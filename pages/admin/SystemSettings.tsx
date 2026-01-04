@@ -3,7 +3,9 @@ import Layout from '../../components/Layout';
 import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
 import { Notice } from '../../types';
-import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar } from 'lucide-react';
+import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar, AlertTriangle } from 'lucide-react';
+import { collection, getDocs, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { firestore } from '../../services/firebase';
 
 const SystemSettings = () => {
   // Notices State
@@ -25,6 +27,11 @@ const SystemSettings = () => {
       schoolReopenDate: ''
   });
   const [savingConfig, setSavingConfig] = useState(false);
+
+  // Danger Zone State
+  const [showDangerZone, setShowDangerZone] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
 
   const fetchNotices = async () => {
     const data = await db.getNotices();
@@ -109,10 +116,61 @@ const SystemSettings = () => {
       fetchSubjects();
   };
 
+  // --- Danger Zone Handler ---
+  const handleResetAllData = () => {
+      setShowResetModal(true);
+  };
+
+  const confirmReset = async () => {
+      setShowResetModal(false);
+      setResetting(true);
+      try {
+          const collections = [
+              'users',
+              'students',
+              'attendance',
+              'assessments',
+              'notices',
+              'admin_notifications',
+              'teacher_attendance',
+              'timetables'
+          ];
+          for (const colName of collections) {
+              const snap = await getDocs(collection(firestore, colName));
+              const deleteOps = snap.docs.map(d => deleteDoc(doc(firestore, colName, d.id)));
+              await Promise.all(deleteOps);
+          }
+          // Reset settings
+          await setDoc(doc(firestore, 'settings', 'subjects'), {
+              list: ['Mathematics', 'English', 'Science', 'Social Studies', 'Religious Education', 'Information Technology']
+          });
+          await setDoc(doc(firestore, 'settings', 'schoolConfig'), {
+              schoolName: 'Noble Care Academy',
+              academicYear: '2024-2025',
+              currentTerm: 'Term 1'
+          });
+          // Create default admin
+          await setDoc(doc(firestore, 'users', 'admin'), {
+              id: 'admin',
+              name: 'Administrator',
+              email: 'admin@noblecare.edu',
+              role: 'ADMIN'
+          });
+          showToast('Database reset to defaults completed successfully!', { type: 'success' });
+          // Reload the page
+          window.location.reload();
+      } catch (error) {
+          console.error('Reset error:', error);
+          showToast('Error during reset. Check console for details.', { type: 'error' });
+      } finally {
+          setResetting(false);
+      }
+  };
+
   return (
     <Layout title="System Settings">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          
+           
           {/* Left Column */}
           <div className="space-y-8">
             {/* General Config */}
@@ -236,6 +294,35 @@ const SystemSettings = () => {
                     ))}
                 </div>
             </div>
+
+            {/* Secret Database Reset */}
+            {showDangerZone && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+                <div className="flex items-center mb-4">
+                  <AlertTriangle className="text-red-600 mr-2" size={24} />
+                  <h2 className="text-xl font-bold text-red-800">Danger Zone: Database Reset</h2>
+                </div>
+                <p className="text-red-700 mb-4">
+                  This action will permanently delete all data and reset the system to its default state. Use with extreme caution.
+                </p>
+                <button
+                  onClick={handleResetAllData}
+                  disabled={resetting}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-red-400 transition-colors"
+                >
+                  {resetting ? 'Resetting...' : 'Reset All Data'}
+                </button>
+              </div>
+            )}
+
+            <div className="text-center mt-4">
+              <button
+                onClick={() => setShowDangerZone(!showDangerZone)}
+                className="text-slate-500 text-sm underline hover:text-slate-700"
+              >
+                {showDangerZone ? 'Hide' : 'Show'} Advanced Settings
+              </button>
+            </div>
           </div>
 
           {/* Right Column: Notices Management */}
@@ -328,6 +415,35 @@ const SystemSettings = () => {
             </div>
           </div>
       </div>
+
+      {/* Reset Confirmation Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-slate-900 bg-opacity-30 flex items-center justify-center z-50 transition-opacity duration-300">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="text-red-600 mr-3" size={32} />
+              <h2 className="text-xl font-bold text-slate-800">Confirm Database Reset</h2>
+            </div>
+            <p className="text-slate-600 mb-6">
+              WARNING: This will permanently delete ALL data from the system and reset everything to default state. This action cannot be undone. Are you absolutely sure you want to proceed?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReset}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Confirm Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 };
