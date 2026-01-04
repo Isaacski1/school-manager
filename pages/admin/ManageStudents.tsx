@@ -25,6 +25,8 @@ const ManageStudents = () => {
 
   // Delete Confirmation State
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  // Save button loading state
+  const [isSaving, setIsSaving] = useState(false);
 
   const fetchData = async () => {
     const data = await db.getStudents();
@@ -49,13 +51,14 @@ const ManageStudents = () => {
   };
   // ----------------------------------
 
-  const filteredStudents = students.filter(s => 
-    filterClass === 'all' ? true : s.classId === filterClass
-  );
+  const filteredStudents = students
+    .filter(s => filterClass === 'all' ? true : s.classId === filterClass)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const handleOpenAdd = () => {
     setPerformanceData(null);
-    setFormData({ gender: 'Male', classId: 'c_p1', dob: '' });
+    const selectedClass = filterClass !== 'all' ? filterClass : 'c_p1';
+    setFormData({ gender: 'Male', classId: selectedClass, dob: '' });
     setEditingId(null);
     setShowModal(true);
   };
@@ -108,123 +111,126 @@ const ManageStudents = () => {
     e.preventDefault();
     if (!formData.name || !formData.classId) return;
 
-    if (editingId) {
-        // Update existing
+    setIsSaving(true);
+    try {
+      if (editingId) {
         const updatedStudent: Student = {
-            ...formData as Student, // Preserve existing properties like dob that might not be in the form
-            id: editingId
+          ...formData as Student,
+          id: editingId
         };
         await db.updateStudent(updatedStudent);
-    } else {
-        // Create new
+        showToast('Student updated successfully.', { type: 'success' });
+      } else {
         const newStudent: Student = {
-            id: Math.random().toString(36).substr(2, 9),
-            name: formData.name,
-            gender: formData.gender as 'Male' | 'Female',
-            dob: formData.dob || '2015-01-01',
-            classId: formData.classId,
-            guardianName: formData.guardianName || '',
-            guardianPhone: formData.guardianPhone || '',
+          id: Math.random().toString(36).substr(2, 9),
+          name: formData.name,
+          gender: formData.gender as 'Male' | 'Female',
+          dob: formData.dob || '2015-01-01',
+          classId: formData.classId,
+          guardianName: formData.guardianName || '',
+          guardianPhone: formData.guardianPhone || '',
         };
         await db.addStudent(newStudent);
-    }
+        showToast('Student added successfully.', { type: 'success' });
+      }
 
-    fetchData();
-    handleClose();
+      await fetchData();
+      handleClose();
+    } catch (error) {
+      console.error('Save failed', error);
+      showToast('Failed to save student. Please try again.', { type: 'error' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // --- Calendar Rendering Helpers ---
   const renderCalendar = () => {
-      if (!performanceData || !performanceData.attendance.schoolDates) return null;
-      
+      if (!performanceData || !performanceData.attendance || !performanceData.attendance.schoolDates) return null;
+
       const { schoolDates, presentDates } = performanceData.attendance;
       if (schoolDates.length === 0) return <div className="text-center text-slate-400 py-4 italic">No attendance records found for this term.</div>;
 
-      // Group dates by Month
-      const months: Record<string, string[]> = {};
-      schoolDates.forEach((dateStr: string) => {
-          const date = new Date(dateStr);
-          const monthKey = date.toLocaleString('default', { month: 'long', year: 'numeric' });
-          if (!months[monthKey]) months[monthKey] = [];
-          months[monthKey].push(dateStr);
+      // Normalize date strings (YYYY-MM-DD)
+      const normalize = (d: string | Date) => {
+        const date = typeof d === 'string' ? new Date(d) : d;
+        return date.toISOString().split('T')[0];
+      };
+
+      const schoolSet = new Set(schoolDates.map((s: string) => normalize(s)));
+      const presentSet = new Set(presentDates.map((s: string) => normalize(s)));
+
+      // Group by month-year using numeric keys for correct ordering
+      const months: Record<string, { label: string, year: number, month: number }> = {};
+      schoolDates.forEach((s: string) => {
+        const d = new Date(s);
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        if (!months[key]) months[key] = { label: d.toLocaleString('default', { month: 'long', year: 'numeric' }), year: d.getFullYear(), month: d.getMonth() };
       });
+
+      const weekdayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
       return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            {Object.entries(months).map(([monthName, dates]) => (
-                <div key={monthName} className="border border-slate-200 rounded-lg p-3 bg-white">
-                    <h5 className="font-bold text-slate-700 text-sm mb-2 text-center border-b border-slate-100 pb-2">{monthName}</h5>
-                    <div className="grid grid-cols-7 gap-1 text-center">
-                        {['S','M','T','W','T','F','S'].map((d, i) => (
-                            <div key={i} className="text-[10px] text-slate-400 font-bold">{d}</div>
-                        ))}
-                        {/* 
-                            Simplification: We are mapping valid school days to a grid.
-                            To make a proper calendar, we'd need exact day alignment. 
-                            For this view, we'll align dates based on their actual day of week.
-                        */}
-                        {Array.from({ length: 31 }).map((_, i) => {
-                            // Find if any date in this month matches day i+1
-                            const dayNum = i + 1;
-                            const dateStr = dates.find(d => new Date(d).getDate() === dayNum);
-                            
-                            if (!dateStr) {
-                                // Check if this day actually exists in the month to avoid showing '31' in Feb
-                                // Quick check:
-                                const testDate = new Date(monthName);
-                                testDate.setDate(dayNum);
-                                if (testDate.getMonth() !== new Date(monthName).getMonth()) return null;
+          {Object.entries(months).map(([key, info]) => {
+            const { year, month, label } = info;
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const totalCells = Math.ceil((firstDay + daysInMonth) / 7) * 7;
 
-                                return <div key={i} className="h-6 w-6 flex items-center justify-center text-[10px] text-slate-200"></div>; 
-                            }
+            return (
+              <div key={key} className="border border-slate-200 rounded-lg p-3 bg-white">
+                <h5 className="font-bold text-slate-700 text-sm mb-2 text-center border-b border-slate-100 pb-2">{label}</h5>
 
-                            // Calculate actual day of week for correct column placement? 
-                            // Complex for a mock. Let's just render the active days in a list style or simple grid if exact calendar math is too heavy.
-                            // Actually, let's just render the days that HAVE data.
-                            
-                            const isPresent = presentDates.includes(dateStr);
-                            const dateObj = new Date(dateStr);
-                            const colIndex = dateObj.getDay(); // 0 = Sun, 6 = Sat
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {weekdayLabels.map((d, i) => (
+                    <div key={i} className="text-[11px] text-slate-400 font-bold">{d}</div>
+                  ))}
 
-                            // We need to render padding for the first week row if we want a true calendar look, 
-                            // but looping 1-31 and placing them might be tricky without a library.
-                            // Let's stick to a visual indicator of status.
-                            
-                            return (
-                                <div 
-                                    key={i} 
-                                    className={`h-6 w-6 mx-auto flex items-center justify-center rounded-full text-[10px] font-bold
-                                        ${isPresent ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}
-                                    `}
-                                    title={`${dateStr}: ${isPresent ? 'Present' : 'Absent'}`}
-                                >
-                                    {dayNum}
-                                </div>
-                            );
-                        })}
-                    </div>
-                    {/* Fallback layout for simplicity: Just show the days that had school */}
-                    <div className="mt-2 flex flex-wrap gap-1.5 justify-center">
-                        {dates.map(dateStr => {
-                            const dayNum = new Date(dateStr).getDate();
-                            const isPresent = presentDates.includes(dateStr);
-                            return (
-                                <div 
-                                    key={dateStr} 
-                                    className={`h-7 w-7 flex items-center justify-center rounded-full text-xs font-medium border
-                                        ${isPresent ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}
-                                    `}
-                                    title={`${dateStr}: ${isPresent ? 'Present' : 'Absent'}`}
-                                >
-                                    {dayNum}
-                                </div>
-                            )
-                        })}
-                    </div>
+                  {Array.from({ length: totalCells }).map((_, idx) => {
+                    const dayNum = idx - firstDay + 1;
+                    if (dayNum < 1 || dayNum > daysInMonth) {
+                      return <div key={idx} className="h-8"></div>;
+                    }
+
+                    const dateObj = new Date(year, month, dayNum);
+                    const iso = normalize(dateObj);
+                    const isSchoolDay = schoolSet.has(iso);
+                    const isPresent = presentSet.has(iso);
+                    const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+
+                    // Visual styles
+                    const baseClasses = `h-8 w-8 mx-auto flex items-center justify-center rounded-full text-sm font-semibold`;
+                    const weekendClasses = isWeekend ? 'text-slate-300 bg-slate-50' : '';
+
+                    if (!isSchoolDay) {
+                      return (
+                        <div key={idx} className={`h-8 flex items-center justify-center text-[12px] text-slate-200`}></div>
+                      );
+                    }
+
+                    return (
+                      <div key={idx} className="flex items-center justify-center">
+                        <div
+                          title={`${iso}: ${isPresent ? 'Present' : 'Absent'}`}
+                          className={`${baseClasses} ${weekendClasses} ${isPresent ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}
+                        >
+                          {dayNum}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-            ))}
+
+                <div className="mt-3 flex justify-center gap-4 text-xs text-slate-500">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 bg-emerald-100 rounded-full border border-emerald-200"></div> Present</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-100 rounded-full border border-red-200"></div> Absent</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      )
+      );
   };
 
   return (
@@ -469,10 +475,21 @@ const ManageStudents = () => {
                   Cancel
                 </button>
                 <button 
-                  type="submit" 
-                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium shadow-sm transition-colors"
+                  type="submit"
+                  disabled={isSaving}
+                  className={`px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-medium shadow-sm transition-colors ${isSaving ? 'opacity-60 cursor-not-allowed hover:bg-emerald-600' : 'hover:bg-emerald-700'}`}
                 >
-                  {editingId ? 'Update Student' : 'Save Student'}
+                  {isSaving ? (
+                    <span className="flex items-center">
+                      <svg className="animate-spin h-4 w-4 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                      </svg>
+                      {editingId ? 'Updating...' : 'Saving...'}
+                    </span>
+                  ) : (
+                    (editingId ? 'Update Student' : 'Save Student')
+                  )}
                 </button>
               </div>
             </form>

@@ -35,6 +35,13 @@ export interface AttendanceRecord {
   presentStudentIds: string[];
 }
 
+export interface TeacherAttendanceRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  teacherId: string;
+  status: 'present' | 'absent';
+}
+
 export interface Assessment {
   id: string;
   studentId: string;
@@ -81,4 +88,25 @@ export interface TimeSlot {
 export interface ClassTimetable {
   classId: string;
   schedule: Record<string, TimeSlot[]>; // Key is Day name (Monday, Tuesday...)
+}
+
+export interface MonthlyTeacherAttendance {
+  teacherId: string;
+  teacherName: string;
+  month: string; // YYYY-MM format
+  year: number;
+  totalWorkingDays: number;
+  presentDays: number;
+  absentDays: number;
+  attendanceRate: number;
+  trend: 'improving' | 'declining' | 'stable';
+}
+
+export interface TeacherAttendanceAnalytics {
+  teacherId: string;
+  teacherName: string;
+  overallAttendance: number;
+  monthlyBreakdown: MonthlyTeacherAttendance[];
+  termStartDate: string;
+  vacationDate?: string;
 }

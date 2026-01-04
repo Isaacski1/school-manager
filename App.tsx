@@ -9,11 +9,13 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import ManageStudents from './pages/admin/ManageStudents';
 import ManageTeachers from './pages/admin/ManageTeachers';
 import AttendanceStats from './pages/admin/AttendanceStats';
+import TeacherAttendanceStats from './pages/admin/TeacherAttendanceStats';
 import Reports from './pages/admin/Reports';
 import SystemSettings from './pages/admin/SystemSettings';
 import Timetable from './pages/admin/Timetable';
 import TeacherDashboard from './pages/teacher/TeacherDashboard';
 import Attendance from './pages/teacher/Attendance';
+import TeacherAttendance from './pages/teacher/TeacherAttendance';
 import AssessmentPage from './pages/teacher/Assessment';
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactElement, allowedRoles?: UserRole[] }) => {
@@ -64,6 +66,11 @@ const AppRoutes = () => {
       <Route path="/admin/attendance" element={
         <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
            <AttendanceStats /> 
+        </ProtectedRoute>
+      } />
+      <Route path="/admin/teacher-attendance" element={
+        <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
+           <TeacherAttendanceStats />
         </ProtectedRoute>
       } />
        <Route path="/admin/reports" element={

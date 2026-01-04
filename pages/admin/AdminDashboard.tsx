@@ -3,12 +3,15 @@ import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../../components/Layout';
 import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
+import { firestore } from '../../services/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { 
   Users, 
   GraduationCap, 
   CreditCard, 
   MoreHorizontal, 
   UserPlus,
+    User,
   BookOpen,
   Settings,
   Bell,
@@ -16,7 +19,6 @@ import {
   Edit,
   X,
   Save,
-  User as UserIcon,
   ArrowUpRight,
   Calendar,
   BarChart2,
@@ -24,7 +26,7 @@ import {
   RefreshCw,
   AlertOctagon
 } from 'lucide-react';
-import { Notice, Student } from '../../types';
+import { Notice, Student, TeacherAttendanceRecord } from '../../types';
 import { CLASSES_LIST, calculateGrade, getGradeColor, CURRENT_TERM } from '../../constants';
 
 const AdminDashboard = () => {
@@ -42,16 +44,44 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // Teacher Attendance State
+  const [teacherAttendance, setTeacherAttendance] = useState<TeacherAttendanceRecord[]>([]);
+  const [teacherTermStats, setTeacherTermStats] = useState<any[]>([]);
+  const [missedAttendanceAlerts, setMissedAttendanceAlerts] = useState<any[]>([]);
+
+    // Real-time metrics
+    const [realTimeEnabled, setRealTimeEnabled] = useState(false);
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const pollRef = React.useRef<number | null>(null);
+    const [now, setNow] = useState<number>(Date.now());
+    const [animatedStudents, setAnimatedStudents] = useState<number>(0);
+    const [animatedAttendance, setAnimatedAttendance] = useState<number>(0);
+    const [animatedGradeAvg, setAnimatedGradeAvg] = useState<number>(0);
+    const [thisWeekAttendance, setThisWeekAttendance] = useState<number | null>(null);
+    const [lastWeekAttendance, setLastWeekAttendance] = useState<number | null>(null);
   
   // Configuration State
   const [schoolConfig, setSchoolConfig] = useState({
       academicYear: '...',
-      currentTerm: '...'
+      currentTerm: '...',
+      schoolReopenDate: ''
   });
+
+  // Attendance Week Navigation (initialized to null, set after config loads)
+  const [attendanceWeek, setAttendanceWeek] = useState<Date | null>(null);
 
   // Performance Stats
   const [gradeDistribution, setGradeDistribution] = useState<Record<string, number>>({ A:0, B:0, C:0, D:0, F:0 });
-  const [topStudents, setTopStudents] = useState<{name: string, class: string, avg: number}[]>([]);
+    const [topStudents, setTopStudents] = useState<{id: string, name: string, class: string, avg: number}[]>([]);
+    const [gradeBuckets, setGradeBuckets] = useState<Record<string, {id: string, name: string, class: string, avg: number}[]>>({ A: [], B: [], C: [], D: [], F: [] });
+    const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
+
+    // Advanced visualization state
+    const [heatmapData, setHeatmapData] = useState<Record<string, Record<string, number>>>({}); // classId -> { subject: avg }
+    const [comparativeData, setComparativeData] = useState<{ className: string; avg: number }[]>([]);
+    const [gradeDistributionByClass, setGradeDistributionByClass] = useState<Record<string, Record<string, number>>>({});
+    const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
 
   // --- Modal States ---
   const [viewStudent, setViewStudent] = useState<Student | null>(null);
@@ -68,9 +98,78 @@ const AdminDashboard = () => {
         const fetchedNotices = await db.getNotices();
         const config = await db.getSchoolConfig();
 
+        // Teacher Attendance for today and term statistics
+        const today = new Date().toISOString().split('T')[0];
+        const teachers = await db.getUsers();
+
+        // Get today's attendance
+        const teacherAttendanceData = await db.getAllTeacherAttendance(today);
+
+        // Get all teacher attendance records for term statistics
+        const allTeacherRecords = await db.getAllTeacherAttendanceRecords();
+
+        // Check for missed attendance (yesterday)
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const missedAlerts: any[] = [];
+
+        // Only check if school has reopened
+        const currentDate = new Date();
+        const reopenDateObj = config.schoolReopenDate ? new Date(config.schoolReopenDate) : null;
+        const schoolHasReopened = !reopenDateObj || currentDate >= reopenDateObj;
+
+        if (schoolHasReopened && yesterday >= (config.schoolReopenDate || yesterday)) {
+            for (const teacher of teachers.filter(t => t.role === 'TEACHER')) {
+                const yesterdayRecord = await db.getTeacherAttendance(teacher.id, yesterday);
+                if (!yesterdayRecord) {
+                    missedAlerts.push({
+                        teacherId: teacher.id,
+                        teacherName: teacher.name,
+                        date: yesterday,
+                        classes: teacher.assignedClassIds?.map(id =>
+                            CLASSES_LIST.find(c => c.id === id)?.name
+                        ).join(', ') || 'Not Assigned'
+                    });
+                }
+            }
+        }
+
+        // Calculate term statistics for each teacher
+        const teacherTermStats = teachers
+            .filter(t => t.role === 'TEACHER')
+            .map(teacher => {
+                const teacherRecords = allTeacherRecords.filter(r => r.teacherId === teacher.id);
+                const presentDays = teacherRecords.filter(r => r.status === 'present').length;
+                const totalDays = teacherRecords.length;
+                const attendanceRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+
+                return {
+                    id: teacher.id,
+                    name: teacher.name,
+                    classes: teacher.assignedClassIds?.map(id =>
+                        CLASSES_LIST.find(c => c.id === id)?.name
+                    ).join(', ') || 'Not Assigned',
+                    presentDays,
+                    totalDays,
+                    attendanceRate
+                };
+            });
+
+        // Map today's attendance records to include teacher names and classes
+        const teacherAttendanceWithDetails = teacherAttendanceData.map(record => {
+            const teacher = teachers.find(t => t.id === record.teacherId);
+            return {
+                ...record,
+                teacherName: teacher?.name || 'Unknown',
+                teacherClasses: teacher?.assignedClassIds?.map(id =>
+                    CLASSES_LIST.find(c => c.id === id)?.name
+                ).join(', ') || 'Not Assigned'
+            };
+        });
+
         setSchoolConfig({
             academicYear: config.academicYear,
-            currentTerm: config.currentTerm
+            currentTerm: config.currentTerm,
+            schoolReopenDate: config.schoolReopenDate || ''
         });
         
         // Use Dynamic Term Number from config string (e.g. "Term 2" -> 2)
@@ -103,21 +202,25 @@ const AdminDashboard = () => {
             }
         });
 
-        // 2. Calculate Averages & Grade Distribution
+        // 2. Calculate Averages & Grade Distribution (also build buckets)
         const counts = { A: 0, B: 0, C: 0, D: 0, F: 0 };
-        const averagesList: {name: string, class: string, avg: number}[] = [];
+        const averagesList: {id:string,name: string, class: string, avg: number}[] = [];
+        const buckets: Record<string, {id:string,name:string,class:string,avg:number}[]> = { A: [], B: [], C: [], D: [], F: [] };
 
-        Object.values(studentScores).forEach(s => {
+        Object.entries(studentScores).forEach(([studentId, s]) => {
             const avg = s.count > 0 ? s.total / s.count : 0;
             const { grade } = calculateGrade(avg);
             if(counts[grade as keyof typeof counts] !== undefined) {
                 counts[grade as keyof typeof counts]++;
             }
-            averagesList.push({
+            const record = {
+                id: studentId,
                 name: s.name,
                 class: CLASSES_LIST.find(c => c.id === s.classId)?.name || 'N/A',
                 avg: parseFloat(avg.toFixed(1))
-            });
+            };
+            averagesList.push(record);
+            if (buckets[grade]) buckets[grade].push(record);
         });
 
         // 3. Sort for Top Students
@@ -133,9 +236,14 @@ const AdminDashboard = () => {
         });
         setNotices(fetchedNotices);
         setRecentStudents(students.slice(-5).reverse());
-        
+        setTeacherAttendance(teacherAttendanceWithDetails);
+        setTeacherTermStats(teacherTermStats);
+        setMissedAttendanceAlerts(missedAlerts);
+
         setGradeDistribution(counts);
         setTopStudents(averagesList.slice(0, 5));
+        setGradeBuckets(buckets);
+        setLastUpdated(new Date());
     } catch (err: any) {
         console.error("Dashboard fetch error:", err);
         setError("Failed to load dashboard data. Please check your internet connection or database permissions.");
@@ -144,9 +252,259 @@ const AdminDashboard = () => {
     }
   };
 
+    // Lightweight stats fetch used by the live updater
+    const fetchStats = async () => {
+        try {
+            const dashboardStats = await db.getDashboardStats();
+                    // compute simple attendance average across classes
+                    const classPctList = (dashboardStats.classAttendance || []).map((c: any) => c.percentage || 0);
+                    const currentAttendanceAvg = classPctList.length > 0 ? Math.round(classPctList.reduce((a,b) => a+b, 0) / classPctList.length) : 0;
+            setStats(prev => ({
+                ...prev,
+                students: dashboardStats.studentsCount,
+                teachers: dashboardStats.teachersCount,
+                classes: CLASSES_LIST.length,
+                maleStudents: dashboardStats.gender.male,
+                femaleStudents: dashboardStats.gender.female,
+                classAttendance: dashboardStats.classAttendance
+            }));
+                        // animate KPI targets
+                        setLastUpdated(new Date());
+                        animateNumber(setAnimatedStudents, dashboardStats.studentsCount, 600);
+                        animateNumber(setAnimatedAttendance, currentAttendanceAvg, 600);
+
+                        // compute grade average from assessments (best-effort, use getAllAssessments)
+                        try {
+                            const all = await db.getAllAssessments();
+                            const studentScores: Record<string, { total: number, count: number }> = {};
+                            all.forEach((a: any) => {
+                                if(!studentScores[a.studentId]) studentScores[a.studentId] = { total: 0, count: 0 };
+                                const score = a.total ?? ((a.testScore||0)+(a.homeworkScore||0)+(a.projectScore||0)+(a.examScore||0));
+                                studentScores[a.studentId].total += score;
+                                studentScores[a.studentId].count += 1;
+                            });
+                            const avgs = Object.values(studentScores).map(s => s.count > 0 ? s.total / s.count : 0);
+                            const overallAvg = avgs.length > 0 ? Math.round(avgs.reduce((a,b) => a+b, 0) / avgs.length) : 0;
+                            animateNumber(setAnimatedGradeAvg, overallAvg, 600);
+                        } catch(e) {
+                            console.error('Failed to compute grade avg', e);
+                        }
+                        // compute this-week vs last-week attendance in background
+                        computeWeekComparison().catch(e => console.error(e));
+                        // refresh visualizations in background as well
+                        fetchVisualizations().catch((e: any) => console.error('Failed to compute visuals', e));
+        } catch (e) {
+            console.error('Failed to fetch live stats', e);
+        }
+    };
+
+    // Aggregate assessment data for advanced visualizations
+    const fetchVisualizations = async () => {
+        try {
+            const all = await db.getAllAssessments();
+            const students = await db.getStudents();
+
+            // Structures
+            const perClassSubject: Record<string, Record<string, { total: number; count: number }>> = {};
+            const perClassTotals: Record<string, { total: number; count: number }> = {};
+            const perClassGrades: Record<string, Record<string, number>> = {};
+            const perClassTimeline: Record<string, { date: number; avg: number }[]> = {};
+
+            // Map student -> class for fallback
+            const studentToClass = new Map(students.map((s: any) => [s.id, s.classId]));
+
+            all.forEach((a: any) => {
+                const classId = a.classId || studentToClass.get(a.studentId) || 'unknown';
+                const subject = a.subject || 'General';
+                const score = a.total ?? ((a.testScore||0)+(a.homeworkScore||0)+(a.projectScore||0)+(a.examScore||0));
+                if (!perClassSubject[classId]) perClassSubject[classId] = {};
+                if (!perClassSubject[classId][subject]) perClassSubject[classId][subject] = { total: 0, count: 0 };
+                perClassSubject[classId][subject].total += score;
+                perClassSubject[classId][subject].count += 1;
+
+                if (!perClassTotals[classId]) perClassTotals[classId] = { total: 0, count: 0 };
+                perClassTotals[classId].total += score;
+                perClassTotals[classId].count += 1;
+
+                // grade buckets
+                const avgForAssessment = score; // we treat each assessment score as sample
+                const grade = (() => {
+                    if (avgForAssessment >= 80) return 'A';
+                    if (avgForAssessment >= 65) return 'B';
+                    if (avgForAssessment >= 50) return 'C';
+                    if (avgForAssessment >= 35) return 'D';
+                    return 'F';
+                })();
+                if (!perClassGrades[classId]) perClassGrades[classId] = { A:0,B:0,C:0,D:0,F:0 };
+                perClassGrades[classId][grade] = (perClassGrades[classId][grade] || 0) + 1;
+
+                // timeline: use assessment date or createdAt else fallback to now
+                const when = a.date ? new Date(a.date).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : Date.now());
+                if (!perClassTimeline[classId]) perClassTimeline[classId] = [];
+                perClassTimeline[classId].push({ date: when, avg: score });
+            });
+
+            // Build heatmap avg per subject
+            const heat: Record<string, Record<string, number>> = {};
+            Object.entries(perClassSubject).forEach(([cls, subjects]) => {
+                heat[cls] = {};
+                Object.entries(subjects).forEach(([subj, val]) => {
+                    heat[cls][subj] = Math.round(val.total / Math.max(1, val.count));
+                });
+            });
+
+            // comparative per-class averages
+            const comp = Object.entries(perClassTotals).map(([cls, v]) => ({
+                className: CLASSES_LIST.find(c => c.id === cls)?.name || cls,
+                avg: Math.round(v.total / Math.max(1, v.count))
+            })).sort((a,b) => b.avg - a.avg);
+
+            // prepare sparklines: sort timeline and take last 8 points averaged into buckets
+            const sparks: Record<string, number[]> = {};
+            Object.entries(perClassTimeline).forEach(([cls, points]) => {
+                const sorted = points.sort((a,b) => a.date - b.date);
+                // reduce to up to 8 points evenly
+                const n = 8;
+                const bucketSize = Math.max(1, Math.ceil(sorted.length / n));
+                const arr: number[] = [];
+                for (let i=0;i<sorted.length;i+=bucketSize) {
+                    const slice = sorted.slice(i, i+bucketSize);
+                    const avg = Math.round(slice.reduce((s,p) => s + p.avg, 0) / slice.length);
+                    arr.push(avg);
+                }
+                // pad to length n
+                while (arr.length < n) arr.unshift(arr[0] ?? 0);
+                sparks[cls] = arr.slice(-n);
+            });
+
+            setHeatmapData(heat);
+            setComparativeData(comp);
+            setGradeDistributionByClass(perClassGrades);
+            setSparklines(sparks);
+        } catch (e) {
+            console.error('Error fetching visualizations', e);
+        }
+    };
+
+    // Helper: animate numeric value from current to target over duration (ms)
+    const animateNumber = (setter: (v: number) => void, target: number, duration = 500) => {
+        const start = Date.now();
+        const from = 0;
+        const tick = () => {
+            const t = Math.min(1, (Date.now() - start) / duration);
+            const v = Math.round(from + (target - from) * t);
+            setter(v);
+            if (t < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    };
+
+    // Compute attendance percentage for a given week (monday -> friday)
+    const computeAttendanceForWeek = async (monday: Date, friday: Date) => {
+        // For each class, fetch attendance records and compute percent for dates in range
+        const results: number[] = [];
+        for (const cls of CLASSES_LIST) {
+            try {
+                const records = await db.getClassAttendance(cls.id);
+                const inRange = records.filter((r: any) => {
+                    const parts = r.date.split('-');
+                    if (parts.length !== 3) return false;
+                    const d = new Date(parseInt(parts[0]), parseInt(parts[1]) -1, parseInt(parts[2]));
+                    return d >= monday && d <= friday;
+                });
+                const studentsInClass = (await db.getStudents(cls.id)).length || 0;
+                if (inRange.length > 0 && studentsInClass > 0) {
+                    const totalPossible = inRange.length * studentsInClass;
+                    const totalPresent = inRange.reduce((s: number, r: any) => s + (r.presentStudentIds?.length || 0), 0);
+                    results.push(Math.round((totalPresent / totalPossible) * 100));
+                }
+            } catch (e) {
+                console.error('Error computing class attendance for', cls.id, e);
+            }
+        }
+        if (results.length === 0) return null;
+        return Math.round(results.reduce((a,b) => a+b, 0) / results.length);
+    };
+
+    const computeWeekComparison = async () => {
+        // determine current attendanceWeek (use attendanceWeek state or today)
+        const refDate = attendanceWeek || new Date();
+        const { monday } = getWeekRange(refDate);
+        const thisMonday = monday;
+        const thisFriday = new Date(monday); thisFriday.setDate(monday.getDate() + 4);
+        const lastMonday = new Date(monday); lastMonday.setDate(monday.getDate() - 7);
+        const lastFriday = new Date(lastMonday); lastFriday.setDate(lastMonday.getDate() + 4);
+
+        const thisPct = await computeAttendanceForWeek(thisMonday, thisFriday);
+        const lastPct = await computeAttendanceForWeek(lastMonday, lastFriday);
+        setThisWeekAttendance(thisPct);
+        setLastWeekAttendance(lastPct);
+    };
+
   useEffect(() => {
     fetchData();
   }, []);
+
+    // Real-time listener: refresh lightweight stats when attendance collection changes
+    useEffect(() => {
+        const attendanceRef = collection(firestore, 'attendance');
+        const unsub = onSnapshot(attendanceRef, () => {
+            // Keep this lightweight — update class attendance and counters
+            fetchStats().catch(e => console.error('Error refreshing stats on attendance change', e));
+        });
+        return () => unsub();
+    }, []);
+
+    // Real-time polling effect
+    useEffect(() => {
+        if (!realTimeEnabled) {
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+            return;
+        }
+
+        // Fetch immediately and then poll
+        fetchStats();
+        pollRef.current = window.setInterval(fetchStats, 15000);
+
+        return () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+        };
+    }, [realTimeEnabled]);
+
+    // Update `now` every second while we have a lastUpdated timestamp (for "Xs ago" freshness)
+    useEffect(() => {
+        if (!lastUpdated) return;
+        // tick immediately so UI shows up-to-date seconds
+        setNow(Date.now());
+        const id = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(id);
+    }, [lastUpdated]);
+
+  // Initialize attendance week based on school re-open date (runs AFTER config loads)
+  useEffect(() => {
+      if (schoolConfig.schoolReopenDate) {
+          const parts = schoolConfig.schoolReopenDate.split('-');
+          const reopenDate = parts.length === 3 
+              ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+              : new Date(schoolConfig.schoolReopenDate);
+          const today = new Date();
+
+          // If school hasn't reopened yet, set attendance week to the Monday of the re-open week
+          if (reopenDate > today) {
+              setAttendanceWeek(getWeekRange(reopenDate).monday);
+              return;
+          }
+      }
+
+      // If no re-open date set or school already reopened, default to current week's Monday
+      setAttendanceWeek(getWeekRange(new Date()).monday);
+  }, [schoolConfig.schoolReopenDate]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -198,6 +556,99 @@ const AdminDashboard = () => {
       }
   };
 
+  const fetchAndViewStudent = async (id: string) => {
+      setSelectedGrade(null);
+      try {
+          const students = await db.getStudents();
+          const s = students.find((st: any) => st.id === id);
+          if (s) {
+              handleViewDetails(s);
+          } else {
+              showToast('Student not found', { type: 'error' });
+          }
+      } catch (e) {
+          console.error(e);
+          showToast('Failed to fetch student', { type: 'error' });
+      }
+  };
+
+  // Week Navigation Helpers
+  const getWeekRange = (date: Date) => {
+      const d = new Date(date);
+      const day = d.getDay();
+      // Calculate Monday (1st day of week): if Sunday (0), go back 6 days; otherwise go back (day-1) days
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+
+      // For school schedule use weekdays only: calculate Friday (5th day)
+      const friday = new Date(monday);
+      friday.setDate(monday.getDate() + 4);
+
+      return { monday, friday };
+  };
+
+  const getEffectiveCurrentWeekStart = () => {
+      // If school re-open date is set and is in the future, use it as reference
+      if (schoolConfig.schoolReopenDate) {
+          const parts = schoolConfig.schoolReopenDate.split('-');
+          const reopenDate = parts.length === 3 
+              ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+              : new Date(schoolConfig.schoolReopenDate);
+          const today = new Date();
+          if (reopenDate > today) {
+              // School hasn't reopened yet, return the week of re-open date
+              return getWeekRange(reopenDate).monday;
+          }
+      }
+      // Otherwise, use today's week
+      return getWeekRange(new Date()).monday;
+  };
+
+  const goToPreviousWeek = () => {
+      if (attendanceWeek === null) return;
+      
+      const prevWeek = new Date(attendanceWeek);
+      prevWeek.setDate(prevWeek.getDate() - 7);
+      
+      // Don't allow going before school reopen date
+      if (schoolConfig.schoolReopenDate) {
+          const parts = schoolConfig.schoolReopenDate.split('-');
+          const reopenDate = parts.length === 3 
+              ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+              : new Date(schoolConfig.schoolReopenDate);
+          const reopenWeek = getWeekRange(reopenDate).monday;
+          if (prevWeek < reopenWeek) {
+              showToast('Cannot view weeks before school re-opens', { type: 'info' });
+              return;
+          }
+      }
+      setAttendanceWeek(prevWeek);
+  };
+
+  const goToNextWeek = () => {
+      if (attendanceWeek === null) return;
+      
+      const nextWeek = new Date(attendanceWeek);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      setAttendanceWeek(nextWeek);
+  };
+
+  const goToCurrentWeek = () => {
+      if (schoolConfig.schoolReopenDate) {
+          const parts = schoolConfig.schoolReopenDate.split('-');
+          const reopenDate = parts.length === 3 
+              ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+              : new Date(schoolConfig.schoolReopenDate);
+          const today = new Date();
+          if (reopenDate > today) {
+              // School hasn't reopened yet, go to the Monday of the reopen week
+              setAttendanceWeek(getWeekRange(reopenDate).monday);
+              return;
+          }
+      }
+      setAttendanceWeek(getWeekRange(new Date()).monday);
+  };
+
   // --- Components ---
 
   const StatCard = ({ title, value, subtext, icon: Icon, colorClass, iconColorClass }: any) => (
@@ -209,24 +660,271 @@ const AdminDashboard = () => {
            {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
         </div>
       </div>
+            {/* KPI Row removed from StatCard - KPI cards will be shown in a separate standalone card */}
       <div className={`absolute -right-4 -bottom-4 opacity-10 pointer-events-none transform group-hover:scale-110 transition-transform ${iconColorClass}`}>
          <Icon size={100} />
       </div>
     </div>
   );
 
-  const AttendanceChart = () => {
-    const data = stats.classAttendance;
-    return (
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full flex flex-col">
-             <div className="flex justify-between items-center mb-6">
+    const KPICard = ({ title, value, suffix, delta, deltaPositive }: any) => (
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
                 <div>
-                    <h3 className="font-bold text-slate-800 text-lg">Class Attendance</h3>
-                    <p className="text-xs text-slate-500">Live participation by Class</p>
+                    <p className="text-xs text-slate-400 uppercase font-semibold">{title}</p>
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-slate-800">{value}</span>
+                        {suffix && <span className="text-sm text-slate-500">{suffix}</span>}
+                    </div>
+                </div>
+                <div className={`text-sm font-semibold px-2 py-1 rounded ${deltaPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                    {delta ?? '--'}
                 </div>
             </div>
-            
-            <div className="flex-1 flex items-end justify-between gap-1 sm:gap-2 px-1 pb-2 h-64 w-full overflow-x-auto">
+        </div>
+    );
+
+    // Standalone KPI container to avoid embedding KPIs inside StatCard
+    const KPIRowContainer = () => (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KPICard
+                    title="Students Enrolled"
+                    value={animatedStudents}
+                    suffix="total"
+                    delta={null}
+                    deltaPositive={true}
+                />
+                <KPICard
+                    title="Attendance Now"
+                    value={`${animatedAttendance}%`}
+                    suffix={null}
+                    delta={thisWeekAttendance !== null && lastWeekAttendance !== null ? `${thisWeekAttendance - lastWeekAttendance}% vs last week` : 'No comparison'}
+                    deltaPositive={thisWeekAttendance !== null && lastWeekAttendance !== null ? (thisWeekAttendance - lastWeekAttendance) >= 0 : true}
+                />
+                <KPICard
+                    title="Avg Grade"
+                    value={`${animatedGradeAvg}%`}
+                    suffix={null}
+                    delta={null}
+                    deltaPositive={true}
+                />
+            </div>
+        </div>
+    );
+
+    // Polished, responsive Student enrollment card (replaces Students StatCard)
+    const StudentEnrollCard = () => (
+        <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-6 rounded-2xl shadow-md border border-amber-200 flex flex-col justify-between min-h-[140px]">
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <p className="text-xs font-semibold uppercase text-amber-700">Students Enrolled</p>
+                    <h3 className="text-3xl sm:text-4xl font-extrabold text-amber-900 mt-2">{stats.students}</h3>
+                    <p className="text-sm text-amber-700 mt-1">{stats.classes} classes • {stats.teachers} teachers</p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="bg-white p-3 rounded-xl shadow-sm hidden sm:flex">
+                        <GraduationCap className="text-amber-600" size={28} />
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-6">
+                    <div className="text-center">
+                        <div className="text-xs text-slate-500">Female</div>
+                        <div className="text-lg font-bold text-red-800">{stats.femaleStudents}</div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-xs text-slate-500">Male</div>
+                        <div className="text-lg font-bold text-amber-600">{stats.maleStudents}</div>
+                    </div>
+                </div>
+
+                <div className="hidden sm:flex items-end gap-2 flex-1 max-w-[55%]">
+                    {stats.classAttendance.slice(0, 8).map(c => (
+                        <div key={c.id} className="flex-1 flex flex-col items-center">
+                            <div
+                                className="w-full rounded-sm"
+                                title={`${c.className}: ${c.percentage}%`}
+                                style={{
+                                    background: c.percentage >= 80 ? '#16a34a' : c.percentage < 50 ? '#dc2626' : '#f59e0b',
+                                    height: `${Math.max(6, Math.round(c.percentage / 2))}px`
+                                }}
+                            />
+                            <div className="text-[10px] text-slate-500 mt-1 truncate text-center">{c.className.replace('Primary ', 'P').replace('Class ', 'P').replace('Nursery ', 'N')}</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+                <div className="text-xs text-slate-500">Updated {lastUpdated ? `${Math.floor((now - lastUpdated.getTime())/1000)}s ago` : '—'}</div>
+                <div className="text-xs text-slate-400 hidden sm:block">Responsive • Clean • Insightful</div>
+            </div>
+        </div>
+    );
+
+    // Polished, responsive Teacher / Staff card
+    const TeacherStaffCard = () => {
+        const avgStudentsPerTeacher = stats.teachers > 0 ? Math.round(stats.students / stats.teachers) : '—';
+        return (
+            <div className="bg-gradient-to-br from-sky-50 to-sky-100 p-6 rounded-2xl shadow-md border border-sky-200 flex flex-col justify-between min-h-[140px]">
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <p className="text-xs font-semibold uppercase text-sky-700">Teachers & Staff</p>
+                        <h3 className="text-3xl sm:text-4xl font-extrabold text-sky-900 mt-2">{stats.teachers}</h3>
+                        <p className="text-sm text-sky-700 mt-1">Teaching across {stats.classes} classes</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-3 rounded-xl shadow-sm hidden sm:flex">
+                            <Users className="text-sky-600" size={28} />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-6">
+                        <div className="text-center">
+                            <div className="text-xs text-slate-500">Avg Students / Teacher</div>
+                            <div className="text-lg font-bold text-sky-800">{avgStudentsPerTeacher}</div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-xs text-slate-500">Classes</div>
+                            <div className="text-lg font-bold text-sky-800">{stats.classes}</div>
+                        </div>
+                    </div>
+
+                    <div className="hidden sm:flex items-center gap-3">
+                        <Link to="/admin/teachers" className="text-xs bg-white px-3 py-1 rounded-md font-medium text-sky-700 shadow-sm hover:underline">Manage Staff</Link>
+                    </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between">
+                    <div className="text-xs text-slate-500">Updated {lastUpdated ? `${Math.floor((now - lastUpdated.getTime())/1000)}s ago` : '—'}</div>
+                    <div className="text-xs text-slate-400 hidden sm:block">Professional • Accessible • Responsive</div>
+                </div>
+            </div>
+        );
+    };
+
+  const AttendanceChart = () => {
+    // Return placeholder if week hasn't loaded yet
+    if (attendanceWeek === null) {
+        return (
+            <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col items-center justify-center">
+                <div className="relative w-12 h-12 border-3 border-slate-100 border-t-red-900 rounded-full animate-spin"></div>
+                <p className="text-slate-400 text-sm mt-4">Loading attendance data...</p>
+            </div>
+        );
+    }
+
+    const data = stats.classAttendance;
+    const { monday, friday } = getWeekRange(attendanceWeek);
+    const effectiveCurrentWeekStart = getEffectiveCurrentWeekStart();
+    const isCurrentWeek = effectiveCurrentWeekStart.toDateString() === monday.toDateString();
+
+    // Parse date string safely to avoid timezone shift
+    const parseLocalDate = (dateString: string): Date => {
+        const parts = dateString.split('-');
+        if (parts.length === 3) {
+            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        }
+        return new Date(dateString);
+    };
+
+    // Check if school has reopened
+    let schoolStatus = '';
+    let reopenDateObj: Date | null = null;
+    if (schoolConfig.schoolReopenDate) {
+        reopenDateObj = parseLocalDate(schoolConfig.schoolReopenDate);
+        const today = new Date();
+        if (reopenDateObj > today) {
+            schoolStatus = 'School Closed';
+        } else {
+            schoolStatus = 'School Open';
+        }
+    }
+
+    const formatDate = (date: Date) => {
+        return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date);
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col">
+             {/* Header with Week Navigation */}
+             <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-100">
+                <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Class Attendance</h3>
+                    <p className="text-xs text-slate-500">Weekly participation overview</p>
+                </div>
+                {schoolStatus && (
+                    <div className={`text-xs font-bold px-3 py-1 rounded-full ${schoolStatus === 'School Closed' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {schoolStatus}
+                    </div>
+                )}
+            </div>
+
+            {/* Beautiful Week Selector */}
+            <div className="mb-6 p-4 bg-gradient-to-r from-red-50 to-amber-50 rounded-xl border border-red-100">
+                <div className="flex items-center justify-between">
+                    <button
+                        onClick={goToPreviousWeek}
+                        className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold"
+                        title="Previous week"
+                    >
+                        ←
+                    </button>
+
+                    <div className="flex-1 mx-4 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                            <p className="text-sm font-semibold text-slate-800">
+                                {formatDate(monday)} — {formatDate(friday)}
+                            </p>
+                            <p className="text-xs text-slate-500 font-medium">
+                                {monday.getFullYear()}
+                            </p>
+                            {isCurrentWeek && (
+                                <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full mt-1 uppercase tracking-wide">
+                                    Current Week
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={goToNextWeek}
+                        disabled={isCurrentWeek}
+                        className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-600"
+                        title={isCurrentWeek ? "You are viewing the current week" : "Next week"}
+                    >
+                        →
+                    </button>
+                </div>
+
+                {!isCurrentWeek && (
+                    <div className="mt-3 text-center">
+                        <button
+                            onClick={goToCurrentWeek}
+                            className="text-xs text-red-700 hover:text-red-800 font-semibold bg-white border border-red-200 px-3 py-1.5 rounded-md hover:bg-red-50 transition-colors"
+                        >
+                            Return to Current Week
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {/* School Closed Notice */}
+            {schoolStatus === 'School Closed' && reopenDateObj && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-800 font-semibold">
+                        School is currently closed. Attendance records will begin from {formatDate(reopenDateObj)}
+                    </p>
+                </div>
+            )}
+
+            {/* Attendance Bars */}
+            <div className="flex-1 flex items-end justify-between gap-1 sm:gap-2 px-1 pb-2 h-96 w-full overflow-x-auto">
                 {data.map((item) => {
                     let barColor = 'bg-amber-500'; // Standard Noble Gold
                     if (item.percentage < 50) barColor = 'bg-red-600'; // Warning Red
@@ -281,11 +979,13 @@ const AdminDashboard = () => {
                 <div className="text-center">
                     <p className="text-xs text-slate-400 mb-1">Female</p>
                     <p className="text-xl font-bold text-red-900">{femalePct}%</p>
+                    <p className="text-lg font-bold text-red-700 mt-1">{stats.femaleStudents}</p>
                 </div>
                 <div className="w-px bg-slate-100"></div>
                 <div className="text-center">
                     <p className="text-xs text-slate-400 mb-1">Male</p>
                     <p className="text-xl font-bold text-amber-500">{malePct}%</p>
+                    <p className="text-lg font-bold text-amber-600 mt-1">{stats.maleStudents}</p>
                 </div>
             </div>
         </div>
@@ -293,16 +993,39 @@ const AdminDashboard = () => {
   }
 
   const PerformanceSection = () => {
-    const totalGrades = Object.keys(gradeDistribution).reduce((sum, key) => sum + gradeDistribution[key], 0) || 1;
+    const totalGrades = Object.keys(gradeDistribution).reduce((sum, key) => sum + gradeDistribution[key], 0) || 0;
+
+    // Compute average grade score (A=4 .. F=0) and derive a letter
+    const weights: Record<string, number> = { A: 4, B: 3, C: 2, D: 1, F: 0 };
+        const weightedSum = Object.entries(gradeDistribution).reduce((acc, [g, c]: [string, number]) => {
+            const w = weights[g as keyof typeof weights] ?? 0;
+            return acc + w * c;
+        }, 0);
+    const avgScore = totalGrades > 0 ? (weightedSum / totalGrades) : 0;
+    const avgLetter = avgScore >= 3.5 ? 'A' : avgScore >= 2.5 ? 'B' : avgScore >= 1.5 ? 'C' : avgScore >= 0.5 ? 'D' : 'F';
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-            {/* Grade Distribution Chart */}
-            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            {/* Grade Distribution Chart (Enhanced) */}
+            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-md border border-slate-100">
                 <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-bold text-slate-800 flex items-center">
-                        <BarChart2 className="w-5 h-5 mr-2 text-red-700"/> Academic Performance Rate ({schoolConfig.currentTerm})
-                    </h3>
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-red-50 rounded-xl">
+                            <BarChart2 className="w-6 h-6 text-red-700"/>
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-slate-800">Academic Performance Rate</h3>
+                            <p className="text-xs text-slate-500">{schoolConfig.currentTerm}</p>
+                        </div>
+                        <div className="ml-6 hidden sm:block">
+                            <p className="text-xs text-slate-500 uppercase">Graded Students</p>
+                            <p className="text-2xl font-bold text-slate-800">{totalGrades}</p>
+                        </div>
+                        <div className="ml-6 hidden sm:block">
+                            <p className="text-xs text-slate-500 uppercase">Average Grade</p>
+                            <p className="text-2xl font-bold text-amber-500">{avgLetter} <span className="text-sm text-slate-500">({avgScore.toFixed(2)})</span></p>
+                        </div>
+                    </div>
                     <button
                         onClick={fetchData}
                         disabled={loading}
@@ -313,31 +1036,79 @@ const AdminDashboard = () => {
                         Refresh
                     </button>
                 </div>
-                <div className="space-y-4">
-                    {Object.entries(gradeDistribution).map(([grade, count]: [string, number]) => {
-                        const percentage = Math.round((count / totalGrades) * 100);
-                        // Standard Grade Colors
-                        let barColor = 'bg-emerald-500';
-                        if (grade === 'B') barColor = 'bg-blue-500';
-                        if (grade === 'C') barColor = 'bg-amber-400';
-                        if (grade === 'D') barColor = 'bg-orange-500';
-                        if (grade === 'F') barColor = 'bg-red-600';
 
-                        return (
-                            <div key={grade} className="flex items-center">
-                                <div className="w-8 font-bold text-slate-700">{grade}</div>
-                                <div className="flex-1 mx-3 h-3 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className={`h-full ${barColor} rounded-full transition-all duration-1000`} style={{ width: `${percentage}%` }}></div>
+                <div className="space-y-4">
+                    <div className="space-y-3">
+                        {Object.entries(gradeDistribution).map(([grade, count]: [string, number]) => {
+                            const percentage = totalGrades > 0 ? Math.round((count / totalGrades) * 100) : 0;
+                            let barColor = 'from-emerald-400 to-emerald-600';
+                            if (grade === 'B') barColor = 'from-blue-400 to-blue-600';
+                            if (grade === 'C') barColor = 'from-amber-300 to-amber-500';
+                            if (grade === 'D') barColor = 'from-orange-300 to-orange-500';
+                            if (grade === 'F') barColor = 'from-red-400 to-red-600';
+
+                            return (
+                                <div key={grade} className="flex items-center gap-4">
+                                    <div className="w-10 font-bold text-slate-700">{grade}</div>
+                                    <div className="flex-1">
+                                        <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden">
+                                            <div
+                                                className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-1000`}
+                                                style={{ width: `${percentage}%` }}
+                                                title={`${count} students — ${percentage}%`}
+                                            />
+                                        </div>
+                                        <div className="mt-2 flex justify-between text-xs text-slate-500">
+                                            <span>{count} {count === 1 ? 'student' : 'students'}</span>
+                                            <span className="font-semibold text-slate-700">{percentage}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="ml-4">
+                                        <button
+                                            onClick={() => setSelectedGrade(grade)}
+                                            className="text-xs text-red-700 hover:underline font-medium"
+                                        >
+                                            View
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="w-16 text-right text-xs text-slate-500">
-                                    <span className="font-bold text-slate-800">{count}</span> ({percentage}%)
-                                </div>
-                            </div>
-                        );
-                    })}
-                    {totalGrades === 1 && Object.values(gradeDistribution).every(v => v === 0) && (
+                            );
+                        })}
+                    </div>
+
+                    {/* Legend explaining colors */}
+                    <div className="mt-4 flex flex-wrap gap-4 items-center">
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-sm block bg-gradient-to-r from-emerald-400 to-emerald-600" aria-hidden></span>
+                            <span className="text-xs text-slate-600">A — Excellent</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-sm block bg-gradient-to-r from-blue-400 to-blue-600" aria-hidden></span>
+                            <span className="text-xs text-slate-600">B — Very Good</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-sm block bg-gradient-to-r from-amber-300 to-amber-500" aria-hidden></span>
+                            <span className="text-xs text-slate-600">C — Satisfactory</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-sm block bg-gradient-to-r from-orange-300 to-orange-500" aria-hidden></span>
+                            <span className="text-xs text-slate-600">D — Needs Support</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-sm block bg-gradient-to-r from-red-400 to-red-600" aria-hidden></span>
+                            <span className="text-xs text-slate-600">F — Intervention Required</span>
+                        </div>
+                    </div>
+                    {totalGrades === 0 && (
                          <div className="text-center text-slate-400 py-4 text-sm">No academic data available for {schoolConfig.currentTerm}.</div>
                     )}
+
+                    <div className="mt-4 p-4 bg-gradient-to-r from-emerald-50 to-blue-50 rounded-lg text-sm text-slate-700 border border-slate-100">
+                        <div className="font-semibold text-slate-800 mb-1">What this chart shows</div>
+                        <div className="text-sm">
+                            Each bar represents the number of students who received that grade during the selected term. Percentages are calculated against the total number of graded students. Use the counts and percentages to identify strengths (high A/B) and areas for intervention (high D/F). Hover a bar to see the exact count.
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -401,6 +1172,132 @@ const AdminDashboard = () => {
       )
   }
 
+  // --- Advanced Visualization Components ---
+  const scoreToColor = (v: number) => {
+      if (v >= 80) return 'bg-emerald-500';
+      if (v >= 65) return 'bg-blue-500';
+      if (v >= 50) return 'bg-amber-400';
+      if (v >= 35) return 'bg-orange-400';
+      return 'bg-red-500';
+  };
+
+  const HeatmapComponent = ({ data }: { data: Record<string, Record<string, number>> }) => {
+      const classes = Object.keys(data).slice(0, 8);
+      const subjects = Array.from(new Set(classes.flatMap(c => Object.keys(data[c] || {})))).slice(0, 8);
+      return (
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+              <h4 className="font-bold text-slate-800 mb-3">Class × Subject Heatmap</h4>
+              <div className="overflow-x-auto">
+                  <div className="inline-block">
+                      <div className="grid" style={{ gridTemplateColumns: `repeat(${subjects.length + 1}, minmax(80px, 1fr))` }}>
+                          <div className="p-2 font-semibold"></div>
+                          {subjects.map(s => <div key={s} className="p-2 text-xs text-slate-500 font-semibold text-center">{s}</div>)}
+                          {classes.map(cls => (
+                              <React.Fragment key={cls}>
+                                  <div className="p-2 font-medium text-sm text-slate-700">{CLASSES_LIST.find(c => c.id === cls)?.name || cls}</div>
+                                  {subjects.map(sub => {
+                                      const v = data[cls]?.[sub] ?? 0;
+                                      return (
+                                          <div key={cls + '-' + sub} className={`p-2 m-1 rounded text-white text-xs flex items-center justify-center ${scoreToColor(v)}`} title={`${sub}: ${v}`}>
+                                              {v}
+                                          </div>
+                                      )
+                                  })}
+                              </React.Fragment>
+                          ))}
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )
+  }
+
+  const ComparativeBars = ({ data }: { data: { className: string; avg: number }[] }) => (
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+          <h4 className="font-bold text-slate-800 mb-3">Class Comparison</h4>
+          <div className="space-y-3">
+              {data.slice(0,6).map(d => (
+                  <div key={d.className} className="flex items-center gap-3">
+                      <div className="w-36 text-sm text-slate-600">{d.className}</div>
+                      <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
+                          <div className={`${scoreToColor(d.avg)} h-full`} style={{ width: `${Math.min(100, d.avg)}%` }} />
+                      </div>
+                      <div className="w-12 text-right text-sm font-semibold text-slate-700">{d.avg}%</div>
+                  </div>
+              ))}
+          </div>
+      </div>
+  );
+
+  const GradeDistributionPieByClass = ({ dist }: { dist: Record<string, number> }) => {
+      const total = Object.values(dist).reduce((a,b) => a+b, 0) || 1;
+      // build gradient stops
+      const segments = ['A','B','C','D','F'].map((k,i) => ({k, v: dist[k] || 0}));
+      let start = 0;
+      const stops: string[] = [];
+      segments.forEach(s => {
+          const pct = Math.round((s.v / total) * 100);
+          stops.push(`${s.v ? pct : 0}%`);
+      });
+      // fallback simple pie using conic-gradient with fixed colors
+      const colors = { A: '#10b981', B: '#3b82f6', C: '#f59e0b', D: '#fb923c', F: '#ef4444' };
+      let gradient = '';
+      let offset = 0;
+      segments.forEach((s, idx) => {
+          const pct = (s.v / total) * 100;
+          const next = offset + pct;
+          gradient += `${colors[s.k]} ${offset}% ${next}%, `;
+          offset = next;
+      });
+      gradient = gradient || '#f3f4f6 0% 100%';
+      return (
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="w-28 h-28 rounded-full" style={{ background: `conic-gradient(${gradient})`, mask: 'radial-gradient(transparent 60%, black 61%)', WebkitMask: 'radial-gradient(transparent 60%, black 61%)' }} />
+              <div>
+                  {segments.map(s => (
+                      <div key={s.k} className="flex items-center gap-2 text-sm">
+                          <span className="w-3 h-3 rounded-sm" style={{ background: colors[s.k] }} />
+                          <span className="text-slate-700 font-medium">{s.k}</span>
+                          <span className="text-slate-500 ml-2">{s.v}</span>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )
+  }
+
+  const Sparkline = ({ points }: { points: number[] }) => {
+      const w = 120; const h = 28;
+      if (!points || points.length === 0) return <div className="text-xs text-slate-400">No data</div>;
+      const max = Math.max(...points, 1);
+      const min = Math.min(...points);
+      const norm = points.map((p,i) => {
+          const x = Math.round((i/(points.length-1)) * w);
+          const y = Math.round(h - ((p - min) / Math.max(1, (max - min))) * h);
+          return `${x},${y}`;
+      }).join(' ');
+      return (
+          <svg width={w} height={h} className="block"><polyline fill="none" stroke="#ef4444" strokeWidth={2} points={norm} /></svg>
+      )
+  }
+
+  const ClassSparklines = ({ sparks }: { sparks: Record<string, number[]> }) => (
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+          <h4 className="font-bold text-slate-800 mb-3">Class Performance Trends</h4>
+          <div className="space-y-3">
+              {Object.entries(sparks).slice(0,6).map(([cls, pts]) => (
+                  <div key={cls} className="flex items-center justify-between">
+                      <div className="text-sm text-slate-700 w-40">{CLASSES_LIST.find(c => c.id === cls)?.name || cls}</div>
+                      <div className="flex-1 flex items-center justify-end gap-4">
+                          <div className="w-40"><Sparkline points={pts} /></div>
+                          <div className="w-12 text-right font-semibold text-slate-700">{Math.round((pts.reduce((a,b)=>a+b,0)/Math.max(1,pts.length))) }%</div>
+                      </div>
+                  </div>
+              ))}
+          </div>
+      </div>
+  );
+
   if (error) {
       return (
           <Layout title="Dashboard">
@@ -442,27 +1339,70 @@ const AdminDashboard = () => {
                     Add Staff
                 </Link>
              </div>
+             
+             {/* Live Metrics Toggle */}
+             <div className="ml-4 flex flex-col items-end text-right">
+                <div className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded-full ${realTimeEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`} aria-hidden></span>
+                    <button
+                        onClick={() => setRealTimeEnabled(v => !v)}
+                        className="text-xs text-slate-600 hover:underline"
+                        title="Toggle live metrics polling"
+                    >
+                        {realTimeEnabled ? 'Live Metrics On' : 'Enable Live Metrics'}
+                    </button>
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                    {lastUpdated ? `Updated ${Math.floor((now - lastUpdated.getTime())/1000)}s ago` : 'Not updated'}
+                </div>
+             </div>
         </div>
       </div>
 
+      {/* Missed Attendance Alerts */}
+      {missedAttendanceAlerts.length > 0 && (
+        <div className="mb-8">
+          <div className="bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <AlertOctagon className="text-red-600" size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-red-900 text-lg">Attendance Alerts</h3>
+                <p className="text-red-700 text-sm">{missedAttendanceAlerts.length} teacher{missedAttendanceAlerts.length !== 1 ? 's' : ''} missed attendance yesterday</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {missedAttendanceAlerts.map((alert: any) => (
+                <div key={alert.teacherId} className="bg-white p-4 rounded-lg border border-red-100 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-bold text-red-600">
+                          {alert.teacherName.charAt(0)}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-800">{alert.teacherName}</p>
+                        <p className="text-sm text-slate-500">{alert.classes}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-red-700">Missed: {new Date(alert.date).toLocaleDateString()}</p>
+                      <p className="text-xs text-slate-400">Please follow up</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <StatCard 
-            title="Students" 
-            value={stats.students} 
-            subtext="Number of students enrolled"
-            icon={GraduationCap} 
-            colorClass="bg-red-50"
-            iconColorClass="text-red-700"
-        />
-        <StatCard 
-            title="Teachers" 
-            value={stats.teachers} 
-            subtext="Fully Staffed"
-            icon={Users} 
-            colorClass="bg-amber-50" 
-            iconColorClass="text-amber-600"
-        />
+        <StudentEnrollCard />
+        <TeacherStaffCard />
         <StatCard 
             title="Notices" 
             value={notices.length} 
@@ -473,9 +1413,14 @@ const AdminDashboard = () => {
         />
       </div>
 
+    {/* KPI row placed below the main stats so the three-card grid remains intact */}
+    <div className="mb-8">
+        <KPIRowContainer />
+    </div>
+
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-         <div className="lg:col-span-2 h-96">
+         <div className="lg:col-span-2 h-[550px]">
             <AttendanceChart />
          </div>
          <div className="h-96">
@@ -487,7 +1432,7 @@ const AdminDashboard = () => {
       <PerformanceSection />
 
       {/* Bottom Section: Recent Students & Notices */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         
         {/* Recent Students Table */}
         <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-visible">
@@ -571,7 +1516,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Notice Board Widget */}
-        <div className="bg-gradient-to-br from-red-900 to-slate-900 rounded-2xl shadow-lg border border-red-800 overflow-hidden flex flex-col text-white">
+        <div className="bg-gradient-to-br from-red-900 to-slate-900 rounded-2xl shadow-lg border border-red-800 overflow-hidden flex flex-col text-white self-start">
             <div className="p-6 border-b border-red-800 flex justify-between items-center">
                  <div>
                     <h3 className="font-bold text-amber-400">Notice Board</h3>
@@ -606,6 +1551,154 @@ const AdminDashboard = () => {
                 </Link>
             </div>
         </div>
+
+        {/* Teacher Attendance Widgets */}
+        <div className="space-y-6">
+          {/* Today's Teacher Attendance */}
+          <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 rounded-2xl shadow-lg border border-emerald-200 flex flex-col min-h-[300px] hover:shadow-xl transition-shadow duration-300">
+              <div className="p-4 sm:p-6 border-b border-emerald-200 flex justify-between items-center">
+                  <div>
+                      <h3 className="font-bold text-emerald-900 text-lg">Teacher Attendance Today</h3>
+                      <p className="text-xs text-emerald-700 mt-1">Current day's staff presence overview</p>
+                  </div>
+                  <div className="bg-emerald-100 p-2 rounded-full">
+                      <Users className="text-emerald-600" size={20} />
+                  </div>
+              </div>
+              <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[400px]">
+                  {teacherAttendance.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-32 text-emerald-500">
+                          <div className="bg-emerald-100 p-4 rounded-full mb-3">
+                              <Users size={32} className="text-emerald-400"/>
+                          </div>
+                          <p className="text-sm font-medium text-center">No attendance marked yet today</p>
+                          <p className="text-xs text-emerald-400 mt-1">Teachers will appear here once they mark attendance</p>
+                      </div>
+                  ) : (
+                      <div className="space-y-3">
+                          {teacherAttendance.map((record) => (
+                              <div key={record.id} className="bg-white p-4 rounded-xl shadow-sm border border-emerald-100 hover:shadow-md transition-all duration-200 hover:border-emerald-200">
+                                  <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                                          <div className={`w-4 h-4 rounded-full flex-shrink-0 ${
+                                              record.status === 'present' ? 'bg-emerald-500' : 'bg-red-500'
+                                          } shadow-sm`}></div>
+                                          <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                  <p className="text-sm font-semibold text-slate-800 truncate">{record.teacherName}</p>
+                                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                      record.status === 'present'
+                                                          ? 'bg-emerald-100 text-emerald-700'
+                                                          : 'bg-red-100 text-red-700'
+                                                  }`}>
+                                                      {record.status === 'present' ? 'Present' : 'Absent'}
+                                                  </span>
+                                              </div>
+                                              <p className="text-xs text-slate-500 truncate">
+                                                  {record.teacherClasses || 'No classes assigned'}
+                                              </p>
+                                              <p className="text-xs text-slate-400 mt-1">{record.date}</p>
+                                          </div>
+                                      </div>
+                                      <div className="ml-3 flex-shrink-0">
+                                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                              record.status === 'present'
+                                                  ? 'bg-emerald-100 text-emerald-600'
+                                                  : 'bg-red-100 text-red-600'
+                                          }`}>
+                                              {record.status === 'present' ? (
+                                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                  </svg>
+                                              ) : (
+                                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                                  </svg>
+                                              )}
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                          <div className="text-center mt-4 pt-3 border-t border-emerald-100">
+                              <p className="text-xs text-emerald-600 font-medium">
+                                  {teacherAttendance.length} teacher{teacherAttendance.length !== 1 ? 's' : ''} marked attendance today
+                              </p>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+
+          {/* Teacher Term Attendance Statistics */}
+          <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl shadow-lg border border-blue-200 flex flex-col min-h-[300px] hover:shadow-xl transition-shadow duration-300">
+              <div className="p-4 sm:p-6 border-b border-blue-200 flex justify-between items-center">
+                  <div>
+                      <h3 className="font-bold text-blue-900 text-lg">Teacher Attendance Summary</h3>
+                      <p className="text-xs text-blue-700 mt-1">Term-wide staff attendance statistics</p>
+                  </div>
+                  <div className="bg-blue-100 p-2 rounded-full">
+                      <BarChart2 className="text-blue-600" size={20} />
+                  </div>
+              </div>
+              <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[400px]">
+                  {teacherTermStats.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-32 text-blue-500">
+                          <div className="bg-blue-100 p-4 rounded-full mb-3">
+                              <BarChart2 size={32} className="text-blue-400"/>
+                          </div>
+                          <p className="text-sm font-medium text-center">No attendance data available</p>
+                          <p className="text-xs text-blue-400 mt-1">Term statistics will appear as teachers mark attendance</p>
+                      </div>
+                  ) : (
+                      <div className="space-y-3">
+                          {teacherTermStats.map((stat: any) => (
+                              <div key={stat.id} className="bg-white p-4 rounded-xl shadow-sm border border-blue-100 hover:shadow-md transition-all duration-200 hover:border-blue-200">
+                                  <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                                          <div className="flex-shrink-0">
+                                              <div className="relative">
+                                                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                                                      <span className="text-sm font-bold text-blue-600">{stat.attendanceRate}%</span>
+                                                  </div>
+                                                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center">
+                                                      <div className={`w-3 h-3 rounded-full ${
+                                                          stat.attendanceRate >= 80 ? 'bg-emerald-500' :
+                                                          stat.attendanceRate >= 70 ? 'bg-amber-500' : 'bg-red-500'
+                                                      }`}></div>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                  <p className="text-sm font-semibold text-slate-800 truncate">{stat.name}</p>
+                                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                      stat.attendanceRate >= 80 ? 'bg-emerald-100 text-emerald-700' :
+                                                      stat.attendanceRate >= 70 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                                                  }`}>
+                                                      {stat.attendanceRate >= 80 ? 'Excellent' :
+                                                       stat.attendanceRate >= 70 ? 'Good' : 'Needs Attention'}
+                                                  </span>
+                                              </div>
+                                              <p className="text-xs text-slate-500 truncate">
+                                                  {stat.classes || 'No classes assigned'}
+                                              </p>
+                                              <p className="text-xs text-slate-400 mt-1">{stat.presentDays} present / {stat.totalDays} total days</p>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                          <div className="text-center mt-4 pt-3 border-t border-blue-100">
+                              <p className="text-xs text-blue-600 font-medium">
+                                  Average attendance: {teacherTermStats.length > 0 ? Math.round(teacherTermStats.reduce((sum: number, stat: any) => sum + stat.attendanceRate, 0) / teacherTermStats.length) : 0}%
+                              </p>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+        </div>
       </div>
       
       {/* Modals for View/Edit (content unchanged, but necessary to keep file valid if copy-pasting full file) */}
@@ -621,7 +1714,7 @@ const AdminDashboard = () => {
                       <div>
                           <h2 className="text-xl font-bold text-slate-900">{viewStudent.name}</h2>
                           <div className="flex gap-2 text-sm text-slate-500 mt-1">
-                             <span className="flex items-center"><UserIcon size={14} className="mr-1"/> {viewStudent.gender}</span>
+                             <span className="flex items-center"><User size={14} className="mr-1"/> {viewStudent.gender}</span>
                              <span>•</span>
                              <span>{CLASSES_LIST.find(c => c.id === viewStudent.classId)?.name}</span>
                           </div>
@@ -797,6 +1890,42 @@ const AdminDashboard = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Grade Bucket Modal */}
+      {selectedGrade && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                  <div>
+                      <h2 className="text-lg font-bold text-slate-900">Students with grade {selectedGrade}</h2>
+                      <p className="text-sm text-slate-500">{(gradeBuckets[selectedGrade] || []).length} students</p>
+                  </div>
+                  <button onClick={() => setSelectedGrade(null)} className="text-slate-400 hover:text-slate-700 transition-colors bg-white p-2 rounded-full shadow-sm hover:shadow">
+                      <X size={20} />
+                  </button>
+              </div>
+              <div className="p-6 space-y-4">
+                  {(!gradeBuckets[selectedGrade] || gradeBuckets[selectedGrade].length === 0) ? (
+                      <div className="text-center text-slate-400 py-8">No students in this grade for the selected term.</div>
+                  ) : (
+                      <div className="space-y-3">
+                          {gradeBuckets[selectedGrade].map((s, i) => (
+                              <div key={s.id} className="flex items-center justify-between border-b border-slate-100 pb-3 last:pb-0">
+                                  <div>
+                                      <p className="font-semibold text-slate-800">{s.name}</p>
+                                      <p className="text-xs text-slate-400">{s.class} • Avg: {s.avg}</p>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                      <button onClick={() => fetchAndViewStudent(s.id)} className="text-xs text-red-700 hover:underline">View</button>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+           </div>
         </div>
       )}
 

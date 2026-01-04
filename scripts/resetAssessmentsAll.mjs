@@ -47,39 +47,10 @@ async function resetForClass(classId) {
   console.log(`Processing ${classId}...`);
   const q = query(collection(firestore, 'assessments'), where('classId', '==', classId));
   const snap = await getDocs(q);
-  // delete
+  // delete all assessments
   const deletes = snap.docs.map(d => deleteDoc(doc(firestore, 'assessments', d.id)));
   await Promise.all(deletes);
   console.log(`Deleted ${snap.docs.length} assessments for ${classId}`);
-
-  // seed defaults: fetch students
-  const studentsQ = query(collection(firestore, 'students'), where('classId', '==', classId));
-  const studentsSnap = await getDocs(studentsQ);
-  const students = studentsSnap.docs.map(d => d.data());
-
-  const ops = [];
-  for (const student of students) {
-    for (const subject of DEFAULT_SUBJECTS) {
-      const id = `${student.id}_${subject}_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
-      const assessment = {
-        id,
-        studentId: student.id,
-        classId,
-        term: CURRENT_TERM,
-        academicYear: ACADEMIC_YEAR,
-        subject,
-        testScore: 0,
-        homeworkScore: 0,
-        projectScore: 0,
-        examScore: 0,
-        total: 0
-      };
-      ops.push(setDoc(doc(firestore, 'assessments', id), assessment));
-    }
-  }
-
-  await Promise.all(ops);
-  console.log(`Seeded ${ops.length} default assessments for ${classId}`);
 }
 
 (async () => {

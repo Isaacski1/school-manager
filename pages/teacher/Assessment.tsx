@@ -18,6 +18,8 @@ const AssessmentPage = () => {
   const [assessments, setAssessments] = useState<Record<string, Partial<Assessment>>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+    // School config (term + academic year) fetched from DB
+    const [schoolConfig, setSchoolConfig] = useState<{ currentTerm: string; academicYear: string }>({ currentTerm: `Term ${CURRENT_TERM}`, academicYear: ACADEMIC_YEAR });
 
   // Score Limits
   const LIMITS = {
@@ -33,6 +35,23 @@ const AssessmentPage = () => {
         setSelectedClassId(assignedClassIds[0]);
     }
   }, [assignedClassIds]);
+
+    // Load school configuration (term + academic year)
+    useEffect(() => {
+        const loadConfig = async () => {
+            try {
+                const cfg = await db.getSchoolConfig();
+                setSchoolConfig({
+                    currentTerm: cfg.currentTerm || `Term ${CURRENT_TERM}`,
+                    academicYear: cfg.academicYear || ACADEMIC_YEAR
+                });
+            } catch (e) {
+                // fallback to defaults already set
+                console.error('Failed to load school config', e);
+            }
+        };
+        loadConfig();
+    }, []);
 
   // Fetch subjects first
   useEffect(() => {
@@ -52,34 +71,41 @@ const AssessmentPage = () => {
     const loadData = async () => {
       setLoading(true);
       // Get Students
-      const studentsList = await db.getStudents(selectedClassId);
+            const studentsList = await db.getStudents(selectedClassId);
       setStudents(studentsList);
 
       // Get existing assessments
       const existing = await db.getAssessments(selectedClassId, selectedSubject);
       
-      // Map to state
-      const map: Record<string, Partial<Assessment>> = {};
-      studentsList.forEach(s => {
-        const found = existing.find(a => a.studentId === s.id && a.term === CURRENT_TERM);
-        map[s.id] = found || {
-            studentId: s.id,
-            classId: selectedClassId,
-            term: CURRENT_TERM,
-            academicYear: ACADEMIC_YEAR,
-            subject: selectedSubject,
-            testScore: 0,
-            homeworkScore: 0,
-            projectScore: 0,
-            examScore: 0,
-        };
-      });
+            // Determine dynamic term number from schoolConfig (e.g. "Term 2" -> 2)
+            let dynamicTerm = CURRENT_TERM;
+            if (schoolConfig.currentTerm) {
+                const match = schoolConfig.currentTerm.match(/\d+/);
+                if (match) dynamicTerm = parseInt(match[0], 10);
+            }
+
+            // Map to state
+            const map: Record<string, Partial<Assessment>> = {};
+            studentsList.forEach(s => {
+                const found = existing.find(a => a.studentId === s.id && a.term === dynamicTerm);
+                map[s.id] = found || {
+                        studentId: s.id,
+                        classId: selectedClassId,
+                        term: dynamicTerm,
+                        academicYear: schoolConfig.academicYear,
+                        subject: selectedSubject,
+                        testScore: 0,
+                        homeworkScore: 0,
+                        projectScore: 0,
+                        examScore: 0,
+                };
+            });
       setAssessments(map);
       setLoading(false);
     };
 
     loadData();
-  }, [selectedClassId, selectedSubject]);
+    }, [selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
 
   const handleChange = (studentId: string, field: keyof typeof LIMITS, value: string) => {
     let numValue = value === '' ? 0 : parseFloat(value);
@@ -111,7 +137,14 @@ const AssessmentPage = () => {
       if (!selectedClassId) return;
       setSaving(true);
       try {
-          const promises = Object.values(assessments).map(async (a) => {
+                    // determine dynamic term from config
+                    let dynamicTerm = CURRENT_TERM;
+                    if (schoolConfig.currentTerm) {
+                        const match = schoolConfig.currentTerm.match(/\d+/);
+                        if (match) dynamicTerm = parseInt(match[0], 10);
+                    }
+
+                    const promises = Object.values(assessments).map(async (a) => {
              if (!a.studentId) return;
              
              const total = calculateTotalScore(a);
@@ -124,8 +157,8 @@ const AssessmentPage = () => {
                  studentId: a.studentId!,
                  classId: selectedClassId!,
                  subject: selectedSubject,
-                 term: CURRENT_TERM as 1|2|3,
-                 academicYear: ACADEMIC_YEAR,
+                                 term: dynamicTerm as 1|2|3,
+                                 academicYear: schoolConfig.academicYear,
                  testScore: a.testScore || 0,
                  homeworkScore: a.homeworkScore || 0,
                  projectScore: a.projectScore || 0,
@@ -193,9 +226,9 @@ const AssessmentPage = () => {
             </div>
 
             <div className="flex items-center justify-between border-t border-slate-200 pt-4">
-                 <div className="hidden sm:block">
-                    <p className="text-sm font-medium text-slate-900">Term {CURRENT_TERM} &bull; {ACADEMIC_YEAR}</p>
-                 </div>
+                      <div className="hidden sm:block">
+                          <p className="text-sm font-medium text-slate-900">{schoolConfig.currentTerm} &bull; {schoolConfig.academicYear}</p>
+                      </div>
                  <button 
                     onClick={handleSave}
                     disabled={saving || !selectedSubject || !selectedClassId}

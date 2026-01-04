@@ -4,14 +4,27 @@ import Layout from '../../components/Layout';
 import { useAuth } from '../../context/AuthContext';
 import { CLASSES_LIST } from '../../constants';
 import { db } from '../../services/mockDb';
-import { Notice, TimeSlot, ClassTimetable } from '../../types';
+import { Notice, TimeSlot, ClassTimetable, TeacherAttendanceRecord } from '../../types';
+import TeacherAttendance from './TeacherAttendance';
 import { ClipboardCheck, BookOpen, Clock, TrendingUp, Bell, ChevronDown } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 const TeacherDashboard = () => {
   const { user } = useAuth();
-  
+
+  // Loading state for when user is not available
+  if (!user) {
+    return (
+      <Layout title="Teacher Dashboard">
+        <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mx-auto mb-4"></div>
+          <p className="text-slate-500">Loading dashboard...</p>
+        </div>
+      </Layout>
+    );
+  }
+
   // Class selection for multi-class teachers
   const assignedClassIds = user?.assignedClassIds || [];
   const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -29,6 +42,12 @@ const TeacherDashboard = () => {
   const classNames = assignedClassIds.map(id => CLASSES_LIST.find(c => c.id === id)?.name).join(', ');
 
   const [notices, setNotices] = useState<Notice[]>([]);
+
+  // Teacher Attendance State
+  const [teacherAttendance, setTeacherAttendance] = useState<TeacherAttendanceRecord | null>(null);
+  const [markingAttendance, setMarkingAttendance] = useState(false);
+  const [showWeeklyAttendance, setShowWeeklyAttendance] = useState(false);
+   const [missedAttendanceModal, setMissedAttendanceModal] = useState<{show: boolean, date: string}>({show: false, date: ''});
   
   // Helper to get current day
   const getCurrentDay = () => {
@@ -55,10 +74,44 @@ const TeacherDashboard = () => {
         for (let i = 0; i < 5; i++) { // Monday to Friday
             const date = new Date(monday);
             date.setDate(monday.getDate() + i);
-            dates.push(date.toISOString().split('T')[0]); // YYYY-MM-DD
+            // Build local YYYY-MM-DD to avoid UTC timezone shifts from toISOString()
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            dates.push(`${y}-${m}-${d}`);
         }
         return dates;
     };
+
+  // Refresh attendance data when returning from attendance page
+  useEffect(() => {
+    if (!showWeeklyAttendance) {
+      // Re-check for missed attendance when returning to dashboard
+      const checkAttendance = async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+        const todayAttendance = await db.getTeacherAttendance(user?.id || '', today);
+
+        try {
+          const config = await db.getSchoolConfig();
+          const schoolHasReopened = config.schoolReopenDate && yesterday >= config.schoolReopenDate;
+          if (schoolHasReopened) {
+            const yesterdayAttendance = await db.getTeacherAttendance(user?.id || '', yesterday);
+            if (!yesterdayAttendance) {
+              setMissedAttendanceModal({show: true, date: yesterday});
+            } else {
+              setMissedAttendanceModal({show: false, date: ''});
+            }
+          }
+        } catch (error) {
+          console.error('Error re-checking missed attendance:', error);
+        }
+      };
+
+      if (user) checkAttendance();
+    }
+  }, [showWeeklyAttendance, user]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -75,6 +128,26 @@ const TeacherDashboard = () => {
         // Notices
         const noticeData = await db.getNotices();
         setNotices(noticeData);
+
+        // Teacher Attendance
+        const today = new Date().toISOString().split('T')[0];
+        const attendance = await db.getTeacherAttendance(user?.id || '', today);
+        setTeacherAttendance(attendance);
+
+        // Check for missed attendance (yesterday)
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        try {
+          const config = await db.getSchoolConfig();
+          const schoolHasReopened = config.schoolReopenDate && yesterday >= config.schoolReopenDate;
+          if (schoolHasReopened) {
+            const yesterdayAttendance = await db.getTeacherAttendance(user?.id || '', yesterday);
+            if (!yesterdayAttendance) {
+              setMissedAttendanceModal({show: true, date: yesterday});
+            }
+          }
+        } catch (error) {
+          console.error('Error checking missed attendance:', error);
+        }
 
         // Class Specific Data
         if (selectedClassId) {
@@ -140,6 +213,46 @@ const TeacherDashboard = () => {
     }
   };
 
+  const handleMarkAttendance = async (status: 'present' | 'absent') => {
+    if (!user?.id) return;
+    setMarkingAttendance(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const record: TeacherAttendanceRecord = {
+        id: `${user.id}_${today}`,
+        date: today,
+        teacherId: user.id,
+        status
+      };
+      await db.saveTeacherAttendance(record);
+      setTeacherAttendance(record);
+
+      // Notification
+      await db.addSystemNotification(
+        `${user.name} marked themselves as ${status} on ${today}`,
+        'attendance'
+      );
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMarkingAttendance(false);
+    }
+  };
+
+  if (showWeeklyAttendance) {
+    return (
+      <div>
+        <button
+          onClick={() => setShowWeeklyAttendance(false)}
+          className="mb-4 px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+        >
+          ← Back to Dashboard
+        </button>
+        <TeacherAttendance />
+      </div>
+    );
+  }
+
   return (
     <Layout title="Teacher Dashboard">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -183,7 +296,7 @@ const TeacherDashboard = () => {
         <div className="lg:col-span-2 space-y-8">
             
             {/* Quick Stats/Actions */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Link to="/teacher/attendance" className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-red-500 transition-all relative overflow-hidden">
                     <div className="absolute right-0 top-0 w-24 h-24 bg-red-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                     <div className="relative z-10">
@@ -205,6 +318,22 @@ const TeacherDashboard = () => {
                         <p className="text-sm text-slate-500">Record marks for tests, homework & exams.</p>
                     </div>
                 </Link>
+
+                <button onClick={() => setShowWeeklyAttendance(true)} className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-green-500 transition-all relative overflow-hidden w-full text-left">
+                    <div className="absolute right-0 top-0 w-24 h-24 bg-green-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                    <div className="relative z-10">
+                        <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-green-500 transition-colors">
+                            <ClipboardCheck className="w-6 h-6 text-green-600 group-hover:text-white" />
+                        </div>
+                        <h3 className="font-bold text-lg text-slate-800 mb-1">My Attendance</h3>
+                        <p className="text-sm text-slate-500">Mark weekly attendance & view records</p>
+                        {teacherAttendance && (
+                          <p className="text-xs text-slate-400 mt-1">
+                            Last marked: {teacherAttendance.date}
+                          </p>
+                        )}
+                    </div>
+                </button>
             </div>
 
             {/* Attendance Chart Visualization */}
@@ -331,6 +460,50 @@ const TeacherDashboard = () => {
             </div>
         </div>
       </div>
+
+      {/* Missed Attendance Modal */}
+      {missedAttendanceModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-full">
+                  <Bell className="text-amber-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Attendance Reminder</h3>
+                  <p className="text-sm text-slate-500">You missed marking attendance yesterday</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="text-sm text-amber-800">
+                  Please mark your attendance for <strong>{new Date(missedAttendanceModal.date).toLocaleDateString()}</strong> to keep your records accurate.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setMissedAttendanceModal({show: false, date: ''})}
+                  className="flex-1 px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Remind Me Later
+                </button>
+                <button
+                  onClick={() => {
+                    setMissedAttendanceModal({show: false, date: ''});
+                    setShowWeeklyAttendance(true);
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Mark Attendance
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </Layout>
   );
 };

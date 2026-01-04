@@ -1,4 +1,4 @@
-import { firestore } from './firebase';
+﻿import { firestore } from './firebase';
 import { 
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, updateDoc, query, where, orderBy, limit 
 } from 'firebase/firestore';
@@ -323,94 +323,6 @@ class FirestoreService {
   async getAllTeacherAttendanceRecords(): Promise<TeacherAttendanceRecord[]> {
       return this.getCollection<TeacherAttendanceRecord>('teacher_attendance');
   }
-   // --- Teacher Attendance Analytics ---
-   async getTeacherAttendanceAnalytics(termStartDate?: string, vacationDate?: string): Promise<TeacherAttendanceAnalytics[]> {
-       const teachers = await this.getUsers();
-       const teacherUsers = teachers.filter(t => t.role === UserRole.TEACHER);
-       const allRecords = await this.getAllTeacherAttendanceRecords();
-
-       // Use term start date or default to current academic year start
-       const startDate = termStartDate || `${ACADEMIC_YEAR.split('-')[0]}-09-01`; // September 1st
-       const endDate = vacationDate || new Date().toISOString().split('T')[0]; // Today or vacation date
-
-       const analytics: TeacherAttendanceAnalytics[] = [];
-
-       for (const teacher of teacherUsers) {
-           const teacherRecords = allRecords.filter(r => r.teacherId === teacher.id);
-
-           // Filter records within the date range
-           const recordsInRange = teacherRecords.filter(r => {
-               return r.date >= startDate && r.date <= endDate;
-           });
-
-           // Group records by month
-           const monthlyData: Record<string, { total: number, present: number }> = {};
-
-           recordsInRange.forEach(record => {
-               const date = new Date(record.date);
-               const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-
-               if (!monthlyData[monthKey]) {
-                   monthlyData[monthKey] = { total: 0, present: 0 };
-               }
-
-               monthlyData[monthKey].total += 1;
-               if (record.status === 'present') {
-                   monthlyData[monthKey].present += 1;
-               }
-           });
-
-           // Calculate monthly breakdown
-           const monthlyBreakdown: MonthlyTeacherAttendance[] = Object.entries(monthlyData)
-               .map(([month, data]) => {
-                   const [year, monthNum] = month.split('-');
-                   const attendanceRate = data.total > 0 ? Math.round((data.present / data.total) * 100) : 0;
-
-                   return {
-                       teacherId: teacher.id,
-                       teacherName: teacher.name,
-                       month,
-                       year: parseInt(year),
-                       totalWorkingDays: data.total,
-                       presentDays: data.present,
-                       absentDays: data.total - data.present,
-                       attendanceRate,
-                       trend: 'stable' as const // Will be calculated based on previous months
-                   };
-               })
-               .sort((a, b) => a.month.localeCompare(b.month));
-
-           // Calculate trend for each month
-           for (let i = 0; i < monthlyBreakdown.length; i++) {
-               if (i > 0) {
-                   const current = monthlyBreakdown[i].attendanceRate;
-                   const previous = monthlyBreakdown[i - 1].attendanceRate;
-                   if (current > previous + 5) {
-                       monthlyBreakdown[i].trend = 'improving';
-                   } else if (current < previous - 5) {
-                       monthlyBreakdown[i].trend = 'declining';
-                   } else {
-                       monthlyBreakdown[i].trend = 'stable';
-                   }
-               }
-           }
-
-           // Calculate overall attendance
-           const totalDays = monthlyBreakdown.reduce((sum, month) => sum + month.totalWorkingDays, 0);
-           const totalPresent = monthlyBreakdown.reduce((sum, month) => sum + month.presentDays, 0);
-           const overallAttendance = totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
-
-           analytics.push({
-               teacherId: teacher.id,
-               teacherName: teacher.name,
-               overallAttendance,
-               monthlyBreakdown,
-               termStartDate: startDate,
-               vacationDate: endDate !== new Date().toISOString().split('T')[0] ? endDate : undefined
-           });
-       }
-
-       return analytics;
-   }
 }
-export const db = new FirestoreService();
+
+export const db = new FirestoreService();-e "\n   // --- Teacher Attendance Analytics ---\n   async getTeacherAttendanceAnalytics(termStartDate?: string, vacationDate?: string): Promise<TeacherAttendanceAnalytics[]> {\n       const teachers = await this.getUsers();\n       const teacherUsers = teachers.filter(t => t.role === UserRole.TEACHER);\n       const allRecords = await this.getAllTeacherAttendanceRecords();\n\n       // Use term start date or default to current academic year start\n       const startDate = termStartDate || \`\${ACADEMIC_YEAR.split('-')[0]}-09-01\`; // September 1st\n       const endDate = vacationDate || new Date().toISOString().split('T')[0]; // Today or vacation date\n\n       const analytics: TeacherAttendanceAnalytics[] = [];\n\n       for (const teacher of teacherUsers) {\n           const teacherRecords = allRecords.filter(r => r.teacherId === teacher.id);\n\n           // Filter records within the date range\n           const recordsInRange = teacherRecords.filter(r => {\n               return r.date >= startDate && r.date <= endDate;\n           });\n\n           // Group records by month\n           const monthlyData: Record<string, { total: number, present: number }> = {};\n\n           recordsInRange.forEach(record => {\n               const date = new Date(record.date);\n               const monthKey = \`\${date.getFullYear()}-\${String(date.getMonth() + 1).padStart(2, '0')}\`;\n\n               if (!monthlyData[monthKey]) {\n                   monthlyData[monthKey] = { total: 0, present: 0 };\n               }\n\n               monthlyData[monthKey].total += 1;\n               if (record.status === 'present') {\n                   monthlyData[monthKey].present += 1;\n               }\n           });\n\n           // Calculate monthly breakdown\n           const monthlyBreakdown: MonthlyTeacherAttendance[] = Object.entries(monthlyData)\n               .map(([month, data]) => {\n                   const [year, monthNum] = month.split('-');\n                   const attendanceRate = data.total > 0 ? Math.round((data.present / data.total) * 100) : 0;\n\n                   return {\n                       teacherId: teacher.id,\n                       teacherName: teacher.name,\n                       month,\n                       year: parseInt(year),\n                       totalWorkingDays: data.total,\n                       presentDays: data.present,\n                       absentDays: data.total - data.present,\n                       attendanceRate,\n                       trend: 'stable' as const // Will be calculated based on previous months\n                   };\n               })\n               .sort((a, b) => a.month.localeCompare(b.month));\n\n           // Calculate trend for each month\n           for (let i = 0; i < monthlyBreakdown.length; i++) {\n               if (i > 0) {\n                   const current = monthlyBreakdown[i].attendanceRate;\n                   const previous = monthlyBreakdown[i - 1].attendanceRate;\n                   if (current > previous + 5) {\n                       monthlyBreakdown[i].trend = 'improving';\n                   } else if (current < previous - 5) {\n                       monthlyBreakdown[i].trend = 'declining';\n                   } else {\n                       monthlyBreakdown[i].trend = 'stable';\n                   }\n               }\n           }\n\n           // Calculate overall attendance\n           const totalDays = monthlyBreakdown.reduce((sum, month) => sum + month.totalWorkingDays, 0);\n           const totalPresent = monthlyBreakdown.reduce((sum, month) => sum + month.presentDays, 0);\n           const overallAttendance = totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;\n\n           analytics.push({\n               teacherId: teacher.id,\n               teacherName: teacher.name,\n               overallAttendance,\n               monthlyBreakdown,\n               termStartDate: startDate,\n               vacationDate: endDate !== new Date().toISOString().split('T')[0] ? endDate : undefined\n           });\n       }\n\n       return analytics;\n   }" 

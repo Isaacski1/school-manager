@@ -159,7 +159,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
               <NavItem href="/admin/students" icon={GraduationCap} label="Students" />
               <NavItem href="/admin/teachers" icon={Users} label="Teachers" />
-              <NavItem href="/admin/attendance" icon={BarChart} label="Attendance" />
+              <NavItem href="/admin/attendance" icon={BarChart} label="Student Attendance" />
+              <NavItem href="/admin/teacher-attendance" icon={ClipboardCheck} label="Teacher Attendance" />
               <NavItem href="/admin/reports" icon={BookOpen} label="Reports" />
               <NavItem href="/admin/timetable" icon={CalendarDays} label="Timetable" />
               <NavItem href="/admin/settings" icon={Settings} label="Settings" />
