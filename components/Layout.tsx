@@ -4,20 +4,21 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../services/mockDb';
 import { UserRole, SystemNotification } from '../types';
 import Toast from './Toast';
-import { 
-  LogOut, 
-  Menu, 
-  X, 
-  LayoutDashboard, 
-  Users, 
-  GraduationCap, 
-  ClipboardCheck, 
+import {
+  LogOut,
+  Menu,
+  X,
+  LayoutDashboard,
+  Users,
+  GraduationCap,
+  ClipboardCheck,
   BookOpen,
   Settings,
   Bell,
   CalendarDays,
   BarChart,
-  Check
+  Check,
+  MessageSquare
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -124,7 +125,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-30 w-64 bg-red-900 text-white transform transition-transform duration-200 ease-in-out
+        fixed inset-y-0 left-0 z-30 w-64 bg-red-900 text-white transform transition-transform duration-200 ease-in-out overflow-y-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 flex flex-col shadow-xl border-r border-red-800
       `}>

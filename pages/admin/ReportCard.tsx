@@ -110,7 +110,7 @@ const ReportCard = () => {
             },
             termDates: {
                 endDate: schoolConfig.termEndDate || '',
-                reopeningDate: schoolConfig.schoolReopenDate || '',
+                reopeningDate: schoolConfig.nextTermBegins || '',
             },
         };
 

@@ -261,6 +261,18 @@ const SystemSettings = () => {
                                     />
                                 </div>
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Next Term Begins</label>
+                                <div className="relative">
+                                    <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none"/>
+                                    <input
+                                        type="date"
+                                        value={config.nextTermBegins || ''}
+                                        onChange={(e) => setConfig({...config, nextTermBegins: e.target.value})}
+                                        className="w-full border border-slate-300 pl-10 pr-3 py-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

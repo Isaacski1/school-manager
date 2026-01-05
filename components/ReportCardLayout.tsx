@@ -13,7 +13,8 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     const { schoolInfo, studentInfo, attendance, performance, summary, skills, remarks, promotion, termDates } = data;
 
     return (
-        <div className="bg-white p-4 rounded-xl shadow-lg border border-slate-100 max-w-4xl mx-auto" id="report-card" style={{ pageBreakInside: 'avoid' }}>
+        <>
+        <div className="bg-white p-4 rounded-xl shadow-lg border border-slate-100" id="report-card" style={{ pageBreakInside: 'avoid' }}>
             {/* Header */}
             <div className="flex justify-between items-center border-b-4 border-red-800 pb-1 mb-1">
                 <div className="flex items-center">
@@ -161,29 +162,30 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                     <p className="border-t-2 border-dotted border-slate-400 w-48 pt-1 text-sm font-semibold">Head Teacher</p>
                 </div>
             </div>
-            <div className="flex justify-end mt-8">
-             <button
-                    onClick={() => {
-            const element = document.getElementById('report-card');
-            if (element) {
-                const opt = {
-                    margin: 1,
-                    filename: `${data.studentInfo.name}_Report_Card.pdf`,
-                    image: { type: 'jpeg' as const, quality: 0.98 },
-                    html2canvas: { scale: 1.5, useCORS: true },
-                    jsPDF: { unit: 'in', format: 'a4' as const, orientation: 'portrait' as const },
-                    css: '.no-pdf { display: none; }'
-                };
-                html2pdf().set(opt).from(element).save();
-            }
-        }}
-                    className="no-pdf px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                >
-                    Download PDF
-                </button>
-                </div>
 
         </div>
+        <div className="flex justify-end mt-8">
+         <button
+                onClick={() => {
+        const element = document.getElementById('report-card');
+        if (element) {
+            const opt = {
+                margin: 0.5,
+                filename: `${data.studentInfo.name}_Report_Card.pdf`,
+                image: { type: 'jpeg' as const, quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true, allowTaint: false, backgroundColor: '#ffffff' },
+                jsPDF: { unit: 'in', format: 'a4' as const, orientation: 'portrait' as const, compress: true },
+                css: '.no-pdf { display: none; }'
+            };
+            html2pdf().set(opt).from(element).save();
+        }
+    }}
+                className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+            >
+                Download PDF
+            </button>
+            </div>
+        </>
     );
 };
 

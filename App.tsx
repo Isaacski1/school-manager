@@ -45,7 +45,7 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      
+
       {/* Root redirects based on role */}
       <Route path="/" element={
         <ProtectedRoute>
@@ -61,12 +61,12 @@ const AppRoutes = () => {
       } />
       <Route path="/admin/teachers" element={
         <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-           <ManageTeachers /> 
+           <ManageTeachers />
         </ProtectedRoute>
       } />
       <Route path="/admin/attendance" element={
         <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-           <AttendanceStats /> 
+           <AttendanceStats />
         </ProtectedRoute>
       } />
       <Route path="/admin/teacher-attendance" element={
@@ -89,6 +89,7 @@ const AppRoutes = () => {
            <Timetable />
         </ProtectedRoute>
       } />
+
       <Route path="/admin/settings" element={
         <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
            <SystemSettings />
