@@ -1816,7 +1816,7 @@ const AdminDashboard = () => {
                                           </div>
                                           <div className="flex-1 min-w-0">
                                               <div className="flex items-center gap-2 mb-1">
-                                                  <p className="text-sm font-semibold text-slate-800 truncate">{stat.name}</p>
+                                                  <p className="text-sm font-semibold text-slate-800 break-words">{stat.name}</p>
                                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                                       stat.attendanceRate >= 80 ? 'bg-emerald-100 text-emerald-700' :
                                                       stat.attendanceRate >= 70 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
