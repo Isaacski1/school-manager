@@ -2,7 +2,7 @@ import { firestore } from './firebase';
 import { 
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, updateDoc, query, where, orderBy, limit 
 } from 'firebase/firestore';
-import { User, UserRole, Student, AttendanceRecord, TeacherAttendanceRecord, Assessment, Notice, ClassTimetable, SystemNotification, MonthlyTeacherAttendance, TeacherAttendanceAnalytics, StudentRemark, StudentSkills, ClassSubjectConfig, ClassRoom } from "../types";
+import { User, UserRole, Student, AttendanceRecord, TeacherAttendanceRecord, Assessment, Notice, ClassTimetable, SystemNotification, MonthlyTeacherAttendance, TeacherAttendanceAnalytics, StudentRemark, StudentSkills, ClassSubjectConfig, ClassRoom, SchoolConfig } from "../types";
 import { CURRENT_TERM, ACADEMIC_YEAR, CLASSES_LIST } from "../constants";
 
 class FirestoreService {
@@ -13,21 +13,22 @@ class FirestoreService {
   }
 
   // --- Config ---
-  async getSchoolConfig() {
+  async getSchoolConfig(): Promise<SchoolConfig> {
       const docRef = doc(firestore, 'settings', 'schoolConfig');
       const snap = await getDoc(docRef);
-      if (snap.exists()) return snap.data() as any;
+      if (snap.exists()) return snap.data() as SchoolConfig;
       return {
           schoolName: 'Noble Care Academy',
           academicYear: ACADEMIC_YEAR,
           currentTerm: `Term ${CURRENT_TERM}`,
           headTeacherRemark: 'An outstanding performance. The school is proud of you.',
           termEndDate: '2024-12-20',
-          schoolReopenDate: '2024-01-01'
+          schoolReopenDate: '2024-01-01',
+          vacationDate: '2024-12-20' // Default vacation date
       };
   }
 
-  async updateSchoolConfig(config: any) {
+  async updateSchoolConfig(config: SchoolConfig): Promise<void> {
       await setDoc(doc(firestore, 'settings', 'schoolConfig'), config);
   }
 
@@ -367,6 +368,131 @@ class FirestoreService {
     async saveStudentSkills(skills: StudentSkills): Promise<void> {
         await setDoc(doc(firestore, 'student_skills', skills.id), skills);
     }
+
+  // --- Backups ---
+  async createTermBackup(term: string, academicYear: string): Promise<void> {
+    const backupId = `backup_${academicYear.replace('-', '')}_${term.replace(' ', '')}_${Date.now()}`;
+    const dataCollectionRefPath = `backups/${backupId}/data`; // Path to the subcollection
+
+    // Step 1: Prepare the actual data payload
+    // Fetch all data that should be backed up
+    const students = await this.getCollection<Student>('students');
+    const allAttendanceRecords = await this.getCollection<AttendanceRecord>('attendance');
+    const allTeacherAttendanceRecords = await this.getCollection<TeacherAttendanceRecord>('teacher_attendance');
+    const allAssessments = await this.getCollection<Assessment>('assessments');
+    const allStudentRemarks = await this.getCollection<StudentRemark>('student_remarks');
+    const allStudentSkills = await this.getCollection<StudentSkills>('student_skills');
+    const allTimetables = await this.getCollection<ClassTimetable>('timetables');
+    const users = await this.getCollection<User>('users');
+    const classSubjects = await this.getCollection<ClassSubjectConfig>('class_subjects');
+
+    const termNumber = parseInt(term.split(' ')[1]);
+    const termAttendanceRecords = allAttendanceRecords.filter(rec => this.isRecordInTerm(rec.date, term, academicYear));
+    const termTeacherAttendanceRecords = allTeacherAttendanceRecords.filter(rec => this.isRecordInTerm(rec.date, term, academicYear));
+    const termAssessments = allAssessments.filter(ass => ass.term === termNumber && ass.academicYear === academicYear);
+    const termStudentRemarks = allStudentRemarks.filter(rem => rem.term === termNumber && rem.academicYear === academicYear);
+    const termStudentSkills = allStudentSkills.filter(skill => skill.term === termNumber && skill.academicYear === academicYear);
+
+    const actualDataPayload = {
+        students,
+        attendanceRecords: termAttendanceRecords,
+        teacherAttendanceRecords: termTeacherAttendanceRecords,
+        assessments: termAssessments,
+        studentRemarks: termStudentRemarks,
+        studentSkills: termStudentSkills,
+        timetables: allTimetables,
+        users,
+        classSubjects,
+    };
+
+    // Step 2: Create the backup metadata document (without the large data payload)
+    const backupMetadata: Partial<Backup> = { // Use Partial because `data` is now omitted
+      id: backupId,
+      timestamp: Date.now(),
+      term,
+      academicYear,
+      dataCollectionRef: dataCollectionRefPath // Store the reference
+    };
+
+    await setDoc(doc(firestore, 'backups', backupId), backupMetadata);
+
+    // Step 3: Store the actual data payload in a subcollection
+    // For simplicity, store the entire payload as one document in the subcollection.
+    // Firestore subcollection documents also have a 1MB limit, but this pattern allows breaking it down further if needed.
+    await setDoc(doc(firestore, dataCollectionRefPath, 'full_backup'), actualDataPayload);
+  }
+
+  async getBackups(filters?: { term?: string, academicYear?: string, date?: string }): Promise<Partial<Backup>[]> {
+      let q = query(collection(firestore, 'backups'), orderBy('timestamp', 'desc'));
+
+      if (filters?.term) {
+          q = query(q, where('term', '==', filters.term));
+      }
+      if (filters?.academicYear) {
+          q = query(q, where('academicYear', '==', filters.academicYear));
+      }
+      // Filtering by a specific date for a backup's timestamp might be less useful,
+      // usually, it's a date range. For simplicity, let's filter by creation date (timestamp).
+      // If 'date' is provided, we can filter backups created on that day.
+      if (filters?.date) {
+        const startOfDay = new Date(filters.date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(filters.date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        q = query(q, where('timestamp', '>=', startOfDay.getTime()), where('timestamp', '<=', endOfDay.getTime()));
+      }
+
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => doc.data() as Partial<Backup>); // Changed: no destructuring of 'data'
+  }
+
+  async getBackupDetails(id: string): Promise<Backup | undefined> {
+      const snap = await getDoc(doc(firestore, 'backups', id));
+      if (snap.exists()) {
+          const backupMetadata = snap.data() as Backup;
+          if (backupMetadata.dataCollectionRef) {
+              // Fetch actual data from the subcollection
+              const dataSnap = await getDoc(doc(firestore, backupMetadata.dataCollectionRef, 'full_backup'));
+              if (dataSnap.exists()) {
+                  backupMetadata.data = dataSnap.data() as Backup['data'];
+              }
+          }
+          return backupMetadata;
+      }
+      return undefined;
+  }
+
+  async deleteBackup(id: string): Promise<void> {
+      await deleteDoc(doc(firestore, 'backups', id)); // Delete metadata document
+      // Also delete the subcollection data if it exists
+      // Note: Firestore does not automatically delete subcollections when parent document is deleted.
+      // A more robust solution would involve a Cloud Function to delete the subcollection.
+      // For now, we'll leave the subcollection data orphaned or implement a simple client-side delete
+      // for the data document, assuming it's a single document.
+      try {
+        await deleteDoc(doc(firestore, `backups/${id}/data`, 'full_backup'));
+      } catch (e) {
+        console.warn(`Could not delete backup data subcollection for ${id}:`, e);
+      }
+  }
+
+  // Helper function to determine if a date falls within the given term and academic year
+  // This is a simplified check. A more robust solution might involve schoolConfig.termEndDate etc.
+  private isRecordInTerm(dateString: string, term: string, academicYear: string): boolean {
+    const recordYear = parseInt(dateString.split('-')[0]);
+    const [startYear, endYear] = academicYear.split('-').map(Number);
+    
+    // Basic academic year check
+    if (recordYear < startYear || recordYear > endYear) {
+      return false;
+    }
+
+    // This part would need more sophisticated logic based on term start/end dates.
+    // For now, if within academic year, consider it for backup.
+    // Proper implementation requires term boundary dates from school config.
+    return true; 
+  }
 
    // --- Teacher Attendance Analytics ---
    async getTeacherAttendanceAnalytics(termStartDate?: string, vacationDate?: string): Promise<TeacherAttendanceAnalytics[]> {

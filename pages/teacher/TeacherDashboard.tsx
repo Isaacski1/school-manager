@@ -4,7 +4,7 @@ import Layout from '../../components/Layout';
 import { useAuth } from '../../context/AuthContext';
 import { CLASSES_LIST, CURRENT_TERM, ACADEMIC_YEAR, calculateTotalScore } from '../../constants';
 import { db } from '../../services/mockDb';
-import { Notice, TimeSlot, ClassTimetable, TeacherAttendanceRecord, Student, StudentRemark, StudentSkills, Assessment } from '../../types';
+import { Notice, TimeSlot, ClassTimetable, TeacherAttendanceRecord, Student, StudentRemark, StudentSkills, Assessment, SchoolConfig } from '../../types';
 import { showToast } from '../../services/toast';
 import TeacherAttendance from './TeacherAttendance';
 import { ClipboardCheck, BookOpen, Clock, TrendingUp, Bell, ChevronDown, X } from 'lucide-react';
@@ -96,6 +96,7 @@ const TeacherDashboard = () => {
   const [teacherAttendance, setTeacherAttendance] = useState<TeacherAttendanceRecord | null>(null);
   const [markingAttendance, setMarkingAttendance] = useState(false);
    const [missedAttendanceModal, setMissedAttendanceModal] = useState<{show: boolean, date: string}>({show: false, date: ''});
+   const [missedStudentAttendanceModal, setMissedStudentAttendanceModal] = useState<{show: boolean, date: string}>({show: false, date: ''});
 
    // Remarks Modal State
    const [remarksModalOpen, setRemarksModalOpen] = useState(false);
@@ -191,15 +192,18 @@ const TeacherDashboard = () => {
             const todayDate = new Date();
             const previousWeekday = new Date(todayDate);
             let dayOfWeek = previousWeekday.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+            const vacationDateObj = config.vacationDate ? new Date(config.vacationDate + 'T00:00:00') : null; // Parse to local date
 
-            // Go back one day at a time until we hit a weekday (Mon-Fri)
+            // Go back one day at a time until we hit a weekday (Mon-Fri) AND not a vacation day
             do {
               previousWeekday.setDate(previousWeekday.getDate() - 1);
               dayOfWeek = previousWeekday.getDay();
-            } while (dayOfWeek === 0 || dayOfWeek === 6); // Skip Sunday (0) and Saturday (6)
-
-            const previousSchoolDay = previousWeekday.toISOString().split('T')[0];
-
+              const isVacationDay = vacationDateObj && previousWeekday.toDateString() === vacationDateObj.toDateString();
+              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
+                  continue;
+              }
+            } while (true);
+            const previousSchoolDay = `${previousWeekday.getFullYear()}-${String(previousWeekday.getMonth() + 1).padStart(2, '0')}-${String(previousWeekday.getDate()).padStart(2, '0')}`;
             // Only check if the previous school day is on or after the reopen date
             if (previousSchoolDay >= config.schoolReopenDate) {
               const attendance = await db.getTeacherAttendance(user?.id || '', previousSchoolDay);
@@ -221,13 +225,21 @@ const TeacherDashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
         // Fetch Config and Subjects
-        let config: any = null;
+        let config: SchoolConfig;
         try {
             config = await db.getSchoolConfig();
             setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);
         } catch (e) {
             console.error(e);
-            config = { currentTerm: `Term ${CURRENT_TERM}`, academicYear: ACADEMIC_YEAR, schoolReopenDate: '' };
+            config = { 
+                currentTerm: `Term ${CURRENT_TERM}`, 
+                academicYear: ACADEMIC_YEAR, 
+                schoolReopenDate: '',
+                schoolName: 'Noble Care Academy', // Default value
+                headTeacherRemark: 'An outstanding performance. The school is proud of you.', // Default value
+                termEndDate: '2024-12-20', // Default value
+                vacationDate: '2024-12-20' // Default value
+            };
         }
 
         // Fetch subjects from system settings for the selected class
@@ -254,20 +266,35 @@ const TeacherDashboard = () => {
             const today = new Date();
             const previousWeekday = new Date(today);
             let dayOfWeek = previousWeekday.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+            const vacationDateObj = config.vacationDate ? new Date(config.vacationDate + 'T00:00:00') : null; // Parse to local date
 
-            // Go back one day at a time until we hit a weekday (Mon-Fri)
+            // Go back one day at a time until we hit a weekday (Mon-Fri) AND not a vacation day
             do {
               previousWeekday.setDate(previousWeekday.getDate() - 1);
               dayOfWeek = previousWeekday.getDay();
-            } while (dayOfWeek === 0 || dayOfWeek === 6); // Skip Sunday (0) and Saturday (6)
+              const isVacationDay = vacationDateObj && previousWeekday.toDateString() === vacationDateObj.toDateString();
+              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
+                  continue;
+              } else {
+                  break;
+              }
+            } while (true);
 
-            const previousSchoolDay = previousWeekday.toISOString().split('T')[0];
+            const previousSchoolDay = `${previousWeekday.getFullYear()}-${String(previousWeekday.getMonth() + 1).padStart(2, '0')}-${String(previousWeekday.getDate()).padStart(2, '0')}`;
 
             // Only check if the previous school day is on or after the reopen date
-            if (previousSchoolDay >= config.schoolReopenDate) {
+            if (config.schoolReopenDate && previousSchoolDay >= config.schoolReopenDate) {
               const attendance = await db.getTeacherAttendance(user?.id || '', previousSchoolDay);
               if (!attendance) {
                 setMissedAttendanceModal({show: true, date: previousSchoolDay});
+              }
+
+              // Also check for missed STUDENT attendance for the selected class
+              if (selectedClassId) {
+                const studentAttendance = await db.getAttendance(selectedClassId, previousSchoolDay);
+                if (!studentAttendance) {
+                    setMissedStudentAttendanceModal({show: true, date: previousSchoolDay});
+                }
               }
             }
           }
@@ -809,6 +836,47 @@ const TeacherDashboard = () => {
         </div>
       )}
 
+      {/* Missed Student Attendance Modal */}
+      {missedStudentAttendanceModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-full">
+                  <Bell className="text-amber-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Student Attendance Reminder</h3>
+                  <p className="text-sm text-slate-500">You missed marking student attendance for your class.</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="text-sm text-amber-800">
+                  Please mark student attendance for <strong>{assignedClass?.name}</strong> on <strong>{new Date(missedStudentAttendanceModal.date).toLocaleDateString()}</strong> to keep records accurate.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setMissedStudentAttendanceModal({show: false, date: ''})}
+                  className="flex-1 px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Remind Me Later
+                </button>
+                <Link
+                  to="/teacher/attendance"
+                  onClick={() => setMissedStudentAttendanceModal({show: false, date: ''})}
+                  className="flex-1 px-4 py-2 text-center bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Take Attendance
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Remarks Modal */}
       {remarksModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
@@ -965,14 +1033,25 @@ const TeacherDashboard = () => {
                             try {
                                 const termNumber = parseInt(currentTerm.split(' ')[1]);
                                 const promises = Object.entries(skillsData).map(async ([studentId, data]) => {
-                                    const d = data as any;
+                                    const d = data as Partial<StudentSkills>;
+
+                                    // Skip saving if no skills were entered for this student
+                                    if (!d || Object.values(d).every(val => !val)) {
+                                        return null;
+                                    }
+
                                     const skills: StudentSkills = {
                                         id: `${studentId}_${currentTerm.replace(' ', '_')}`,
                                         studentId,
                                         classId: selectedClassId || '',
                                         term: termNumber as 1 | 2 | 3,
                                         academicYear: ACADEMIC_YEAR,
-                                        ...d
+                                        punctuality: d.punctuality || 'Fair',
+                                        neatness: d.neatness || 'Fair',
+                                        conduct: d.conduct || 'Fair',
+                                        attitudeToWork: d.attitudeToWork || 'Fair',
+                                        classParticipation: d.classParticipation || 'Fair',
+                                        homeworkCompletion: d.homeworkCompletion || 'Fair',
                                     };
                                     return db.saveStudentSkills(skills);
                                 });

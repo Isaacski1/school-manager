@@ -12,6 +12,35 @@ export interface User {
   assignedClassIds?: string[]; // Changed from single ID to array of IDs
 }
 
+export interface SchoolConfig {
+  schoolName: string;
+  academicYear: string;
+  currentTerm: string;
+  headTeacherRemark: string;
+  termEndDate: string;
+  schoolReopenDate: string;
+  vacationDate?: string; // New field
+}
+
+export interface Backup {
+  id: string;
+  timestamp: number; // Unix timestamp
+  term: string;
+  academicYear: string;
+  data?: { // Make data optional
+    students: Student[];
+    attendanceRecords: AttendanceRecord[];
+    teacherAttendanceRecords: TeacherAttendanceRecord[];
+    assessments: Assessment[];
+    studentRemarks: StudentRemark[];
+    studentSkills: StudentSkills[];
+    timetables: ClassTimetable[];
+    users: User[];
+    classSubjects: ClassSubjectConfig[];
+  };
+  dataCollectionRef?: string; // New field to store reference to subcollection
+}
+
 export interface ClassSubjectConfig {
   classId: string;
   subjects: string[];

@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
 import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
-import { Notice, ClassRoom } from '../../types';
+import { Notice, ClassRoom, SchoolConfig } from '../../types';
 import { CLASSES_LIST, nurserySubjects, kgSubjects, primarySubjects, jhsSubjects } from '../../constants';
-import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar, AlertTriangle, History } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { collection, getDocs, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { firestore } from '../../services/firebase';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -24,14 +25,16 @@ const SystemSettings = () => {
   const [editingSubject, setEditingSubject] = useState<{original: string, current: string} | null>(null);
 
   // Config State
-  const [config, setConfig] = useState({
+  const [config, setConfig] = useState<SchoolConfig>({
       schoolName: '',
       academicYear: '',
       currentTerm: '',
       schoolReopenDate: '',
-      logoUrl: ''
+      vacationDate: '', // Add this line
+      logoUrl: '' // Assuming logoUrl is also part of SchoolConfig if it's being used here
   });
   const [savingConfig, setSavingConfig] = useState(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false); // New state
 
   // Danger Zone State
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -75,6 +78,21 @@ const SystemSettings = () => {
       await db.updateSchoolConfig(config);
       setSavingConfig(false);
       showToast('Configuration saved successfully!', { type: 'success' });
+  };
+
+  const handleCreateTermBackup = async () => {
+    setIsCreatingBackup(true);
+    try {
+      // db.createTermBackup will be implemented in the next step
+      // For now, it will use currentTerm and academicYear from the config state
+      await db.createTermBackup(config.currentTerm, config.academicYear);
+      showToast('Term backup created successfully!', { type: 'success' });
+    } catch (error) {
+      console.error('Error creating term backup:', error);
+      showToast('Failed to create term backup. Please try again.', { type: 'error' });
+    } finally {
+      setIsCreatingBackup(false);
+    }
   };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -297,6 +315,19 @@ const SystemSettings = () => {
                                     />
                                 </div>
                             </div>
+                            {/* New Vacation Date Input */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Term Vacation Date</label>
+                                <div className="relative">
+                                    <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none"/>
+                                    <input 
+                                        type="date"
+                                        value={config.vacationDate} 
+                                        onChange={(e) => setConfig({...config, vacationDate: e.target.value})}
+                                        className="w-full border border-slate-300 pl-10 pr-3 py-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none" 
+                                    />
+                                </div>
+                            </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Next Term Begins</label>
                                 <div className="relative">
@@ -314,6 +345,7 @@ const SystemSettings = () => {
                 </div>
             </div>
 
+            {/* Subject Management */}
             {/* Subject Management */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                 <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
@@ -383,6 +415,37 @@ const SystemSettings = () => {
                         ))
                     )}
                 </div>
+            </div>
+
+            {/* Term Backup Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
+                    <Save className="mr-2 text-purple-600" size={24} /> 
+                    Term Data Backup
+                </h2>
+                <p className="text-sm text-slate-600 mb-4">
+                    Create a full backup of the current term's academic records, attendance, and student data. 
+                    Backups can be viewed and restored from the "Manage Backups" section.
+                </p>
+                <button 
+                    onClick={handleCreateTermBackup} 
+                    disabled={isCreatingBackup} 
+                    className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                    {isCreatingBackup ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Save size={16} className="mr-2"/> Create Current Term Backup
+                      </>
+                    )}
+                </button>
+                <Link to="/admin/backups" className="mt-4 inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800">
+                    <History size={16} className="mr-1"/> View and Manage Previous Backups
+                </Link>
             </div>
 
             {/* Secret Database Reset */}

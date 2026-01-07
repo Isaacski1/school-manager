@@ -13,6 +13,7 @@ import TeacherAttendanceStats from './pages/admin/TeacherAttendanceStats';
 import Reports from './pages/admin/Reports';
 import ReportCard from './pages/admin/ReportCard';
 import SystemSettings from './pages/admin/SystemSettings';
+import ManageBackups from './pages/admin/ManageBackups';
 import Timetable from './pages/admin/Timetable';
 import TeacherDashboard from './pages/teacher/TeacherDashboard';
 import Attendance from './pages/teacher/Attendance';
@@ -93,6 +94,12 @@ const AppRoutes = () => {
       <Route path="/admin/settings" element={
         <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
            <SystemSettings />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin/backups" element={
+        <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
+           <ManageBackups />
         </ProtectedRoute>
       } />
 
