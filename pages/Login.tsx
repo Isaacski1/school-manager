@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { auth } from '../services/firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { AlertCircle, ArrowLeft, CheckCircle } from 'lucide-react';
+import schoolLogo from '../logo/school_logo.jpg';
 
 const Login = () => {
   const { isAuthenticated, loading: authLoading, error: globalError } = useAuth();
@@ -97,7 +98,7 @@ const Login = () => {
         <div className="text-center mb-8">
           <div className="mx-auto w-28 h-28 mb-4 relative p-2 bg-white rounded-full shadow-sm border border-amber-100">
             <img 
-              src="logo/school_logo.jpg" 
+              src={schoolLogo} 
               alt="Noble Care Academy Logo" 
               className="w-full h-full object-contain rounded-full"
               onError={(e) => {
