@@ -26,13 +26,36 @@ const AttendanceStats = () => {
                 // 1. Get Students in Class
                 const students = await db.getStudents(selectedClass);
                 
-                // 2. Get All Attendance Records for this class
-                const attendanceRecords = await db.getClassAttendance(selectedClass);
+                // 2. Get School Config to calculate total school days
+                const config = await db.getSchoolConfig();
                 
-                const totalSchoolDays = attendanceRecords.length;
+                // 3. Calculate total school days from reopen to vacation (excluding weekends)
+                let totalSchoolDays = 0;
+                if (config.schoolReopenDate && config.vacationDate) {
+                    const reopen = new Date(config.schoolReopenDate);
+                    const vacation = new Date(config.vacationDate);
+                    
+                    // Count weekdays (Mon-Fri) between dates
+                    const current = new Date(reopen);
+                    while (current <= vacation) {
+                        const day = current.getDay();
+                        if (day !== 0 && day !== 6) { // Not Sunday (0) or Saturday (6)
+                            totalSchoolDays++;
+                        }
+                        current.setDate(current.getDate() + 1);
+                    }
+                } else {
+                    // Fallback: count existing attendance records
+                    const attendanceRecords = await db.getClassAttendance(selectedClass);
+                    totalSchoolDays = attendanceRecords.length;
+                }
+                
                 setTermTotalDays(totalSchoolDays);
 
-                // 3. Calculate Stats for each student
+                // 4. Get All Attendance Records for this class
+                const attendanceRecords = await db.getClassAttendance(selectedClass);
+
+                // 5. Calculate Stats for each student
                 const calculatedStats = students.map(student => {
                     // Count how many records have this student's ID in 'presentStudentIds'
                     const presentCount = attendanceRecords.filter(r => 

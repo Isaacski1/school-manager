@@ -19,6 +19,8 @@ import TeacherDashboard from './pages/teacher/TeacherDashboard';
 import Attendance from './pages/teacher/Attendance';
 import TeacherAttendance from './pages/teacher/TeacherAttendance';
 import AssessmentPage from './pages/teacher/Assessment';
+import WriteRemarks from './pages/teacher/WriteRemarks';
+import EditSkills from './pages/teacher/EditSkills';
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactElement, allowedRoles?: UserRole[] }) => {
   const { user, isAuthenticated } = useAuth();
@@ -122,6 +124,16 @@ const AppRoutes = () => {
       <Route path="/teacher/my-attendance" element={
         <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
           <TeacherAttendance />
+        </ProtectedRoute>
+      } />
+      <Route path="/teacher/write-remarks" element={
+        <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <WriteRemarks />
+        </ProtectedRoute>
+      } />
+      <Route path="/teacher/edit-skills" element={
+        <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <EditSkills />
         </ProtectedRoute>
       } />
     </Routes>

@@ -26,10 +26,10 @@ const Reports = () => {
                     case 'KG': currentSubjects = kgSubjects; break;
                     case 'PRIMARY': currentSubjects = primarySubjects; break;
                     case 'JHS': currentSubjects = jhsSubjects; break;
-                    default: currentSubjects = await db.getSubjects();
+                    default: currentSubjects = await db.getSubjects(selectedClass);
                 }
             } else {
-                currentSubjects = await db.getSubjects();
+                currentSubjects = await db.getSubjects(selectedClass);
             }
             setSubjects(currentSubjects);
 

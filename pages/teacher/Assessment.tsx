@@ -81,7 +81,7 @@ const AssessmentPage = () => {
     }
   }, [assignedClassIds]);
 
-    // Load school configuration (term + academic year)
+  // Load school configuration (term + academic year)
     useEffect(() => {
         const loadConfig = async () => {
             try {
@@ -90,8 +90,29 @@ const AssessmentPage = () => {
                     currentTerm: cfg.currentTerm || `Term ${CURRENT_TERM}`,
                     academicYear: cfg.academicYear || ACADEMIC_YEAR
                 });
+
+                // Check if term transition has been processed - reload once to get fresh data
+                if (cfg.termTransitionProcessed) {
+                    console.log('Term transition detected, reloading for fresh data...');
+                    await db.updateSchoolConfig({ ...cfg, termTransitionProcessed: false });
+                    window.location.reload();
+                    return;
+                }
+
+                // Check if nextTermBegins date has passed and reset hasn't been triggered yet
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const nextTermDate = cfg.nextTermBegins ? new Date(cfg.nextTermBegins + 'T00:00:00') : null;
+                
+                if (nextTermDate && today >= nextTermDate) {
+                    console.log('New term begins, initiating reset...');
+                    await db.resetForNewTerm(cfg);
+                    await db.updateSchoolConfig({ ...cfg, termTransitionProcessed: true });
+                    showToast('New term started! Assessments have been reset.', { type: 'success' });
+                    window.location.reload();
+                    return;
+                }
             } catch (e) {
-                // fallback to defaults already set
                 console.error('Failed to load school config', e);
             }
         };
@@ -106,29 +127,8 @@ const AssessmentPage = () => {
             return;
         };
 
-        const selectedClassInfo = CLASSES_LIST.find(c => c.id === selectedClassId);
-        let currentSubjects: string[] = [];
-
-        if (selectedClassInfo) {
-            switch (selectedClassInfo.level) {
-                case 'NURSERY':
-                    currentSubjects = nurserySubjects;
-                    break;
-                case 'KG':
-                    currentSubjects = kgSubjects;
-                    break;
-                case 'PRIMARY':
-                    currentSubjects = primarySubjects;
-                    break;
-                case 'JHS':
-                    currentSubjects = jhsSubjects;
-                    break;
-                default:
-                    currentSubjects = await db.getSubjects(selectedClassId);
-            }
-        } else {
-            currentSubjects = await db.getSubjects(selectedClassId);
-        }
+        // Get subjects from DB, with fallback to hardcoded based on class level
+        const currentSubjects = await db.getSubjects(selectedClassId);
         
         setSubjects(currentSubjects);
         if (currentSubjects.length > 0) {
@@ -217,7 +217,7 @@ const AssessmentPage = () => {
                         if (match) dynamicTerm = parseInt(match[0], 10);
                     }
 
-                    const promises = Object.values(assessments).map(async (a) => {
+                    const promises = (Object.values(assessments) as Assessment[]).map(async (a) => {
              if (!a.studentId) return;
              
              const total = calculateTotalScore(a);

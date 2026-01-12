@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/mockDb';
 import { Student } from '../../types';
 import { CLASSES_LIST } from '../../constants';
-import { Save, Calendar } from 'lucide-react';
+import { Save, Calendar, AlertTriangle } from 'lucide-react';
 
 const Attendance = () => {
   const { user } = useAuth();
@@ -16,6 +16,7 @@ const Attendance = () => {
   const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [schoolConfig, setSchoolConfig] = useState<any>(null);
 
   // Initialize selected class
   useEffect(() => {
@@ -23,6 +24,69 @@ const Attendance = () => {
         setSelectedClassId(assignedClassIds[0]);
     }
   }, [assignedClassIds]);
+
+  // Fetch school config
+  useEffect(() => {
+    const fetchConfig = async () => {
+      const config = await db.getSchoolConfig();
+      setSchoolConfig(config);
+      
+      // Auto-set date to minimum allowed date if current date is before minimum
+      const minDate = getMinDateFromConfig(config);
+      if (minDate && date < minDate) {
+        setDate(minDate);
+      }
+    };
+    fetchConfig();
+  }, []);
+
+  // Helper function to get minimum allowed date
+  const getMinDate = () => {
+    return getMinDateFromConfig(schoolConfig);
+  };
+
+  const getMinDateFromConfig = (config: any) => {
+    if (!config) return '';
+    // The user wants schoolReopenDate to be the primary start date for marking attendance
+    if (config.schoolReopenDate) {
+      return config.schoolReopenDate;
+    }
+    return '';
+  };
+
+  // Helper function to get maximum allowed date for attendance marking
+  const getMaxDateFromConfig = (config: any) => {
+    if (!config) return '';
+    // The user wants vacationDate to be the end date for marking attendance
+    if (config.vacationDate) {
+      return config.vacationDate;
+    }
+    return '';
+  };
+
+  // Helper function to check if date is blocked
+  const isDateBlocked = () => {
+    const vacationDate = schoolConfig?.vacationDate;
+    const nextTermBegins = schoolConfig?.nextTermBegins;
+    const schoolReopenDate = schoolConfig?.schoolReopenDate;
+    
+    // If nextTermBegins is set and we're at or past that date, allow attendance (new term started)
+    if (nextTermBegins && date >= nextTermBegins) {
+      return false;
+    }
+    
+    // Block if date is after vacation date (during vacation period)
+    if (vacationDate && date > vacationDate) {
+      return true;
+    }
+    
+    // Block if no vacationDate but schoolReopenDate is set and date is before it
+    if (!vacationDate && schoolReopenDate && date < schoolReopenDate) {
+      return true;
+    }
+    
+    return false;
+  };
 
   useEffect(() => {
     if (!selectedClassId) return;
@@ -39,8 +103,8 @@ const Attendance = () => {
         if (existing) {
           setPresentIds(new Set(existing.presentStudentIds));
         } else {
-          // Default to all present
-          setPresentIds(new Set(studentsList.map(s => s.id)));
+          // Default to empty - teacher must manually mark attendance
+          setPresentIds(new Set());
         }
       } catch (err) {
         console.error(err);
@@ -64,6 +128,28 @@ const Attendance = () => {
 
   const handleSave = async () => {
     if (!selectedClassId) return;
+
+    // Check if date is valid for attendance
+    // After term reset, check if we're past nextTermBegins
+    const vacationDate = schoolConfig?.vacationDate;
+    const nextTermBegins = schoolConfig?.nextTermBegins;
+    const schoolReopenDate = schoolConfig?.schoolReopenDate;
+    
+    // If nextTermBegins is set and we're at or past that date, allow attendance
+    if (nextTermBegins && date >= nextTermBegins) {
+      // Attendance allowed - new term has started
+    } else if (vacationDate && date > vacationDate) {
+      // Block if date is after vacation date
+      setMessage('Cannot mark attendance after school vacation date');
+      setTimeout(() => setMessage(''), 3000);
+      return;
+    } else if (!vacationDate && schoolReopenDate && date < schoolReopenDate) {
+      // Block if no vacationDate but schoolReopenDate is set and date is before it
+      setMessage(`Cannot mark attendance before school re-open date (${schoolReopenDate})`);
+      setTimeout(() => setMessage(''), 3000);
+      return;
+    }
+
     setLoading(true);
     try {
       await db.saveAttendance({
@@ -128,10 +214,11 @@ const Attendance = () => {
                     <label className="block text-sm font-medium text-slate-700 mb-1">Select Date</label>
                     <div className="relative">
                         <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                        <input 
+                        <input
                             type="date"
                             value={date}
                             onChange={(e) => setDate(e.target.value)}
+                            min={getMinDate()}
                             className="w-full sm:w-auto pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                         />
                     </div>
@@ -147,7 +234,7 @@ const Attendance = () => {
                 </div>
                 <button 
                 onClick={handleSave}
-                disabled={loading || !selectedClassId}
+                disabled={loading || !selectedClassId || isDateBlocked()}
                 className="w-full sm:w-auto flex justify-center items-center bg-emerald-600 text-white px-6 py-2.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 font-medium shadow-sm"
                 >
                 <Save size={18} className="mr-2" />
@@ -157,8 +244,25 @@ const Attendance = () => {
         </div>
 
         {message && (
-          <div className="mb-4 p-3 bg-green-50 text-green-700 rounded text-center text-sm">
+          <div className={`mb-4 p-3 rounded text-center text-sm ${message.includes('Cannot') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
             {message}
+          </div>
+        )}
+
+        {(isDateBlocked()) && (
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle size={18} />
+              <span className="font-medium">
+                {schoolConfig?.nextTermBegins && date >= schoolConfig.nextTermBegins
+                  ? 'Attendance not available for selected date'
+                  : schoolConfig?.vacationDate && date > schoolConfig.vacationDate 
+                    ? `Cannot mark attendance after vacation date (${schoolConfig.vacationDate})`
+                    : !schoolConfig?.vacationDate && schoolConfig?.schoolReopenDate && date < schoolConfig.schoolReopenDate
+                      ? `Cannot mark attendance before school re-open date (${schoolConfig.schoolReopenDate})`
+                      : 'Attendance not available for selected date'}
+              </span>
+            </div>
           </div>
         )}
 
@@ -166,11 +270,12 @@ const Attendance = () => {
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           {students.map((student) => {
             const isPresent = presentIds.has(student.id);
+            const isBlocked = isDateBlocked();
             return (
               <div 
                 key={student.id} 
-                className={`flex items-center justify-between p-4 border-b last:border-b-0 cursor-pointer transition-colors ${isPresent ? 'bg-white' : 'bg-red-50'}`}
-                onClick={() => togglePresence(student.id)}
+                className={`flex items-center justify-between p-4 border-b last:border-b-0 cursor-pointer transition-colors ${isPresent ? 'bg-white' : 'bg-red-50'} ${isBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                onClick={() => !isBlocked && togglePresence(student.id)}
               >
                 <div className="flex items-center">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold mr-4 ${isPresent ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600'}`}>

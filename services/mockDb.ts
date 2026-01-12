@@ -2,8 +2,8 @@ import { firestore } from './firebase';
 import { 
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, updateDoc, query, where, orderBy, limit 
 } from 'firebase/firestore';
-import { User, UserRole, Student, AttendanceRecord, TeacherAttendanceRecord, Assessment, Notice, ClassTimetable, SystemNotification, MonthlyTeacherAttendance, TeacherAttendanceAnalytics, StudentRemark, StudentSkills, ClassSubjectConfig, ClassRoom, SchoolConfig } from "../types";
-import { CURRENT_TERM, ACADEMIC_YEAR, CLASSES_LIST } from "../constants";
+import { User, UserRole, Student, AttendanceRecord, TeacherAttendanceRecord, Assessment, Notice, ClassTimetable, SystemNotification, MonthlyTeacherAttendance, TeacherAttendanceAnalytics, StudentRemark, StudentSkills, ClassSubjectConfig, ClassRoom, SchoolConfig, AdminRemark, Backup } from "../types";
+import { CURRENT_TERM, ACADEMIC_YEAR, CLASSES_LIST, nurserySubjects, kgSubjects, primarySubjects, jhsSubjects } from "../constants";
 
 class FirestoreService {
   // Helper to get array from collection
@@ -24,7 +24,9 @@ class FirestoreService {
           headTeacherRemark: 'An outstanding performance. The school is proud of you.',
           termEndDate: '2024-12-20',
           schoolReopenDate: '2024-01-01',
-          vacationDate: '2024-12-20' // Default vacation date
+          vacationDate: '2024-12-20',
+          nextTermBegins: '',
+          termTransitionProcessed: false,
       };
   }
 
@@ -73,7 +75,7 @@ class FirestoreService {
       const docRef = doc(firestore, 'class_subjects', classId);
       const snap = await getDoc(docRef);
       if (snap.exists()) return (snap.data() as ClassSubjectConfig).subjects;
-      return []; // Return empty array if no subjects are configured for the class
+      return [];
   }
 
   async addSubject(classId: string, name: string): Promise<void> {
@@ -123,14 +125,11 @@ class FirestoreService {
   }
 
   async saveAttendance(record: AttendanceRecord): Promise<void> {
-      // ID convention: classId_date
       await setDoc(doc(firestore, 'attendance', record.id), record);
   }
 
   // --- Assessments ---
   async getAssessments(classId: string, subject: string): Promise<Assessment[]> {
-      // NOTE: Removed compound query to avoid index requirements error. 
-      // Filter by classId first (high selectivity), then filter subject in memory.
       const q = query(collection(firestore, 'assessments'), where('classId', '==', classId));
       const snap = await getDocs(q);
       const all = snap.docs.map(d => d.data() as Assessment);
@@ -145,11 +144,7 @@ class FirestoreService {
       await setDoc(doc(firestore, 'assessments', assessment.id), assessment);
   }
 
-  /**
-   * Remove all assessments for a given class. Optionally seed default zeroed
-   * assessments for every student in the class across configured subjects.
-   */
-  async resetAssessmentsForClass(classId: string, seedDefaults = false): Promise<void> {
+  async resetAssessmentsForClass(classId: string, seedDefaults = false, newTerm?: number): Promise<void> {
       const q = query(collection(firestore, 'assessments'), where('classId', '==', classId));
       const snap = await getDocs(q);
       const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'assessments', d.id)));
@@ -157,8 +152,11 @@ class FirestoreService {
 
       if (seedDefaults) {
           const students = await this.getStudents(classId);
-          const subjects = await this.getSubjects(classId); // Updated to use classId
+          const subjects = await this.getSubjects(classId);
           const ops: Promise<void>[] = [];
+
+          // Determine the new term number (default to CURRENT_TERM if not provided)
+          const termNum = newTerm || CURRENT_TERM;
 
           for (const student of students) {
               for (const subject of subjects) {
@@ -167,7 +165,7 @@ class FirestoreService {
                       id,
                       studentId: student.id,
                       classId,
-                      term: CURRENT_TERM as 1 | 2 | 3,
+                      term: termNum as 1 | 2 | 3,
                       academicYear: ACADEMIC_YEAR,
                       subject,
                       testScore: 0,
@@ -196,6 +194,28 @@ class FirestoreService {
 
   async deleteNotice(id: string): Promise<void> {
       await deleteDoc(doc(firestore, 'notices', id));
+  }
+
+  // --- Student Remarks ---
+  async getStudentRemarks(classId: string): Promise<StudentRemark[]> {
+      const q = query(collection(firestore, 'student_remarks'), where('classId', '==', classId));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => d.data() as StudentRemark);
+  }
+
+  async saveStudentRemark(remark: StudentRemark): Promise<void> {
+      await setDoc(doc(firestore, 'student_remarks', remark.id), remark);
+  }
+
+  // --- Student Skills ---
+  async getStudentSkills(classId: string): Promise<StudentSkills[]> {
+      const q = query(collection(firestore, 'student_skills'), where('classId', '==', classId));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => d.data() as StudentSkills);
+  }
+
+  async saveStudentSkills(skills: StudentSkills): Promise<void> {
+      await setDoc(doc(firestore, 'student_skills', skills.id), skills);
   }
 
   // --- Notifications (Admin Activity Log) ---
@@ -237,7 +257,6 @@ class FirestoreService {
   
   // --- Dashboard/Aggregates ---
   async getStudentPerformance(studentId: string, classId: string) {
-    // Fetch all attendance for class
     const attendanceRecords = await this.getClassAttendance(classId);
     
     const totalDays = attendanceRecords.length;
@@ -250,15 +269,12 @@ class FirestoreService {
         .map(r => r.date)
         .sort();
 
-    // Fetch assessments for student
-    // NOTE: Removed compound query (studentId + term) to avoid index error
     const q = query(collection(firestore, 'assessments'), where('studentId', '==', studentId));
     const snap = await getDocs(q);
     const allAssessments = snap.docs
         .map(d => d.data() as Assessment)
-        .filter(a => true); // Show assessments from all terms
+        .filter(a => true);
     
-    // Use the class-specific subjects
     const subjects = await this.getSubjects(classId);
 
     const grades = subjects.map(subject => {
@@ -280,7 +296,6 @@ class FirestoreService {
   }
 
   async getDashboardStats() {
-    // Parallel fetch for dashboard speed
     const [studentsSnap, usersSnap, attendanceSnap] = await Promise.all([
         getDocs(collection(firestore, 'students')),
         getDocs(collection(firestore, 'users')),
@@ -330,7 +345,6 @@ class FirestoreService {
   }
 
   async saveTeacherAttendance(record: TeacherAttendanceRecord): Promise<void> {
-      // ID convention: teacherId_date
       await setDoc(doc(firestore, 'teacher_attendance', record.id), record);
   }
 
@@ -345,178 +359,192 @@ class FirestoreService {
       await Promise.all(deletions);
   }
 
+  // --- Admin Remarks ---
+  async getAdminRemark(remarkId: string): Promise<AdminRemark | undefined> {
+    const docRef = doc(firestore, 'admin_remarks', remarkId);
+    const snap = await getDoc(docRef);
+    return snap.exists() ? snap.data() as AdminRemark : undefined;
+  }
 
+  async saveAdminRemark(remark: AdminRemark): Promise<void> {
+      await setDoc(doc(firestore, 'admin_remarks', remark.id), remark);
+  }
 
-    // --- Student Remarks ---
-    async getStudentRemarks(classId: string): Promise<StudentRemark[]> {
-        const q = query(collection(firestore, 'student_remarks'), where('classId', '==', classId));
+  /**
+   * Create a complete backup of the current term's data before resetting.
+   */
+  async createTermBackup(currentTerm: string, academicYear: string): Promise<void> {
+    console.log(`Creating backup for ${currentTerm}, ${academicYear}...`);
+    
+    try {
+      const [students, users, attendanceRecords, teacherAttendanceRecords, 
+             assessments, studentRemarks, studentSkills, timetables, notices] = await Promise.all([
+        this.getCollection<Student>('students'),
+        this.getCollection<User>('users'),
+        this.getCollection<AttendanceRecord>('attendance'),
+        this.getCollection<TeacherAttendanceRecord>('teacher_attendance'),
+        this.getCollection<Assessment>('assessments'),
+        this.getCollection<StudentRemark>('student_remarks'),
+        this.getCollection<StudentSkills>('student_skills'),
+        this.getCollection<ClassTimetable>('timetables'),
+        this.getCollection<Notice>('notices')
+      ]);
+
+      const classSubjectsSnap = await getDocs(collection(firestore, 'class_subjects'));
+      const classSubjects: ClassSubjectConfig[] = classSubjectsSnap.docs.map(d => d.data() as ClassSubjectConfig);
+
+      const backup: Backup = {
+        id: `backup_${Date.now()}`,
+        timestamp: Date.now(),
+        term: currentTerm,
+        academicYear: academicYear,
+        data: {
+          students,
+          attendanceRecords,
+          teacherAttendanceRecords,
+          assessments,
+          studentRemarks,
+          studentSkills,
+          timetables,
+          users,
+          classSubjects
+        }
+      };
+
+      await setDoc(doc(firestore, 'backups', backup.id), backup);
+      console.log(`Backup created successfully: ${backup.id}`);
+      
+    } catch (error) {
+      console.error('Error creating backup:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset the system for a new term.
+   */
+  async resetForNewTerm(currentConfig: SchoolConfig): Promise<void> {
+    console.log('Initiating term transition for:', currentConfig.currentTerm, currentConfig.academicYear);
+
+    await this.createTermBackup(currentConfig.currentTerm, currentConfig.academicYear);
+    
+    const classIds = CLASSES_LIST.map(c => c.id);
+
+    const resetPromises = [
+      (async () => {
+        const q = collection(firestore, 'attendance');
         const snap = await getDocs(q);
-        return snap.docs.map(d => d.data() as StudentRemark);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'attendance', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared student attendance records.');
+      })(),
+
+      this.resetAllTeacherAttendance(),
+
+      (async () => {
+        const q = query(collection(firestore, 'student_remarks'));
+        const snap = await getDocs(q);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'student_remarks', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared student remarks.');
+      })(),
+
+      (async () => {
+        const q = query(collection(firestore, 'student_skills'));
+        const snap = await getDocs(q);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'student_skills', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared student skills.');
+      })(),
+
+      (async () => {
+        const q = query(collection(firestore, 'admin_remarks'));
+        const snap = await getDocs(q);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'admin_remarks', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared admin remarks.');
+      })(),
+
+      (async () => {
+        const q = query(collection(firestore, 'admin_notifications'));
+        const snap = await getDocs(q);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'admin_notifications', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared system notifications.');
+      })(),
+
+      (async () => {
+        const q = query(collection(firestore, 'notices'));
+        const snap = await getDocs(q);
+        const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'notices', d.id)));
+        await Promise.all(deletions);
+        console.log('Cleared notices.');
+      })(),
+    ];
+    await Promise.all(resetPromises);
+    
+    // Calculate the new term number FIRST before resetting assessments
+    let newTerm = 1;
+    let newAcademicYear = currentConfig.academicYear;
+    const currentTermNumber = parseInt(currentConfig.currentTerm.split(' ')[1]);
+
+    if (currentTermNumber === 3) {
+      newTerm = 1;
+      const years = currentConfig.academicYear.split('-').map(Number);
+      newAcademicYear = `${years[0] + 1}-${years[1] + 1}`;
+    } else {
+      newTerm = currentTermNumber + 1;
     }
 
-    async saveStudentRemark(remark: StudentRemark): Promise<void> {
-        await setDoc(doc(firestore, 'student_remarks', remark.id), remark);
+    // Reset and seed assessments with the NEW term number (only once, with correct term)
+    for (const classId of classIds) {
+      await this.resetAssessmentsForClass(classId, true, newTerm);
+      console.log(`Reset and re-seeded assessments for class: ${classId} with term ${newTerm}`);
     }
     
-    // --- Student Skills ---
-    async getStudentSkills(classId: string): Promise<StudentSkills[]> {
-        const q = query(collection(firestore, 'student_skills'), where('classId', '==', classId));
-        const snap = await getDocs(q);
-        return snap.docs.map(d => d.data() as StudentSkills);
-    }
-
-    async saveStudentSkills(skills: StudentSkills): Promise<void> {
-        await setDoc(doc(firestore, 'student_skills', skills.id), skills);
-    }
-
-  // --- Backups ---
-  async createTermBackup(term: string, academicYear: string): Promise<void> {
-    const backupId = `backup_${academicYear.replace('-', '')}_${term.replace(' ', '')}_${Date.now()}`;
-    const dataCollectionRefPath = `backups/${backupId}/data`; // Path to the subcollection
-
-    // Step 1: Prepare the actual data payload
-    // Fetch all data that should be backed up
-    const students = await this.getCollection<Student>('students');
-    const allAttendanceRecords = await this.getCollection<AttendanceRecord>('attendance');
-    const allTeacherAttendanceRecords = await this.getCollection<TeacherAttendanceRecord>('teacher_attendance');
-    const allAssessments = await this.getCollection<Assessment>('assessments');
-    const allStudentRemarks = await this.getCollection<StudentRemark>('student_remarks');
-    const allStudentSkills = await this.getCollection<StudentSkills>('student_skills');
-    const allTimetables = await this.getCollection<ClassTimetable>('timetables');
-    const users = await this.getCollection<User>('users');
-    const classSubjects = await this.getCollection<ClassSubjectConfig>('class_subjects');
-
-    const termNumber = parseInt(term.split(' ')[1]);
-    const termAttendanceRecords = allAttendanceRecords.filter(rec => this.isRecordInTerm(rec.date, term, academicYear));
-    const termTeacherAttendanceRecords = allTeacherAttendanceRecords.filter(rec => this.isRecordInTerm(rec.date, term, academicYear));
-    const termAssessments = allAssessments.filter(ass => ass.term === termNumber && ass.academicYear === academicYear);
-    const termStudentRemarks = allStudentRemarks.filter(rem => rem.term === termNumber && rem.academicYear === academicYear);
-    const termStudentSkills = allStudentSkills.filter(skill => skill.term === termNumber && skill.academicYear === academicYear);
-
-    const actualDataPayload = {
-        students,
-        attendanceRecords: termAttendanceRecords,
-        teacherAttendanceRecords: termTeacherAttendanceRecords,
-        assessments: termAssessments,
-        studentRemarks: termStudentRemarks,
-        studentSkills: termStudentSkills,
-        timetables: allTimetables,
-        users,
-        classSubjects,
+    const updatedConfig: SchoolConfig = {
+      ...currentConfig,
+      currentTerm: `Term ${newTerm}`,
+      academicYear: newAcademicYear,
+      termTransitionProcessed: true,
+      schoolReopenDate: currentConfig.nextTermBegins || '',
+      vacationDate: '',
+      nextTermBegins: '',
     };
-
-    // Step 2: Create the backup metadata document (without the large data payload)
-    const backupMetadata: Partial<Backup> = { // Use Partial because `data` is now omitted
-      id: backupId,
-      timestamp: Date.now(),
-      term,
-      academicYear,
-      dataCollectionRef: dataCollectionRefPath // Store the reference
-    };
-
-    await setDoc(doc(firestore, 'backups', backupId), backupMetadata);
-
-    // Step 3: Store the actual data payload in a subcollection
-    // For simplicity, store the entire payload as one document in the subcollection.
-    // Firestore subcollection documents also have a 1MB limit, but this pattern allows breaking it down further if needed.
-    await setDoc(doc(firestore, dataCollectionRefPath, 'full_backup'), actualDataPayload);
-  }
-
-  async getBackups(filters?: { term?: string, academicYear?: string, date?: string }): Promise<Partial<Backup>[]> {
-      let q = query(collection(firestore, 'backups'), orderBy('timestamp', 'desc'));
-
-      if (filters?.term) {
-          q = query(q, where('term', '==', filters.term));
-      }
-      if (filters?.academicYear) {
-          q = query(q, where('academicYear', '==', filters.academicYear));
-      }
-      // Filtering by a specific date for a backup's timestamp might be less useful,
-      // usually, it's a date range. For simplicity, let's filter by creation date (timestamp).
-      // If 'date' is provided, we can filter backups created on that day.
-      if (filters?.date) {
-        const startOfDay = new Date(filters.date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(filters.date);
-        endOfDay.setHours(23, 59, 59, 999);
-
-        q = query(q, where('timestamp', '>=', startOfDay.getTime()), where('timestamp', '<=', endOfDay.getTime()));
-      }
-
-      const snap = await getDocs(q);
-      return snap.docs.map(doc => doc.data() as Partial<Backup>); // Changed: no destructuring of 'data'
-  }
-
-  async getBackupDetails(id: string): Promise<Backup | undefined> {
-      const snap = await getDoc(doc(firestore, 'backups', id));
-      if (snap.exists()) {
-          const backupMetadata = snap.data() as Backup;
-          if (backupMetadata.dataCollectionRef) {
-              // Fetch actual data from the subcollection
-              const dataSnap = await getDoc(doc(firestore, backupMetadata.dataCollectionRef, 'full_backup'));
-              if (dataSnap.exists()) {
-                  backupMetadata.data = dataSnap.data() as Backup['data'];
-              }
-          }
-          return backupMetadata;
-      }
-      return undefined;
-  }
-
-  async deleteBackup(id: string): Promise<void> {
-      await deleteDoc(doc(firestore, 'backups', id)); // Delete metadata document
-      // Also delete the subcollection data if it exists
-      // Note: Firestore does not automatically delete subcollections when parent document is deleted.
-      // A more robust solution would involve a Cloud Function to delete the subcollection.
-      // For now, we'll leave the subcollection data orphaned or implement a simple client-side delete
-      // for the data document, assuming it's a single document.
-      try {
-        await deleteDoc(doc(firestore, `backups/${id}/data`, 'full_backup'));
-      } catch (e) {
-        console.warn(`Could not delete backup data subcollection for ${id}:`, e);
-      }
-  }
-
-  // Helper function to determine if a date falls within the given term and academic year
-  // This is a simplified check. A more robust solution might involve schoolConfig.termEndDate etc.
-  private isRecordInTerm(dateString: string, term: string, academicYear: string): boolean {
-    const recordYear = parseInt(dateString.split('-')[0]);
-    const [startYear, endYear] = academicYear.split('-').map(Number);
+    await this.updateSchoolConfig(updatedConfig);
     
-    // Basic academic year check
-    if (recordYear < startYear || recordYear > endYear) {
-      return false;
-    }
-
-    // This part would need more sophisticated logic based on term start/end dates.
-    // For now, if within academic year, consider it for backup.
-    // Proper implementation requires term boundary dates from school config.
-    return true; 
+    console.log('SchoolConfig updated for new term:', `Term ${newTerm}`, newAcademicYear);
   }
-
+    
    // --- Teacher Attendance Analytics ---
    async getTeacherAttendanceAnalytics(termStartDate?: string, vacationDate?: string): Promise<TeacherAttendanceAnalytics[]> {
+       const config = await this.getSchoolConfig();
+
+       // If no explicit start date is provided and the school hasn't reopened, return empty.
+       if (!termStartDate && !config.schoolReopenDate) {
+           return [];
+       }
+
        const teachers = await this.getUsers();
        const teacherUsers = teachers.filter(t => t.role === UserRole.TEACHER);
        const allRecords = await this.getAllTeacherAttendanceRecords();
-        const config = await this.getSchoolConfig();
 
+       // Use config.academicYear for fallback if schoolReopenDate is not set
+       const fallbackAcademicYear = config.academicYear || ACADEMIC_YEAR; // Use config.academicYear if present, else fallback to constant
+       const defaultStartDate = `${fallbackAcademicYear.split('-')[0]}-09-01`;
 
-       // Use term start date or default to current academic year start
-       const startDate = termStartDate || config.schoolReopenDate || `${ACADEMIC_YEAR.split('-')[0]}-09-01`; // September 1st
-       const endDate = vacationDate || new Date().toISOString().split('T')[0]; // Today or vacation date
+       const startDate = termStartDate || config.schoolReopenDate || defaultStartDate;
+       const endDate = vacationDate || new Date().toISOString().split('T')[0];
 
        const analytics: TeacherAttendanceAnalytics[] = [];
 
        for (const teacher of teacherUsers) {
            const teacherRecords = allRecords.filter(r => r.teacherId === teacher.id);
 
-           // Filter records within the date range
            const recordsInRange = teacherRecords.filter(r => {
                return r.date >= startDate && r.date <= endDate;
            });
 
-           // Group records by month
            const monthlyData: Record<string, { total: number, present: number }> = {};
 
            recordsInRange.forEach(record => {
@@ -533,7 +561,6 @@ class FirestoreService {
                }
            });
 
-           // Calculate monthly breakdown
            const monthlyBreakdown: MonthlyTeacherAttendance[] = Object.entries(monthlyData)
                .map(([month, data]) => {
                    const [year, monthNum] = month.split('-');
@@ -548,12 +575,11 @@ class FirestoreService {
                        presentDays: data.present,
                        absentDays: data.total - data.present,
                        attendanceRate,
-                       trend: 'stable' as const // Will be calculated based on previous months
+                       trend: 'stable' as const
                    };
                })
                .sort((a, b) => a.month.localeCompare(b.month));
 
-           // Calculate trend for each month
            for (let i = 0; i < monthlyBreakdown.length; i++) {
                if (i > 0) {
                    const current = monthlyBreakdown[i].attendanceRate;
@@ -568,7 +594,6 @@ class FirestoreService {
                }
            }
 
-           // Calculate overall attendance
            const totalDays = monthlyBreakdown.reduce((sum, month) => sum + month.totalWorkingDays, 0);
            const totalPresent = monthlyBreakdown.reduce((sum, month) => sum + month.presentDays, 0);
            const overallAttendance = totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
@@ -585,5 +610,30 @@ class FirestoreService {
 
        return analytics;
    }
+    // --- Backups ---
+    async getBackups(filters?: { term?: string; academicYear?: string; date?: string }): Promise<Partial<Backup>[]> {
+        let q: any = collection(firestore, 'backups');
+        const conditions: any[] = [];
+        if (filters?.term) conditions.push(where('term', '==', filters.term));
+        if (filters?.academicYear) conditions.push(where('academicYear', '==', filters.academicYear));
+        if (filters?.date) {
+            const start = new Date(filters.date).getTime();
+            const end = start + 24 * 60 * 60 * 1000 - 1;
+            conditions.push(where('timestamp', '>=', start), where('timestamp', '<=', end));
+        }
+        if (conditions.length > 0) q = query(q, ...conditions);
+        const snap = await getDocs(q);
+        return snap.docs.map(d => d.data() as Partial<Backup>);
+    }
+
+    async getBackupDetails(id: string): Promise<Backup | undefined> {
+        const snap = await getDoc(doc(firestore, 'backups', id));
+        return snap.exists() ? snap.data() as Backup : undefined;
+    }
+
+    async deleteBackup(id: string): Promise<void> {
+        await deleteDoc(doc(firestore, 'backups', id));
+    }
 }
+
 export const db = new FirestoreService();

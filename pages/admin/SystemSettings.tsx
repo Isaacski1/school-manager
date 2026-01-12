@@ -6,7 +6,7 @@ import { Notice, ClassRoom, SchoolConfig } from '../../types';
 import { CLASSES_LIST, nurserySubjects, kgSubjects, primarySubjects, jhsSubjects } from '../../constants';
 import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar, AlertTriangle, History } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, setDoc, writeBatch, query, limit } from 'firebase/firestore';
 import { firestore } from '../../services/firebase';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -30,8 +30,11 @@ const SystemSettings = () => {
       academicYear: '',
       currentTerm: '',
       schoolReopenDate: '',
-      vacationDate: '', // Add this line
-      logoUrl: '' // Assuming logoUrl is also part of SchoolConfig if it's being used here
+      vacationDate: '',
+      nextTermBegins: '',
+      termTransitionProcessed: false,
+      headTeacherRemark: '',
+      termEndDate: '',
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false); // New state
@@ -39,7 +42,9 @@ const SystemSettings = () => {
   // Danger Zone State
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [termResetting, setTermResetting] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [showTermResetModal, setShowTermResetModal] = useState(false);
   const [showDeleteSubjectModal, setShowDeleteSubjectModal] = useState(false);
   const [subjectToDeleteName, setSubjectToDeleteName] = useState<string | null>(null);
 
@@ -198,6 +203,71 @@ const SystemSettings = () => {
   // --- Danger Zone Handler ---
   const handleResetAllData = () => {
       setShowResetModal(true);
+  };
+
+  const handleTermReset = () => {
+    setShowTermResetModal(true);
+  };
+  
+  const deleteCollectionInBatches = async (collectionName: string) => {
+    const batchSize = 100;
+    const collectionRef = collection(firestore, collectionName);
+    const q = query(collectionRef, limit(batchSize));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.size === 0) {
+      return; // Collection is empty
+    }
+
+    const batch = writeBatch(firestore);
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    // Recurse to delete the next batch
+    if (snapshot.size === batchSize) {
+        await deleteCollectionInBatches(collectionName);
+    }
+  };
+
+  const confirmTermReset = async () => {
+      setShowTermResetModal(false);
+      setTermResetting(true);
+      try {
+          const collectionsToDelete = [
+              'attendance',
+              'assessments',
+              'teacher_attendance',
+              'notices',
+              'student_remarks',
+              'admin_remarks',
+              'student_skills',
+              'admin_notifications'
+          ];
+
+          for (const colName of collectionsToDelete) {
+              console.log(`Deleting collection: ${colName}`);
+              await deleteCollectionInBatches(colName);
+          }
+
+          // Reset relevant school config fields
+          const schoolConfigRef = doc(firestore, 'settings', 'schoolConfig');
+          await setDoc(schoolConfigRef, {
+              schoolReopenDate: '',
+              vacationDate: '',
+              nextTermBegins: ''
+          }, { merge: true });
+
+          showToast('Term data reset successfully!', { type: 'success' });
+          // Reload the page to reflect changes
+          window.location.reload();
+      } catch (error: any) {
+          console.error('Term Reset error:', error);
+          showToast(`Term Reset Failed: ${error.message}`, { type: 'error' });
+      } finally {
+          setTermResetting(false);
+      }
   };
 
   const confirmReset = async () => {
@@ -458,13 +528,22 @@ const SystemSettings = () => {
                 <p className="text-red-700 mb-4">
                   This action will permanently delete all data and reset the system to its default state. Use with extreme caution.
                 </p>
-                <button
-                  onClick={handleResetAllData}
-                  disabled={resetting}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-red-400 transition-colors"
-                >
-                  {resetting ? 'Resetting...' : 'Reset All Data'}
-                </button>
+                <div className="flex flex-col space-y-4">
+                    <button
+                      onClick={handleResetAllData}
+                      disabled={resetting}
+                      className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-red-400 transition-colors"
+                    >
+                      {resetting ? 'Resetting...' : 'Reset All Data'}
+                    </button>
+                    <button
+                        onClick={handleTermReset}
+                        disabled={termResetting}
+                        className="bg-amber-600 text-white px-4 py-2 rounded-lg hover:bg-amber-700 disabled:bg-amber-400 transition-colors"
+                    >
+                        {termResetting ? 'Resetting Term...' : 'Term Reset'}
+                    </button>
+                </div>
               </div>
             )}
 
@@ -605,6 +684,42 @@ const SystemSettings = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Term Reset Confirmation Modal */}
+      {showTermResetModal && (
+        <div className="fixed inset-0 bg-slate-900 bg-opacity-30 flex items-center justify-center z-50 transition-opacity duration-300">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4 transform transition-all duration-300 scale-100">
+                <div className="flex items-center mb-4">
+                    <AlertTriangle className="text-amber-600 mr-3" size={32} />
+                    <h2 className="text-xl font-bold text-slate-800">Confirm Term Reset</h2>
+                </div>
+                <div className="text-slate-600 mb-6 space-y-2">
+                    <p>
+                        This will reset all data for the current term, but <strong>keep core school setup</strong>. Are you sure you want to proceed?
+                    </p>
+                    <ul className="list-disc list-inside text-sm space-y-1">
+                        <li><strong>RESET:</strong> Attendance, Assessments, Teacher Attendance, Notices, and all student Remarks.</li>
+                        <li><strong>KEEP:</strong> Student Enrollment, Teacher Accounts, Class Subjects, and Timetables.</li>
+                    </ul>
+                    <p className="font-semibold text-amber-700">This action cannot be undone.</p>
+                </div>
+                <div className="flex justify-end gap-3">
+                    <button
+                        onClick={() => setShowTermResetModal(false)}
+                        className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={confirmTermReset}
+                        className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+                    >
+                        Confirm Term Reset
+                    </button>
+                </div>
+            </div>
         </div>
       )}
 

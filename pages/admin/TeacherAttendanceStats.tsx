@@ -14,18 +14,24 @@ const TeacherAttendanceStats = () => {
         const fetchInitialData = async () => {
             setLoading(true);
             try {
-                // Fetch school config to get the reopen date
+                // Fetch school config to get the reopen date and vacation date
                 const config = await db.getSchoolConfig();
-                const startDate = termStartDate || config.schoolReopenDate || undefined;
                 
+                // Set term start date from config
                 if (config.schoolReopenDate && !termStartDate) {
                     setTermStartDate(config.schoolReopenDate);
                 }
-
-                const data = await db.getTeacherAttendanceAnalytics(
-                    startDate,
-                    vacationDate || undefined
-                );
+                
+                // Set vacation date from config
+                if (config.vacationDate && !vacationDate) {
+                    setVacationDate(config.vacationDate);
+                }
+                
+                // Use dates from state, falling back to config
+                const startDate = termStartDate || config.schoolReopenDate || undefined;
+                const endDate = vacationDate || config.vacationDate || undefined;
+                
+                const data = await db.getTeacherAttendanceAnalytics(startDate, endDate);
                 setAnalytics(data);
             } catch (error) {
                 console.error("Error fetching teacher attendance analytics:", error);

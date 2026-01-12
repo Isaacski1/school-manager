@@ -20,7 +20,9 @@ import {
   CalendarDays,
   BarChart,
   Check,
-  MessageSquare
+  MessageSquare,
+  Edit,
+  FileText
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -169,7 +171,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           ) : (
             <>
               <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
-              <NavItem href="/teacher/attendance" icon={ClipboardCheck} label="Attendance" />
+              <NavItem href="/teacher/my-attendance" icon={ClipboardCheck} label="My Attendance" />
+              <NavItem href="/teacher/attendance" icon={Users} label="Student Attendance" />
               <NavItem href="/teacher/assessment" icon={BookOpen} label="Assessment" />
             </>
           )}

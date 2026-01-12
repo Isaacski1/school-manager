@@ -19,7 +19,12 @@ export interface SchoolConfig {
   headTeacherRemark: string;
   termEndDate: string;
   schoolReopenDate: string;
-  vacationDate?: string; // New field
+  vacationDate: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  nextTermBegins: string;
+  termTransitionProcessed: boolean;
 }
 
 export interface Backup {
@@ -105,6 +110,17 @@ export interface StudentRemark {
   remark: string;
   behaviorTag: 'Excellent' | 'Good' | 'Needs Improvement';
   teacherId: string;
+  dateCreated: string; // YYYY-MM-DD
+}
+
+export interface AdminRemark {
+  id: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  remark: string;
+  adminId: string;
   dateCreated: string; // YYYY-MM-DD
 }
 

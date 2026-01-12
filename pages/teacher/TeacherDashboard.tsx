@@ -6,7 +6,8 @@ import { CLASSES_LIST, CURRENT_TERM, ACADEMIC_YEAR, calculateTotalScore } from '
 import { db } from '../../services/mockDb';
 import { Notice, TimeSlot, ClassTimetable, TeacherAttendanceRecord, Student, StudentRemark, StudentSkills, Assessment, SchoolConfig } from '../../types';
 import { showToast } from '../../services/toast';
-import { ClipboardCheck, BookOpen, Clock, TrendingUp, Bell, X, Sparkles } from 'lucide-react';
+import { ClipboardCheck, BookOpen, Clock, TrendingUp, Bell, X, Sparkles, Calendar, GraduationCap, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import VacationOverlay from './VacationOverlay';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const SKILLS_LIST = ['punctuality', 'neatness', 'conduct', 'attitudeToWork', 'classParticipation', 'homeworkCompletion'];
@@ -93,6 +94,8 @@ const TeacherDashboard = () => {
 
   // School Config State
   const [currentTerm, setCurrentTerm] = useState('Term 1');
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
+  const [isVacation, setIsVacation] = useState(false);
 
   useEffect(() => {
       if (assignedClassIds.length > 0) {
@@ -147,7 +150,9 @@ const TeacherDashboard = () => {
     const [absentToday, setAbsentToday] = useState(0);
     const [classAverage, setClassAverage] = useState(0);
     const [behaviorAverage, setBehaviorAverage] = useState('0.0');
-    const [subjectStandings, setSubjectStandings] = useState<{subject: string, topStudent: string, average: number}[]>([]);
+    const [subjectStandings, setSubjectStandings] = useState<{subject: string, topStudent: string, average: number}[]>(
+        []
+    );
 
     const getWeekDates = (offset = 0) => {
         const now = new Date();
@@ -200,11 +205,31 @@ const TeacherDashboard = () => {
         try {
           const config = await db.getSchoolConfig();
           if (!isMounted) return;
-          
-          const currentDate = new Date();
-          const schoolHasReopened = config.schoolReopenDate && currentDate >= new Date(config.schoolReopenDate);
 
-          if (schoolHasReopened) {
+          const currentDate = new Date();
+          const reopenDateObj = config.schoolReopenDate ? new Date(config.schoolReopenDate + 'T00:00:00') : null;
+          if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
+
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const nextTermBeginsObj = config.nextTermBegins ? new Date(config.nextTermBegins + 'T00:00:00') : null;
+          if (nextTermBeginsObj) nextTermBeginsObj.setHours(0, 0, 0, 0);
+
+          // Don't show missed attendance reminders on the nextTermBegins day
+          if (nextTermBeginsObj && today.getTime() === nextTermBeginsObj.getTime()) {
+            setMissedAttendanceModal({show: false, date: ''});
+            setMissedStudentAttendanceModal({show: false, date: ''});
+            return;
+          }
+
+          const vacationDateObj = config.vacationDate ? new Date(config.vacationDate + 'T00:00:00') : null;
+          if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
+
+          const schoolHasReopened = !reopenDateObj || currentDate >= reopenDateObj;
+          const isOnVacation = vacationDateObj && nextTermBeginsObj && today >= vacationDateObj && today < nextTermBeginsObj;
+
+          if (schoolHasReopened && !isOnVacation) {
             // Find the most recent weekday before today
             const todayDate = new Date();
             const previousWeekday = new Date(todayDate);
@@ -224,13 +249,27 @@ const TeacherDashboard = () => {
             } while (true);
             const previousSchoolDay = `${previousWeekday.getFullYear()}-${String(previousWeekday.getMonth() + 1).padStart(2, '0')}-${String(previousWeekday.getDate()).padStart(2, '0')}`;
             // Only check if the previous school day is on or after the reopen date
-            if (previousSchoolDay >= config.schoolReopenDate) {
+            const previousWeekdayTime = previousWeekday.getTime();
+           const reopenDateTime = reopenDateObj ? reopenDateObj.getTime() : 0;
+
+           if (previousWeekdayTime >= reopenDateTime && reopenDateTime > 0) {
               const attendance = await db.getTeacherAttendance(user?.id || '', previousSchoolDay);
               if (!isMounted) return;
               if (!attendance) {
                 setMissedAttendanceModal({show: true, date: previousSchoolDay});
               } else {
                 setMissedAttendanceModal({show: false, date: ''});
+              }
+
+              // Check for missed student attendance
+              if (selectedClassId) {
+                const studentAttendanceRecord = await db.getAttendance(selectedClassId, previousSchoolDay);
+                if (!isMounted) return;
+                if (!studentAttendanceRecord) {
+                  setMissedStudentAttendanceModal({show: true, date: previousSchoolDay});
+                } else {
+                  setMissedStudentAttendanceModal({show: false, date: ''});
+                }
               }
             }
           }
@@ -244,7 +283,7 @@ const TeacherDashboard = () => {
       return () => {
           isMounted = false;
       };
-  }, [user]);
+  }, [user, selectedClassId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -257,7 +296,71 @@ const TeacherDashboard = () => {
         try {
             config = await db.getSchoolConfig();
             if (isMounted) {
+                setSchoolConfig(config);
                 setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const todayMs = today.getTime();
+
+                let vacationDateMs: number | null = null;
+                if (config.vacationDate) {
+                    const vd = new Date(config.vacationDate + 'T00:00:00');
+                    vd.setHours(0, 0, 0, 0);
+                    vacationDateMs = vd.getTime();
+                }
+
+                let nextTermBeginsMs: number | null = null;
+                if (config.nextTermBegins) {
+                    const nt = new Date(config.nextTermBegins + 'T00:00:00');
+                    nt.setHours(0, 0, 0, 0);
+                    nextTermBeginsMs = nt.getTime();
+                }
+
+                let vacationStartMs: number | null = null;
+                if (vacationDateMs !== null) {
+                    const vdPlusOne = new Date(vacationDateMs);
+                    vdPlusOne.setDate(vdPlusOne.getDate() + 1);
+                    vacationStartMs = vdPlusOne.getTime();
+                }
+
+                let shouldBeVacation = false;
+                if (vacationStartMs !== null && todayMs >= vacationStartMs && nextTermBeginsMs !== null && todayMs < nextTermBeginsMs) {
+                    shouldBeVacation = true;
+                }
+                setIsVacation(shouldBeVacation);
+
+                console.log('--- Vacation Overlay Debug ---');
+                console.log('Current Date (Local Midnight):', today.toLocaleDateString());
+                console.log('Vacation Date (Last School Day):', config.vacationDate);
+                console.log('Vacation Starts (Local Midnight):', vacationStartMs ? new Date(vacationStartMs).toLocaleDateString() : 'N/A');
+                console.log('Next Term Begins (Local Midnight):', config.nextTermBegins);
+                console.log('Is Vacation:', shouldBeVacation);
+                console.log('--- End Debug ---');
+
+                // New Term Transition Logic: Check if nextTermBegins date is reached and reset needed
+                if (config.nextTermBegins && todayMs >= nextTermBeginsMs) {
+                    if (config.termTransitionProcessed === false) {
+                        console.log('New term begins today or has passed. Initiating dashboard reset...');
+                        try {
+                            await db.resetForNewTerm(config);
+                            // Mark the transition as processed to prevent repeated resets on subsequent loads
+                            await db.updateSchoolConfig({ ...config, termTransitionProcessed: true });
+                            showToast('New term started! Dashboard has been reset.', { type: 'success' });
+                            window.location.reload(); // Reload to reflect new term's state
+                        } catch (resetError) {
+                            console.error('Error during new term reset:', resetError);
+                            showToast('Failed to reset dashboard for new term.', { type: 'error' });
+                        }
+                    } else {
+                        // Already processed, no need to change isVacation here
+                    }
+                } else if (config.nextTermBegins && todayMs < nextTermBeginsMs && config.termTransitionProcessed === true) {
+                    // If before nextTermBegins but already marked as processed, reset flag (e.g., if admin changes date backward)
+                    await db.updateSchoolConfig({ ...config, termTransitionProcessed: false });
+                } else {
+                    // No nextTermBegins set, no need to change isVacation here
+                }
             }
         } catch (e) {
             console.error(e);
@@ -268,7 +371,9 @@ const TeacherDashboard = () => {
                 schoolName: 'Noble Care Academy',
                 headTeacherRemark: 'An outstanding performance. The school is proud of you.',
                 termEndDate: '2024-12-20',
-                vacationDate: '2024-12-20'
+                vacationDate: '2024-12-20',
+                nextTermBegins: '', // Ensure nextTermBegins is also included in fallback config
+                termTransitionProcessed: false // Default for fallback
             };
         }
 
@@ -448,6 +553,9 @@ const TeacherDashboard = () => {
 
   return (
     <Layout title="Teacher Dashboard">
+      {isVacation && (
+        <VacationOverlay reopenDate={schoolConfig?.nextTermBegins || 'TBD'} />
+      )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
             <h1 className="text-2xl font-bold text-slate-800">Welcome back, {user?.name}</h1>
@@ -529,6 +637,12 @@ const TeacherDashboard = () => {
                 </Link>
 
                 <button onClick={async () => { 
+                    // Fetch students first if not loaded
+                    let students = classStudents;
+                    if (!students || students.length === 0) {
+                        students = await db.getStudents(selectedClassId);
+                    }
+                    
                     const existingRemarks = await db.getStudentRemarks(selectedClassId);
                     const remarksMap = existingRemarks.reduce((acc, remark) => {
                         acc[remark.studentId] = { remark: remark.remark, behaviorTag: remark.behaviorTag };
@@ -536,33 +650,6 @@ const TeacherDashboard = () => {
                     }, {} as Record<string, { remark: string, behaviorTag: string }>);
                     setRemarksData(remarksMap);
 
-    const existingSkills = await db.getStudentSkills(selectedClassId);
-    const skillsMap = existingSkills.reduce((acc, skill) => {
-        acc[skill.studentId] = {
-            punctuality: skill.punctuality,
-            neatness: skill.neatness,
-            conduct: skill.conduct,
-            attitudeToWork: skill.attitudeToWork,
-            classParticipation: skill.classParticipation,
-            homeworkCompletion: skill.homeworkCompletion,
-        };
-        return acc;
-    }, {} as Record<string, any>);
-    setSkillsData(skillsMap);
-                    setStudentsForRemarks(classStudents); 
-                    setRemarksModalOpen(true); 
-                }} className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-purple-500 transition-all relative overflow-hidden w-full text-left">
-                    <div className="absolute right-0 top-0 w-24 h-24 bg-purple-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                    <div className="relative z-10">
-                        <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-purple-500 transition-colors">
-                            <BookOpen className="w-6 h-6 text-purple-600 group-hover:text-white" />
-                        </div>
-                        <h3 className="font-bold text-lg text-slate-800 mb-1">Write Remarks</h3>
-                        <p className="text-sm text-slate-500">End of term comments & behavior tags.</p>
-                    </div>
-                </button>
-
-                <button onClick={async () => {
                     const existingSkills = await db.getStudentSkills(selectedClassId);
                     const skillsMap = existingSkills.reduce((acc, skill) => {
                         acc[skill.studentId] = {
@@ -576,7 +663,40 @@ const TeacherDashboard = () => {
                         return acc;
                     }, {} as Record<string, any>);
                     setSkillsData(skillsMap);
-                    setStudentsForSkills(classStudents);
+                    setStudentsForRemarks(students || []); 
+                    setRemarksModalOpen(true); 
+                }} className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-purple-500 transition-all relative overflow-hidden w-full text-left">
+                    <div className="absolute right-0 top-0 w-24 h-24 bg-purple-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                    <div className="relative z-10">
+                        <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-purple-500 transition-colors">
+                            <BookOpen className="w-6 h-6 text-purple-600 group-hover:text-white" />
+                        </div>
+                        <h3 className="font-bold text-lg text-slate-800 mb-1">Write Remarks</h3>
+                        <p className="text-sm text-slate-500">End of term comments & behavior tags.</p>
+                    </div>
+                </button>
+
+                <button onClick={async () => {
+                    // Fetch students first if not loaded
+                    let students = classStudents;
+                    if (!students || students.length === 0) {
+                        students = await db.getStudents(selectedClassId);
+                    }
+                    
+                    const existingSkills = await db.getStudentSkills(selectedClassId);
+                    const skillsMap = existingSkills.reduce((acc, skill) => {
+                        acc[skill.studentId] = {
+                            punctuality: skill.punctuality,
+                            neatness: skill.neatness,
+                            conduct: skill.conduct,
+                            attitudeToWork: skill.attitudeToWork,
+                            classParticipation: skill.classParticipation,
+                            homeworkCompletion: skill.homeworkCompletion,
+                        };
+                        return acc;
+                    }, {} as Record<string, any>);
+                    setSkillsData(skillsMap);
+                    setStudentsForSkills(students || []);
                     setSkillsModalOpen(true);
                 }} className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-blue-500 transition-all relative overflow-hidden w-full text-left">
                     <div className="absolute right-0 top-0 w-24 h-24 bg-blue-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
@@ -795,7 +915,13 @@ const TeacherDashboard = () => {
             <div className="p-6 space-y-4">
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <p className="text-sm text-amber-800">
-                  Please mark your attendance for <strong>{new Date(missedAttendanceModal.date).toLocaleDateString()}</strong> to keep your records accurate.
+                  Please mark your attendance for <strong>{(() => {
+                    const parts = missedAttendanceModal.date.split('-');
+                    if (parts.length === 3) {
+                      return `${parts[1]}/${parts[2]}/${parts[0]}`;
+                    }
+                    return missedAttendanceModal.date;
+                  })()}</strong> to keep your records accurate.
                 </p>
               </div>
               <div className="flex gap-3">
@@ -805,15 +931,15 @@ const TeacherDashboard = () => {
                 >
                   Remind Me Later
                 </button>
-                {/* <button
-                  onClick={() => {
-                    setMissedAttendanceModal({show: false, date: ''});
-                    setShowWeeklyAttendance(true);
-                  }}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Mark Attendance
-                </button> */}
+                
+                              <Link
+  to="/teacher/my-attendance"
+  onClick={() => setMissedAttendanceModal({show: false, date: ''})}
+  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-center"
+>
+  Mark Attendance Now
+</Link>
+
               </div>
             </div>
           </div>
@@ -826,8 +952,8 @@ const TeacherDashboard = () => {
           <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="p-6 border-b border-slate-100">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 rounded-full">
-                  <Bell className="text-amber-600" size={20} />
+                <div className="p-2 bg-blue-100 rounded-full">
+                  <Bell className="text-blue-600" size={20} />
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900">Student Attendance Reminder</h3>
@@ -836,9 +962,15 @@ const TeacherDashboard = () => {
               </div>
             </div>
             <div className="p-6 space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <p className="text-sm text-amber-800">
-                  Please mark student attendance for <strong>{assignedClass?.name}</strong> on <strong>{new Date(missedStudentAttendanceModal.date).toLocaleDateString()}</strong> to keep records accurate.
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  Please mark student attendance for <strong>{assignedClass?.name}</strong> on <strong>{(() => {
+                    const parts = missedStudentAttendanceModal.date.split('-');
+                    if (parts.length === 3) {
+                      return `${parts[1]}/${parts[2]}/${parts[0]}`;
+                    }
+                    return missedStudentAttendanceModal.date;
+                  })()}</strong> to keep records accurate.
                 </p>
               </div>
               <div className="flex gap-3">
@@ -851,7 +983,7 @@ const TeacherDashboard = () => {
                 <Link
                   to="/teacher/attendance"
                   onClick={() => setMissedStudentAttendanceModal({show: false, date: ''})}
-                  className="flex-1 px-4 py-2 text-center bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  className="flex-1 px-4 py-2 text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   Take Attendance
                 </Link>

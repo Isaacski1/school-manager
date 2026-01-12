@@ -76,6 +76,9 @@ const TeacherAttendance = () => {
     const reopenObj = schoolConfig?.schoolReopenDate
       ? parseLocalDate(schoolConfig.schoolReopenDate)
       : null;
+    const vacationObj = schoolConfig?.vacationDate
+      ? parseLocalDate(schoolConfig.vacationDate)
+      : null;
 
     let startDate = new Date(todayDate);
 
@@ -83,7 +86,19 @@ const TeacherAttendance = () => {
       startDate = reopenObj;
     }
 
-    return getConsecutiveSchoolDates(startDate, 5);
+    const generatedDates = getConsecutiveSchoolDates(startDate, 10);
+
+    return generatedDates.filter(dateString => {
+      const currentDate = parseLocalDate(dateString);
+      const nextTermObj = schoolConfig?.nextTermBegins ? parseLocalDate(schoolConfig.nextTermBegins) : null;
+
+      // If nextTermBegins is set and currentDate >= nextTermBegins, include for new term
+      if (nextTermObj && currentDate >= nextTermObj) return true;
+
+      const isAfterReopen = !reopenObj || currentDate >= reopenObj;
+      const isBeforeVacation = !vacationObj || currentDate <= vacationObj;
+      return isAfterReopen && isBeforeVacation;
+    }).slice(0, 5);
   }, [todayDate, schoolConfig]);
 
   const getPreviousSchoolDay = (date: Date) => {
@@ -100,9 +115,19 @@ const TeacherAttendance = () => {
     [todayDate]
   );
 
-  const isValidAttendanceDate = (date: string, reopen?: string) => {
-    if (!reopen) return true;
-    return date >= reopen;
+  const isValidAttendanceDate = (dateString: string, reopen?: string, vacation?: string, nextTerm?: string) => {
+    const checkDate = parseLocalDate(dateString);
+    const reopenDateObj = reopen ? parseLocalDate(reopen) : null;
+    const vacationDateObj = vacation ? parseLocalDate(vacation) : null;
+    const nextTermDateObj = nextTerm ? parseLocalDate(nextTerm) : null;
+
+    // If nextTermBegins is set and checkDate >= nextTermBegins, valid for new term
+    if (nextTermDateObj && checkDate >= nextTermDateObj) return true;
+
+    if (reopenDateObj && checkDate < reopenDateObj) return false;
+    if (vacationDateObj && checkDate > vacationDateObj) return false;
+
+    return true;
   };
 
   /* =======================
@@ -127,7 +152,7 @@ const TeacherAttendance = () => {
       const records: Record<string, TeacherAttendanceRecord> = {};
 
       for (const date of weekDates) {
-        if (isValidAttendanceDate(date, schoolConfig?.schoolReopenDate)) {
+        if (isValidAttendanceDate(date, schoolConfig?.schoolReopenDate, schoolConfig?.vacationDate, schoolConfig?.nextTermBegins)) {
           const record = await db.getTeacherAttendance(user.id, date);
           if (record) records[date] = record;
         }
@@ -145,14 +170,18 @@ const TeacherAttendance = () => {
 
     const checkMissed = async () => {
       const reopen = schoolConfig.schoolReopenDate;
-      if (!reopen || previousSchoolDay < reopen) return;
-
+      const vacation = schoolConfig.vacationDate;
+      
+      if (!isValidAttendanceDate(previousSchoolDay, reopen, vacation, schoolConfig.nextTermBegins)) {
+        return;
+      }
+      
       const record = await db.getTeacherAttendance(user.id, previousSchoolDay);
       if (!record) setMissedAttendanceAlert(previousSchoolDay);
     };
 
     checkMissed();
-  }, [user?.id, schoolConfig, previousSchoolDay]);
+  }, [user?.id, schoolConfig, previousSchoolDay, isValidAttendanceDate]);
 
   /* =======================
      Actions
@@ -186,6 +215,21 @@ const TeacherAttendance = () => {
     return todayDate >= parseLocalDate(schoolConfig.schoolReopenDate);
   };
 
+  const isSchoolInSession = (dateString: string) => {
+    const checkDate = parseLocalDate(dateString);
+    const reopenDateObj = schoolConfig?.schoolReopenDate ? parseLocalDate(schoolConfig.schoolReopenDate) : null;
+    const vacationDateObj = schoolConfig?.vacationDate ? parseLocalDate(schoolConfig.vacationDate) : null;
+    const nextTermDateObj = schoolConfig?.nextTermBegins ? parseLocalDate(schoolConfig.nextTermBegins) : null;
+
+    // If nextTermBegins is set and checkDate >= nextTermBegins, valid for new term
+    if (nextTermDateObj && checkDate >= nextTermDateObj) return true;
+
+    if (reopenDateObj && checkDate < reopenDateObj) return false;
+    if (vacationDateObj && checkDate > vacationDateObj) return false;
+
+    return true;
+  };
+
   /* =======================
      UI
   ======================= */
@@ -199,6 +243,22 @@ const TeacherAttendance = () => {
           <div className="mb-4 p-4 bg-amber-50 border rounded">
             <AlertTriangle className="inline mr-2 text-amber-600" />
             You missed attendance for {missedAttendanceAlert}
+            <div className="mt-3 space-x-2">
+              <button
+                onClick={() => handleMarkAttendance(missedAttendanceAlert, 'present')}
+                disabled={saving[missedAttendanceAlert]}
+                className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
+              >
+                Mark Present
+              </button>
+              <button
+                onClick={() => handleMarkAttendance(missedAttendanceAlert, 'absent')}
+                disabled={saving[missedAttendanceAlert]}
+                className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
+              >
+                Mark Absent
+              </button>
+            </div>
           </div>
         )}
 
@@ -209,6 +269,13 @@ const TeacherAttendance = () => {
           </div>
         )}
 
+        {schoolConfig?.vacationDate && todayDate < parseLocalDate(schoolConfig.vacationDate) && (
+          <div className="mb-4 p-4 bg-amber-50 border rounded">
+            <Calendar className="inline mr-2 text-amber-600" />
+            School will vacate on: {schoolConfig.vacationDate}
+          </div>
+        )}
+
         <div className="bg-white border rounded">
           {loading ? (
             <div className="p-6 text-center">Loading...</div>
@@ -216,6 +283,9 @@ const TeacherAttendance = () => {
             weekDates.map(date => {
               const record = attendanceRecords[date];
               const isFuture = date > todayString;
+              // Only show "After Vacation" if school hasn't reopened yet
+              const isAfterVacation = schoolConfig?.vacationDate && date > schoolConfig.vacationDate && 
+                (!schoolConfig?.nextTermBegins || todayDate < parseLocalDate(schoolConfig.nextTermBegins));
 
               return (
                 <div key={date} className="p-4 border-b flex justify-between items-center">
@@ -224,6 +294,10 @@ const TeacherAttendance = () => {
                   {record ? (
                     <span className={record.status === 'present' ? 'text-green-600' : 'text-red-600'}>
                       {record.status.toUpperCase()}
+                    </span>
+                  ) : !isValidAttendanceDate(date, schoolConfig?.schoolReopenDate, schoolConfig?.vacationDate, schoolConfig?.nextTermBegins) ? (
+                    <span className="text-amber-600">
+                      {parseLocalDate(date) < parseLocalDate(schoolConfig?.schoolReopenDate || '') ? 'Before Reopen' : 'After Vacation'}
                     </span>
                   ) : !isFuture ? (
                     <div className="space-x-2">
