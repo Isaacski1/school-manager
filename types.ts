@@ -1,7 +1,6 @@
-
 export enum UserRole {
-  ADMIN = 'ADMIN',
-  TEACHER = 'TEACHER'
+  ADMIN = "ADMIN",
+  TEACHER = "TEACHER",
 }
 
 export interface User {
@@ -32,7 +31,8 @@ export interface Backup {
   timestamp: number; // Unix timestamp
   term: string;
   academicYear: string;
-  data?: { // Make data optional
+  data?: {
+    // Make data optional
     students: Student[];
     attendanceRecords: AttendanceRecord[];
     teacherAttendanceRecords: TeacherAttendanceRecord[];
@@ -54,13 +54,13 @@ export interface ClassSubjectConfig {
 export interface ClassRoom {
   id: string;
   name: string; // e.g., "Primary 4", "JHS 1"
-  level: 'NURSERY' | 'KG' | 'PRIMARY' | 'JHS';
+  level: "NURSERY" | "KG" | "PRIMARY" | "JHS";
 }
 
 export interface Student {
   id: string;
   name: string;
-  gender: 'Male' | 'Female';
+  gender: "Male" | "Female";
   dob: string;
   classId: string;
   guardianName: string;
@@ -78,7 +78,7 @@ export interface TeacherAttendanceRecord {
   id: string;
   date: string; // YYYY-MM-DD
   teacherId: string;
-  status: 'present' | 'absent';
+  status: "present" | "absent";
 }
 
 export interface Assessment {
@@ -108,7 +108,7 @@ export interface StudentRemark {
   term: 1 | 2 | 3;
   academicYear: string;
   remark: string;
-  behaviorTag: 'Excellent' | 'Good' | 'Needs Improvement';
+  behaviorTag: "Excellent" | "Good" | "Needs Improvement" | "";
   teacherId: string;
   dateCreated: string; // YYYY-MM-DD
 }
@@ -125,24 +125,24 @@ export interface AdminRemark {
 }
 
 export interface StudentSkills {
-    id: string;
-    studentId: string;
-    classId: string;
-    term: 1 | 2 | 3;
-    academicYear: string;
-    punctuality: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
-    neatness: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
-    conduct: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
-    attitudeToWork: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
-    classParticipation: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
-    homeworkCompletion: 'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
+  id: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  punctuality: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  neatness: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  conduct: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  attitudeToWork: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  classParticipation: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  homeworkCompletion: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
 }
 
 export interface Notice {
   id: string;
   message: string;
   date: string;
-  type: 'info' | 'urgent';
+  type: "info" | "urgent";
 }
 
 export interface SystemNotification {
@@ -150,15 +150,15 @@ export interface SystemNotification {
   message: string;
   createdAt: number; // Timestamp
   isRead: boolean;
-  type: 'attendance' | 'assessment' | 'system';
+  type: "attendance" | "assessment" | "system";
 }
 
 export interface TimeSlot {
   id: string;
   startTime: string; // e.g. "08:00"
-  endTime: string;   // e.g. "09:00"
-  subject: string;   // e.g. "Mathematics" or "Break"
-  type: 'lesson' | 'break' | 'worship' | 'closing' | 'assembly' | 'arrival';
+  endTime: string; // e.g. "09:00"
+  subject: string; // e.g. "Mathematics" or "Break"
+  type: "lesson" | "break" | "worship" | "closing" | "assembly" | "arrival";
 }
 
 export interface ClassTimetable {
@@ -175,7 +175,7 @@ export interface MonthlyTeacherAttendance {
   presentDays: number;
   absentDays: number;
   attendanceRate: number;
-  trend: 'improving' | 'declining' | 'stable';
+  trend: "improving" | "declining" | "stable";
 }
 
 export interface TeacherAttendanceAnalytics {

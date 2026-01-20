@@ -1,20 +1,26 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import Layout from '../../components/Layout';
-import { useAuth } from '../../context/AuthContext';
-import { db } from '../../services/mockDb';
-import { TeacherAttendanceRecord } from '../../types';
-import { Calendar, CheckCircle, XCircle, AlertTriangle, Clock } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from "react";
+import Layout from "../../components/Layout";
+import { useAuth } from "../../context/AuthContext";
+import { db } from "../../services/mockDb";
+import { TeacherAttendanceRecord } from "../../types";
+import {
+  Calendar,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Clock,
+} from "lucide-react";
 
 /* =======================
    ✅ FIX: MOVE THIS TO TOP
 ======================= */
 const parseLocalDate = (dateString: string): Date => {
-  const parts = dateString.split('-');
+  const parts = dateString.split("-");
   if (parts.length === 3) {
     const date = new Date(
       parseInt(parts[0]),
       parseInt(parts[1]) - 1,
-      parseInt(parts[2])
+      parseInt(parts[2]),
     );
     if (!isNaN(date.getTime())) return date;
   }
@@ -22,7 +28,7 @@ const parseLocalDate = (dateString: string): Date => {
   const fallback = new Date(dateString);
   if (!isNaN(fallback.getTime())) return fallback;
 
-  console.error('Invalid date string:', dateString);
+  console.error("Invalid date string:", dateString);
   return new Date();
 };
 /* ======================= */
@@ -30,19 +36,23 @@ const parseLocalDate = (dateString: string): Date => {
 const TeacherAttendance = () => {
   const { user } = useAuth();
 
-  const [attendanceRecords, setAttendanceRecords] = useState<Record<string, TeacherAttendanceRecord>>({});
+  const [attendanceRecords, setAttendanceRecords] = useState<
+    Record<string, TeacherAttendanceRecord>
+  >({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [schoolConfig, setSchoolConfig] = useState<any>(null);
-  const [missedAttendanceAlert, setMissedAttendanceAlert] = useState<string | null>(null);
+  const [missedAttendanceAlert, setMissedAttendanceAlert] = useState<
+    string | null
+  >(null);
 
   /* =======================
      Dates
   ======================= */
   const toYYYYMMDD = (date: Date) => {
     const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   };
 
@@ -53,12 +63,13 @@ const TeacherAttendance = () => {
   };
 
   const todayDate = useMemo(() => getLocalTodayDate(), []);
-  const todayString = useMemo(
-    () => toYYYYMMDD(todayDate),
-    [todayDate]
-  );
+  const todayString = useMemo(() => toYYYYMMDD(todayDate), [todayDate]);
 
-  const getConsecutiveSchoolDates = (startDate: Date, numDays: number) => {
+  const getConsecutiveSchoolDates = (
+    startDate: Date,
+    numDays: number,
+    backward: boolean = false,
+  ) => {
     const dates: string[] = [];
     let current = new Date(startDate);
     current.setHours(0, 0, 0, 0);
@@ -67,7 +78,7 @@ const TeacherAttendance = () => {
       if (current.getDay() !== 0 && current.getDay() !== 6) {
         dates.push(toYYYYMMDD(current));
       }
-      current.setDate(current.getDate() + 1);
+      current.setDate(current.getDate() + (backward ? -1 : 1));
     }
     return dates;
   };
@@ -80,25 +91,25 @@ const TeacherAttendance = () => {
       ? parseLocalDate(schoolConfig.vacationDate)
       : null;
 
-    let startDate = new Date(todayDate);
+    // Start from today and go backward to show past dates for marking missed attendance
+    const startDate = new Date(todayDate);
+    const generatedDates = getConsecutiveSchoolDates(startDate, 20, true); // Go backward 20 school days
 
-    if (reopenObj && todayDate < reopenObj) {
-      startDate = reopenObj;
-    }
+    return generatedDates
+      .filter((dateString) => {
+        const currentDate = parseLocalDate(dateString);
+        const nextTermObj = schoolConfig?.nextTermBegins
+          ? parseLocalDate(schoolConfig.nextTermBegins)
+          : null;
 
-    const generatedDates = getConsecutiveSchoolDates(startDate, 10);
+        // If nextTermBegins is set and currentDate >= nextTermBegins, include for new term
+        if (nextTermObj && currentDate >= nextTermObj) return true;
 
-    return generatedDates.filter(dateString => {
-      const currentDate = parseLocalDate(dateString);
-      const nextTermObj = schoolConfig?.nextTermBegins ? parseLocalDate(schoolConfig.nextTermBegins) : null;
-
-      // If nextTermBegins is set and currentDate >= nextTermBegins, include for new term
-      if (nextTermObj && currentDate >= nextTermObj) return true;
-
-      const isAfterReopen = !reopenObj || currentDate >= reopenObj;
-      const isBeforeVacation = !vacationObj || currentDate <= vacationObj;
-      return isAfterReopen && isBeforeVacation;
-    }).slice(0, 5);
+        const isAfterReopen = !reopenObj || currentDate >= reopenObj;
+        const isBeforeVacation = !vacationObj || currentDate <= vacationObj;
+        return isAfterReopen && isBeforeVacation;
+      })
+      .sort(); // Sort dates chronologically
   }, [todayDate, schoolConfig]);
 
   const getPreviousSchoolDay = (date: Date) => {
@@ -112,10 +123,15 @@ const TeacherAttendance = () => {
 
   const previousSchoolDay = useMemo(
     () => getPreviousSchoolDay(todayDate),
-    [todayDate]
+    [todayDate],
   );
 
-  const isValidAttendanceDate = (dateString: string, reopen?: string, vacation?: string, nextTerm?: string) => {
+  const isValidAttendanceDate = (
+    dateString: string,
+    reopen?: string,
+    vacation?: string,
+    nextTerm?: string,
+  ) => {
     const checkDate = parseLocalDate(dateString);
     const reopenDateObj = reopen ? parseLocalDate(reopen) : null;
     const vacationDateObj = vacation ? parseLocalDate(vacation) : null;
@@ -152,7 +168,14 @@ const TeacherAttendance = () => {
       const records: Record<string, TeacherAttendanceRecord> = {};
 
       for (const date of weekDates) {
-        if (isValidAttendanceDate(date, schoolConfig?.schoolReopenDate, schoolConfig?.vacationDate, schoolConfig?.nextTermBegins)) {
+        if (
+          isValidAttendanceDate(
+            date,
+            schoolConfig?.schoolReopenDate,
+            schoolConfig?.vacationDate,
+            schoolConfig?.nextTermBegins,
+          )
+        ) {
           const record = await db.getTeacherAttendance(user.id, date);
           if (record) records[date] = record;
         }
@@ -171,11 +194,18 @@ const TeacherAttendance = () => {
     const checkMissed = async () => {
       const reopen = schoolConfig.schoolReopenDate;
       const vacation = schoolConfig.vacationDate;
-      
-      if (!isValidAttendanceDate(previousSchoolDay, reopen, vacation, schoolConfig.nextTermBegins)) {
+
+      if (
+        !isValidAttendanceDate(
+          previousSchoolDay,
+          reopen,
+          vacation,
+          schoolConfig.nextTermBegins,
+        )
+      ) {
         return;
       }
-      
+
       const record = await db.getTeacherAttendance(user.id, previousSchoolDay);
       if (!record) setMissedAttendanceAlert(previousSchoolDay);
     };
@@ -186,28 +216,31 @@ const TeacherAttendance = () => {
   /* =======================
      Actions
   ======================= */
-  const handleMarkAttendance = async (date: string, status: 'present' | 'absent') => {
+  const handleMarkAttendance = async (
+    date: string,
+    status: "present" | "absent",
+  ) => {
     if (!user?.id) return;
 
-    setSaving(s => ({ ...s, [date]: true }));
+    setSaving((s) => ({ ...s, [date]: true }));
 
     const record: TeacherAttendanceRecord = {
       id: `${user.id}_${date}`,
       date,
       teacherId: user.id,
-      status
+      status,
     };
 
     await db.saveTeacherAttendance(record);
-    setAttendanceRecords(prev => ({ ...prev, [date]: record }));
+    setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
     setMissedAttendanceAlert(null);
 
     await db.addSystemNotification(
       `${user.name} marked ${status} for ${date}`,
-      'attendance'
+      "attendance",
     );
 
-    setSaving(s => ({ ...s, [date]: false }));
+    setSaving((s) => ({ ...s, [date]: false }));
   };
 
   const isSchoolOpen = () => {
@@ -217,9 +250,15 @@ const TeacherAttendance = () => {
 
   const isSchoolInSession = (dateString: string) => {
     const checkDate = parseLocalDate(dateString);
-    const reopenDateObj = schoolConfig?.schoolReopenDate ? parseLocalDate(schoolConfig.schoolReopenDate) : null;
-    const vacationDateObj = schoolConfig?.vacationDate ? parseLocalDate(schoolConfig.vacationDate) : null;
-    const nextTermDateObj = schoolConfig?.nextTermBegins ? parseLocalDate(schoolConfig.nextTermBegins) : null;
+    const reopenDateObj = schoolConfig?.schoolReopenDate
+      ? parseLocalDate(schoolConfig.schoolReopenDate)
+      : null;
+    const vacationDateObj = schoolConfig?.vacationDate
+      ? parseLocalDate(schoolConfig.vacationDate)
+      : null;
+    const nextTermDateObj = schoolConfig?.nextTermBegins
+      ? parseLocalDate(schoolConfig.nextTermBegins)
+      : null;
 
     // If nextTermBegins is set and checkDate >= nextTermBegins, valid for new term
     if (nextTermDateObj && checkDate >= nextTermDateObj) return true;
@@ -236,7 +275,6 @@ const TeacherAttendance = () => {
   return (
     <Layout title="Daily Attendance">
       <div className="max-w-4xl mx-auto">
-
         <h1 className="text-3xl font-bold mb-6">Daily Attendance</h1>
 
         {missedAttendanceAlert && (
@@ -245,14 +283,18 @@ const TeacherAttendance = () => {
             You missed attendance for {missedAttendanceAlert}
             <div className="mt-3 space-x-2">
               <button
-                onClick={() => handleMarkAttendance(missedAttendanceAlert, 'present')}
+                onClick={() =>
+                  handleMarkAttendance(missedAttendanceAlert, "present")
+                }
                 disabled={saving[missedAttendanceAlert]}
                 className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
               >
                 Mark Present
               </button>
               <button
-                onClick={() => handleMarkAttendance(missedAttendanceAlert, 'absent')}
+                onClick={() =>
+                  handleMarkAttendance(missedAttendanceAlert, "absent")
+                }
                 disabled={saving[missedAttendanceAlert]}
                 className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
               >
@@ -269,46 +311,67 @@ const TeacherAttendance = () => {
           </div>
         )}
 
-        {schoolConfig?.vacationDate && todayDate < parseLocalDate(schoolConfig.vacationDate) && (
-          <div className="mb-4 p-4 bg-amber-50 border rounded">
-            <Calendar className="inline mr-2 text-amber-600" />
-            School will vacate on: {schoolConfig.vacationDate}
-          </div>
-        )}
+        {schoolConfig?.vacationDate &&
+          todayDate < parseLocalDate(schoolConfig.vacationDate) && (
+            <div className="mb-4 p-4 bg-amber-50 border rounded">
+              <Calendar className="inline mr-2 text-amber-600" />
+              School will vacate on: {schoolConfig.vacationDate}
+            </div>
+          )}
 
         <div className="bg-white border rounded">
           {loading ? (
             <div className="p-6 text-center">Loading...</div>
           ) : (
-            weekDates.map(date => {
+            weekDates.map((date) => {
               const record = attendanceRecords[date];
               const isFuture = date > todayString;
               // Only show "After Vacation" if school hasn't reopened yet
-              const isAfterVacation = schoolConfig?.vacationDate && date > schoolConfig.vacationDate && 
-                (!schoolConfig?.nextTermBegins || todayDate < parseLocalDate(schoolConfig.nextTermBegins));
+              const isAfterVacation =
+                schoolConfig?.vacationDate &&
+                date > schoolConfig.vacationDate &&
+                (!schoolConfig?.nextTermBegins ||
+                  todayDate < parseLocalDate(schoolConfig.nextTermBegins));
 
               return (
-                <div key={date} className="p-4 border-b flex justify-between items-center">
+                <div
+                  key={date}
+                  className="p-4 border-b flex justify-between items-center"
+                >
                   <span>{date}</span>
 
                   {record ? (
-                    <span className={record.status === 'present' ? 'text-green-600' : 'text-red-600'}>
+                    <span
+                      className={
+                        record.status === "present"
+                          ? "text-green-600"
+                          : "text-red-600"
+                      }
+                    >
                       {record.status.toUpperCase()}
                     </span>
-                  ) : !isValidAttendanceDate(date, schoolConfig?.schoolReopenDate, schoolConfig?.vacationDate, schoolConfig?.nextTermBegins) ? (
+                  ) : !isValidAttendanceDate(
+                      date,
+                      schoolConfig?.schoolReopenDate,
+                      schoolConfig?.vacationDate,
+                      schoolConfig?.nextTermBegins,
+                    ) ? (
                     <span className="text-amber-600">
-                      {parseLocalDate(date) < parseLocalDate(schoolConfig?.schoolReopenDate || '') ? 'Before Reopen' : 'After Vacation'}
+                      {parseLocalDate(date) <
+                      parseLocalDate(schoolConfig?.schoolReopenDate || "")
+                        ? "Before Reopen"
+                        : "After Vacation"}
                     </span>
                   ) : !isFuture ? (
                     <div className="space-x-2">
                       <button
-                        onClick={() => handleMarkAttendance(date, 'present')}
+                        onClick={() => handleMarkAttendance(date, "present")}
                         className="px-3 py-1 bg-green-600 text-white rounded"
                       >
                         Present
                       </button>
                       <button
-                        onClick={() => handleMarkAttendance(date, 'absent')}
+                        onClick={() => handleMarkAttendance(date, "absent")}
                         className="px-3 py-1 bg-red-600 text-white rounded"
                       >
                         Absent
@@ -322,7 +385,6 @@ const TeacherAttendance = () => {
             })
           )}
         </div>
-
       </div>
     </Layout>
   );

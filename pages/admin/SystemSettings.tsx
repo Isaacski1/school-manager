@@ -6,7 +6,7 @@ import { Notice, ClassRoom, SchoolConfig } from '../../types';
 import { CLASSES_LIST, nurserySubjects, kgSubjects, primarySubjects, jhsSubjects } from '../../constants';
 import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar, AlertTriangle, History } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, deleteDoc, doc, setDoc, writeBatch, query, limit } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, setDoc, writeBatch, query, limit, getDocsFromServer } from 'firebase/firestore';
 import { firestore } from '../../services/firebase';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -210,25 +210,10 @@ const SystemSettings = () => {
   };
   
   const deleteCollectionInBatches = async (collectionName: string) => {
-    const batchSize = 100;
     const collectionRef = collection(firestore, collectionName);
-    const q = query(collectionRef, limit(batchSize));
-    const snapshot = await getDocs(q);
-
-    if (snapshot.size === 0) {
-      return; // Collection is empty
-    }
-
-    const batch = writeBatch(firestore);
-    snapshot.docs.forEach(doc => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-
-    // Recurse to delete the next batch
-    if (snapshot.size === batchSize) {
-        await deleteCollectionInBatches(collectionName);
-    }
+    const snapshot = await getDocs(collectionRef);
+    const deletions = snapshot.docs.map(doc => deleteDoc(doc.ref));
+    await Promise.all(deletions);
   };
 
   const confirmTermReset = async () => {
