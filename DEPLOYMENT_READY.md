@@ -323,5 +323,5 @@ All requirements completed. Cloud Functions tested for syntax. UI components int
 ---
 
 _Generated: January 28, 2026_
-_System: Noble Care Academy - Teacher Provisioning Fix_
+_System: School Manager GH - Teacher Provisioning Fix_
 _Version: 1.0 Complete_

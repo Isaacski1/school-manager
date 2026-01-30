@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick Start Script for Local Development
 
-echo "🚀 Noble Care Academy - Backend + Frontend Setup"
+echo "🚀 School Manager GH - Backend + Frontend Setup"
 echo "================================================"
 
 # Check if .env exists

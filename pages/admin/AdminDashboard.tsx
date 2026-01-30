@@ -1647,7 +1647,7 @@ const AdminDashboard = () => {
 
           <div className="mt-8 text-center space-y-2">
             <h3 className="text-lg font-bold text-slate-800">
-              Noble Care Academy
+              School Manager GH
             </h3>
             <div className="flex items-center justify-center space-x-1">
               <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>

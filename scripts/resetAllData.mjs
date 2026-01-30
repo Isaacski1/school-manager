@@ -63,7 +63,7 @@ async function resetSettings() {
 
   // Reset school config
   await setDoc(doc(firestore, "settings", "schoolConfig"), {
-    schoolName: "Noble Care Academy",
+    schoolName: "School Manager GH",
     academicYear: "2024-2025",
     currentTerm: "Term 1",
   });

@@ -488,7 +488,7 @@ const TeacherDashboard = () => {
           currentTerm: `Term ${CURRENT_TERM}`,
           academicYear: ACADEMIC_YEAR,
           schoolReopenDate: "",
-          schoolName: "Noble Care Academy",
+          schoolName: "School Manager GH",
           headTeacherRemark:
             "An outstanding performance. The school is proud of you.",
           termEndDate: "2024-12-20",

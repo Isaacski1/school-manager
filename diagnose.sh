@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick Diagnostic Script for "Failed to fetch" Error
 
-echo "🔍 Noble Care Academy - Backend Connectivity Diagnostic"
+echo "🔍 School Manager GH - Backend Connectivity Diagnostic"
 echo "========================================================"
 echo ""
 

@@ -1,7 +1,7 @@
 {
   "name": "noble-care-academy-backend",
   "version": "1.0.0",
-  "description": "Backend for Noble Care Academy SMS",
+  "description": "Backend for School Manager GH SMS",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

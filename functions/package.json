@@ -1,6 +1,6 @@
 {
   "name": "functions",
-  "description": "Cloud Functions for Noble Care Academy",
+  "description": "Cloud Functions for School Manager GH",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",

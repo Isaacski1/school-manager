@@ -263,7 +263,7 @@ const ReportCard = () => {
 
       const data = {
         schoolInfo: {
-          name: school?.name || schoolConfig.schoolName || "Noble Care Academy",
+          name: school?.name || schoolConfig.schoolName || "School Manager GH",
           logoUrl: finalLogo, // ✅ PDF-safe logo
           address: school?.address || schoolConfig.address || "",
           phone: school?.phone || schoolConfig.phone || "",

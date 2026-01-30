@@ -2,7 +2,7 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Noble Care Academy - School Management System
+# School Manager GH - School Management System
 
 A multi-tenant SaaS School Management System built with React (Vite), Firebase (Auth + Firestore), supporting multiple schools with Super Admin oversight.
 

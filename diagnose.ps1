@@ -1,7 +1,7 @@
 # Quick Diagnostic Script for "Failed to fetch" Error (Windows PowerShell)
 # Usage: .\diagnose.ps1
 
-Write-Host "🔍 Noble Care Academy - Backend Connectivity Diagnostic" -ForegroundColor Cyan
+Write-Host "🔍 School Manager GH - Backend Connectivity Diagnostic" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host ""
 
