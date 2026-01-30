@@ -6,23 +6,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
 
   return {
-    // ✅ Dev server config (unchanged)
     server: {
       port: 3000,
       host: "0.0.0.0",
     },
 
-    // ✅ Plugins
     plugins: [react()],
 
-    // ✅ Module resolution aliases
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "."),
       },
     },
 
-    // ✅ Fix blank page on GitHub Pages
-    base: "/school-manager-gh/", // <-- ADD THIS LINE
+    // ✅ Fix blank page on GitHub Pages (repo name in your URL)
+    base: "/school-manager/",
   };
 });
