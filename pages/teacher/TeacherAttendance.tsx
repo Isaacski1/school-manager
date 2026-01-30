@@ -35,6 +35,7 @@ const parseLocalDate = (dateString: string): Date => {
 
 const TeacherAttendance = () => {
   const { user } = useAuth();
+  const schoolId = user?.schoolId || null;
 
   const [attendanceRecords, setAttendanceRecords] = useState<
     Record<string, TeacherAttendanceRecord>
@@ -151,14 +152,18 @@ const TeacherAttendance = () => {
   ======================= */
   useEffect(() => {
     const fetchConfig = async () => {
-      const config = await db.getSchoolConfig();
+      if (!schoolId) {
+        setSchoolConfig(null);
+        return;
+      }
+      const config = await db.getSchoolConfig(schoolId);
       setSchoolConfig(config);
     };
     fetchConfig();
-  }, []);
+  }, [schoolId]);
 
   useEffect(() => {
-    if (!user?.id || weekDates.length === 0) {
+    if (!user?.id || !schoolId || weekDates.length === 0) {
       setLoading(false);
       return;
     }
@@ -176,7 +181,7 @@ const TeacherAttendance = () => {
             schoolConfig?.nextTermBegins,
           )
         ) {
-          const record = await db.getTeacherAttendance(user.id, date);
+          const record = await db.getTeacherAttendance(schoolId, user.id, date);
           if (record) records[date] = record;
         }
       }
@@ -186,10 +191,10 @@ const TeacherAttendance = () => {
     };
 
     fetchAttendance();
-  }, [user?.id, weekDates, schoolConfig?.schoolReopenDate]);
+  }, [user?.id, weekDates, schoolConfig?.schoolReopenDate, schoolId]);
 
   useEffect(() => {
-    if (!user?.id || !schoolConfig) return;
+    if (!user?.id || !schoolId || !schoolConfig) return;
 
     const checkMissed = async () => {
       const reopen = schoolConfig.schoolReopenDate;
@@ -206,7 +211,11 @@ const TeacherAttendance = () => {
         return;
       }
 
-      const record = await db.getTeacherAttendance(user.id, previousSchoolDay);
+      const record = await db.getTeacherAttendance(
+        schoolId,
+        user.id,
+        previousSchoolDay,
+      );
       if (!record) setMissedAttendanceAlert(previousSchoolDay);
     };
 
@@ -220,14 +229,15 @@ const TeacherAttendance = () => {
     date: string,
     status: "present" | "absent",
   ) => {
-    if (!user?.id) return;
+    if (!user?.id || !schoolId) return;
 
     setSaving((s) => ({ ...s, [date]: true }));
 
     const record: TeacherAttendanceRecord = {
-      id: `${user.id}_${date}`,
+      id: `${schoolId}_${user.id}_${date}`,
       date,
       teacherId: user.id,
+      schoolId: schoolId || schoolConfig?.schoolId || "",
       status,
     };
 
@@ -236,8 +246,9 @@ const TeacherAttendance = () => {
     setMissedAttendanceAlert(null);
 
     await db.addSystemNotification(
-      `${user.name} marked ${status} for ${date}`,
+      `${user?.fullName || "Teacher"} marked ${status} for ${date}`,
       "attendance",
+      schoolId,
     );
 
     setSaving((s) => ({ ...s, [date]: false }));
@@ -305,8 +316,8 @@ const TeacherAttendance = () => {
         )}
 
         {!isSchoolOpen() && (
-          <div className="mb-4 p-4 bg-blue-50 border rounded">
-            <Clock className="inline mr-2 text-blue-600" />
+          <div className="mb-4 p-4 bg-red-50 border rounded">
+            <Clock className="inline mr-2 text-red-600" />
             School not yet open
           </div>
         )}

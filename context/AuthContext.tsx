@@ -1,12 +1,20 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, UserRole } from '../types';
-import { auth, firestore } from '../services/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from "react";
+import { User, UserRole } from "../types";
+import { auth, firestore } from "../services/firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { loadUserProfile } from "../services/authProfile";
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  authLoading: boolean;
   error: string | null;
   logout: () => void;
   isAuthenticated: boolean;
@@ -14,9 +22,12 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // The UID provided by the user to be the Super Admin
@@ -25,74 +36,80 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     // Listen for Firebase Auth changes
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      
+      setAuthLoading(true);
+
       if (firebaseUser) {
         // Reset error on new attempt
         setError(null);
+        setLoading(true);
+
         try {
-          // Fetch custom user profile (Role, Class Assignments) from Firestore
-          const userDocRef = doc(firestore, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            setUser({
-              id: firebaseUser.uid,
-              name: userData.name || firebaseUser.displayName || 'User',
-              email: firebaseUser.email || '',
-              role: userData.role as UserRole,
-              assignedClassIds: userData.assignedClassIds || []
-            });
-          } else {
-            // New User Setup
-            console.log("Setting up new user profile in Firestore...");
-            
-            // Check if this is the specific Admin UID OR the specific email
-            const isTargetAdmin = firebaseUser.uid === ADMIN_UID;
-            const isEmailAdmin = firebaseUser.email === 'admin@school.com' || firebaseUser.email === 'isaacskikrams@gmail.com';
-            
-            const role = (isTargetAdmin || isEmailAdmin) ? UserRole.ADMIN : UserRole.TEACHER;
-
-            const newUser: User = {
-                id: firebaseUser.uid,
-                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'New User',
-                email: firebaseUser.email || '',
-                role: role,
-                assignedClassIds: []
-            };
-            
-            // Create the doc so next time it exists
-            await setDoc(userDocRef, {
-                name: newUser.name,
-                email: newUser.email,
-                role: newUser.role,
-                assignedClassIds: []
-            });
-
-            setUser(newUser);
-          }
+          const userProfile = await loadUserProfile(firebaseUser);
+          setUser(userProfile);
         } catch (err: any) {
           console.error("Error fetching user profile:", err);
           setUser(null);
-          
+
           // Improved Error Handling
           const errorMessage = err.message || err.toString();
-          
-          if (errorMessage.includes("Cloud Firestore API has not been used")) {
-             setError("CRITICAL ERROR: The Firestore Database is not enabled. Go to Firebase Console > Build > Firestore Database > Create Database.");
-          } else if (errorMessage.includes("permission-denied") || errorMessage.includes("Missing or insufficient permissions")) {
-             setError("PERMISSION DENIED: Database access blocked. Go to Firebase Console > Firestore Database > Rules and change 'allow read, write: if false;' to 'allow read, write: if true;' (for testing).");
-          } else if (errorMessage.includes("client is offline") || errorMessage.includes("offline")) {
-             setError("Network Error: Could not connect to the database. Check your internet connection.");
+
+          if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
+            setError(
+              "Your account is not set up yet. Please contact your administrator for access.",
+            );
+            // Sign out the user
+            await signOut(auth);
+          } else if (errorMessage === "ACCOUNT_INACTIVE") {
+            setError(
+              "Your account has been deactivated. Please contact your administrator for access.",
+            );
+            // Sign out the user
+            await signOut(auth);
+          } else if (errorMessage === "SCHOOL_NOT_FOUND") {
+            setError(
+              "Your school could not be found. Please contact your administrator.",
+            );
+            // Sign out the user
+            await signOut(auth);
+          } else if (errorMessage === "SCHOOL_INACTIVE") {
+            setError(
+              "Your school has been deactivated. Please contact your administrator.",
+            );
+            // Sign out the user
+            await signOut(auth);
+          } else if (
+            errorMessage.includes("Cloud Firestore API has not been used")
+          ) {
+            setError(
+              "CRITICAL ERROR: The Firestore Database is not enabled. Go to Firebase Console > Build > Firestore Database > Create Database.",
+            );
+          } else if (
+            errorMessage.includes("permission-denied") ||
+            errorMessage.includes("Missing or insufficient permissions")
+          ) {
+            setError(
+              "PERMISSION DENIED: Database access blocked. Go to Firebase Console > Firestore Database > Rules and change 'allow read, write: if false;' to 'allow read, write: if true;' (for testing).",
+            );
+          } else if (
+            errorMessage.includes("client is offline") ||
+            errorMessage.includes("offline")
+          ) {
+            setError(
+              "Network Error: Could not connect to the database. Check your internet connection.",
+            );
           } else {
-             setError("Failed to load user profile. Please try refreshing the page. Error: " + errorMessage);
+            setError(
+              "Failed to load user profile. Please try refreshing the page. Error: " +
+                errorMessage,
+            );
           }
         }
       } else {
         setUser(null);
         setError(null);
       }
+
+      setAuthLoading(false);
       setLoading(false);
     });
 
@@ -110,7 +127,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        authLoading,
+        error,
+        logout,
+        isAuthenticated: !!user,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -118,6 +144,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { CLASSES_LIST } from "../../constants";
 import { db } from "../../services/mockDb";
@@ -14,10 +14,14 @@ import {
   Users,
 } from "lucide-react";
 import { showToast } from "../../services/toast";
+import { useAuth } from "../../context/AuthContext";
+import { requireSchoolId } from "../../services/authProfile";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
 const Timetable = () => {
+  const { user } = useAuth();
+  const schoolId = requireSchoolId(user);
   const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
   const [timetable, setTimetable] = useState<Record<string, TimeSlot[]>>({});
   const [loading, setLoading] = useState(false);
@@ -37,7 +41,7 @@ const Timetable = () => {
       setLoading(true);
 
       // 1. Fetch subjects from system settings for selected class
-      const currentSubjects = await db.getSubjects(selectedClass);
+      const currentSubjects = await db.getSubjects(schoolId, selectedClass);
 
       setSubjects(currentSubjects);
       if (currentSubjects.length > 0) {
@@ -51,7 +55,7 @@ const Timetable = () => {
       }
 
       // 2. Fetch timetable
-      const data = await db.getTimetable(selectedClass);
+      const data = await db.getTimetable(schoolId, selectedClass);
 
       const schedule = data?.schedule || {};
       DAYS.forEach((day) => {
@@ -77,6 +81,7 @@ const Timetable = () => {
       // If changes were made, save the updated timetable
       if (hasChanges) {
         const updatedData: ClassTimetable = {
+          schoolId,
           classId: selectedClass,
           schedule: schedule,
         };
@@ -91,7 +96,7 @@ const Timetable = () => {
     };
 
     loadDataForClass();
-  }, [selectedClass]);
+  }, [selectedClass, schoolId]);
 
   const handleAddSlot = () => {
     if (!newSlot.startTime || !newSlot.endTime || !newSlot.subject) return;
@@ -111,7 +116,13 @@ const Timetable = () => {
         | "worship"
         | "closing"
         | "assembly"
-        | "arrival",
+        | "arrival"
+        | "lunch"
+        | "snack"
+        | "cleaning"
+        | "games"
+        | "nap"
+        | "clubs",
     };
 
     const updatedSchedule = { ...timetable };
@@ -134,8 +145,10 @@ const Timetable = () => {
   const handleSave = async () => {
     setLoading(true);
     const data: ClassTimetable = {
+      schoolId,
       classId: selectedClass,
       schedule: timetable,
+      updatedAt: Date.now(),
     };
     await db.saveTimetable(data);
     setLoading(false);
@@ -169,11 +182,11 @@ const Timetable = () => {
         };
       case "assembly":
         return {
-          bg: "bg-blue-50",
-          border: "border-blue-100",
+          bg: "bg-[#E6F0FA]",
+          border: "border-[#E6F0FA]",
           icon: Users,
-          iconColor: "text-blue-600",
-          badge: "text-blue-600 border-blue-200",
+          iconColor: "text-[#0B4A82]",
+          badge: "text-[#0B4A82] border-[#E6F0FA]",
         };
       case "arrival":
         return {
@@ -331,7 +344,7 @@ const Timetable = () => {
                       </div>
                       <button
                         onClick={() => handleDeleteSlot(slot.id)}
-                        className="text-slate-300 hover:text-red-500 p-2 transition-colors flex-shrink-0"
+                        className="text-slate-300 hover:text-[#1160A8] p-2 transition-colors flex-shrink-0"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -387,7 +400,13 @@ const Timetable = () => {
                         | "worship"
                         | "closing"
                         | "assembly"
-                        | "arrival";
+                        | "arrival"
+                        | "lunch"
+                        | "snack"
+                        | "cleaning"
+                        | "games"
+                        | "nap"
+                        | "clubs";
                       let subject = "";
                       if (type === "break") subject = "Break";
                       else if (type === "worship") subject = "Worship";
@@ -395,16 +414,28 @@ const Timetable = () => {
                       else if (type === "assembly") subject = "Assembly";
                       else if (type === "arrival")
                         subject = "Arrival & Free Play";
+                      else if (type === "lunch") subject = "Lunch";
+                      else if (type === "snack") subject = "Snack";
+                      else if (type === "cleaning") subject = "Clean Up";
+                      else if (type === "games") subject = "Games";
+                      else if (type === "nap") subject = "Nap Time";
+                      else if (type === "clubs") subject = "Clubs/Activities";
                       else subject = subjects[0] || "";
 
                       setNewSlot({ ...newSlot, type, subject });
                     }}
                   >
                     <option value="arrival">Arrival & Free Play</option>
+                    <option value="assembly">Morning Assembly</option>
                     <option value="lesson">Lesson</option>
                     <option value="break">Break</option>
-                    <option value="worship">Worship</option>
-                    <option value="assembly">Assembly</option>
+                    <option value="snack">Snack</option>
+                    <option value="lunch">Lunch</option>
+                    <option value="worship">Worship/Devotion</option>
+                    <option value="games">Games/Sports</option>
+                    <option value="clubs">Clubs/Activities</option>
+                    <option value="cleaning">Clean Up</option>
+                    <option value="nap">Nap Time</option>
                     <option value="closing">Closing</option>
                   </select>
                 </div>
@@ -443,7 +474,7 @@ const Timetable = () => {
                 <div className="sm:col-span-2 lg:col-span-2">
                   <button
                     onClick={handleAddSlot}
-                    className="w-full bg-blue-600 text-white p-3 rounded text-sm md:text-base font-medium hover:bg-blue-700 transition-colors"
+                    className="w-full bg-[#1160A8] text-white p-3 rounded text-sm md:text-base font-medium hover:bg-[#0B4A82] transition-colors"
                   >
                     <Plus size={16} className="inline mr-1" /> Add Slot
                   </button>

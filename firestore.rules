@@ -1,0 +1,261 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
+    function isSchoolAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'school_admin';
+    }
+
+    function isTeacher() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    function userSchoolId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId;
+    }
+
+    function isActiveUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isActiveSchoolId(schoolId) {
+      return schoolId != null &&
+        exists(/databases/$(database)/documents/schools/$(schoolId)) &&
+        get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active';
+    }
+
+    // Users collection - STRICT security
+    match /users/{userId} {
+      // Super admin can create/delete any user and change role/schoolId
+      allow create, delete: if isSuperAdmin();
+      allow read, update: if isSuperAdmin();
+
+      // School admin can read users in their school, update users in their school but cannot change role/schoolId
+      allow read: if isSchoolAdmin() && userSchoolId() == resource.data.schoolId;
+      allow update: if isSchoolAdmin() &&
+                       userSchoolId() == resource.data.schoolId &&
+                       request.resource.data.role == resource.data.role &&
+                       request.resource.data.schoolId == resource.data.schoolId;
+
+      // Authenticated users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+
+      // Users can update only safe fields on their own profile (cannot change role/schoolId)
+      allow update: if isAuthenticated() &&
+                       request.auth.uid == userId &&
+                       request.resource.data.role == resource.data.role &&
+                       request.resource.data.schoolId == resource.data.schoolId;
+
+      // Teachers can read their own profile (redundant but explicit)
+      allow read: if isTeacher() && request.auth.uid == userId;
+    }
+
+    // Schools collection
+    match /schools/{schoolId} {
+      // Super admin can read/write all schools
+      allow read, write: if isSuperAdmin();
+
+      // School admin can read their own school
+      allow read: if isSchoolAdmin() && userSchoolId() == schoolId;
+
+      // No write for school admins on schools
+      allow write: if false;
+    }
+
+    // Settings collection (per school config)
+    match /settings/{document} {
+      // Super admin can read/write all settings
+      allow read, write: if isSuperAdmin();
+
+      // School admin can read/write their school's settings
+      allow read, write: if isSchoolAdmin() && userSchoolId() == document;
+    }
+
+    // Students collection
+    match /students/{studentId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Assessments collection
+    match /assessments/{assessmentId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Teacher attendance collection
+    match /teacher_attendance/{recordId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Notices collection
+    match /notices/{noticeId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Student remarks collection
+    match /student_remarks/{remarkId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Student skills collection
+    match /student_skills/{skillId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Admin remarks collection
+    match /admin_remarks/{remarkId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // System notifications collection
+    match /admin_notifications/{notificationId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Timetables collection
+    match /timetables/{timetableId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Class subjects collection
+    match /class_subjects/{subjectId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId);
+
+      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Backups collection
+    match /backups/{backupId} {
+      // Only super admin can access backups
+      allow read, write: if isSuperAdmin();
+    }
+
+    // Activity logs for analytics and auditing
+    match /activity_logs/{logId} {
+      // Creation of logs: allowed if authenticated and either super_admin or creating for your own school
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || (userSchoolId() == request.resource.data.schoolId)
+      );
+
+      // Read: super_admin can read all. School admins/teachers can read logs for their school only.
+      allow get: if isSuperAdmin() || (
+        isAuthenticated() && userSchoolId() != null && userSchoolId() == resource.data.schoolId
+      );
+
+      // List (query) — only super_admin allowed to list all logs via queries
+      allow list: if isSuperAdmin();
+
+      // Updates/deletes: only super_admin
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

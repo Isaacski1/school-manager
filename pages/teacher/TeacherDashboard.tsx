@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
@@ -108,23 +108,12 @@ const jhsSubjects = [
 
 const TeacherDashboard = () => {
   const { user } = useAuth();
+  const schoolId = user?.schoolId || null;
 
   const [subjects, setSubjects] = useState<string[]>([]);
 
-  // Loading state for when user is not available
-  if (!user) {
-    return (
-      <Layout title="Teacher Dashboard">
-        <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)]">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mx-auto mb-4"></div>
-          <p className="text-slate-500">Loading dashboard...</p>
-        </div>
-      </Layout>
-    );
-  }
-
   // Class selection for multi-class teachers
-  const assignedClassIds = user?.assignedClassIds || [];
+  const assignedClassIds = (user as any)?.assignedClassIds || [];
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   // School Config State
@@ -208,6 +197,18 @@ const TeacherDashboard = () => {
     { subject: string; topStudent: string; average: number }[]
   >([]);
 
+  // If user is not yet available, show loading (keep hooks above this line)
+  if (!user) {
+    return (
+      <Layout title="Teacher Dashboard">
+        <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#1160A8] mx-auto mb-4"></div>
+          <p className="text-slate-500">Loading dashboard...</p>
+        </div>
+      </Layout>
+    );
+  }
+
   const getWeekDates = (offset = 0) => {
     const now = new Date();
     // Go back by N weeks
@@ -253,15 +254,17 @@ const TeacherDashboard = () => {
 
     // Re-check for missed attendance when returning to dashboard
     const checkAttendance = async () => {
-      const today = new Date().toISOString().split("T")[0];
+      const todayStr = new Date().toISOString().split("T")[0];
 
       const todayAttendance = await db.getTeacherAttendance(
+        schoolId || undefined,
         user?.id || "",
-        today,
+        todayStr,
       );
 
       try {
-        const config = await db.getSchoolConfig();
+        if (!schoolId) return;
+        const config = await db.getSchoolConfig(schoolId);
         if (!isMounted) return;
 
         const currentDate = new Date();
@@ -322,6 +325,7 @@ const TeacherDashboard = () => {
 
             const dateString = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, "0")}-${String(checkDate.getDate()).padStart(2, "0")}`;
             const attendance = await db.getTeacherAttendance(
+              schoolId,
               user?.id || "",
               dateString,
             );
@@ -342,6 +346,7 @@ const TeacherDashboard = () => {
           if (selectedClassId && missedDates.length > 0) {
             const mostRecentMissed = missedDates[0]; // First in array is most recent
             const studentAttendanceRecord = await db.getAttendance(
+              schoolId,
               selectedClassId,
               mostRecentMissed,
             );
@@ -372,12 +377,12 @@ const TeacherDashboard = () => {
     let isMounted = true;
 
     const fetchData = async () => {
-      if (!selectedClassId) return;
+      if (!selectedClassId || !schoolId) return;
 
       // Fetch Config and Subjects
       let config: SchoolConfig;
       try {
-        config = await db.getSchoolConfig();
+        config = await db.getSchoolConfig(schoolId);
         if (isMounted) {
           setSchoolConfig(config);
           setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);
@@ -483,36 +488,41 @@ const TeacherDashboard = () => {
           currentTerm: `Term ${CURRENT_TERM}`,
           academicYear: ACADEMIC_YEAR,
           schoolReopenDate: "",
-          schoolName: "Noble Care Academy",
+          schoolName: "School Manager GH",
           headTeacherRemark:
             "An outstanding performance. The school is proud of you.",
           termEndDate: "2024-12-20",
           vacationDate: "2024-12-20",
           nextTermBegins: "", // Ensure nextTermBegins is also included in fallback config
           termTransitionProcessed: false, // Default for fallback
+          schoolId: "",
         };
       }
 
       // Fetch subjects from system settings for the selected class
-      const currentSubjects = await db.getSubjects(selectedClassId);
+      const currentSubjects = await db.getSubjects(schoolId, selectedClassId);
       if (!isMounted) return;
       setSubjects(currentSubjects);
 
       // Notices
-      const noticeData = await db.getNotices();
+      const noticeData = await db.getNotices(schoolId);
       if (!isMounted) return;
       setNotices(noticeData);
 
       // Teacher Attendance
       const today = new Date().toISOString().split("T")[0];
-      const attendance = await db.getTeacherAttendance(user?.id || "", today);
+      const attendance = await db.getTeacherAttendance(
+        schoolId,
+        user?.id || "",
+        today,
+      );
       if (!isMounted) return;
       setTeacherAttendance(attendance);
 
       // Class Specific Data
       if (selectedClassId) {
         // 1. Timetable
-        const t = await db.getTimetable(selectedClassId);
+        const t = await db.getTimetable(schoolId, selectedClassId);
         if (!isMounted) return;
         setTimetable(t || null);
         setSelectedDay(getCurrentDay());
@@ -520,8 +530,8 @@ const TeacherDashboard = () => {
         // 2. Real Attendance Trend
         try {
           const [attendanceRecords, students] = await Promise.all([
-            db.getClassAttendance(selectedClassId),
-            db.getStudents(selectedClassId),
+            db.getClassAttendance(schoolId, selectedClassId),
+            db.getStudents(schoolId, selectedClassId),
           ]);
 
           if (!isMounted) return;
@@ -574,6 +584,7 @@ const TeacherDashboard = () => {
           let totalAssessments = 0;
           for (const subject of currentSubjects) {
             const assessments = await db.getAssessments(
+              schoolId,
               selectedClassId,
               subject,
             );
@@ -590,7 +601,7 @@ const TeacherDashboard = () => {
           setClassAverage(avg);
 
           // Behavior Tracker
-          const skills = await db.getStudentSkills(selectedClassId);
+          const skills = await db.getStudentSkills(schoolId, selectedClassId);
           const termSkills = skills.filter((s) => s.term === currentTermNum);
           let totalConductScore = 0;
           let conductCount = 0;
@@ -619,6 +630,7 @@ const TeacherDashboard = () => {
           }[] = [];
           for (const subject of currentSubjects) {
             const assessments = await db.getAssessments(
+              schoolId,
               selectedClassId,
               subject,
             );
@@ -656,7 +668,7 @@ const TeacherDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [selectedClassId, weekOffset]);
+  }, [selectedClassId, weekOffset, schoolId]);
 
   // Update displayed schedule when day or data changes
   useEffect(() => {
@@ -693,10 +705,10 @@ const TeacherDashboard = () => {
         };
       default:
         return {
-          border: "border-red-500",
-          bgHover: "group-hover:bg-red-50",
+          border: "border-[#1160A8]",
+          bgHover: "group-hover:bg-[#E6F0FA]",
           text: "text-slate-800",
-          badge: "text-red-600",
+          badge: "text-[#1160A8]",
         };
     }
   };
@@ -707,9 +719,10 @@ const TeacherDashboard = () => {
     try {
       const today = new Date().toISOString().split("T")[0];
       const record: TeacherAttendanceRecord = {
-        id: `${user.id}_${today}`,
+        id: `${schoolId}_${user.id}_${today}`,
         date: today,
         teacherId: user.id,
+        schoolId: schoolId || schoolConfig?.schoolId || "",
         status,
       };
       await db.saveTeacherAttendance(record);
@@ -717,8 +730,9 @@ const TeacherDashboard = () => {
 
       // Notification
       await db.addSystemNotification(
-        `${user.name} marked themselves as ${status} on ${today}`,
+        `${user?.fullName || "Teacher"} marked themselves as ${status} on ${today}`,
         "attendance",
+        schoolId || schoolConfig?.schoolId || "",
       );
     } catch (err) {
       console.error(err);
@@ -735,10 +749,10 @@ const TeacherDashboard = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">
-            Welcome back, {user?.name}
+            Welcome back, {user?.fullName}
           </h1>
           <p className="text-slate-500 mt-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-red-600 mr-2"></span>
+            <span className="inline-block w-2 h-2 rounded-full bg-[#1160A8] mr-2"></span>
             Class Teacher for:{" "}
             <span className="font-semibold text-slate-800">
               {classNames || "Not Assigned"}
@@ -785,12 +799,12 @@ const TeacherDashboard = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Link
               to="/teacher/attendance"
-              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-red-500 transition-all relative overflow-hidden"
+              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-[#1160A8] transition-all relative overflow-hidden"
             >
-              <div className="absolute right-0 top-0 w-24 h-24 bg-red-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-[#E6F0FA] rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
               <div className="relative z-10">
-                <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-red-800 transition-colors">
-                  <ClipboardCheck className="w-6 h-6 text-red-700 group-hover:text-white" />
+                <div className="w-12 h-12 bg-[#E6F0FA] rounded-lg flex items-center justify-center mb-4 group-hover:bg-[#0B4A82] transition-colors">
+                  <ClipboardCheck className="w-6 h-6 text-[#1160A8] group-hover:text-white" />
                 </div>
                 <h3 className="font-bold text-lg text-slate-800 mb-1">
                   Take Attendance
@@ -848,11 +862,13 @@ const TeacherDashboard = () => {
                 // Fetch students first if not loaded
                 let students = classStudents;
                 if (!students || students.length === 0) {
-                  students = await db.getStudents(selectedClassId);
+                  students = await db.getStudents(schoolId, selectedClassId);
                 }
 
-                const existingRemarks =
-                  await db.getStudentRemarks(selectedClassId);
+                const existingRemarks = await db.getStudentRemarks(
+                  schoolId,
+                  selectedClassId,
+                );
                 const remarksMap = existingRemarks.reduce(
                   (acc, remark) => {
                     acc[remark.studentId] = {
@@ -879,8 +895,10 @@ const TeacherDashboard = () => {
                 );
                 setRemarksData(remarksMap);
 
-                const existingSkills =
-                  await db.getStudentSkills(selectedClassId);
+                const existingSkills = await db.getStudentSkills(
+                  schoolId,
+                  selectedClassId,
+                );
                 const skillsMap = existingSkills.reduce(
                   (acc, skill) => {
                     acc[skill.studentId] = {
@@ -920,11 +938,13 @@ const TeacherDashboard = () => {
                 // Fetch students first if not loaded
                 let students = classStudents;
                 if (!students || students.length === 0) {
-                  students = await db.getStudents(selectedClassId);
+                  students = await db.getStudents(schoolId, selectedClassId);
                 }
 
-                const existingSkills =
-                  await db.getStudentSkills(selectedClassId);
+                const existingSkills = await db.getStudentSkills(
+                  schoolId,
+                  selectedClassId,
+                );
                 const skillsMap = existingSkills.reduce(
                   (acc, skill) => {
                     acc[skill.studentId] = {
@@ -943,12 +963,12 @@ const TeacherDashboard = () => {
                 setStudentsForSkills(students || []);
                 setSkillsModalOpen(true);
               }}
-              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-blue-500 transition-all relative overflow-hidden w-full text-left"
+              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-[#1160A8] transition-all relative overflow-hidden w-full text-left"
             >
-              <div className="absolute right-0 top-0 w-24 h-24 bg-blue-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+              <div className="absolute right-0 top-0 w-24 h-24 bg-[#E6F0FA] rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
               <div className="relative z-10">
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-blue-500 transition-colors">
-                  <TrendingUp className="w-6 h-6 text-blue-600 group-hover:text-white" />
+                <div className="w-12 h-12 bg-[#E6F0FA] rounded-lg flex items-center justify-center mb-4 group-hover:bg-[#1160A8] transition-colors">
+                  <TrendingUp className="w-6 h-6 text-[#1160A8] group-hover:text-white" />
                 </div>
                 <h3 className="font-bold text-lg text-slate-800 mb-1">
                   Edit Skills
@@ -989,7 +1009,7 @@ const TeacherDashboard = () => {
               </h4>
               <div className="text-center">
                 {classAverage > 0 ? (
-                  <span className="text-2xl font-bold text-blue-600">
+                  <span className="text-2xl font-bold text-[#1160A8]">
                     {classAverage.toFixed(1)}%
                   </span>
                 ) : (
@@ -1036,7 +1056,7 @@ const TeacherDashboard = () => {
           <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-3 sm:gap-0">
               <h3 className="font-bold text-slate-800 flex items-center text-base sm:text-lg">
-                <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 mr-2 text-red-700" />{" "}
+                <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 mr-2 text-[#1160A8]" />{" "}
                 Weekly Attendance Trend
               </h3>
               <div className="flex gap-2 items-center w-full sm:w-auto justify-center sm:justify-start">
@@ -1046,7 +1066,7 @@ const TeacherDashboard = () => {
                 >
                   &larr; Prev
                 </button>
-                <span className="px-3 py-1.5 text-xs font-medium rounded-full bg-red-600 text-white text-center min-w-[120px] sm:w-36 truncate">
+                <span className="px-3 py-1.5 text-xs font-medium rounded-full bg-[#1160A8] text-white text-center min-w-[120px] sm:w-36 truncate">
                   {getWeekLabel(weekOffset)}
                 </span>
                 <button
@@ -1074,11 +1094,11 @@ const TeacherDashboard = () => {
                   >
                     <div className="relative w-full flex justify-center">
                       <div
-                        className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-red-100 relative overflow-hidden"
+                        className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-[#E6F0FA] relative overflow-hidden"
                         style={{ height: "120px" }}
                       >
                         <div
-                          className="absolute bottom-0 left-0 right-0 bg-red-600 rounded-t-lg transition-all duration-1000"
+                          className="absolute bottom-0 left-0 right-0 bg-[#1160A8] rounded-t-lg transition-all duration-1000"
                           style={{ height: `${data.percentage}%` }}
                         ></div>
                       </div>
@@ -1106,7 +1126,7 @@ const TeacherDashboard = () => {
           {/* Notice Board Widget */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <h3 className="font-bold text-slate-800 mb-4 flex items-center">
-              <Bell className="w-5 h-5 mr-2 text-red-700" /> Notice Board
+              <Bell className="w-5 h-5 mr-2 text-[#1160A8]" /> Notice Board
             </h3>
             <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
               {notices.length === 0 ? (
@@ -1117,7 +1137,7 @@ const TeacherDashboard = () => {
                 notices.map((notice) => (
                   <div
                     key={notice.id}
-                    className="group relative pl-4 pb-2 border-l-2 border-slate-200 hover:border-red-400 transition-colors"
+                    className="group relative pl-4 pb-2 border-l-2 border-slate-200 hover:border-[#1160A8] transition-colors"
                   >
                     <div
                       className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${notice.type === "urgent" ? "bg-red-500" : "bg-amber-400"} shadow-sm`}
@@ -1147,12 +1167,12 @@ const TeacherDashboard = () => {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-slate-800 flex items-center">
-                <Clock className="w-5 h-5 mr-2 text-red-700" /> Class Schedule
+                <Clock className="w-5 h-5 mr-2 text-[#1160A8]" /> Class Schedule
               </h3>
               <select
                 value={selectedDay}
                 onChange={(e) => setSelectedDay(e.target.value)}
-                className="text-xs font-bold text-red-700 bg-red-50 px-2 py-1 rounded uppercase border-none outline-none cursor-pointer hover:bg-red-100 transition-colors"
+                className="text-xs font-bold text-[#1160A8] bg-[#E6F0FA] px-2 py-1 rounded uppercase border-none outline-none cursor-pointer hover:bg-[#E6F0FA] transition-colors"
               >
                 {DAYS.map((day) => (
                   <option key={day} value={day}>
@@ -1266,7 +1286,7 @@ const TeacherDashboard = () => {
                   onClick={() =>
                     setMissedAttendanceModal({ show: false, dates: [] })
                   }
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-center"
+                  className="flex-1 px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors text-center"
                 >
                   Mark Attendance Now
                 </Link>
@@ -1282,8 +1302,8 @@ const TeacherDashboard = () => {
           <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="p-6 border-b border-slate-100">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-full">
-                  <Bell className="text-blue-600" size={20} />
+                <div className="p-2 bg-red-100 rounded-full">
+                  <Bell className="text-red-600" size={20} />
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900">
@@ -1296,8 +1316,8 @@ const TeacherDashboard = () => {
               </div>
             </div>
             <div className="p-6 space-y-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-sm text-red-800">
                   Please mark student attendance for{" "}
                   <strong>{assignedClass?.name}</strong> on{" "}
                   <strong>
@@ -1327,7 +1347,7 @@ const TeacherDashboard = () => {
                   onClick={() =>
                     setMissedStudentAttendanceModal({ show: false, date: "" })
                   }
-                  className="flex-1 px-4 py-2 text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  className="flex-1 px-4 py-2 text-center bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
                 >
                   Take Attendance
                 </Link>
@@ -1473,6 +1493,7 @@ const TeacherDashboard = () => {
                           classId: selectedClassId,
                           term: termNum,
                           academicYear: ACADEMIC_YEAR,
+                          schoolId: schoolId || schoolConfig?.schoolId || "",
                           remark: remarksData[student.id]?.remark || "",
                           behaviorTag:
                             remarksData[student.id]?.behaviorTag || "",
@@ -1510,8 +1531,8 @@ const TeacherDashboard = () => {
             <div className="p-6 border-b border-slate-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <TrendingUp className="text-blue-600" size={20} />
+                  <div className="p-2 bg-[#E6F0FA] rounded-full">
+                    <TrendingUp className="text-[#1160A8]" size={20} />
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-900">
@@ -1593,6 +1614,7 @@ const TeacherDashboard = () => {
                           classId: selectedClassId,
                           term: termNum,
                           academicYear: ACADEMIC_YEAR,
+                          schoolId: schoolId || schoolConfig?.schoolId || "",
                           ...skillsData[student.id],
                         };
                         await db.saveStudentSkills(skills);
@@ -1609,7 +1631,7 @@ const TeacherDashboard = () => {
                     }
                   }}
                   disabled={savingSkills}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="px-4 py-2 bg-[#1160A8] text-white rounded hover:bg-[#0B4A82] disabled:opacity-50"
                 >
                   {savingSkills ? "Saving..." : "Save Skills"}
                 </button>
@@ -1623,3 +1645,4 @@ const TeacherDashboard = () => {
 };
 
 export default TeacherDashboard;
+

@@ -1,5 +1,5 @@
-import React from 'react';
-import { CLASSES_LIST } from '../../constants';
+import React from "react";
+import { CLASSES_LIST } from "../../constants";
 
 interface AttendanceChartProps {
   data: { className: string; percentage: number; id: string }[];
@@ -16,46 +16,56 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
   onPreviousWeek,
   onNextWeek,
   onCurrentWeek,
-  schoolReopenDate
+  schoolReopenDate,
 }) => {
   // Return placeholder if week hasn't loaded yet
   if (week === null) {
     return (
       <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col items-center justify-center">
         <div className="relative w-12 h-12 border-3 border-slate-100 border-t-red-900 rounded-full animate-spin"></div>
-        <p className="text-slate-400 text-sm mt-4">Loading attendance data...</p>
+        <p className="text-slate-400 text-sm mt-4">
+          Loading attendance data...
+        </p>
       </div>
     );
   }
 
   const { monday, friday } = getWeekRange(week);
   const effectiveCurrentWeekStart = getEffectiveCurrentWeekStart();
-  const isCurrentWeek = effectiveCurrentWeekStart.toDateString() === monday.toDateString();
+  const isCurrentWeek =
+    effectiveCurrentWeekStart.toDateString() === monday.toDateString();
 
   // Parse date string safely to avoid timezone shift
   const parseLocalDate = (dateString: string): Date => {
-    const parts = dateString.split('-');
+    const parts = dateString.split("-");
     if (parts.length === 3) {
-      return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      return new Date(
+        parseInt(parts[0]),
+        parseInt(parts[1]) - 1,
+        parseInt(parts[2]),
+      );
     }
     return new Date(dateString);
   };
 
   // Check if school has reopened
-  let schoolStatus = '';
+  let schoolStatus = "";
   let reopenDateObj: Date | null = null;
   if (schoolReopenDate) {
     reopenDateObj = parseLocalDate(schoolReopenDate);
     const today = new Date();
     if (reopenDateObj > today) {
-      schoolStatus = 'School Closed';
+      schoolStatus = "School Closed";
     } else {
-      schoolStatus = 'School Open';
+      schoolStatus = "School Open";
     }
   }
 
   const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date);
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+    }).format(date);
   };
 
   return (
@@ -64,10 +74,14 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
       <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-100">
         <div>
           <h3 className="font-bold text-slate-800 text-lg">Class Attendance</h3>
-          <p className="text-xs text-slate-500">Weekly participation overview</p>
+          <p className="text-xs text-slate-500">
+            Weekly participation overview
+          </p>
         </div>
         {schoolStatus && (
-          <div className={`text-xs font-bold px-3 py-1 rounded-full ${schoolStatus === 'School Closed' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+          <div
+            className={`text-xs font-bold px-3 py-1 rounded-full ${schoolStatus === "School Closed" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}
+          >
             {schoolStatus}
           </div>
         )}
@@ -104,7 +118,9 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
             onClick={onNextWeek}
             disabled={isCurrentWeek}
             className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-600"
-            title={isCurrentWeek ? "You are viewing the current week" : "Next week"}
+            title={
+              isCurrentWeek ? "You are viewing the current week" : "Next week"
+            }
           >
             →
           </button>
@@ -123,10 +139,11 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
       </div>
 
       {/* School Closed Notice */}
-      {schoolStatus === 'School Closed' && reopenDateObj && (
+      {schoolStatus === "School Closed" && reopenDateObj && (
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
           <p className="text-sm text-red-800 font-semibold">
-            School is currently closed. Attendance records will begin from {formatDate(reopenDateObj)}
+            School is currently closed. Attendance records will begin from{" "}
+            {formatDate(reopenDateObj)}
           </p>
         </div>
       )}
@@ -134,12 +151,16 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
       {/* Attendance Bars */}
       <div className="flex-1 flex items-end justify-between gap-1 sm:gap-2 px-1 pb-2 h-96 w-full overflow-x-auto">
         {data.map((item) => {
-          let barColor = 'bg-amber-500'; // Standard Noble Gold
-          if (item.percentage < 50) barColor = 'bg-red-600'; // Warning Red
-          else if (item.percentage >= 80) barColor = 'bg-emerald-500'; // Excellence
+          let barColor = "bg-amber-500"; // Standard Noble Gold
+          if (item.percentage < 50)
+            barColor = "bg-red-600"; // Warning Red
+          else if (item.percentage >= 80) barColor = "bg-emerald-500"; // Excellence
 
           return (
-            <div key={item.id} className="flex flex-col items-center flex-1 group h-full justify-end min-w-[20px]">
+            <div
+              key={item.id}
+              className="flex flex-col items-center flex-1 group h-full justify-end min-w-[20px]"
+            >
               <div className="w-full max-w-[30px] bg-slate-50 rounded-t-sm relative flex items-end h-full hover:bg-slate-100 transition-colors">
                 <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
                   {item.className}: {item.percentage}%
@@ -150,7 +171,12 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
                 ></div>
               </div>
               <span className="text-[10px] text-slate-400 mt-2 font-medium truncate w-full text-center">
-                {item.className.replace('Nursery ', 'N').replace('Class ', 'P').replace('Primary ', 'P').replace('KG ', 'K').replace('JHS ', 'J')}
+                {item.className
+                  .replace("Nursery ", "N")
+                  .replace("Class ", "P")
+                  .replace("Primary ", "P")
+                  .replace("KG ", "K")
+                  .replace("JHS ", "J")}
               </span>
             </div>
           );

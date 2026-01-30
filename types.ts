@@ -1,17 +1,37 @@
 export enum UserRole {
-  ADMIN = "ADMIN",
-  TEACHER = "TEACHER",
+  SUPER_ADMIN = "super_admin",
+  SCHOOL_ADMIN = "school_admin",
+  TEACHER = "teacher",
 }
 
 export interface User {
   id: string;
-  name: string;
+  fullName: string;
   email: string;
   role: UserRole;
-  assignedClassIds?: string[]; // Changed from single ID to array of IDs
+  schoolId: string | null;
+  assignedClassIds?: string[];
+  status: "active" | "inactive";
+  createdAt?: Date;
+}
+
+export interface School {
+  id: string;
+  name: string;
+  code: string;
+  logoUrl: string;
+  phone: string;
+  address: string;
+  status: "active" | "inactive";
+  plan: "trial" | "monthly" | "termly" | "yearly";
+  planEndsAt: Date | null;
+  createdAt: Date;
+  createdBy: string;
+  notes?: string;
 }
 
 export interface SchoolConfig {
+  schoolId: string;
   schoolName: string;
   academicYear: string;
   currentTerm: string;
@@ -22,12 +42,14 @@ export interface SchoolConfig {
   address?: string;
   phone?: string;
   email?: string;
+  logoUrl?: string;
   nextTermBegins: string;
   termTransitionProcessed: boolean;
 }
 
 export interface Backup {
   id: string;
+  schoolId: string;
   timestamp: number; // Unix timestamp
   term: string;
   academicYear: string;
@@ -47,18 +69,21 @@ export interface Backup {
 }
 
 export interface ClassSubjectConfig {
+  schoolId: string;
   classId: string;
   subjects: string[];
 }
 
 export interface ClassRoom {
   id: string;
+  schoolId: string;
   name: string; // e.g., "Primary 4", "JHS 1"
   level: "NURSERY" | "KG" | "PRIMARY" | "JHS";
 }
 
 export interface Student {
   id: string;
+  schoolId: string;
   name: string;
   gender: "Male" | "Female";
   dob: string;
@@ -69,6 +94,7 @@ export interface Student {
 
 export interface AttendanceRecord {
   id: string;
+  schoolId: string;
   date: string; // YYYY-MM-DD
   classId: string;
   presentStudentIds: string[];
@@ -76,6 +102,7 @@ export interface AttendanceRecord {
 
 export interface TeacherAttendanceRecord {
   id: string;
+  schoolId: string;
   date: string; // YYYY-MM-DD
   teacherId: string;
   status: "present" | "absent";
@@ -83,6 +110,7 @@ export interface TeacherAttendanceRecord {
 
 export interface Assessment {
   id: string;
+  schoolId: string;
   studentId: string;
   classId: string;
   term: 1 | 2 | 3;
@@ -103,6 +131,7 @@ export interface ComputedGrade {
 
 export interface StudentRemark {
   id: string;
+  schoolId: string;
   studentId: string;
   classId: string;
   term: 1 | 2 | 3;
@@ -115,6 +144,7 @@ export interface StudentRemark {
 
 export interface AdminRemark {
   id: string;
+  schoolId: string;
   studentId: string;
   classId: string;
   term: 1 | 2 | 3;
@@ -126,6 +156,7 @@ export interface AdminRemark {
 
 export interface StudentSkills {
   id: string;
+  schoolId: string;
   studentId: string;
   classId: string;
   term: 1 | 2 | 3;
@@ -140,13 +171,16 @@ export interface StudentSkills {
 
 export interface Notice {
   id: string;
+  schoolId: string;
   message: string;
   date: string;
   type: "info" | "urgent";
+  createdAt?: number;
 }
 
 export interface SystemNotification {
   id: string;
+  schoolId: string;
   message: string;
   createdAt: number; // Timestamp
   isRead: boolean;
@@ -158,12 +192,26 @@ export interface TimeSlot {
   startTime: string; // e.g. "08:00"
   endTime: string; // e.g. "09:00"
   subject: string; // e.g. "Mathematics" or "Break"
-  type: "lesson" | "break" | "worship" | "closing" | "assembly" | "arrival";
+  type:
+    | "lesson"
+    | "break"
+    | "worship"
+    | "closing"
+    | "assembly"
+    | "arrival"
+    | "lunch"
+    | "snack"
+    | "cleaning"
+    | "games"
+    | "nap"
+    | "clubs";
 }
 
 export interface ClassTimetable {
+  schoolId: string;
   classId: string;
   schedule: Record<string, TimeSlot[]>; // Key is Day name (Monday, Tuesday...)
+  updatedAt?: number;
 }
 
 export interface MonthlyTeacherAttendance {
