@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
       },
     },
 
-    // ✅ Fix blank page on GitHub Pages (repo name in your URL)
-    base: "/school-manager/",
+    // ✅ Fix blank page on GitHub Pages (use relative paths)
+    base: "./",
   };
 });
