@@ -15,7 +15,7 @@ import {
   primarySubjects,
   jhsSubjects,
 } from "../../constants";
-import { Download } from "lucide-react";
+import { Download, BookOpen, Users, CheckCircle, XCircle } from "lucide-react";
 import { Assessment } from "../../types";
 
 const Reports = () => {
@@ -38,6 +38,9 @@ const Reports = () => {
     academicYear: ACADEMIC_YEAR,
     schoolReopenDate: "",
   });
+
+  const classLabel =
+    CLASSES_LIST.find((c) => c.id === selectedClass)?.name || "Class";
 
   useEffect(() => {
     const loadReportData = async () => {
@@ -241,39 +244,72 @@ const Reports = () => {
 
       <div
         id="report-content"
-        className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)] print:h-auto print:border-none print:shadow-none"
+        className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)] print:h-auto print:border-none print:shadow-none"
       >
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 print:bg-white print:border-none">
-          <div className="flex items-center gap-4">
-            <select
-              className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white text-black no-print"
-              value={selectedClass}
-              onChange={(e) => setSelectedClass(e.target.value)}
-            >
-              {CLASSES_LIST.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+        <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-white to-emerald-50 print:bg-white print:border-none">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                  <BookOpen size={22} />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900">
+                    Academic Reports
+                  </h1>
+                  <p className="text-sm text-slate-600">
+                    {schoolConfig.currentTerm} • {schoolConfig.academicYear}
+                  </p>
+                </div>
+              </div>
 
-            {/* Title for print view */}
-            <div className="hidden print:block text-2xl font-bold text-slate-900">
-              {CLASSES_LIST.find((c) => c.id === selectedClass)?.name} Report
+              {/* Title for print view */}
+              <div className="hidden print:block text-2xl font-bold text-slate-900">
+                {classLabel} Report
+              </div>
             </div>
 
-            <div className="text-sm text-slate-500 print:text-slate-900 print:font-semibold">
-              {schoolConfig.currentTerm} | {schoolConfig.academicYear}
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                className="border border-slate-200 rounded-full px-4 py-2 text-sm bg-white text-slate-700 shadow-sm no-print focus:ring-2 focus:ring-emerald-200"
+                value={selectedClass}
+                onChange={(e) => setSelectedClass(e.target.value)}
+              >
+                {CLASSES_LIST.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={downloadCSV}
+                disabled={loading || reportData.length === 0}
+                className="flex items-center gap-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-4 py-2 rounded-full transition-colors no-print font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={18} /> Export CSV
+              </button>
             </div>
           </div>
-          <button
-            onClick={downloadCSV}
-            disabled={loading || reportData.length === 0}
-            className="flex items-center text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-4 py-2 rounded-lg transition-colors no-print font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Download size={18} className="mr-2" /> Export CSV
-          </button>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+            <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
+              <Users className="h-4 w-4 text-indigo-500" />
+              Students: {reportData.length}
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 shadow-sm">
+              <CheckCircle className="h-4 w-4" />
+              Pass: {passFailData.pass.length}
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-700 shadow-sm">
+              <XCircle className="h-4 w-4" />
+              Fail: {passFailData.fail.length}
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700 shadow-sm">
+              <BookOpen className="h-4 w-4" />
+              Subjects: {subjects.length}
+            </span>
+          </div>
         </div>
 
         {/* Table */}
@@ -283,10 +319,15 @@ const Reports = () => {
         >
           {schoolConfig.currentTerm?.includes("3") && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 no-print">
-              <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-emerald-800 mb-2">
-                  Passed (&gt;= 500)
-                </h3>
+              <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-4 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-emerald-800">
+                    Passed (&gt;= 500)
+                  </h3>
+                  <span className="text-xs text-emerald-700 font-semibold">
+                    {passFailData.pass.length}
+                  </span>
+                </div>
                 {passFailData.pass.length === 0 ? (
                   <p className="text-sm text-emerald-700">
                     No passing students.
@@ -305,14 +346,19 @@ const Reports = () => {
                   </ul>
                 )}
               </div>
-              <div className="bg-red-50 border border-red-100 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-red-800 mb-2">
-                  Failed (&lt; 500)
-                </h3>
+              <div className="bg-rose-50/70 border border-rose-100 rounded-2xl p-4 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-rose-800">
+                    Failed (&lt; 500)
+                  </h3>
+                  <span className="text-xs text-rose-700 font-semibold">
+                    {passFailData.fail.length}
+                  </span>
+                </div>
                 {passFailData.fail.length === 0 ? (
-                  <p className="text-sm text-red-700">No failing students.</p>
+                  <p className="text-sm text-rose-700">No failing students.</p>
                 ) : (
-                  <ul className="text-sm text-red-900 space-y-1 max-h-40 overflow-y-auto">
+                  <ul className="text-sm text-rose-900 space-y-1 max-h-40 overflow-y-auto">
                     {passFailData.fail.map((row) => (
                       <li
                         key={row.student.id}
@@ -332,9 +378,9 @@ const Reports = () => {
               Loading Report Data...
             </div>
           ) : (
-            <div className="overflow-x-auto print:overflow-visible">
+            <div className="overflow-x-auto print:overflow-visible rounded-2xl border border-slate-100 bg-white shadow-sm">
               <table className="w-full text-left text-sm border-collapse text-black">
-                <thead className="bg-slate-100 text-black font-bold print:bg-slate-200">
+                <thead className="bg-slate-50 text-slate-700 font-semibold print:bg-slate-200">
                   <tr>
                     <th className="px-4 py-3 border border-slate-200 w-10">
                       Pos

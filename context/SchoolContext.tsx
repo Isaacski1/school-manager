@@ -5,7 +5,7 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { firestore } from "../services/firebase";
 import { School } from "../types";
 import { useAuth } from "./AuthContext";
@@ -29,7 +29,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   useEffect(() => {
     let cancelled = false;
 
-    const loadSchoolData = async () => {
+    const loadSchoolData = () => {
       // reset immediately when user changes
       setSchool(null);
       setSchoolError(null);
@@ -63,45 +63,55 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
       try {
         const schoolDocRef = doc(firestore, "schools", user.schoolId);
-        const schoolDoc = await getDoc(schoolDocRef);
+        const unsubscribe = onSnapshot(
+          schoolDocRef,
+          (schoolDoc) => {
+            if (!schoolDoc.exists()) {
+              if (!cancelled)
+                setSchoolError(
+                  "School not found. Please contact your administrator.",
+                );
+              if (!cancelled) setSchool(null);
+              return;
+            }
 
-        if (!schoolDoc.exists()) {
-          if (!cancelled)
-            setSchoolError(
-              "School not found. Please contact your administrator.",
-            );
-          if (!cancelled) setSchool(null);
-          return;
-        }
+            const schoolData = {
+              id: schoolDoc.id,
+              ...schoolDoc.data(),
+            } as School;
 
-        const schoolData = { id: schoolDoc.id, ...schoolDoc.data() } as School;
+            if (schoolData.status !== "active") {
+              if (!cancelled)
+                setSchoolError(
+                  "Your school is currently inactive. Please contact your administrator.",
+                );
+              if (!cancelled) setSchool(null);
+              return;
+            }
 
-        if (schoolData.status !== "active") {
-          if (!cancelled)
-            setSchoolError(
-              "Your school is currently inactive. Please contact your administrator.",
-            );
-          if (!cancelled) setSchool(null);
-          return;
-        }
+            localStorage.setItem(cacheKey, JSON.stringify(schoolData));
+            if (!cancelled) setSchool(schoolData);
+          },
+          (error) => {
+            console.error("Error loading school data:", error);
+            if (!cancelled)
+              setSchoolError(
+                "Failed to load school information. Please try refreshing the page.",
+              );
+            if (!cancelled) setSchool(null);
+          },
+        );
 
-        localStorage.setItem(cacheKey, JSON.stringify(schoolData));
-        if (!cancelled) setSchool(schoolData);
-      } catch (error) {
-        console.error("Error loading school data:", error);
-        if (!cancelled)
-          setSchoolError(
-            "Failed to load school information. Please try refreshing the page.",
-          );
-        if (!cancelled) setSchool(null);
+        return () => unsubscribe();
       } finally {
         if (!cancelled) setSchoolLoading(false);
       }
     };
 
-    loadSchoolData();
+    const cleanup = loadSchoolData();
     return () => {
       cancelled = true;
+      if (cleanup) cleanup();
     };
   }, [isAuthenticated, user?.id, user?.schoolId, user?.role]);
 

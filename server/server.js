@@ -5,6 +5,7 @@ import express from "express";
 import admin from "firebase-admin";
 import cors from "cors";
 import dotenv from "dotenv";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,7 +15,13 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  }),
+);
 
 // --- Robust Firebase Admin SDK Initialization ---
 
@@ -139,6 +146,54 @@ async function superAdminMiddleware(req, res, next) {
     res.status(500).json({ error: "Internal server error" });
   }
 }
+
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
+const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
+const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
+
+const paystackRequest = async (endpoint, method, body) => {
+  if (!PAYSTACK_SECRET_KEY) {
+    throw new Error("PAYSTACK_SECRET_KEY is not set in the environment.");
+  }
+  const response = await fetch(`https://api.paystack.co${endpoint}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || "Paystack request failed");
+  }
+  return data;
+};
+
+const verifyPaystackTransaction = async (reference) => {
+  if (!reference) {
+    throw new Error("Payment reference is required for verification.");
+  }
+  return paystackRequest(`/transaction/verify/${reference}`, "GET");
+};
+
+const updateSchoolBilling = async (schoolId, updates) => {
+  await admin
+    .firestore()
+    .collection("schools")
+    .doc(schoolId)
+    .set(
+      {
+        billing: {
+          ...(updates.billing || {}),
+        },
+        plan: updates.plan || "monthly",
+        planEndsAt: updates.planEndsAt || null,
+        status: updates.status || "active",
+      },
+      { merge: true },
+    );
+};
 
 /**
  * Create School
@@ -334,6 +389,329 @@ app.post(
     }
   },
 );
+
+/**
+ * Initialize Paystack subscription for school admin
+ * POST /api/billing/initiate
+ */
+app.post(
+  "/api/billing/initiate",
+  authMiddleware,
+  schoolAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { uid, email } = req.user;
+      const { amount, currency = "GHS", metadata = {} } = req.body;
+
+      const userDoc = await admin
+        .firestore()
+        .collection("users")
+        .doc(uid)
+        .get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User profile not found" });
+      }
+
+      const userData = userDoc.data();
+      const schoolId = userData.schoolId;
+      if (!schoolId) {
+        return res.status(400).json({ error: "School not linked to admin" });
+      }
+
+      const schoolDoc = await admin
+        .firestore()
+        .collection("schools")
+        .doc(schoolId)
+        .get();
+      if (!schoolDoc.exists) {
+        return res.status(404).json({ error: "School not found" });
+      }
+
+      const reference = `sch_${schoolId}_${Date.now()}`;
+      const payload = {
+        email: email || userData.email,
+        amount,
+        currency,
+        reference,
+        callback_url: PAYSTACK_CALLBACK_URL || undefined,
+        metadata: {
+          schoolId,
+          adminUid: uid,
+          reference,
+          ...metadata,
+        },
+      };
+
+      const response = await paystackRequest(
+        "/transaction/initialize",
+        "POST",
+        payload,
+      );
+
+      await admin
+        .firestore()
+        .collection("payments")
+        .doc(reference)
+        .set(
+          {
+            reference,
+            amount,
+            currency,
+            status: "pending",
+            schoolId,
+            schoolName: schoolDoc.data()?.name || "",
+            adminUid: uid,
+            adminEmail: email || userData.email || "",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+      await admin
+        .firestore()
+        .collection("schools")
+        .doc(schoolId)
+        .set(
+          {
+            billing: {
+              ...(PAYSTACK_PLAN_CODE ? { planCode: PAYSTACK_PLAN_CODE } : {}),
+              reference,
+              status: "pending",
+            },
+          },
+          { merge: true },
+        );
+
+      res.json({
+        authorizationUrl: response.data.authorization_url,
+        reference: response.data.reference,
+      });
+    } catch (error) {
+      console.error("Billing initiate error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+/**
+ * Verify and backfill a payment status by reference
+ * POST /api/billing/verify
+ */
+app.post(
+  "/api/billing/verify",
+  authMiddleware,
+  schoolAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { reference } = req.body;
+      if (!reference) {
+        return res.status(400).json({ error: "reference is required" });
+      }
+
+      const paymentDoc = await admin
+        .firestore()
+        .collection("payments")
+        .doc(reference)
+        .get();
+
+      if (!paymentDoc.exists) {
+        return res.status(404).json({ error: "Payment not found" });
+      }
+
+      const paymentData = paymentDoc.data();
+      const schoolId = paymentData?.schoolId;
+
+      if (!schoolId || schoolId !== req.callerDoc.schoolId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const verification = await verifyPaystackTransaction(reference);
+      const data = verification?.data || {};
+      const mappedStatus = String(data.status || "pending");
+
+      await admin
+        .firestore()
+        .collection("payments")
+        .doc(reference)
+        .set(
+          {
+            status: mappedStatus,
+            paidAt: data.paid_at ? new Date(data.paid_at).getTime() : null,
+            gatewayResponse: data.gateway_response || null,
+            channel: data.channel || null,
+            reference,
+            schoolId,
+            verifiedAt: Date.now(),
+          },
+          { merge: true },
+        );
+
+      if (mappedStatus === "success") {
+        await admin
+          .firestore()
+          .collection("schools")
+          .doc(schoolId)
+          .set(
+            {
+              billing: {
+                status: "active",
+                customerCode: data.customer?.customer_code || null,
+                subscriptionCode: data.subscription?.subscription_code || null,
+                email: data.customer?.email || null,
+                lastPaymentAt: Date.now(),
+              },
+              plan: "monthly",
+              status: "active",
+            },
+            { merge: true },
+          );
+      }
+
+      if (["failed", "abandoned"].includes(mappedStatus)) {
+        await admin
+          .firestore()
+          .collection("schools")
+          .doc(schoolId)
+          .set(
+            {
+              billing: { status: "past_due" },
+            },
+            { merge: true },
+          );
+      }
+
+      return res.json({
+        success: true,
+        status: mappedStatus,
+        reference,
+      });
+    } catch (error) {
+      console.error("Billing verify error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+/**
+ * Paystack webhook
+ * POST /api/billing/webhook
+ */
+app.post("/api/billing/webhook", async (req, res) => {
+  try {
+    if (!PAYSTACK_SECRET_KEY) {
+      return res.status(500).send("Paystack not configured");
+    }
+
+    const signature = req.headers["x-paystack-signature"];
+    const hash = crypto
+      .createHmac("sha512", PAYSTACK_SECRET_KEY)
+      .update(req.rawBody || "")
+      .digest("hex");
+
+    if (hash !== signature) {
+      return res.status(401).send("Invalid signature");
+    }
+
+    const event = req.body;
+    const data = event?.data || {};
+    const metadata = data?.metadata || {};
+    const schoolId = metadata.schoolId;
+    const paymentReference = data?.reference || metadata?.reference;
+
+    if (!schoolId) {
+      return res.status(200).send("No schoolId on webhook metadata");
+    }
+
+    if (event.event === "charge.success") {
+      const subscription = data.subscription || {};
+      if (paymentReference) {
+        await admin
+          .firestore()
+          .collection("payments")
+          .doc(paymentReference)
+          .set(
+            {
+              status: "success",
+              paidAt: Date.now(),
+              gatewayResponse: data.gateway_response || null,
+              channel: data.channel || null,
+              event: event.event,
+              reference: paymentReference,
+              schoolId,
+            },
+            { merge: true },
+          );
+      }
+      await admin
+        .firestore()
+        .collection("schools")
+        .doc(schoolId)
+        .set(
+          {
+            billing: {
+              status: "active",
+              customerCode: data.customer?.customer_code || null,
+              subscriptionCode: subscription.subscription_code || null,
+              email: data.customer?.email || null,
+              lastPaymentAt: Date.now(),
+            },
+            plan: "monthly",
+            status: "active",
+          },
+          { merge: true },
+        );
+    }
+
+    if (
+      event.event === "subscription.disable" ||
+      event.event === "invoice.payment_failed"
+    ) {
+      if (paymentReference) {
+        await admin.firestore().collection("payments").doc(data.reference).set(
+          {
+            status: "failed",
+            failedAt: Date.now(),
+            event: event.event,
+            reference: paymentReference,
+            schoolId,
+          },
+          { merge: true },
+        );
+      }
+      await admin
+        .firestore()
+        .collection("schools")
+        .doc(schoolId)
+        .set(
+          {
+            billing: { status: "past_due" },
+          },
+          { merge: true },
+        );
+    }
+
+    if (paymentReference && data?.status) {
+      await admin
+        .firestore()
+        .collection("payments")
+        .doc(paymentReference)
+        .set(
+          {
+            status: String(data.status),
+            event: event.event || null,
+            reference: paymentReference,
+            schoolId,
+          },
+          { merge: true },
+        );
+    }
+
+    res.status(200).send("OK");
+  } catch (error) {
+    console.error("Webhook error:", error.message);
+    res.status(500).send("Webhook error");
+  }
+});
 
 /**
  * Reset School Admin Password

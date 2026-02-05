@@ -280,120 +280,211 @@ const TeacherAttendance = () => {
     return true;
   };
 
+  const formatDate = (dateString: string) => {
+    const parsed = parseLocalDate(dateString);
+    return parsed.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
   /* =======================
      UI
   ======================= */
   return (
     <Layout title="Daily Attendance">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Daily Attendance</h1>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+          <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
+          <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div className="relative flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-slate-900">
+              Daily Attendance
+            </h1>
+            <p className="text-sm text-slate-600">
+              Mark your attendance with confidence — fast, clear, and beautiful.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
+                <Calendar className="h-4 w-4 text-indigo-500" />
+                Today: {formatDate(todayString)}
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium shadow-sm ${
+                  isSchoolOpen()
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-rose-50 text-rose-700"
+                }`}
+              >
+                <Clock className="h-4 w-4" />
+                {isSchoolOpen() ? "School Open" : "School Closed"}
+              </span>
+            </div>
+          </div>
+        </div>
 
         {missedAttendanceAlert && (
-          <div className="mb-4 p-4 bg-amber-50 border rounded">
-            <AlertTriangle className="inline mr-2 text-amber-600" />
-            You missed attendance for {missedAttendanceAlert}
-            <div className="mt-3 space-x-2">
-              <button
-                onClick={() =>
-                  handleMarkAttendance(missedAttendanceAlert, "present")
-                }
-                disabled={saving[missedAttendanceAlert]}
-                className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
-              >
-                Mark Present
-              </button>
-              <button
-                onClick={() =>
-                  handleMarkAttendance(missedAttendanceAlert, "absent")
-                }
-                disabled={saving[missedAttendanceAlert]}
-                className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
-              >
-                Mark Absent
-              </button>
+          <div className="relative overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm">
+            <div className="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-amber-200/60 blur-2xl" />
+            <div className="relative flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-amber-800">
+                <AlertTriangle className="h-5 w-5" />
+                <span className="font-semibold">Missed Attendance</span>
+              </div>
+              <p className="text-sm text-amber-900">
+                You missed attendance for
+                <span className="font-semibold">
+                  {" "}
+                  {formatDate(missedAttendanceAlert)}
+                </span>
+                . Please update it now.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() =>
+                    handleMarkAttendance(missedAttendanceAlert, "present")
+                  }
+                  disabled={saving[missedAttendanceAlert]}
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02] hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  Mark Present
+                </button>
+                <button
+                  onClick={() =>
+                    handleMarkAttendance(missedAttendanceAlert, "absent")
+                  }
+                  disabled={saving[missedAttendanceAlert]}
+                  className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02] hover:bg-rose-700 disabled:opacity-50"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Mark Absent
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         {!isSchoolOpen() && (
-          <div className="mb-4 p-4 bg-red-50 border rounded">
-            <Clock className="inline mr-2 text-red-600" />
-            School not yet open
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-rose-800 shadow-sm">
+            <div className="flex items-center gap-2 font-semibold">
+              <Clock className="h-5 w-5" />
+              School not yet open
+            </div>
           </div>
         )}
 
         {schoolConfig?.vacationDate &&
           todayDate < parseLocalDate(schoolConfig.vacationDate) && (
-            <div className="mb-4 p-4 bg-amber-50 border rounded">
-              <Calendar className="inline mr-2 text-amber-600" />
-              School will vacate on: {schoolConfig.vacationDate}
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-amber-900 shadow-sm">
+              <div className="flex items-center gap-2 font-semibold">
+                <Calendar className="h-5 w-5 text-amber-600" />
+                School will vacate on: {schoolConfig.vacationDate}
+              </div>
             </div>
           )}
 
-        <div className="bg-white border rounded">
+        <div className="rounded-2xl border bg-white/80 p-2 shadow-sm">
           {loading ? (
-            <div className="p-6 text-center">Loading...</div>
+            <div className="p-8 text-center text-sm text-slate-500">
+              Loading attendance...
+            </div>
           ) : (
-            weekDates.map((date) => {
-              const record = attendanceRecords[date];
-              const isFuture = date > todayString;
-              // Only show "After Vacation" if school hasn't reopened yet
-              const isAfterVacation =
-                schoolConfig?.vacationDate &&
-                date > schoolConfig.vacationDate &&
-                (!schoolConfig?.nextTermBegins ||
-                  todayDate < parseLocalDate(schoolConfig.nextTermBegins));
+            <div className="grid gap-3 p-2">
+              {weekDates.map((date) => {
+                const record = attendanceRecords[date];
+                const isFuture = date > todayString;
+                const isValid = isValidAttendanceDate(
+                  date,
+                  schoolConfig?.schoolReopenDate,
+                  schoolConfig?.vacationDate,
+                  schoolConfig?.nextTermBegins,
+                );
 
-              return (
-                <div
-                  key={date}
-                  className="p-4 border-b flex justify-between items-center"
-                >
-                  <span>{date}</span>
-
-                  {record ? (
-                    <span
-                      className={
-                        record.status === "present"
-                          ? "text-green-600"
-                          : "text-red-600"
-                      }
-                    >
-                      {record.status.toUpperCase()}
-                    </span>
-                  ) : !isValidAttendanceDate(
-                      date,
-                      schoolConfig?.schoolReopenDate,
-                      schoolConfig?.vacationDate,
-                      schoolConfig?.nextTermBegins,
-                    ) ? (
-                    <span className="text-amber-600">
-                      {parseLocalDate(date) <
-                      parseLocalDate(schoolConfig?.schoolReopenDate || "")
-                        ? "Before Reopen"
-                        : "After Vacation"}
-                    </span>
-                  ) : !isFuture ? (
-                    <div className="space-x-2">
-                      <button
-                        onClick={() => handleMarkAttendance(date, "present")}
-                        className="px-3 py-1 bg-green-600 text-white rounded"
-                      >
-                        Present
-                      </button>
-                      <button
-                        onClick={() => handleMarkAttendance(date, "absent")}
-                        className="px-3 py-1 bg-red-600 text-white rounded"
-                      >
-                        Absent
-                      </button>
+                return (
+                  <div
+                    key={date}
+                    className="group flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {formatDate(date)}
+                        </p>
+                        <p className="text-xs text-slate-500">{date}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {record ? (
+                          <span
+                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${
+                              record.status === "present"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-rose-50 text-rose-700"
+                            }`}
+                          >
+                            {record.status === "present" ? (
+                              <CheckCircle className="h-4 w-4" />
+                            ) : (
+                              <XCircle className="h-4 w-4" />
+                            )}
+                            {record.status.toUpperCase()}
+                          </span>
+                        ) : !isValid ? (
+                          <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                            <AlertTriangle className="h-4 w-4" />
+                            {parseLocalDate(date) <
+                            parseLocalDate(schoolConfig?.schoolReopenDate || "")
+                              ? "Before Reopen"
+                              : "After Vacation"}
+                          </span>
+                        ) : isFuture ? (
+                          <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                            <Clock className="h-4 w-4" />
+                            Future
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                            <Calendar className="h-4 w-4" />
+                            Pending
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  ) : (
-                    <span className="text-gray-400">Future</span>
-                  )}
-                </div>
-              );
-            })
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-xs text-slate-500">
+                        {isSchoolInSession(date)
+                          ? "School in session"
+                          : "Out of session"}
+                      </div>
+
+                      {record || !isValid || isFuture ? null : (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() =>
+                              handleMarkAttendance(date, "present")
+                            }
+                            className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:scale-[1.02] hover:bg-emerald-100"
+                          >
+                            <CheckCircle className="h-4 w-4" />
+                            Present
+                          </button>
+                          <button
+                            onClick={() => handleMarkAttendance(date, "absent")}
+                            className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:scale-[1.02] hover:bg-rose-100"
+                          >
+                            <XCircle className="h-4 w-4" />
+                            Absent
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

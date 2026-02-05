@@ -24,6 +24,8 @@ import {
   Calendar,
   AlertTriangle,
   History,
+  Settings,
+  Shield,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -39,6 +41,16 @@ import {
 } from "firebase/firestore";
 import { firestore } from "../../services/firebase";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
+const getClassGroupKey = (name: string) => {
+  const normalized = name.toLowerCase();
+  if (normalized.includes("nursery")) return "Nursery";
+  if (normalized.startsWith("kg") || normalized.includes("kg")) return "KG";
+  if (/class\s*[1-3]\b/i.test(name)) return "Class 1-3";
+  if (/class\s*[4-6]\b/i.test(name)) return "Class 4-6";
+  if (/jhs\s*[1-3]\b/i.test(name)) return "JHS 1-3";
+  return "Other";
+};
 
 const SystemSettings = () => {
   const { user } = useAuth();
@@ -93,6 +105,32 @@ const SystemSettings = () => {
 
   // Logo Upload State
   const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  const classGroups = React.useMemo(() => {
+    const groups: Record<string, ClassRoom[]> = {
+      Nursery: [],
+      KG: [],
+      "Class 1-3": [],
+      "Class 4-6": [],
+      "JHS 1-3": [],
+      Other: [],
+    };
+
+    CLASSES_LIST.forEach((cls: ClassRoom) => {
+      const key = getClassGroupKey(cls.name);
+      groups[key].push(cls);
+    });
+
+    return groups;
+  }, []);
+
+  const getGroupClassIds = (classId: string) => {
+    const cls = CLASSES_LIST.find((item) => item.id === classId);
+    if (!cls) return [classId];
+    const groupKey = getClassGroupKey(cls.name);
+    const group = classGroups[groupKey];
+    return (group?.length ? group : [cls]).map((item) => item.id);
+  };
 
   const fetchNotices = async () => {
     const data = await db.getNotices(schoolId);
@@ -216,7 +254,12 @@ const SystemSettings = () => {
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubjectName.trim() || !selectedClassId) return;
-    await db.addSubject(selectedClassId, newSubjectName.trim(), schoolId);
+    const targetClassIds = getGroupClassIds(selectedClassId);
+    await Promise.all(
+      targetClassIds.map((classId) =>
+        db.addSubject(classId, newSubjectName.trim(), schoolId),
+      ),
+    );
     setNewSubjectName("");
     fetchSubjects();
     showToast("Subject added successfully!", { type: "success" });
@@ -231,7 +274,12 @@ const SystemSettings = () => {
     if (!subjectToDeleteName || !selectedClassId) return;
     setShowDeleteSubjectModal(false);
     try {
-      await db.deleteSubject(selectedClassId, subjectToDeleteName, schoolId);
+      const targetClassIds = getGroupClassIds(selectedClassId);
+      await Promise.all(
+        targetClassIds.map((classId) =>
+          db.deleteSubject(classId, subjectToDeleteName, schoolId),
+        ),
+      );
       fetchSubjects();
       showToast(`Subject "${subjectToDeleteName}" deleted successfully!`, {
         type: "success",
@@ -253,11 +301,16 @@ const SystemSettings = () => {
   const saveEditSubject = async () => {
     if (!editingSubject || !editingSubject.current.trim() || !selectedClassId)
       return;
-    await db.updateSubject(
-      selectedClassId,
-      editingSubject.original,
-      editingSubject.current.trim(),
-      schoolId,
+    const targetClassIds = getGroupClassIds(selectedClassId);
+    await Promise.all(
+      targetClassIds.map((classId) =>
+        db.updateSubject(
+          classId,
+          editingSubject.original,
+          editingSubject.current.trim(),
+          schoolId,
+        ),
+      ),
     );
     setEditingSubject(null);
     fetchSubjects();
@@ -321,418 +374,461 @@ const SystemSettings = () => {
 
   return (
     <Layout title="System Settings">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Left Column */}
-        <div className="space-y-8">
-          {/* General Config */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-slate-800">
-                General Configuration
-              </h2>
-              <button
-                onClick={handleSaveConfig}
-                disabled={savingConfig}
-                className="flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                <Save size={14} className="mr-1" />{" "}
-                {savingConfig ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
-
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Academic Year
-                  </label>
-                  <input
-                    type="text"
-                    value={config.academicYear}
-                    onChange={(e) =>
-                      setConfig({ ...config, academicYear: e.target.value })
-                    }
-                    className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Current Term
-                  </label>
-                  <select
-                    value={config.currentTerm}
-                    onChange={(e) =>
-                      setConfig({ ...config, currentTerm: e.target.value })
-                    }
-                    className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value="Term 1">Term 1</option>
-                    <option value="Term 2">Term 2</option>
-                    <option value="Term 3">Term 3</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100">
-                <h3 className="font-medium text-slate-800 mb-2">
-                  School Information
-                </h3>
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      School Re-open Date
-                    </label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
-                      <input
-                        type="date"
-                        value={config.schoolReopenDate}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            schoolReopenDate: e.target.value,
-                          })
-                        }
-                        className="w-full border border-slate-300 pl-10 pr-3 py-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                  {/* New Vacation Date Input */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Term Vacation Date
-                    </label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
-                      <input
-                        type="date"
-                        value={config.vacationDate}
-                        onChange={(e) =>
-                          setConfig({ ...config, vacationDate: e.target.value })
-                        }
-                        className="w-full border border-slate-300 pl-10 pr-3 py-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Next Term Begins
-                    </label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
-                      <input
-                        type="date"
-                        value={config.nextTermBegins || ""}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            nextTermBegins: e.target.value,
-                          })
-                        }
-                        className="w-full border border-slate-300 pl-10 pr-3 py-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Subject Management */}
-          {/* Subject Management */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-            <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
-              <Book className="mr-2 text-[#0B4A82]" size={24} />
-              Manage Class Subjects
-            </h2>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Select Class
-              </label>
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-[#1160A8] outline-none"
-              >
-                {CLASSES_LIST.map((cls: ClassRoom) => (
-                  <option key={cls.id} value={cls.id}>
-                    {cls.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <form onSubmit={handleAddSubject} className="flex gap-2 mb-6">
-              <input
-                type="text"
-                required
-                className="flex-1 border border-slate-300 p-2 rounded-lg focus:ring-2 focus:ring-[#1160A8] outline-none text-sm"
-                placeholder="New subject name..."
-                value={newSubjectName}
-                onChange={(e) => setNewSubjectName(e.target.value)}
-              />
-              <button
-                type="submit"
-                className="bg-[#1160A8] text-white px-4 py-2 rounded-lg hover:bg-[#0B4A82] transition-colors"
-              >
-                <Plus size={20} />
-              </button>
-            </form>
-
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {currentClassSubjects.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center italic">
-                  No subjects configured for this class. Add some above!
-                </p>
-              ) : (
-                currentClassSubjects.map((subject) => (
-                  <div
-                    key={subject}
-                    className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100 group"
-                  >
-                    {editingSubject?.original === subject ? (
-                      <div className="flex items-center flex-1 gap-2">
-                        <input
-                          type="text"
-                          className="flex-1 border border-slate-300 p-1 rounded text-sm focus:ring-2 focus:ring-[#1160A8] outline-none"
-                          value={editingSubject.current}
-                          onChange={(e) =>
-                            setEditingSubject({
-                              ...editingSubject,
-                              current: e.target.value,
-                            })
-                          }
-                          autoFocus
-                        />
-                        <button
-                          onClick={saveEditSubject}
-                          className="text-emerald-600 hover:bg-emerald-50 p-1 rounded"
-                        >
-                          <Check size={16} />
-                        </button>
-                        <button
-                          onClick={() => setEditingSubject(null)}
-                          className="text-[#1160A8] hover:bg-[#E6F0FA] p-1 rounded"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="text-sm font-medium text-slate-700">
-                          {subject}
-                        </span>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => startEditSubject(subject)}
-                            className="text-slate-400 hover:text-[#1160A8] p-1.5 hover:bg-[#E6F0FA] rounded-md transition-colors"
-                          >
-                            <Edit size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteSubject(subject)}
-                            className="text-slate-400 hover:text-[#1160A8] p-1.5 hover:bg-[#E6F0FA] rounded-md transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Term Backup Section */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-            <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
-              <Save className="mr-2 text-purple-600" size={24} />
-              Term Data Backup
-            </h2>
-            <p className="text-sm text-slate-600 mb-4">
-              Create a full backup of the current term's academic records,
-              attendance, and student data. Backups can be viewed and restored
-              from the "Manage Backups" section.
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+          <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
+          <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div className="relative flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+              <span className="h-10 w-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                <Settings size={20} />
+              </span>
+              System Settings
+            </h1>
+            <p className="text-sm text-slate-600">
+              Configure academic terms, subjects, notices, and backups with a
+              premium control center.
             </p>
-            <button
-              onClick={handleCreateTermBackup}
-              disabled={isCreatingBackup}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {isCreatingBackup ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Save size={16} className="mr-2" /> Create Current Term Backup
-                </>
-              )}
-            </button>
-            <Link
-              to="/admin/backups"
-              className="mt-4 inline-flex items-center text-sm font-medium text-[#1160A8] hover:text-[#0B4A82]"
-            >
-              <History size={16} className="mr-1" /> View and Manage Previous
-              Backups
-            </Link>
-          </div>
-
-          {/* Secret Database Reset */}
-          {showDangerZone && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
-              <div className="flex items-center mb-4">
-                <AlertTriangle className="text-red-600 mr-2" size={24} />
-                <h2 className="text-xl font-bold text-red-800">
-                  Danger Zone: Database Reset
-                </h2>
-              </div>
-              <p className="text-red-700 mb-4">
-                This action will permanently delete all data and reset the
-                system to its default state. Use with extreme caution.
-              </p>
-              <div className="flex flex-col space-y-4">
-                <button
-                  onClick={handleTermReset}
-                  disabled={termResetting}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-red-400 transition-colors"
-                >
-                  {termResetting ? "Resetting Term..." : "Term Reset"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="text-center mt-4">
-            <button
-              onClick={() => setShowDangerZone(!showDangerZone)}
-              className="text-slate-500 text-sm underline hover:text-slate-700"
-            >
-              {showDangerZone ? "Hide" : "Show"} Advanced Settings
-            </button>
           </div>
         </div>
 
-        {/* Right Column: Notices Management */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
-          <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
-            <Megaphone className="mr-2 text-emerald-600" size={24} />
-            School Notices
-          </h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left Column */}
+          <div className="space-y-8">
+            {/* General Config */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">
+                    General Configuration
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Academic year, term, and key school dates.
+                  </p>
+                </div>
+                <button
+                  onClick={handleSaveConfig}
+                  disabled={savingConfig}
+                  className="flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-full transition-colors"
+                >
+                  <Save size={14} className="mr-1" />{" "}
+                  {savingConfig ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
 
-          <form
-            onSubmit={handleAddNotice}
-            className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"
-          >
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Date
-              </label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Academic Year
+                    </label>
+                    <input
+                      type="text"
+                      value={config.academicYear}
+                      onChange={(e) =>
+                        setConfig({ ...config, academicYear: e.target.value })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Current Term
+                    </label>
+                    <select
+                      value={config.currentTerm}
+                      onChange={(e) =>
+                        setConfig({ ...config, currentTerm: e.target.value })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    >
+                      <option value="Term 1">Term 1</option>
+                      <option value="Term 2">Term 2</option>
+                      <option value="Term 3">Term 3</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100">
+                  <h3 className="font-medium text-slate-800 mb-2">
+                    School Information
+                  </h3>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        School Re-open Date
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+                        <input
+                          type="date"
+                          value={config.schoolReopenDate}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              schoolReopenDate: e.target.value,
+                            })
+                          }
+                          className="w-full border border-slate-200 pl-10 pr-3 py-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                      </div>
+                    </div>
+                    {/* New Vacation Date Input */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Term Vacation Date
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+                        <input
+                          type="date"
+                          value={config.vacationDate}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              vacationDate: e.target.value,
+                            })
+                          }
+                          className="w-full border border-slate-200 pl-10 pr-3 py-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Next Term Begins
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+                        <input
+                          type="date"
+                          value={config.nextTermBegins || ""}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              nextTermBegins: e.target.value,
+                            })
+                          }
+                          className="w-full border border-slate-200 pl-10 pr-3 py-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Subject Management */}
+            {/* Subject Management */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
+                <Book className="mr-2 text-[#0B4A82]" size={24} />
+                Manage Class Subjects
+              </h2>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Select Class
+                </label>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-[#1160A8] outline-none"
+                >
+                  {(
+                    [
+                      "Nursery",
+                      "KG",
+                      "Class 1-3",
+                      "Class 4-6",
+                      "JHS 1-3",
+                      "Other",
+                    ] as const
+                  ).map((group) =>
+                    classGroups[group]?.length ? (
+                      <optgroup key={group} label={group}>
+                        {classGroups[group].map((cls) => (
+                          <option key={cls.id} value={cls.id}>
+                            {cls.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null,
+                  )}
+                </select>
+              </div>
+
+              <form onSubmit={handleAddSubject} className="flex gap-2 mb-6">
                 <input
-                  type="date"
+                  type="text"
                   required
-                  className="w-full border border-slate-300 pl-10 pr-3 py-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
-                  value={noticeDate}
-                  onChange={(e) => setNoticeDate(e.target.value)}
+                  className="flex-1 border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#1160A8] outline-none text-sm"
+                  placeholder="New subject name..."
+                  value={newSubjectName}
+                  onChange={(e) => setNewSubjectName(e.target.value)}
                 />
+                <button
+                  type="submit"
+                  className="bg-[#1160A8] text-white px-4 py-2 rounded-xl hover:bg-[#0B4A82] transition-colors"
+                >
+                  <Plus size={20} />
+                </button>
+              </form>
+
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {currentClassSubjects.length === 0 ? (
+                  <p className="text-sm text-slate-500 text-center italic">
+                    No subjects configured for this class. Add some above!
+                  </p>
+                ) : (
+                  currentClassSubjects.map((subject) => (
+                    <div
+                      key={subject}
+                      className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group"
+                    >
+                      {editingSubject?.original === subject ? (
+                        <div className="flex items-center flex-1 gap-2">
+                          <input
+                            type="text"
+                            className="flex-1 border border-slate-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] outline-none"
+                            value={editingSubject.current}
+                            onChange={(e) =>
+                              setEditingSubject({
+                                ...editingSubject,
+                                current: e.target.value,
+                              })
+                            }
+                            autoFocus
+                          />
+                          <button
+                            onClick={saveEditSubject}
+                            className="text-emerald-600 hover:bg-emerald-50 p-1 rounded"
+                          >
+                            <Check size={16} />
+                          </button>
+                          <button
+                            onClick={() => setEditingSubject(null)}
+                            className="text-[#1160A8] hover:bg-[#E6F0FA] p-1 rounded"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-sm font-medium text-slate-700">
+                            {subject}
+                          </span>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => startEditSubject(subject)}
+                              className="text-slate-400 hover:text-[#1160A8] p-1.5 hover:bg-[#E6F0FA] rounded-md transition-colors"
+                            >
+                              <Edit size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSubject(subject)}
+                              className="text-slate-400 hover:text-[#1160A8] p-1.5 hover:bg-[#E6F0FA] rounded-md transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Notice Message
-              </label>
-              <textarea
-                required
-                className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
-                placeholder="Type notice here..."
-                rows={2}
-                value={newNotice}
-                onChange={(e) => setNewNotice(e.target.value)}
-              />
-            </div>
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                <label className="flex items-center text-sm cursor-pointer">
-                  <input
-                    type="radio"
-                    name="type"
-                    className="mr-2 text-emerald-600 focus:ring-emerald-500"
-                    checked={noticeType === "info"}
-                    onChange={() => setNoticeType("info")}
-                  />
-                  Info
-                </label>
-                <label className="flex items-center text-sm cursor-pointer">
-                  <input
-                    type="radio"
-                    name="type"
-                    className="mr-2 text-red-600 focus:ring-red-500"
-                    checked={noticeType === "urgent"}
-                    onChange={() => setNoticeType("urgent")}
-                  />
-                  Urgent
-                </label>
-              </div>
+
+            {/* Term Backup Section */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
+                <Save className="mr-2 text-purple-600" size={24} />
+                Term Data Backup
+              </h2>
+              <p className="text-sm text-slate-600 mb-4">
+                Create a full backup of the current term's academic records,
+                attendance, and student data. Backups can be viewed and restored
+                from the "Manage Backups" section.
+              </p>
               <button
-                type="submit"
-                disabled={isAddingNotice}
-                className="bg-emerald-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                onClick={handleCreateTermBackup}
+                disabled={isCreatingBackup}
+                className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                {isAddingNotice ? (
+                {isCreatingBackup ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-1"></div>
-                    Saving...
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                    Creating...
                   </>
                 ) : (
                   <>
-                    <Plus size={16} className="mr-1" /> Add Notice
+                    <Save size={16} className="mr-2" /> Create Current Term
+                    Backup
                   </>
                 )}
               </button>
+              <Link
+                to="/admin/backups"
+                className="mt-4 inline-flex items-center text-sm font-medium text-[#1160A8] hover:text-[#0B4A82]"
+              >
+                <History size={16} className="mr-1" /> View and Manage Previous
+                Backups
+              </Link>
             </div>
-          </form>
 
-          <div className="flex-1 overflow-y-auto pr-1">
-            <h3 className="text-sm font-bold text-slate-500 uppercase mb-3">
-              Active Notices
-            </h3>
-            <div className="space-y-3">
-              {notices.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center italic">
-                  No notices posted.
+            {/* Secret Database Reset */}
+            {showDangerZone && (
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6">
+                <div className="flex items-center mb-4">
+                  <Shield className="text-rose-600 mr-2" size={24} />
+                  <h2 className="text-xl font-bold text-rose-800">
+                    Danger Zone: Database Reset
+                  </h2>
+                </div>
+                <p className="text-rose-700 mb-4">
+                  This action will permanently delete all data and reset the
+                  system to its default state. Use with extreme caution.
                 </p>
-              ) : (
-                notices.map((notice) => (
-                  <div
-                    key={notice.id}
-                    className="flex justify-between items-start group p-3 border border-slate-100 rounded-lg hover:bg-slate-50 transition-colors"
+                <div className="flex flex-col space-y-4">
+                  <button
+                    onClick={handleTermReset}
+                    disabled={termResetting}
+                    className="bg-rose-600 text-white px-4 py-2 rounded-full hover:bg-rose-700 disabled:bg-rose-400 transition-colors"
                   >
+                    {termResetting ? "Resetting Term..." : "Term Reset"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="text-center mt-4">
+              <button
+                onClick={() => setShowDangerZone(!showDangerZone)}
+                className="text-slate-500 text-sm underline hover:text-slate-700"
+              >
+                {showDangerZone ? "Hide" : "Show"} Advanced Settings
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column: Notices Management */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
+            <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
+              <Megaphone className="mr-2 text-emerald-600" size={24} />
+              School Notices
+            </h2>
+
+            <form
+              onSubmit={handleAddNotice}
+              className="mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-200"
+            >
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Date
+                </label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                  <input
+                    type="date"
+                    required
+                    className="w-full border border-slate-200 pl-10 pr-3 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-200 outline-none text-sm"
+                    value={noticeDate}
+                    onChange={(e) => setNoticeDate(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Notice Message
+                </label>
+                <textarea
+                  required
+                  className="w-full border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-200 outline-none text-sm"
+                  placeholder="Type notice here..."
+                  rows={2}
+                  value={newNotice}
+                  onChange={(e) => setNewNotice(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="type"
+                      className="mr-2 text-emerald-600 focus:ring-emerald-500"
+                      checked={noticeType === "info"}
+                      onChange={() => setNoticeType("info")}
+                    />
+                    Info
+                  </label>
+                  <label className="flex items-center text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="type"
+                      className="mr-2 text-red-600 focus:ring-red-500"
+                      checked={noticeType === "urgent"}
+                      onChange={() => setNoticeType("urgent")}
+                    />
+                    Urgent
+                  </label>
+                </div>
+                <button
+                  type="submit"
+                  disabled={isAddingNotice}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-emerald-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {isAddingNotice ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-1"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} className="mr-1" /> Add Notice
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            <div className="flex-1 overflow-y-auto pr-1">
+              <h3 className="text-sm font-bold text-slate-500 uppercase mb-3">
+                Active Notices
+              </h3>
+              <div className="space-y-3">
+                {notices.length === 0 ? (
+                  <p className="text-slate-400 text-sm text-center italic">
+                    No notices posted.
+                  </p>
+                ) : (
+                  notices.map((notice) => (
                     <div
-                      className={`border-l-2 pl-3 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
+                      key={notice.id}
+                      className="flex justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors"
                     >
-                      <p className="text-sm text-slate-800 font-medium">
-                        {notice.message}
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        {notice.date} â€¢{" "}
-                        {notice.type === "urgent" ? "Urgent" : "General Info"}
-                      </p>
+                      <div
+                        className={`border-l-2 pl-3 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
+                      >
+                        <p className="text-sm text-slate-800 font-medium">
+                          {notice.message}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {notice.date} â€¢{" "}
+                          {notice.type === "urgent" ? "Urgent" : "General Info"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteNotice(notice.id)}
+                        className="text-slate-300 hover:text-[#1160A8] transition-colors p-1"
+                        title="Delete Notice"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => handleDeleteNotice(notice.id)}
-                      className="text-slate-300 hover:text-[#1160A8] transition-colors p-1"
-                      title="Delete Notice"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>

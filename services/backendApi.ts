@@ -202,4 +202,29 @@ export async function createTeacher(payload: {
   });
 }
 
+export async function initiateSchoolBilling(payload: {
+  amount: number;
+  currency?: "GHS";
+  metadata?: Record<string, any>;
+}): Promise<{
+  authorizationUrl: string;
+  reference: string;
+}> {
+  return apiRequest("/api/billing/initiate", {
+    body: payload,
+  });
+}
+
+export async function verifySchoolPayment(payload: {
+  reference: string;
+}): Promise<{
+  success: boolean;
+  status: string;
+  reference: string;
+}> {
+  return apiRequest("/api/billing/verify", {
+    body: payload,
+  });
+}
+
 export { BACKEND_URL };

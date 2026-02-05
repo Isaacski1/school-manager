@@ -23,6 +23,7 @@ import ReportCard from "./pages/admin/ReportCard";
 import SystemSettings from "./pages/admin/SystemSettings";
 import ManageBackups from "./pages/admin/ManageBackups";
 import Timetable from "./pages/admin/Timetable";
+import Billing from "./pages/admin/Billing";
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import Attendance from "./pages/teacher/Attendance";
 import TeacherAttendance from "./pages/teacher/TeacherAttendance";
@@ -32,6 +33,8 @@ import EditSkills from "./pages/teacher/EditSkills";
 import Schools from "./pages/super-admin/Schools";
 import SchoolDetails from "./pages/super-admin/SchoolDetails";
 import Dashboard from "./pages/super-admin/Dashboard";
+import SuperAdminBackups from "./pages/super-admin/Backups";
+import SuperAdminPayments from "./pages/super-admin/Payments";
 import Layout from "./components/Layout";
 
 const AppContent = () => {
@@ -288,6 +291,15 @@ const AppRoutes = () => {
         }
       />
 
+      <Route
+        path="/admin/billing"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+            <Billing />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Super Admin Routes */}
       <Route
         path="/super-admin/schools"
@@ -312,6 +324,24 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
             <SchoolDetails />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/backups"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminBackups />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/payments"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <Layout title="Payments">
+              <SuperAdminPayments />
+            </Layout>
           </ProtectedRoute>
         }
       />

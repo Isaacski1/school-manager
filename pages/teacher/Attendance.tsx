@@ -4,7 +4,14 @@ import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
 import { Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
-import { Save, Calendar, AlertTriangle } from "lucide-react";
+import {
+  Save,
+  Calendar,
+  AlertTriangle,
+  Users,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 
 const Attendance = () => {
   const { user } = useAuth();
@@ -200,86 +207,118 @@ const Attendance = () => {
     );
   }
 
+  const classNameLabel =
+    CLASSES_LIST.find((c) => c.id === selectedClassId)?.name || selectedClassId;
+  const absentCount = students.length - presentIds.size;
+
   return (
     <Layout title="Mark Attendance">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 max-w-4xl mx-auto">
-        {/* Header Controls */}
-        <div className="flex flex-col gap-6 mb-6">
-          {/* Top Row: Class & Date Selection */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-between">
-            {/* Class Selector */}
-            <div className="w-full sm:w-auto">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Select Class
-              </label>
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full sm:w-48 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-black"
-              >
-                {assignedClassIds.map((id) => {
-                  const c = CLASSES_LIST.find((cl) => cl.id === id);
-                  return (
-                    <option key={id} value={id}>
-                      {c?.name}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-
-            {/* Date Selector */}
-            <div className="w-full sm:w-auto">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Select Date
-              </label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  min={getMinDate()}
-                  className="w-full sm:w-auto pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+          <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
+          <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div className="relative flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-slate-900">
+              Student Attendance
+            </h1>
+            <p className="text-sm text-slate-600">
+              Mark attendance quickly and accurately for your class.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
+                <Users className="h-4 w-4 text-indigo-500" />
+                Class: {classNameLabel || "Select class"}
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 shadow-sm">
+                <CheckCircle className="h-4 w-4" />
+                {presentIds.size} Present
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-700 shadow-sm">
+                <XCircle className="h-4 w-4" />
+                {absentCount} Absent
+              </span>
             </div>
           </div>
+        </div>
 
-          {/* Stats & Save Button */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-50">
-            <div className="text-sm">
-              <span className="font-bold text-emerald-600 text-lg mr-1">
-                {presentIds.size}
-              </span>{" "}
-              Present
-              <span className="mx-2 text-slate-300">|</span>
-              <span className="font-bold text-red-500 text-lg mr-1">
-                {students.length - presentIds.size}
-              </span>{" "}
-              Absent
+        <div className="rounded-2xl border bg-white/80 p-6 shadow-sm">
+          {/* Header Controls */}
+          <div className="flex flex-col gap-6">
+            {/* Top Row: Class & Date Selection */}
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              {/* Class Selector */}
+              <div className="w-full md:w-64">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Select Class
+                </label>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
+                >
+                  {assignedClassIds.map((id) => {
+                    const c = CLASSES_LIST.find((cl) => cl.id === id);
+                    return (
+                      <option key={id} value={id}>
+                        {c?.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Date Selector */}
+              <div className="w-full md:w-64">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Select Date
+                </label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    min={getMinDate()}
+                    className="w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 py-2 text-sm shadow-sm transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+              </div>
             </div>
-            <button
-              onClick={handleSave}
-              disabled={loading || !selectedClassId || isDateBlocked()}
-              className="w-full sm:w-auto flex justify-center items-center bg-emerald-600 text-white px-6 py-2.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 font-medium shadow-sm"
-            >
-              <Save size={18} className="mr-2" />
-              {loading ? "Saving..." : "Save Register"}
-            </button>
+
+            {/* Stats & Save Button */}
+            <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-semibold text-emerald-700">
+                  <CheckCircle className="h-4 w-4" />
+                  {presentIds.size} Present
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 font-semibold text-rose-700">
+                  <XCircle className="h-4 w-4" />
+                  {absentCount} Absent
+                </span>
+              </div>
+              <button
+                onClick={handleSave}
+                disabled={loading || !selectedClassId || isDateBlocked()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.01] hover:bg-emerald-700 disabled:opacity-50 sm:w-auto"
+              >
+                <Save size={18} />
+                {loading ? "Saving..." : "Save Register"}
+              </button>
+            </div>
           </div>
         </div>
 
         {message && (
           <div
-            className={`mb-4 p-3 rounded text-center text-sm ${message.includes("Cannot") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}
+            className={`rounded-2xl p-3 text-center text-sm shadow-sm ${message.includes("Cannot") ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}
           >
             {message}
           </div>
         )}
 
         {isDateBlocked() && (
-          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-amber-900 shadow-sm">
             <div className="flex items-center gap-2 text-amber-700">
               <AlertTriangle size={18} />
               <span className="font-medium">
@@ -300,35 +339,48 @@ const Attendance = () => {
         )}
 
         {/* List */}
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div className="rounded-2xl border bg-white/80 p-2 shadow-sm">
           {students.map((student) => {
             const isPresent = presentIds.has(student.id);
             const isBlocked = isDateBlocked();
             return (
               <div
                 key={student.id}
-                className={`flex items-center justify-between p-4 border-b last:border-b-0 cursor-pointer transition-colors ${isPresent ? "bg-white" : "bg-red-50"} ${isBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`group flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md ${
+                  isBlocked ? "opacity-60" : "cursor-pointer"
+                }`}
                 onClick={() => !isBlocked && togglePresence(student.id)}
               >
-                <div className="flex items-center">
+                <div className="flex items-center gap-4">
                   <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold mr-4 ${isPresent ? "bg-slate-100 text-slate-600" : "bg-red-100 text-red-600"}`}
+                    className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${
+                      isPresent
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-rose-100 text-rose-700"
+                    }`}
                   >
                     {student.name.charAt(0)}
                   </div>
                   <div>
-                    <p
-                      className={`font-medium ${isPresent ? "text-slate-800" : "text-red-700"}`}
-                    >
+                    <p className="font-semibold text-slate-900">
                       {student.name}
                     </p>
-                    <p className="text-xs text-slate-400">{student.gender}</p>
+                    <p className="text-xs text-slate-500">{student.gender}</p>
                   </div>
                 </div>
 
                 <div
-                  className={`px-3 py-1 rounded-full text-xs font-bold border ${isPresent ? "bg-green-100 text-green-700 border-green-200" : "bg-red-100 text-red-700 border-red-200"}`}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
+                    isPresent
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
                 >
+                  {isPresent ? (
+                    <CheckCircle className="h-4 w-4" />
+                  ) : (
+                    <XCircle className="h-4 w-4" />
+                  )}
                   {isPresent ? "PRESENT" : "ABSENT"}
                 </div>
               </div>

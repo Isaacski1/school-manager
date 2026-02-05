@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { Backup } from "../../types";
@@ -18,7 +18,7 @@ import {
   BarChart2,
 } from "lucide-react";
 import { showToast } from "../../services/toast";
-import { CLASSES_LIST } from "../../constants";
+import { CLASSES_LIST, calculateTotalScore } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
 
 const getClassType = (classId: string): string => {
@@ -50,6 +50,87 @@ const ManageBackups = () => {
   const [backupToDeleteId, setBackupToDeleteId] = useState<string | null>(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [showClearAllModal, setShowClearAllModal] = useState(false);
+
+  const studentSnapshots = useMemo(() => {
+    if (!selectedBackup?.data?.students) return [];
+
+    const students = selectedBackup.data.students || [];
+    const attendanceRecords = selectedBackup.data.attendanceRecords || [];
+    const assessments = selectedBackup.data.assessments || [];
+    const studentRemarks = selectedBackup.data.studentRemarks || [];
+
+    const recordsByClass = attendanceRecords.reduce(
+      (acc: Record<string, typeof attendanceRecords>, record: any) => {
+        if (!acc[record.classId]) acc[record.classId] = [];
+        acc[record.classId].push(record);
+        return acc;
+      },
+      {},
+    );
+
+    const assessmentTotals = assessments.reduce(
+      (
+        acc: Record<string, { total: number; count: number }>,
+        assessment: any,
+      ) => {
+        const total =
+          typeof assessment.total === "number"
+            ? assessment.total
+            : calculateTotalScore(assessment);
+        if (!acc[assessment.studentId]) {
+          acc[assessment.studentId] = { total: 0, count: 0 };
+        }
+        acc[assessment.studentId].total += total;
+        acc[assessment.studentId].count += 1;
+        return acc;
+      },
+      {},
+    );
+
+    const remarksByStudent = studentRemarks.reduce(
+      (acc: Record<string, any>, remark: any) => {
+        const existing = acc[remark.studentId];
+        if (!existing) {
+          acc[remark.studentId] = remark;
+          return acc;
+        }
+        const existingDate = new Date(existing.dateCreated).getTime();
+        const nextDate = new Date(remark.dateCreated).getTime();
+        if (nextDate >= existingDate) {
+          acc[remark.studentId] = remark;
+        }
+        return acc;
+      },
+      {},
+    );
+
+    return students.map((student: any) => {
+      const classRecords = recordsByClass[student.classId] || [];
+      const presentDays = classRecords.filter((record: any) =>
+        record.presentStudentIds?.includes(student.id),
+      ).length;
+      const totalDays = classRecords.length;
+      const attendanceRate = totalDays
+        ? `${Math.round((presentDays / totalDays) * 100)}%`
+        : "-";
+
+      const assessmentInfo = assessmentTotals[student.id];
+      const avgScore = assessmentInfo?.count
+        ? (assessmentInfo.total / assessmentInfo.count).toFixed(1)
+        : "-";
+
+      const remark = remarksByStudent[student.id]?.remark || "N/A";
+
+      return {
+        student,
+        presentDays,
+        totalDays,
+        attendanceRate,
+        avgScore,
+        remark,
+      };
+    });
+  }, [selectedBackup]);
 
   const fetchBackups = async (filters?: {
     term?: string;
@@ -498,67 +579,74 @@ const ManageBackups = () => {
                       Students List
                     </h4>
 
-                    {/* Students Table */}
-                    {selectedBackup.data.students &&
-                    selectedBackup.data.students.length > 0 ? (
+                    {/* Students Performance Table */}
+                    {studentSnapshots.length > 0 ? (
                       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm text-left">
                             <thead className="bg-slate-50 text-slate-600 font-semibold">
                               <tr>
-                                <th className="px-4 py-3">Student Name</th>
-                                <th className="px-4 py-3">Gender</th>
+                                <th className="px-4 py-3">Student</th>
                                 <th className="px-4 py-3">Class</th>
-                                <th className="px-4 py-3">Date of Birth</th>
-                                <th className="px-4 py-3">Guardian</th>
-                                <th className="px-4 py-3">Phone</th>
+                                <th className="px-4 py-3 text-center">
+                                  Attendance
+                                </th>
+                                <th className="px-4 py-3 text-center">
+                                  Avg Score
+                                </th>
+                                <th className="px-4 py-3">Remark</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {selectedBackup.data.students.map(
-                                (student: any) => (
-                                  <tr
-                                    key={student.id}
-                                    className="hover:bg-slate-50 transition-colors"
-                                  >
-                                    <td className="px-4 py-3 font-medium text-slate-800">
-                                      <div className="flex items-center">
-                                        <div
-                                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs text-white mr-3 shadow-sm ${student.gender === "Male" ? "bg-amber-400" : "bg-[#0B4A82]"}`}
-                                        >
-                                          {student.name.charAt(0)}
-                                        </div>
-                                        {student.name}
+                              {studentSnapshots.map((row) => (
+                                <tr
+                                  key={row.student.id}
+                                  className="hover:bg-slate-50 transition-colors"
+                                >
+                                  <td className="px-4 py-3 font-medium text-slate-800">
+                                    <div className="flex items-center">
+                                      <div
+                                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs text-white mr-3 shadow-sm ${row.student.gender === "Male" ? "bg-amber-400" : "bg-[#0B4A82]"}`}
+                                      >
+                                        {row.student.name.charAt(0)}
                                       </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-600">
-                                      {student.gender}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold border border-slate-200">
-                                        {CLASSES_LIST.find(
-                                          (c) => c.id === student.classId,
-                                        )?.name || student.classId}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-600">
-                                      {student.dob}
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-600">
-                                      {student.guardianName}
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-600">
-                                      {student.guardianPhone}
-                                    </td>
-                                  </tr>
-                                ),
-                              )}
+                                      <div>
+                                        <p>{row.student.name}</p>
+                                        <p className="text-xs text-slate-400">
+                                          {row.student.gender}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold border border-slate-200">
+                                      {CLASSES_LIST.find(
+                                        (c) => c.id === row.student.classId,
+                                      )?.name || row.student.classId}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <div className="text-sm font-semibold text-slate-700">
+                                      {row.attendanceRate}
+                                    </div>
+                                    <div className="text-xs text-slate-400">
+                                      {row.presentDays}/{row.totalDays} days
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center font-semibold text-slate-700">
+                                    {row.avgScore}
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-600">
+                                    {row.remark}
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>
                         <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
-                          Total: {selectedBackup.data.students.length} student
-                          {selectedBackup.data.students.length !== 1 ? "s" : ""}
+                          Total: {studentSnapshots.length} student
+                          {studentSnapshots.length !== 1 ? "s" : ""}
                         </div>
                       </div>
                     ) : (
@@ -747,4 +835,3 @@ const ManageBackups = () => {
 };
 
 export default ManageBackups;
-

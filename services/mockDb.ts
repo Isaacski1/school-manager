@@ -491,11 +491,12 @@ class FirestoreService {
     const q = query(
       collection(firestore, "admin_notifications"),
       where("schoolId", "==", scopedSchoolId),
-      orderBy("createdAt", "desc"),
       limit(20),
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as SystemNotification);
+    return snap.docs
+      .map((d) => d.data() as SystemNotification)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }
 
   async markNotificationAsRead(id: string): Promise<void> {
@@ -763,9 +764,12 @@ class FirestoreService {
         teacherAttendanceRecords,
         assessments,
         studentRemarks,
+        adminRemarks,
         studentSkills,
         timetables,
         notices,
+        adminNotifications,
+        activityLogs,
       ] = await Promise.all([
         this.getCollectionBySchoolId<Student>("students", schoolId),
         this.getCollectionBySchoolId<User>("users", schoolId),
@@ -779,9 +783,15 @@ class FirestoreService {
           "student_remarks",
           schoolId,
         ),
+        this.getCollectionBySchoolId<AdminRemark>("admin_remarks", schoolId),
         this.getCollectionBySchoolId<StudentSkills>("student_skills", schoolId),
         this.getCollectionBySchoolId<ClassTimetable>("timetables", schoolId),
         this.getCollectionBySchoolId<Notice>("notices", schoolId),
+        this.getCollectionBySchoolId<SystemNotification>(
+          "admin_notifications",
+          schoolId,
+        ),
+        this.getCollectionBySchoolId<any>("activity_logs", schoolId),
       ]);
 
       const classSubjectsSnap = await getDocs(
@@ -801,15 +811,20 @@ class FirestoreService {
         term: currentTerm,
         academicYear: academicYear,
         data: {
+          schoolConfig: currentConfig,
           students,
           attendanceRecords,
           teacherAttendanceRecords,
           assessments,
           studentRemarks,
+          adminRemarks,
           studentSkills,
           timetables,
           users,
           classSubjects,
+          notices,
+          adminNotifications,
+          activityLogs,
         },
       };
 

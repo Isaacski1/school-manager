@@ -24,6 +24,9 @@ import {
   MessageSquare,
   Edit,
   FileText,
+  Shield,
+  CreditCard,
+  Wallet,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -195,6 +198,16 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 icon={GraduationCap}
                 label="Schools"
               />
+              <NavItem
+                href="/super-admin/backups"
+                icon={Shield}
+                label="Backups"
+              />
+              <NavItem
+                href="/super-admin/payments"
+                icon={Wallet}
+                label="Payments"
+              />
             </>
           ) : isAdmin ? (
             <>
@@ -230,6 +243,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 href="/admin/settings"
                 icon={Settings}
                 label="Settings"
+              />
+              <NavItem
+                href="/admin/billing"
+                icon={CreditCard}
+                label="Billing"
               />
             </>
           ) : (

@@ -55,15 +55,20 @@ export interface Backup {
   academicYear: string;
   data?: {
     // Make data optional
+    schoolConfig?: SchoolConfig;
     students: Student[];
     attendanceRecords: AttendanceRecord[];
     teacherAttendanceRecords: TeacherAttendanceRecord[];
     assessments: Assessment[];
     studentRemarks: StudentRemark[];
+    adminRemarks?: AdminRemark[];
     studentSkills: StudentSkills[];
     timetables: ClassTimetable[];
     users: User[];
     classSubjects: ClassSubjectConfig[];
+    notices?: Notice[];
+    adminNotifications?: SystemNotification[];
+    activityLogs?: any[];
   };
   dataCollectionRef?: string; // New field to store reference to subcollection
 }

@@ -303,13 +303,13 @@ const Timetable = () => {
             </div>
 
             {/* Slots List */}
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-3 md:space-y-4">
+            <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-3 md:space-y-4 min-h-[260px]">
               {timetable[activeDay]?.length === 0 ? (
-                <div className="text-center py-20 md:py-16 px-6 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
-                  <div className="text-lg md:text-lg font-medium mb-3">
+                <div className="text-center w-full min-h-[260px] md:min-h-[320px] py-10 md:py-16 px-6 md:px-10 text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-white flex flex-col items-center justify-center">
+                  <div className="text-xl md:text-2xl font-semibold mb-3 text-slate-700">
                     No classes or breaks scheduled
                   </div>
-                  <div className="text-base md:text-base">
+                  <div className="text-base md:text-lg leading-relaxed max-w-md mx-auto">
                     Add time slots for {activeDay} using the form below.
                   </div>
                 </div>

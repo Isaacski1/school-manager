@@ -30,6 +30,8 @@ import {
   Building,
   MoreHorizontal,
   ChevronRight,
+  Wallet,
+  BadgeDollarSign,
 } from "lucide-react";
 
 // Premium Card Component
@@ -150,10 +152,21 @@ const EmptyState: React.FC<{
   </div>
 );
 
+type PaymentRecord = {
+  id: string;
+  amount?: number;
+  currency?: string;
+  status?: string;
+  schoolId?: string;
+  schoolName?: string;
+  createdAt?: Timestamp | number | string;
+};
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [schools, setSchools] = useState<School[]>([]);
   const [activity, setActivity] = useState<any[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -162,9 +175,19 @@ const Dashboard: React.FC = () => {
     "inactive" | "trials" | "noactivity"
   >("inactive");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [dailyChecklist, setDailyChecklist] = useState<
-    Record<string, { completed: number; total: number }>
-  >({});
+  const [dailyChecklist, setDailyChecklist] = useState<{
+    summary: Record<string, { completed: number; total: number }>;
+    perSchool: Record<
+      string,
+      {
+        attendance: boolean;
+        teacherAttendance: boolean;
+        assessments: boolean;
+        timetable: boolean;
+        notices: boolean;
+      }
+    >;
+  }>({ summary: {}, perSchool: {} });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -186,6 +209,19 @@ const Dashboard: React.FC = () => {
       }));
       setActivity(events);
 
+      const paymentsCol = collection(firestore, "payments");
+      const paymentsQuery = query(
+        paymentsCol,
+        orderBy("createdAt", "desc"),
+        limit(200),
+      );
+      const paymentsSnap = await getDocs(paymentsQuery);
+      const paymentRows = paymentsSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      })) as PaymentRecord[];
+      setPayments(paymentRows);
+
       setLastUpdated(new Date());
     } catch (err) {
       console.error(err);
@@ -199,7 +235,13 @@ const Dashboard: React.FC = () => {
     const loadDailyChecklist = async () => {
       try {
         const now = new Date();
-        const today = now.toISOString().split("T")[0];
+        const toLocalYYYYMMDD = (date: Date) => {
+          const y = date.getFullYear();
+          const m = String(date.getMonth() + 1).padStart(2, "0");
+          const d = String(date.getDate()).padStart(2, "0");
+          return `${y}-${m}-${d}`;
+        };
+        const today = toLocalYYYYMMDD(now);
         const startOfDay = new Date(now);
         startOfDay.setHours(0, 0, 0, 0);
         const endOfDay = new Date(now);
@@ -214,6 +256,16 @@ const Dashboard: React.FC = () => {
           timetable: { completed: 0, total: totalSchools },
           notices: { completed: 0, total: totalSchools },
         } as Record<string, { completed: number; total: number }>;
+        const perSchool: Record<
+          string,
+          {
+            attendance: boolean;
+            teacherAttendance: boolean;
+            assessments: boolean;
+            timetable: boolean;
+            notices: boolean;
+          }
+        > = {};
 
         const perSchoolChecks = schools.map(async (school) => {
           const schoolId = school.id;
@@ -272,16 +324,25 @@ const Dashboard: React.FC = () => {
             ),
           ]);
 
-          if (!attendanceSnap.empty) completion.attendance.completed += 1;
-          if (!teacherAttendanceSnap.empty)
+          const status = {
+            attendance: !attendanceSnap.empty,
+            teacherAttendance: !teacherAttendanceSnap.empty,
+            assessments: !assessmentSnap.empty,
+            timetable: !timetableSnap.empty,
+            notices: !noticesSnap.empty,
+          };
+          perSchool[schoolId] = status;
+
+          if (status.attendance) completion.attendance.completed += 1;
+          if (status.teacherAttendance)
             completion.teacherAttendance.completed += 1;
-          if (!assessmentSnap.empty) completion.assessments.completed += 1;
-          if (!timetableSnap.empty) completion.timetable.completed += 1;
-          if (!noticesSnap.empty) completion.notices.completed += 1;
+          if (status.assessments) completion.assessments.completed += 1;
+          if (status.timetable) completion.timetable.completed += 1;
+          if (status.notices) completion.notices.completed += 1;
         });
 
         await Promise.all(perSchoolChecks);
-        setDailyChecklist(completion);
+        setDailyChecklist({ summary: completion, perSchool });
       } catch (err) {
         console.error("Failed to load daily checklist", err);
       }
@@ -324,6 +385,87 @@ const Dashboard: React.FC = () => {
 
     return { total, active, inactive, trial, paid, newSchools, activeLast7 };
   }, [schools, activity]);
+
+  const normalizePaymentStatus = (status?: string) => {
+    const normalized = String(status || "pending").toLowerCase();
+    if (["success", "paid", "active"].includes(normalized)) return "success";
+    if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
+    if (["abandoned", "cancelled", "canceled"].includes(normalized))
+      return "failed";
+    return "pending";
+  };
+
+  const formatCurrency = (value: number, currency = "GHS") =>
+    new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value);
+
+  const paymentMetrics = useMemo(() => {
+    const now = new Date();
+    const monthBuckets: { key: string; label: string }[] = [];
+    for (let i = 5; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-US", { month: "short" });
+      monthBuckets.push({ key, label });
+    }
+
+    const monthlyTotals = Object.fromEntries(
+      monthBuckets.map((bucket) => [bucket.key, 0]),
+    ) as Record<string, number>;
+
+    const last30Cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    let paidAmount = 0;
+    let paidCount = 0;
+    let pendingCount = 0;
+    let failedCount = 0;
+    let last30Amount = 0;
+
+    payments.forEach((payment) => {
+      const status = normalizePaymentStatus(payment.status);
+      const amountRaw = payment.amount ?? 0;
+      const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
+      const createdAt =
+        payment.createdAt instanceof Timestamp
+          ? payment.createdAt.toDate()
+          : new Date(payment.createdAt || 0);
+
+      if (status === "success") {
+        paidAmount += amount;
+        paidCount += 1;
+        if (createdAt >= last30Cutoff) {
+          last30Amount += amount;
+        }
+        const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, "0")}`;
+        if (monthlyTotals[key] !== undefined) {
+          monthlyTotals[key] += amount;
+        }
+      }
+
+      if (status === "pending") pendingCount += 1;
+      if (status === "failed") failedCount += 1;
+    });
+
+    const totalTracked = paidCount + pendingCount + failedCount;
+    const successRate = totalTracked
+      ? Math.round((paidCount / totalTracked) * 100)
+      : 0;
+
+    return {
+      paidAmount,
+      paidCount,
+      pendingCount,
+      failedCount,
+      last30Amount,
+      successRate,
+      monthlySeries: monthBuckets.map((bucket) => ({
+        label: bucket.label,
+        value: monthlyTotals[bucket.key] || 0,
+      })),
+    };
+  }, [payments]);
 
   const planDist = useMemo(() => {
     const counts: Record<string, number> = {
@@ -517,6 +659,201 @@ const Dashboard: React.FC = () => {
               />
             </>
           )}
+        </div>
+
+        {/* Billing Analytics */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <Card className="lg:col-span-2">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Billing Analytics
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Payment performance over the last 6 months
+                </p>
+              </div>
+              <Link
+                to="/super-admin/payments"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-[#0B4A82]"
+              >
+                View payments <ChevronRight size={16} />
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase text-emerald-600">
+                    Total Revenue
+                  </span>
+                  <span className="w-8 h-8 rounded-lg bg-emerald-500/90 text-white flex items-center justify-center">
+                    <BadgeDollarSign size={16} />
+                  </span>
+                </div>
+                <div className="mt-3 text-2xl font-bold text-slate-900">
+                  {formatCurrency(paymentMetrics.paidAmount)}
+                </div>
+                <p className="text-xs text-emerald-700 mt-2">
+                  {paymentMetrics.paidCount} successful payments
+                </p>
+              </div>
+              <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase text-amber-600">
+                    Pending
+                  </span>
+                  <span className="w-8 h-8 rounded-lg bg-amber-500/90 text-white flex items-center justify-center">
+                    <Clock size={16} />
+                  </span>
+                </div>
+                <div className="mt-3 text-2xl font-bold text-slate-900">
+                  {paymentMetrics.pendingCount}
+                </div>
+                <p className="text-xs text-amber-700 mt-2">
+                  Awaiting confirmation
+                </p>
+              </div>
+              <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase text-rose-600">
+                    Failed
+                  </span>
+                  <span className="w-8 h-8 rounded-lg bg-rose-500/90 text-white flex items-center justify-center">
+                    <AlertTriangle size={16} />
+                  </span>
+                </div>
+                <div className="mt-3 text-2xl font-bold text-slate-900">
+                  {paymentMetrics.failedCount}
+                </div>
+                <p className="text-xs text-rose-700 mt-2">Needs follow-up</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-white p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Monthly Revenue
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Successful payments per month
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-emerald-600">
+                  +{paymentMetrics.successRate}% success rate
+                </span>
+              </div>
+              <div className="grid grid-cols-6 gap-3 items-end h-36">
+                {paymentMetrics.monthlySeries.map((point) => {
+                  const maxValue = Math.max(
+                    1,
+                    ...paymentMetrics.monthlySeries.map((p) => p.value),
+                  );
+                  const height = Math.round((point.value / maxValue) * 100);
+                  return (
+                    <div
+                      key={point.label}
+                      className="flex flex-col items-center gap-2"
+                    >
+                      <div
+                        className="w-10 rounded-full bg-gradient-to-t from-[#0B4A82] to-emerald-400 shadow-sm"
+                        style={{ height: `${height}%`, minHeight: "12%" }}
+                      />
+                      <span className="text-[11px] text-slate-500">
+                        {point.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+                <span>
+                  Last 30 days: {formatCurrency(paymentMetrics.last30Amount)}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Activity size={12} /> Updated with payments data
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Billing Health
+                </h3>
+                <p className="text-sm text-slate-600">
+                  Current payment status mix
+                </p>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center">
+                <Wallet size={18} />
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {[
+                {
+                  label: "Successful",
+                  value: paymentMetrics.paidCount,
+                  color: "bg-emerald-500",
+                },
+                {
+                  label: "Pending",
+                  value: paymentMetrics.pendingCount,
+                  color: "bg-amber-500",
+                },
+                {
+                  label: "Failed",
+                  value: paymentMetrics.failedCount,
+                  color: "bg-rose-500",
+                },
+              ].map((item) => {
+                const total =
+                  paymentMetrics.paidCount +
+                  paymentMetrics.pendingCount +
+                  paymentMetrics.failedCount;
+                const percentage = total
+                  ? Math.round((item.value / total) * 100)
+                  : 0;
+                return (
+                  <div key={item.label} className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-slate-700">
+                        {item.label}
+                      </span>
+                      <span className="text-slate-500">{percentage}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className={`h-full ${item.color} rounded-full`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">Success rate</p>
+                  <p className="text-2xl font-bold text-slate-900">
+                    {paymentMetrics.successRate}%
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                  <TrendingUp size={18} />
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mt-3">
+                Track billed revenue and follow up on pending payments.
+              </p>
+            </div>
+          </Card>
         </div>
 
         {/* Insight Cards Section */}
@@ -909,7 +1246,7 @@ const Dashboard: React.FC = () => {
                 bar: "bg-slate-500",
               },
             ].map((item) => {
-              const metrics = dailyChecklist[item.key];
+              const metrics = dailyChecklist.summary[item.key];
               const percent = metrics
                 ? Math.round(
                     (metrics.completed / Math.max(1, metrics.total)) * 100,
@@ -956,6 +1293,81 @@ const Dashboard: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-slate-900">
+                School Activity Status
+              </h3>
+              <span className="text-xs text-slate-500">
+                Live today per school
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {schools.map((school) => {
+                const status = dailyChecklist.perSchool[school.id] || {
+                  attendance: false,
+                  teacherAttendance: false,
+                  assessments: false,
+                  timetable: false,
+                  notices: false,
+                };
+                const activityItems = [
+                  { label: "Attendance", value: status.attendance },
+                  {
+                    label: "Teacher Attendance",
+                    value: status.teacherAttendance,
+                  },
+                  { label: "Assessments", value: status.assessments },
+                  { label: "Timetable", value: status.timetable },
+                  { label: "Notices", value: status.notices },
+                ];
+                const completedCount = activityItems.filter(
+                  (item) => item.value,
+                ).length;
+
+                return (
+                  <div
+                    key={school.id}
+                    className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-slate-500">School</p>
+                        <p className="text-lg font-semibold text-slate-900">
+                          {school.name}
+                        </p>
+                        <p className="text-xs text-slate-400">{school.code}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-500">Completion</p>
+                        <p className="text-lg font-bold text-emerald-600">
+                          {completedCount}/{activityItems.length}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                      {activityItems.map((item) => (
+                        <div
+                          key={item.label}
+                          className={`flex items-center justify-between rounded-lg border px-2 py-1.5 ${
+                            item.value
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-slate-50 text-slate-500"
+                          }`}
+                        >
+                          <span>{item.label}</span>
+                          <span className="font-semibold">
+                            {item.value ? "Done" : "Pending"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </Card>
       </div>

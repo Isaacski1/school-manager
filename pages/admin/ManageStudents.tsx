@@ -14,6 +14,7 @@ import {
   BookOpen,
   Calendar,
   User as UserIcon,
+  Users,
   AlertTriangle,
   CheckCircle,
   XCircle,
@@ -88,6 +89,21 @@ const ManageStudents = () => {
   const filteredStudents = students
     .filter((s) => (filterClass === "all" ? true : s.classId === filterClass))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  const classLabel =
+    filterClass === "all"
+      ? "All Classes"
+      : CLASSES_LIST.find((c) => c.id === filterClass)?.name || filterClass;
+  const totalStudents = students.length;
+  const filteredCount = filteredStudents.length;
+  const attendanceTotal = performanceData?.attendance?.total;
+  const attendancePresent = performanceData?.attendance?.present;
+  const attendanceAbsent =
+    attendanceTotal != null && attendancePresent != null
+      ? Math.max(attendanceTotal - attendancePresent, 0)
+      : null;
+  const attendanceRate = performanceData?.attendance?.percentage;
+  const subjectCount = performanceData?.grades?.length ?? 0;
 
   const handleOpenAdd = () => {
     setPerformanceData(null);
@@ -244,15 +260,23 @@ const ManageStudents = () => {
           return (
             <div
               key={key}
-              className="border border-slate-200 rounded-lg p-3 bg-white"
+              className="relative overflow-hidden border border-slate-200 rounded-2xl p-4 bg-white shadow-sm"
             >
-              <h5 className="font-bold text-slate-700 text-sm mb-2 text-center border-b border-slate-100 pb-2">
-                {label}
-              </h5>
+              <div className="absolute -top-10 -right-10 h-24 w-24 rounded-full bg-indigo-100/60 blur-2xl" />
+              <div className="absolute -bottom-12 -left-10 h-28 w-28 rounded-full bg-emerald-100/60 blur-2xl" />
+              <div className="relative flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+                <h5 className="font-semibold text-slate-800 text-sm">
+                  {label}
+                </h5>
+                <span className="text-[11px] text-slate-400">Attendance</span>
+              </div>
 
               <div className="grid grid-cols-7 gap-1 text-center">
                 {weekdayLabels.map((d, i) => (
-                  <div key={i} className="text-[11px] text-slate-400 font-bold">
+                  <div
+                    key={i}
+                    className="text-[10px] text-slate-400 font-semibold uppercase"
+                  >
                     {d}
                   </div>
                 ))}
@@ -271,16 +295,17 @@ const ManageStudents = () => {
                     dateObj.getDay() === 0 || dateObj.getDay() === 6;
 
                   // Visual styles
-                  const baseClasses = `h-8 w-8 mx-auto flex items-center justify-center rounded-full text-sm font-semibold`;
+                  const baseClasses =
+                    "h-8 w-8 mx-auto flex items-center justify-center rounded-full text-xs font-semibold transition";
                   const weekendClasses = isWeekend
                     ? "text-slate-300 bg-slate-50"
-                    : "";
+                    : "text-slate-600";
 
                   if (!isSchoolDay) {
                     return (
                       <div
                         key={idx}
-                        className={`h-8 flex items-center justify-center text-[12px] text-slate-200`}
+                        className="h-8 flex items-center justify-center text-[11px] text-slate-200"
                       ></div>
                     );
                   }
@@ -289,7 +314,7 @@ const ManageStudents = () => {
                     <div key={idx} className="flex items-center justify-center">
                       <div
                         title={`${iso}: ${isPresent ? "Present" : "Absent"}`}
-                        className={`${baseClasses} ${weekendClasses} ${isPresent ? "bg-emerald-100 text-emerald-800" : "bg-[#E6F0FA] text-[#0B4A82]"}`}
+                        className={`${baseClasses} ${weekendClasses} ${isPresent ? "bg-emerald-100 text-emerald-800 shadow-sm" : "bg-sky-100 text-sky-800 shadow-sm"}`}
                       >
                         {dayNum}
                       </div>
@@ -298,13 +323,13 @@ const ManageStudents = () => {
                 })}
               </div>
 
-              <div className="mt-3 flex justify-center gap-4 text-xs text-slate-500">
+              <div className="mt-3 flex justify-center gap-4 text-[11px] text-slate-500">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-emerald-100 rounded-full border border-emerald-200"></div>{" "}
                   Present
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-[#E6F0FA] rounded-full border border-[#E6F0FA]"></div>{" "}
+                  <div className="w-3 h-3 bg-sky-100 rounded-full border border-sky-200"></div>{" "}
                   Absent
                 </div>
               </div>
@@ -317,119 +342,167 @@ const ManageStudents = () => {
 
   return (
     <Layout title="Manage Students">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-        {/* Toolbar */}
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex gap-2">
-            <select
-              className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-slate-800 text-white"
-              value={filterClass}
-              onChange={(e) => setFilterClass(e.target.value)}
-            >
-              <option value="all">All Classes</option>
-              {CLASSES_LIST.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+          <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
+          <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div className="relative flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-slate-900">
+              Manage Students
+            </h1>
+            <p className="text-sm text-slate-600">
+              Organize, update, and review student profiles in a beautiful
+              workspace.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
+                <Users className="h-4 w-4 text-indigo-500" />
+                Total: {totalStudents}
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 shadow-sm">
+                <CheckCircle className="h-4 w-4" />
+                Showing: {filteredCount}
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700 shadow-sm">
+                <BookOpen className="h-4 w-4" />
+                {classLabel}
+              </span>
+            </div>
           </div>
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center justify-center bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium"
-          >
-            <Plus size={16} className="mr-2" />
-            Add Student
-          </button>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Class</th>
-                <th className="px-6 py-3">Gender</th>
-                <th className="px-6 py-3">Guardian</th>
-                <th className="px-6 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredStudents.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="px-6 py-8 text-center text-slate-400"
-                  >
-                    No students found.
-                  </td>
-                </tr>
-              ) : (
-                filteredStudents.map((student) => {
+        <div className="rounded-2xl border bg-white/80 shadow-sm overflow-hidden">
+          {/* Toolbar */}
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex gap-2">
+              <select
+                className="border border-slate-200 rounded-full px-4 py-2 text-sm bg-white text-slate-700 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                value={filterClass}
+                onChange={(e) => setFilterClass(e.target.value)}
+              >
+                <option value="all">All Classes</option>
+                {CLASSES_LIST.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleOpenAdd}
+              className="flex items-center justify-center gap-2 rounded-full bg-emerald-600 text-white px-5 py-2 text-sm font-semibold shadow-sm transition hover:scale-[1.01] hover:bg-emerald-700"
+            >
+              <Plus size={16} />
+              Add Student
+            </button>
+          </div>
+
+          {/* Cards */}
+          <div className="p-4">
+            {filteredStudents.length === 0 ? (
+              <div className="px-6 py-10 text-center text-slate-400">
+                No students found.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredStudents.map((student) => {
                   const className =
                     CLASSES_LIST.find((c) => c.id === student.classId)?.name ||
                     student.classId;
                   return (
-                    <tr
+                    <div
                       key={student.id}
-                      className="hover:bg-slate-50 transition-colors"
+                      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md"
                     >
-                      <td className="px-6 py-3 font-medium text-slate-800">
-                        {student.name}
-                      </td>
-                      <td className="px-6 py-3">{className}</td>
-                      <td className="px-6 py-3">{student.gender}</td>
-                      <td className="px-6 py-3">
-                        <div className="flex flex-col">
-                          <span>{student.guardianName}</span>
-                          <span className="text-xs text-slate-400">
-                            {student.guardianPhone}
-                          </span>
+                      <div className="absolute -top-14 -right-14 h-28 w-28 rounded-full bg-indigo-100/60 blur-2xl" />
+                      <div className="absolute -bottom-16 -left-10 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
+
+                      <div className="relative flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-11 w-11 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-semibold">
+                            {student.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {student.name}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              ID: {student.id}
+                            </p>
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-6 py-3 text-right whitespace-nowrap">
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                          {className}
+                        </span>
+                      </div>
+
+                      <div className="relative mt-4 grid grid-cols-2 gap-3 text-xs text-slate-600">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Gender
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                            {student.gender}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Guardian
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                            {student.guardianName || "-"}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {student.guardianPhone || ""}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="relative mt-4 flex items-center justify-between">
                         <button
                           type="button"
                           onClick={() => handleViewPerformance(student)}
-                          className="text-emerald-500 hover:text-emerald-700 p-2 hover:bg-emerald-50 rounded-full transition-colors mr-1"
+                          className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
                           title="View Performance"
                         >
-                          <Eye size={16} />
+                          <Eye size={14} />
+                          View
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(student)}
-                          className="text-[#1160A8] hover:text-[#0B4A82] p-2 hover:bg-[#E6F0FA] rounded-full transition-colors mr-1"
-                          title="Edit Details"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => promptDelete(student.id, e)}
-                          className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors cursor-pointer"
-                          title="Delete Student"
-                        >
-                          <Trash2 size={16} className="pointer-events-none" />
-                        </button>
-                      </td>
-                    </tr>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(student)}
+                            className="text-[#1160A8] hover:text-[#0B4A82] p-2 hover:bg-[#E6F0FA] rounded-full transition-colors"
+                            title="Edit Details"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => promptDelete(student.id, e)}
+                            className="text-rose-500 hover:text-rose-700 p-2 hover:bg-rose-50 rounded-full transition-colors cursor-pointer"
+                            title="Delete Student"
+                          >
+                            <Trash2 size={16} className="pointer-events-none" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   );
-                })
-              )}
-            </tbody>
-          </table>
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Delete Confirmation Modal */}
       {deleteId && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-lg max-w-sm w-full p-6 shadow-xl transform transition-all">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl transform transition-all">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 bg-[#E6F0FA] rounded-full flex items-center justify-center mb-4">
-                <AlertTriangle className="text-[#0B4A82] w-6 h-6" />
+              <div className="w-12 h-12 bg-rose-50 rounded-full flex items-center justify-center mb-4">
+                <AlertTriangle className="text-rose-600 w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-slate-900 mb-2">
                 Delete Student?
@@ -441,13 +514,13 @@ const ManageStudents = () => {
               <div className="flex gap-3 w-full">
                 <button
                   onClick={() => setDeleteId(null)}
-                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium transition-colors"
+                  className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-full hover:bg-slate-50 font-medium transition"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={executeDelete}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium transition-colors shadow-sm"
+                  className="flex-1 px-4 py-2 bg-rose-600 text-white rounded-full hover:bg-rose-700 font-medium transition shadow-sm"
                 >
                   Delete
                 </button>
@@ -459,11 +532,16 @@ const ManageStudents = () => {
 
       {/* Add/Edit Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-md w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-6 text-slate-900 border-b pb-2">
-              {editingId ? "Edit Student Details" : "Add New Student"}
-            </h3>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="mb-6 border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900">
+                {editingId ? "Edit Student Details" : "Add New Student"}
+              </h3>
+              <p className="text-xs text-slate-500">
+                Keep student records accurate and up to date.
+              </p>
+            </div>
 
             {/* Quick Performance Summary within Edit Modal */}
             {editingId && (
@@ -673,113 +751,145 @@ const ManageStudents = () => {
 
       {/* View Performance Modal (Report Card) */}
       {viewStudent && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-3xl max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50 sticky top-0 z-10">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-2xl font-bold text-slate-500">
-                  {viewStudent.name.charAt(0)}
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">
-                    {viewStudent.name}
-                  </h2>
-                  <div className="flex gap-2 text-sm text-slate-500 mt-1">
-                    <span className="flex items-center">
-                      <UserIcon size={14} className="mr-1" />{" "}
-                      {viewStudent.gender}
-                    </span>
-                    <span>â€¢</span>
-                    <span>
-                      {
-                        CLASSES_LIST.find((c) => c.id === viewStudent.classId)
-                          ?.name
-                      }
-                    </span>
+            <div className="p-6 border-b border-slate-100 flex flex-col gap-4 bg-gradient-to-r from-slate-50 via-white to-emerald-50 sticky top-0 z-10">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-sm">
+                    {viewStudent.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">
+                      {viewStudent.name}
+                    </h2>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 mt-1">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+                        <UserIcon size={14} />
+                        {viewStudent.gender}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+                        <BookOpen size={14} />
+                        {
+                          CLASSES_LIST.find((c) => c.id === viewStudent.classId)
+                            ?.name
+                        }
+                      </span>
+                    </div>
                   </div>
                 </div>
+                <button
+                  onClick={closeViewModal}
+                  className="text-slate-400 hover:text-slate-700 bg-white p-2 rounded-full shadow-sm"
+                >
+                  <X size={24} />
+                </button>
               </div>
-              <button
-                onClick={closeViewModal}
-                className="text-slate-400 hover:text-slate-700 bg-white p-2 rounded-full shadow-sm"
-              >
-                <X size={24} />
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Attendance Rate
+                  </p>
+                  <p
+                    className={`mt-1 text-2xl font-bold ${performanceData?.attendance?.percentage < 50 ? "text-rose-600" : "text-emerald-600"}`}
+                  >
+                    {performanceData
+                      ? `${performanceData.attendance.percentage}%`
+                      : "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Days Present
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-slate-900">
+                    {performanceData ? performanceData.attendance.present : "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Total School Days
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-slate-900">
+                    {performanceData ? performanceData.attendance.total : "-"}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Body */}
             <div className="p-6 space-y-8">
               {/* Detailed Attendance Stats */}
-              <div className="bg-slate-50 border border-slate-100 rounded-xl p-5">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600">
-                    <Calendar size={20} />
+              <div className="rounded-2xl border border-slate-100 bg-white/80 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600">
+                      <Calendar size={20} />
+                    </div>
+                    <h4 className="font-bold text-slate-800 text-lg">
+                      Attendance Record
+                    </h4>
                   </div>
-                  <h4 className="font-bold text-slate-800 text-lg">
-                    Attendance Record
-                  </h4>
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-semibold text-emerald-700">
+                      <div className="w-2.5 h-2.5 bg-emerald-300 rounded-full" />
+                      Present
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 font-semibold text-sky-700">
+                      <div className="w-2.5 h-2.5 bg-sky-300 rounded-full" />
+                      Absent
+                    </span>
+                  </div>
                 </div>
 
-                {/* Stat Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
-                    <span className="text-xs text-slate-500 uppercase tracking-wide font-bold mb-1">
-                      Total School Days
-                    </span>
-                    <span className="text-2xl font-bold text-slate-800">
-                      {performanceData ? performanceData.attendance.total : "-"}
-                    </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-400">
+                      Total Days
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">
+                      {attendanceTotal ?? "-"}
+                    </p>
                   </div>
-                  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
-                    <span className="text-xs text-slate-500 uppercase tracking-wide font-bold mb-1">
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                    <p className="text-xs uppercase tracking-wide text-emerald-500">
                       Days Present
-                    </span>
-                    <span className="text-2xl font-bold text-emerald-600">
-                      {performanceData
-                        ? performanceData.attendance.present
-                        : "-"}
-                    </span>
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-emerald-700">
+                      {attendancePresent ?? "-"}
+                    </p>
                   </div>
-                  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
-                    <span className="text-xs text-slate-500 uppercase tracking-wide font-bold mb-1">
-                      Attendance Rate
-                    </span>
-                    <span
-                      className={`text-2xl font-bold ${performanceData?.attendance?.percentage < 50 ? "text-red-500" : "text-[#0B4A82]"}`}
-                    >
-                      {performanceData
-                        ? `${performanceData.attendance.percentage}%`
-                        : "-"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Legend */}
-                <div className="flex justify-center gap-6 text-xs text-slate-500 mb-2">
-                  <div className="flex items-center">
-                    <div className="w-3 h-3 bg-emerald-100 border border-emerald-200 rounded-full mr-2"></div>{" "}
-                    Present
-                  </div>
-                  <div className="flex items-center">
-                    <div className="w-3 h-3 bg-[#E6F0FA] border border-[#E6F0FA] rounded-full mr-2"></div>{" "}
-                    Absent
+                  <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4">
+                    <p className="text-xs uppercase tracking-wide text-sky-500">
+                      Days Absent
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-sky-700">
+                      {attendanceAbsent ?? "-"}
+                    </p>
                   </div>
                 </div>
 
                 {/* Calendar View */}
-                {renderCalendar()}
+                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                  {renderCalendar()}
+                </div>
               </div>
 
               {/* Academic Grades */}
-              <div>
-                <h3 className="font-bold text-slate-800 mb-4 flex items-center">
-                  <BookOpen size={20} className="mr-2 text-[#0B4A82]" />{" "}
-                  Academic Performance
-                </h3>
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="rounded-2xl border border-slate-100 bg-white/80 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h3 className="font-bold text-slate-800 flex items-center">
+                    <BookOpen size={20} className="mr-2 text-[#0B4A82]" />{" "}
+                    Academic Performance
+                  </h3>
+                  <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                    Subjects: {subjectCount}
+                  </span>
+                </div>
+                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
                   <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-100 text-slate-600 font-semibold">
+                    <thead className="bg-slate-50 text-slate-600 font-semibold">
                       <tr>
                         <th className="px-4 py-3">Subject</th>
                         <th className="px-4 py-3 text-center">Score</th>
@@ -827,6 +937,9 @@ const ManageStudents = () => {
                       )}
                     </tbody>
                   </table>
+                </div>
+                <div className="mt-3 flex items-center justify-end text-xs text-slate-400">
+                  Updated via system records
                 </div>
               </div>
             </div>
