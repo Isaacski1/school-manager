@@ -271,8 +271,11 @@ const TeacherDashboard = () => {
       const dayName = dateObj.toLocaleDateString("en-US", {
         weekday: "short",
       });
-      const status =
-        record?.approvalStatus || (record ? "approved" : "missing");
+      const status = record
+        ? record.status === "absent"
+          ? "absent"
+          : record.approvalStatus || "approved"
+        : "missing";
       return {
         day: dayName,
         percentage: record ? 100 : 0,
@@ -1315,7 +1318,8 @@ const TeacherDashboard = () => {
                               ? "bg-amber-400"
                               : data.status === "approved"
                                 ? "bg-emerald-500"
-                                : data.status === "rejected"
+                                : data.status === "rejected" ||
+                                    data.status === "absent"
                                   ? "bg-rose-500"
                                   : "bg-slate-300"
                           }`}
@@ -1327,14 +1331,20 @@ const TeacherDashboard = () => {
                           ? "Pending"
                           : data.status === "approved"
                             ? "Approved"
-                            : "Missing"}
+                            : data.status === "rejected" ||
+                                data.status === "absent"
+                              ? "Absent"
+                              : "Missing"}
                       </div>
                       <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
                         {data.status === "pending"
                           ? "Pending"
                           : data.status === "approved"
                             ? "Approved"
-                            : "Missing"}
+                            : data.status === "rejected" ||
+                                data.status === "absent"
+                              ? "Absent"
+                              : "Missing"}
                       </div>
                     </div>
                     <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">

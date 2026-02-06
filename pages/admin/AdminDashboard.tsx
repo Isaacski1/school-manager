@@ -181,6 +181,9 @@ const AdminDashboard = () => {
   const [realTimeEnabled, setRealTimeEnabled] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const pollRef = React.useRef<number | null>(null);
+  const heavyRefreshTimerRef = React.useRef<number | null>(null);
+  const heavyRefreshInFlightRef = React.useRef(false);
+  const lastHeavyRefreshAtRef = React.useRef(0);
   const [now, setNow] = useState<number>(Date.now());
   const [animatedStudents, setAnimatedStudents] = useState<number>(0);
   const [animatedAttendance, setAnimatedAttendance] = useState<number>(0);
@@ -191,6 +194,9 @@ const AdminDashboard = () => {
   const [lastWeekAttendance, setLastWeekAttendance] = useState<number | null>(
     null,
   );
+
+  const HEAVY_REFRESH_THROTTLE_MS = 30000;
+  const STATS_POLL_INTERVAL_MS = 30000;
 
   // Configuration State
   const [schoolConfig, setSchoolConfig] = useState<Partial<SchoolConfig>>({
@@ -514,8 +520,10 @@ const AdminDashboard = () => {
   );
 
   const fetchHeavyData = useCallback(
-    async (options?: { background?: boolean }) => {
+    async (options?: { background?: boolean; force?: boolean }) => {
       if (!schoolId) return;
+      if (heavyRefreshInFlightRef.current && !options?.force) return;
+      heavyRefreshInFlightRef.current = true;
       if (!options?.background) setHeavyLoading(true);
       setError(null);
       try {
@@ -538,7 +546,7 @@ const AdminDashboard = () => {
           db.getSchoolConfig(schoolId),
           db.getUsers(schoolId),
           db.getAllApprovedTeacherAttendance(schoolId, today),
-          db.getAllPendingTeacherAttendance(schoolId),
+          db.getTeacherAttendancePendingByDate(schoolId, today),
           db.getAllTeacherAttendanceRecords(schoolId),
         ]);
 
@@ -862,7 +870,16 @@ const AdminDashboard = () => {
           },
         ) as any[];
 
-        const pendingAttendanceWithDetails = pendingTeacherAttendance.map(
+        const pendingRecordsForToday = (
+          pendingTeacherAttendance.length > 0
+            ? pendingTeacherAttendance
+            : allTeacherRecords.filter(
+                (record) =>
+                  record.date === today && record.approvalStatus === "pending",
+              )
+        ) as any[];
+
+        const pendingAttendanceWithDetails = pendingRecordsForToday.map(
           (record) => {
             const teacher = teachers.find((t) => t.id === record.teacherId);
             return {
@@ -1099,11 +1116,35 @@ const AdminDashboard = () => {
           "Failed to load dashboard data. Please check your internet connection or database permissions.",
         );
       } finally {
+        heavyRefreshInFlightRef.current = false;
         if (!options?.background) setHeavyLoading(false);
       }
     },
     [schoolId, summaryCacheKey],
   );
+
+  const scheduleHeavyRefresh = useCallback(() => {
+    if (!schoolId) return;
+    const nowMs = Date.now();
+    const elapsed = nowMs - lastHeavyRefreshAtRef.current;
+    if (elapsed >= HEAVY_REFRESH_THROTTLE_MS) {
+      lastHeavyRefreshAtRef.current = nowMs;
+      fetchHeavyData({ background: true }).catch((e) =>
+        console.error("Error refreshing attendance widgets", e),
+      );
+      return;
+    }
+
+    if (heavyRefreshTimerRef.current) return;
+    const waitMs = Math.max(HEAVY_REFRESH_THROTTLE_MS - elapsed, 0);
+    heavyRefreshTimerRef.current = window.setTimeout(() => {
+      heavyRefreshTimerRef.current = null;
+      lastHeavyRefreshAtRef.current = Date.now();
+      fetchHeavyData({ background: true }).catch((e) =>
+        console.error("Error refreshing attendance widgets", e),
+      );
+    }, waitMs);
+  }, [fetchHeavyData, schoolId]);
 
   useEffect(() => {
     if (!cachedHeavy || !heavyCacheKey) return;
@@ -1525,9 +1566,7 @@ const AdminDashboard = () => {
       fetchStats().catch((e) =>
         console.error("Error refreshing stats on teacher attendance change", e),
       );
-      fetchHeavyData({ background: true }).catch((e) =>
-        console.error("Error refreshing attendance widgets", e),
-      );
+      scheduleHeavyRefresh();
     });
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -1560,7 +1599,11 @@ const AdminDashboard = () => {
 
     // Fetch immediately and then poll
     fetchStats();
-    pollRef.current = window.setInterval(fetchStats, 15000);
+    pollRef.current = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchStats();
+      }
+    }, STATS_POLL_INTERVAL_MS);
 
     return () => {
       if (pollRef.current) {
@@ -1569,6 +1612,15 @@ const AdminDashboard = () => {
       }
     };
   }, [realTimeEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (heavyRefreshTimerRef.current) {
+        clearTimeout(heavyRefreshTimerRef.current);
+        heavyRefreshTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Update `now` every second while we have a lastUpdated timestamp (for "Xs ago" freshness)
   useEffect(() => {
