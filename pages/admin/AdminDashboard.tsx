@@ -68,6 +68,7 @@ type AdminDashboardCache = {
   notices: Notice[];
   recentStudents: Student[];
   teacherAttendance: any[];
+  pendingTeacherAttendance?: any[];
   teacherTermStats: any[];
   missedAttendanceAlerts: any[];
   missedStudentAttendanceAlerts: any[];
@@ -83,6 +84,7 @@ type AdminDashboardCache = {
   gradeDistributionByClass: Record<string, Record<string, number>>;
   sparklines: Record<string, number[]>;
   lastUpdated: number;
+  attendanceDate?: string;
 };
 
 const adminDashboardMemoryCache: Record<string, AdminDashboardCache> = {};
@@ -165,6 +167,9 @@ const AdminDashboard = () => {
 
   // Teacher Attendance State
   const [teacherAttendance, setTeacherAttendance] = useState<any[]>([]);
+  const [pendingTeacherAttendance, setPendingTeacherAttendance] = useState<
+    any[]
+  >([]);
   const [teacherTermStats, setTeacherTermStats] = useState<any[]>([]);
   const [missedAttendanceAlerts, setMissedAttendanceAlerts] = useState<any[]>(
     [],
@@ -381,11 +386,30 @@ const AdminDashboard = () => {
 
   useLayoutEffect(() => {
     if (!cachedHeavy) return;
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+    if (cachedHeavy.attendanceDate && cachedHeavy.attendanceDate !== todayStr) {
+      localStorage.removeItem(heavyCacheKey);
+      setTeacherAttendance([]);
+      setPendingTeacherAttendance([]);
+      setTeacherTermStats([]);
+      return;
+    }
     setStats(cachedHeavy.stats);
     setDashboardStatsCache(cachedHeavy.stats);
     setNotices(cachedHeavy.notices);
     setRecentStudents(cachedHeavy.recentStudents);
-    setTeacherAttendance(cachedHeavy.teacherAttendance);
+    const cachedTeacherAttendance = (
+      cachedHeavy.teacherAttendance || []
+    ).filter((record: any) => record.date === todayStr);
+    setTeacherAttendance(cachedTeacherAttendance);
+    const cachedPending = cachedHeavy.pendingTeacherAttendance || [];
+    const filteredCachedPending = cachedPending.filter(
+      (record: any) =>
+        record.date === todayStr && record.approvalStatus === "pending",
+    );
+    setPendingTeacherAttendance(filteredCachedPending);
     setTeacherTermStats(cachedHeavy.teacherTermStats);
     setMissedAttendanceAlerts(cachedHeavy.missedAttendanceAlerts);
     setMissedStudentAttendanceAlerts(cachedHeavy.missedStudentAttendanceAlerts);
@@ -505,6 +529,7 @@ const AdminDashboard = () => {
           config,
           teachers,
           teacherAttendanceData,
+          pendingTeacherAttendance,
           allTeacherRecords,
         ] = await Promise.all([
           db.getDashboardStats(schoolId),
@@ -512,7 +537,8 @@ const AdminDashboard = () => {
           db.getNotices(schoolId),
           db.getSchoolConfig(schoolId),
           db.getUsers(schoolId),
-          db.getAllTeacherAttendance(schoolId, today),
+          db.getAllApprovedTeacherAttendance(schoolId, today),
+          db.getAllPendingTeacherAttendance(schoolId),
           db.getAllTeacherAttendanceRecords(schoolId),
         ]);
 
@@ -798,7 +824,8 @@ const AdminDashboard = () => {
                 r.teacherId === teacher.id &&
                 r.date >= (config.schoolReopenDate || "") &&
                 r.date <= (config.vacationDate || "9999-99-99") &&
-                !r.isHoliday,
+                !r.isHoliday &&
+                r.approvalStatus !== "pending",
             );
             const presentDays = teacherRecords.filter(
               (r) => r.status === "present",
@@ -834,6 +861,38 @@ const AdminDashboard = () => {
             };
           },
         ) as any[];
+
+        const pendingAttendanceWithDetails = pendingTeacherAttendance.map(
+          (record) => {
+            const teacher = teachers.find((t) => t.id === record.teacherId);
+            return {
+              ...record,
+              teacherName: teacher?.fullName || "Unknown",
+              teacherClasses:
+                teacher?.assignedClassIds
+                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                  .join(", ") || "Not Assigned",
+            };
+          },
+        ) as any[];
+
+        const approvedAttendanceWithDetails = allTeacherRecords
+          .filter((record) =>
+            Boolean(
+              record.date === today && record.approvalStatus === "approved",
+            ),
+          )
+          .map((record) => {
+            const teacher = teachers.find((t) => t.id === record.teacherId);
+            return {
+              ...record,
+              teacherName: teacher?.fullName || "Unknown",
+              teacherClasses:
+                teacher?.assignedClassIds
+                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                  .join(", ") || "Not Assigned",
+            };
+          }) as any[];
 
         setSchoolConfig((prev) => ({
           ...prev,
@@ -975,7 +1034,23 @@ const AdminDashboard = () => {
         }
         setNotices(fetchedNotices);
         setRecentStudents(students.slice(-5).reverse());
-        setTeacherAttendance(teacherAttendanceWithDetails);
+        const combinedTeacherAttendance = [
+          ...approvedAttendanceWithDetails,
+          ...teacherAttendanceWithDetails,
+        ]
+          .filter((record) => record.date === today)
+          .reduce((acc: any[], record: any) => {
+            if (!acc.find((item) => item.id === record.id)) {
+              acc.push(record);
+            }
+            return acc;
+          }, []);
+        setTeacherAttendance(combinedTeacherAttendance);
+        const pendingTodayWithDetails = pendingAttendanceWithDetails.filter(
+          (record) =>
+            record.date === today && record.approvalStatus === "pending",
+        );
+        setPendingTeacherAttendance(pendingTodayWithDetails);
         setTeacherTermStats(teacherTermStats);
         setMissedAttendanceAlerts(missedAlerts);
         setMissedStudentAttendanceAlerts(missedStudentAlerts);
@@ -990,7 +1065,8 @@ const AdminDashboard = () => {
             stats: fullStats,
             notices: fetchedNotices,
             recentStudents: students.slice(-5).reverse(),
-            teacherAttendance: teacherAttendanceWithDetails,
+            teacherAttendance: combinedTeacherAttendance,
+            pendingTeacherAttendance: pendingTodayWithDetails,
             teacherTermStats: teacherTermStats,
             missedAttendanceAlerts: missedAlerts,
             missedStudentAttendanceAlerts: missedStudentAlerts,
@@ -1013,6 +1089,7 @@ const AdminDashboard = () => {
             gradeDistributionByClass,
             sparklines,
             lastUpdated: Date.now(),
+            attendanceDate: today,
           };
           localStorage.setItem(heavyCacheKey, JSON.stringify(cachePayload));
         }
@@ -1027,6 +1104,83 @@ const AdminDashboard = () => {
     },
     [schoolId, summaryCacheKey],
   );
+
+  useEffect(() => {
+    if (!cachedHeavy || !heavyCacheKey) return;
+
+    const cachedConfig = cachedHeavy.schoolConfig;
+    if (!cachedConfig) return;
+
+    const hasLiveConfig = Boolean(
+      schoolConfig.currentTerm ||
+      schoolConfig.academicYear ||
+      schoolConfig.schoolReopenDate,
+    );
+
+    if (!hasLiveConfig) return;
+
+    const termChanged =
+      (cachedConfig.currentTerm || "") !== (schoolConfig.currentTerm || "") ||
+      (cachedConfig.academicYear || "") !== (schoolConfig.academicYear || "");
+    const reopenChanged =
+      (cachedConfig.schoolReopenDate || "") !==
+      (schoolConfig.schoolReopenDate || "");
+
+    if (termChanged || reopenChanged) {
+      localStorage.removeItem(heavyCacheKey);
+      setTeacherAttendance([]);
+      setPendingTeacherAttendance([]);
+      setTeacherTermStats([]);
+      setMissedAttendanceAlerts([]);
+      setMissedStudentAttendanceAlerts([]);
+      fetchHeavyData({ background: true }).catch((e) =>
+        console.error("Error refreshing after term reset", e),
+      );
+    }
+  }, [
+    cachedHeavy,
+    heavyCacheKey,
+    schoolConfig.currentTerm,
+    schoolConfig.academicYear,
+    schoolConfig.schoolReopenDate,
+    fetchHeavyData,
+  ]);
+
+  const handleApproveTeacherAttendance = async (record: any) => {
+    if (!schoolId || !user?.id) return;
+    try {
+      await db.approveTeacherAttendance(schoolId, record.id, user.id);
+      showToast(`Approved attendance for ${record.teacherName}.`, {
+        type: "success",
+      });
+      setPendingTeacherAttendance((prev) =>
+        prev.filter((item) => item.id !== record.id),
+      );
+      setTeacherAttendance((prev) => [
+        ...prev,
+        { ...record, approvalStatus: "approved", approvedBy: user.id },
+      ]);
+    } catch (error) {
+      console.error("Failed to approve attendance", error);
+      showToast("Failed to approve attendance.", { type: "error" });
+    }
+  };
+
+  const handleRejectTeacherAttendance = async (record: any) => {
+    if (!schoolId || !user?.id) return;
+    try {
+      await db.rejectTeacherAttendance(schoolId, record.id, user.id);
+      showToast(`Rejected attendance for ${record.teacherName}.`, {
+        type: "success",
+      });
+      setPendingTeacherAttendance((prev) =>
+        prev.filter((item) => item.id !== record.id),
+      );
+    } catch (error) {
+      console.error("Failed to reject attendance", error);
+      showToast("Failed to reject attendance.", { type: "error" });
+    }
+  };
 
   const refreshDashboard = useCallback(async () => {
     if (!schoolId) return;
@@ -1370,6 +1524,9 @@ const AdminDashboard = () => {
     const unsubTeacherAttendance = onSnapshot(teacherAttendanceRef, () => {
       fetchStats().catch((e) =>
         console.error("Error refreshing stats on teacher attendance change", e),
+      );
+      fetchHeavyData({ background: true }).catch((e) =>
+        console.error("Error refreshing attendance widgets", e),
       );
     });
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
@@ -3027,6 +3184,56 @@ const AdminDashboard = () => {
               </div>
             </div>
             <div className="p-3 space-y-2 flex-1 overflow-y-auto max-h-[300px] sm:max-h-[350px]">
+              {pendingTeacherAttendance.length > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-xs font-semibold text-amber-800">
+                      Pending approvals ({pendingTeacherAttendance.length})
+                    </p>
+                    <span className="text-[10px] text-amber-700">
+                      Approve to confirm attendance
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {pendingTeacherAttendance.map((record) => (
+                      <div
+                        key={record.id}
+                        className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2 border border-amber-100"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-800 truncate">
+                            {record.teacherName}
+                          </p>
+                          <p className="text-[10px] text-slate-500 truncate">
+                            {record.teacherClasses || "No classes assigned"}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {record.date}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() =>
+                              handleApproveTeacherAttendance(record)
+                            }
+                            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleRejectTeacherAttendance(record)
+                            }
+                            className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-rose-700"
+                          >
+                            No
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {teacherAttendance.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-24 text-emerald-500">
                   <div className="bg-emerald-100 p-3 rounded-full mb-2">

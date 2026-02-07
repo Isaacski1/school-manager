@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Users,
   CheckCircle,
+  Clock,
   XCircle,
 } from "lucide-react";
 
@@ -20,10 +21,13 @@ const Attendance = () => {
   const schoolId = user?.schoolId || null;
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const getLocalDateString = (value: Date = new Date()) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  const [date, setDate] = useState(getLocalDateString());
   const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
   const [isHoliday, setIsHoliday] = useState(false);
   const [holidayReason, setHolidayReason] = useState("");
+  const [hasMarkedAttendance, setHasMarkedAttendance] = useState(false);
   const [loading, setLoading] = useState(false);
   const [adminHoliday, setAdminHoliday] = useState<{
     date: string;
@@ -146,16 +150,19 @@ const Attendance = () => {
             setIsHoliday(true);
             setHolidayReason(existing.holidayReason || "");
             setPresentIds(new Set());
+            setHasMarkedAttendance(false);
           } else {
             setIsHoliday(false);
             setHolidayReason("");
             setPresentIds(new Set(existing.presentStudentIds));
+            setHasMarkedAttendance(true);
           }
         } else {
           // Default to empty - teacher must manually mark attendance
           setIsHoliday(false);
           setHolidayReason("");
           setPresentIds(new Set());
+          setHasMarkedAttendance(false);
         }
         setAdminHoliday(null);
       } catch (err) {
@@ -170,6 +177,9 @@ const Attendance = () => {
 
   const togglePresence = (id: string) => {
     if (isHoliday || adminHoliday) return;
+    if (!hasMarkedAttendance) {
+      setHasMarkedAttendance(true);
+    }
     const newSet = new Set(presentIds);
     if (newSet.has(id)) {
       newSet.delete(id);
@@ -233,6 +243,7 @@ const Attendance = () => {
         isHoliday,
         holidayReason: isHoliday ? holidayReason.trim() : "",
       });
+      setHasMarkedAttendance(!isHoliday);
 
       // Notification logic
       const className =
@@ -271,7 +282,8 @@ const Attendance = () => {
 
   const classNameLabel =
     CLASSES_LIST.find((c) => c.id === selectedClassId)?.name || selectedClassId;
-  const absentCount = isHoliday ? 0 : students.length - presentIds.size;
+  const absentCount =
+    isHoliday || !hasMarkedAttendance ? 0 : students.length - presentIds.size;
 
   return (
     <Layout title="Mark Attendance">
@@ -493,15 +505,19 @@ const Attendance = () => {
                       ? "border-amber-200 bg-amber-50 text-amber-700"
                       : isPresent
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-rose-200 bg-rose-50 text-rose-700"
+                        : hasMarkedAttendance
+                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : "border-slate-200 bg-slate-50 text-slate-500"
                   }`}
                 >
                   {isHoliday ? (
                     <AlertTriangle className="h-4 w-4" />
                   ) : isPresent ? (
                     <CheckCircle className="h-4 w-4" />
-                  ) : (
+                  ) : hasMarkedAttendance ? (
                     <XCircle className="h-4 w-4" />
+                  ) : (
+                    <Clock className="h-4 w-4" />
                   )}
                   {isHoliday
                     ? adminHoliday
@@ -509,7 +525,9 @@ const Attendance = () => {
                       : "HOLIDAY"
                     : isPresent
                       ? "PRESENT"
-                      : "ABSENT"}
+                      : hasMarkedAttendance
+                        ? "ABSENT"
+                        : "UNMARKED"}
                 </div>
               </div>
             );

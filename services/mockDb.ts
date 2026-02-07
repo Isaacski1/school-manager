@@ -801,6 +801,22 @@ class FirestoreService {
       : (snap.docs[0].data() as TeacherAttendanceRecord);
   }
 
+  async getTeacherAttendancePendingByDate(
+    schoolId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    if (!date) return [];
+    const records = await this.getAllTeacherAttendance(schoolId, date);
+    return records.filter((record) => record.approvalStatus === "pending");
+  }
+
+  async getAllPendingTeacherAttendance(
+    schoolId?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    const records = await this.getAllTeacherAttendanceRecords(schoolId);
+    return records.filter((record) => record.approvalStatus === "pending");
+  }
+
   async getAllTeacherAttendance(
     schoolId?: string,
     date?: string,
@@ -819,6 +835,15 @@ class FirestoreService {
     return snap.docs.map((d) => d.data() as TeacherAttendanceRecord);
   }
 
+  async getAllApprovedTeacherAttendance(
+    schoolId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    if (!date) return [];
+    const records = await this.getAllTeacherAttendance(schoolId, date);
+    return records.filter((record) => record.approvalStatus === "approved");
+  }
+
   async saveTeacherAttendance(record: TeacherAttendanceRecord): Promise<void> {
     const scopedSchoolId = this.requireSchoolId(
       record.schoolId,
@@ -826,8 +851,46 @@ class FirestoreService {
     );
     const id = `${scopedSchoolId}_${record.teacherId}_${record.date}`;
     await setDoc(doc(firestore, "teacher_attendance", id), {
+      approvalStatus: record.approvalStatus || "approved",
       ...record,
       id,
+    });
+  }
+
+  async approveTeacherAttendance(
+    schoolId: string,
+    recordId: string,
+    adminId: string,
+  ): Promise<void> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "approveTeacherAttendance",
+    );
+    await updateDoc(doc(firestore, "teacher_attendance", recordId), {
+      schoolId: scopedSchoolId,
+      approvalStatus: "approved",
+      approvedBy: adminId,
+      approvedAt: Date.now(),
+      rejectedBy: null,
+      rejectedAt: null,
+    });
+  }
+
+  async rejectTeacherAttendance(
+    schoolId: string,
+    recordId: string,
+    adminId: string,
+  ): Promise<void> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "rejectTeacherAttendance",
+    );
+    await updateDoc(doc(firestore, "teacher_attendance", recordId), {
+      schoolId: scopedSchoolId,
+      approvalStatus: "rejected",
+      status: "absent",
+      rejectedBy: adminId,
+      rejectedAt: Date.now(),
     });
   }
 
@@ -1153,7 +1216,7 @@ class FirestoreService {
 
     for (const teacher of teacherUsers) {
       const teacherRecords = allRecords.filter(
-        (r) => r.teacherId === teacher.id,
+        (r) => r.teacherId === teacher.id && r.approvalStatus !== "pending",
       );
 
       const recordsInRange = teacherRecords.filter((r) => {
@@ -1172,7 +1235,10 @@ class FirestoreService {
         }
 
         monthlyData[monthKey].total += 1;
-        if (record.status === "present") {
+        if (
+          record.status === "present" &&
+          record.approvalStatus === "approved"
+        ) {
           monthlyData[monthKey].present += 1;
         }
       });

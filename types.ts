@@ -114,6 +114,11 @@ export interface TeacherAttendanceRecord {
   date: string; // YYYY-MM-DD
   teacherId: string;
   status: "present" | "absent";
+  approvalStatus?: "pending" | "approved" | "rejected";
+  approvedBy?: string;
+  approvedAt?: number;
+  rejectedBy?: string;
+  rejectedAt?: number;
   isHoliday?: boolean;
   holidayReason?: string;
 }

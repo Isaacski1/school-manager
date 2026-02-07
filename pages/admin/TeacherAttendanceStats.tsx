@@ -218,7 +218,7 @@ const TeacherAttendanceStats = () => {
                               </div>
                               <div className="flex justify-between text-sm">
                                 <span className="text-slate-600">Absent:</span>
-                                <span className="font-medium text-[#0B4A82]">
+                                <span className="font-medium text-rose-600">
                                   {month.absentDays}
                                 </span>
                               </div>
@@ -283,4 +283,3 @@ const TeacherAttendanceStats = () => {
 };
 
 export default TeacherAttendanceStats;
-

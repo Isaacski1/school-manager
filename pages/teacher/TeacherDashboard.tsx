@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
 import {
   CLASSES_LIST,
@@ -9,6 +10,7 @@ import {
   calculateTotalScore,
 } from "../../constants";
 import { db } from "../../services/mockDb";
+import { firestore } from "../../services/firebase";
 import {
   Notice,
   TimeSlot,
@@ -176,6 +178,9 @@ const TeacherDashboard = () => {
     return DAYS.includes(today) ? today : "Monday";
   };
 
+  const getLocalDateString = (date: Date = new Date()) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
   // Schedule State
   const [timetable, setTimetable] = useState<ClassTimetable | null>(null);
   const [selectedDay, setSelectedDay] = useState<string>(getCurrentDay());
@@ -184,6 +189,9 @@ const TeacherDashboard = () => {
   // Attendance Trend State
   const [attendanceTrend, setAttendanceTrend] = useState<
     { day: string; percentage: number }[]
+  >([]);
+  const [teacherAttendanceTrend, setTeacherAttendanceTrend] = useState<
+    { day: string; percentage: number; status?: string }[]
   >([]);
   const [weekOffset, setWeekOffset] = useState(0);
 
@@ -248,13 +256,42 @@ const TeacherDashboard = () => {
     return `${start} - ${end}`;
   };
 
+  const buildTeacherTrend = async (offset: number) => {
+    if (!schoolId || !user?.id) return;
+    const weekDates = getWeekDates(offset);
+    const weekRecords = await Promise.all(
+      weekDates.map((date) =>
+        db.getTeacherAttendance(schoolId, user?.id || "", date),
+      ),
+    );
+    const trendData = weekDates.map((date, index) => {
+      const record = weekRecords[index];
+      const [y, m, d] = date.split("-").map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      const dayName = dateObj.toLocaleDateString("en-US", {
+        weekday: "short",
+      });
+      const status =
+        record?.approvalStatus || (record ? "approved" : "missing");
+      return {
+        day: dayName,
+        percentage: record ? 100 : 0,
+        status,
+      };
+    });
+    setTeacherAttendanceTrend((prev) => {
+      const hasAnyRecord = trendData.some((item) => item.status !== "missing");
+      return hasAnyRecord ? trendData : prev;
+    });
+  };
+
   // Refresh attendance data when returning from attendance page
   useEffect(() => {
     let isMounted = true;
 
     // Re-check for missed attendance when returning to dashboard
     const checkAttendance = async () => {
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getLocalDateString();
 
       const todayAttendance = await db.getTeacherAttendance(
         schoolId || undefined,
@@ -371,7 +408,90 @@ const TeacherDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [user, selectedClassId]);
+  }, [user, selectedClassId, weekOffset, schoolId]);
+
+  useEffect(() => {
+    if (!schoolId || !user?.id) return;
+    buildTeacherTrend(weekOffset);
+  }, [schoolId, user?.id, weekOffset]);
+
+  useEffect(() => {
+    if (!schoolId || !user?.id) return;
+    const attendanceRef = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", schoolId),
+      where("teacherId", "==", user.id),
+    );
+    const unsubscribe = onSnapshot(attendanceRef, async () => {
+      await buildTeacherTrend(weekOffset);
+      const today = getLocalDateString();
+      const attendance = await db.getTeacherAttendance(
+        schoolId,
+        user.id,
+        today,
+      );
+      setTeacherAttendance(attendance);
+    });
+
+    return () => unsubscribe();
+  }, [schoolId, user?.id, weekOffset]);
+
+  useEffect(() => {
+    if (!schoolId || !selectedClassId) return;
+    const attendanceRef = query(
+      collection(firestore, "attendance"),
+      where("schoolId", "==", schoolId),
+      where("classId", "==", selectedClassId),
+    );
+    const unsubscribe = onSnapshot(attendanceRef, async () => {
+      try {
+        const [attendanceRecords, students] = await Promise.all([
+          db.getClassAttendance(schoolId, selectedClassId),
+          db.getStudents(schoolId, selectedClassId),
+        ]);
+
+        const totalStudents = students.length || 1;
+        const weekDates = getWeekDates(weekOffset);
+        const weekRecords = attendanceRecords.filter((record) =>
+          weekDates.includes(record.date),
+        );
+
+        const trendData = weekDates.map((date) => {
+          const record = weekRecords.find((r) => r.date === date);
+          const percentage = record
+            ? Math.round(
+                (record.presentStudentIds.length / totalStudents) * 100,
+              )
+            : 0;
+          const [y, m, d] = date.split("-").map(Number);
+          const dateObj = new Date(y, m - 1, d);
+          const dayName = dateObj.toLocaleDateString("en-US", {
+            weekday: "short",
+          });
+          return { day: dayName, percentage };
+        });
+
+        setAttendanceTrend(trendData);
+
+        setTotalStudents(students.length);
+        const todayStr = getLocalDateString();
+        const todayAttendance = attendanceRecords.find(
+          (r) => r.date === todayStr,
+        );
+        const presentTodayCount = todayAttendance
+          ? todayAttendance.presentStudentIds.length
+          : 0;
+        setPresentToday(presentTodayCount);
+        setAbsentToday(
+          todayAttendance ? students.length - presentTodayCount : 0,
+        );
+      } catch (error) {
+        console.error("Error updating attendance trend:", error);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [schoolId, selectedClassId, weekOffset]);
 
   useEffect(() => {
     let isMounted = true;
@@ -510,7 +630,7 @@ const TeacherDashboard = () => {
       setNotices(noticeData);
 
       // Teacher Attendance
-      const today = new Date().toISOString().split("T")[0];
+      const today = getLocalDateString();
       const attendance = await db.getTeacherAttendance(
         schoolId,
         user?.id || "",
@@ -527,7 +647,7 @@ const TeacherDashboard = () => {
         setTimetable(t || null);
         setSelectedDay(getCurrentDay());
 
-        // 2. Real Attendance Trend
+        // 2. Real Attendance Trend (students)
         try {
           const [attendanceRecords, students] = await Promise.all([
             db.getClassAttendance(schoolId, selectedClassId),
@@ -560,21 +680,18 @@ const TeacherDashboard = () => {
           setAttendanceTrend(trendData);
           setClassStudents(students);
 
-          if (weekOffset === 0) {
-            setTotalStudents(students.length);
-            const todayStr = new Date().toISOString().split("T")[0];
-            const todayAttendance = attendanceRecords.find(
-              (r) => r.date === todayStr,
-            );
-            const presentTodayCount = todayAttendance
-              ? todayAttendance.presentStudentIds.length
-              : 0;
-            setPresentToday(presentTodayCount);
-            setAbsentToday(students.length - presentTodayCount);
-          } else {
-            setPresentToday(0);
-            setAbsentToday(0);
-          }
+          setTotalStudents(students.length);
+          const todayStr = getLocalDateString();
+          const todayAttendance = attendanceRecords.find(
+            (r) => r.date === todayStr,
+          );
+          const presentTodayCount = todayAttendance
+            ? todayAttendance.presentStudentIds.length
+            : 0;
+          setPresentToday(presentTodayCount);
+          setAbsentToday(
+            todayAttendance ? students.length - presentTodayCount : 0,
+          );
 
           // Class Average
           const currentTermNum = parseInt(
@@ -661,6 +778,13 @@ const TeacherDashboard = () => {
           console.error("Error calculating dashboard stats:", error);
         }
       }
+
+      // Teacher Attendance Trend (approved/pending)
+      try {
+        await buildTeacherTrend(weekOffset);
+      } catch (error) {
+        console.error("Error calculating teacher attendance trend:", error);
+      }
     };
 
     fetchData();
@@ -717,20 +841,21 @@ const TeacherDashboard = () => {
     if (!user?.id) return;
     setMarkingAttendance(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = getLocalDateString();
       const record: TeacherAttendanceRecord = {
         id: `${schoolId}_${user.id}_${today}`,
         date: today,
         teacherId: user.id,
         schoolId: schoolId || schoolConfig?.schoolId || "",
         status,
+        approvalStatus: "pending",
       };
       await db.saveTeacherAttendance(record);
       setTeacherAttendance(record);
 
       // Notification
       await db.addSystemNotification(
-        `${user?.fullName || "Teacher"} marked themselves as ${status} on ${today}`,
+        `${user?.fullName || "Teacher"} submitted ${status} attendance for ${today} (pending approval)`,
         "attendance",
         schoolId || schoolConfig?.schoolId || "",
       );
@@ -850,9 +975,14 @@ const TeacherDashboard = () => {
                   Mark weekly attendance & view records
                 </p>
                 {teacherAttendance && (
-                  <p className="text-xs text-slate-400 mt-1">
-                    Last marked: {teacherAttendance.date}
-                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <span>Last marked: {teacherAttendance.date}</span>
+                    {teacherAttendance.approvalStatus === "pending" && (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        Pending approval
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </Link>
@@ -1057,7 +1187,7 @@ const TeacherDashboard = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-3 sm:gap-0">
               <h3 className="font-bold text-slate-800 flex items-center text-base sm:text-lg">
                 <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 mr-2 text-[#1160A8]" />{" "}
-                Weekly Attendance Trend
+                Students Weekly Attendance Trend
               </h3>
               <div className="flex gap-2 items-center w-full sm:w-auto justify-center sm:justify-start">
                 <button
@@ -1109,6 +1239,102 @@ const TeacherDashboard = () => {
                       {/* Mobile percentage display */}
                       <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
                         {data.percentage}%
+                      </div>
+                    </div>
+                    <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">
+                      {data.day}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* My Attendance Trend */}
+          <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-3 sm:gap-0">
+              <h3 className="font-bold text-slate-800 flex items-center text-base sm:text-lg">
+                <ClipboardCheck className="w-4 h-4 sm:w-5 sm:h-5 mr-2 text-emerald-600" />{" "}
+                Teacher Attendance Trend
+              </h3>
+              <div className="flex gap-2 items-center w-full sm:w-auto justify-center sm:justify-start">
+                <button
+                  onClick={() => setWeekOffset(weekOffset - 1)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-full bg-slate-100 hover:bg-slate-200 transition-colors min-w-[60px] touch-manipulation"
+                >
+                  &larr; Prev
+                </button>
+                <span className="px-3 py-1.5 text-xs font-medium rounded-full bg-emerald-600 text-white text-center min-w-[120px] sm:w-36 truncate">
+                  {getWeekLabel(weekOffset)}
+                </span>
+                <button
+                  onClick={() => setWeekOffset(weekOffset + 1)}
+                  disabled={weekOffset === 0}
+                  className="px-3 py-1.5 text-xs font-medium rounded-full bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[60px] touch-manipulation"
+                >
+                  Next &rarr;
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 mb-3">
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Present (Approved)
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 font-semibold text-rose-700">
+                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                Absent (Rejected)
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                Pending
+              </span>
+            </div>
+            <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2">
+              {teacherAttendanceTrend.length === 0 ? (
+                <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
+                  <ClipboardCheck className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
+                  <p className="text-xs sm:text-sm italic">
+                    No attendance records found.
+                  </p>
+                </div>
+              ) : (
+                teacherAttendanceTrend.map((data, i) => (
+                  <div
+                    key={i}
+                    className="flex flex-col items-center flex-1 group min-w-0"
+                  >
+                    <div className="relative w-full flex justify-center">
+                      <div
+                        className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-emerald-50 relative overflow-hidden"
+                        style={{ height: "120px" }}
+                      >
+                        <div
+                          className={`absolute bottom-0 left-0 right-0 rounded-t-lg transition-all duration-1000 ${
+                            data.status === "pending"
+                              ? "bg-amber-400"
+                              : data.status === "approved"
+                                ? "bg-emerald-500"
+                                : data.status === "rejected"
+                                  ? "bg-rose-500"
+                                  : "bg-slate-300"
+                          }`}
+                          style={{ height: `${data.percentage}%` }}
+                        ></div>
+                      </div>
+                      <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                        {data.status === "pending"
+                          ? "Pending"
+                          : data.status === "approved"
+                            ? "Approved"
+                            : "Missing"}
+                      </div>
+                      <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
+                        {data.status === "pending"
+                          ? "Pending"
+                          : data.status === "approved"
+                            ? "Approved"
+                            : "Missing"}
                       </div>
                     </div>
                     <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">

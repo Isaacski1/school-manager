@@ -250,6 +250,7 @@ const TeacherAttendance = () => {
       teacherId: user.id,
       schoolId: schoolId || schoolConfig?.schoolId || "",
       status,
+      approvalStatus: "pending",
       isHoliday: false,
       holidayReason: "",
     };
@@ -259,7 +260,7 @@ const TeacherAttendance = () => {
     setMissedAttendanceAlert(null);
 
     await db.addSystemNotification(
-      `${user?.fullName || "Teacher"} marked ${status} for ${date}`,
+      `${user?.fullName || "Teacher"} submitted ${status} attendance for ${date} (pending approval)`,
       "attendance",
       schoolId,
     );
@@ -289,6 +290,7 @@ const TeacherAttendance = () => {
         teacherId: user.id,
         schoolId: schoolId || schoolConfig?.schoolId || "",
         status: "absent",
+        approvalStatus: "pending",
         isHoliday: true,
         holidayReason: holidayDrafts[date]?.trim() || "",
       };
@@ -298,7 +300,7 @@ const TeacherAttendance = () => {
       setMissedAttendanceAlert(null);
 
       await db.addSystemNotification(
-        `${user?.fullName || "Teacher"} marked ${date} as Holiday.`,
+        `${user?.fullName || "Teacher"} submitted ${date} as Holiday (pending approval).`,
         "attendance",
         schoolId,
       );
@@ -508,17 +510,27 @@ const TeacherAttendance = () => {
                         ) : record ? (
                           <span
                             className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${
-                              record.status === "present"
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-rose-50 text-rose-700"
+                              record.approvalStatus === "rejected"
+                                ? "bg-rose-50 text-rose-700"
+                                : record.status === "present"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-rose-50 text-rose-700"
                             }`}
                           >
-                            {record.status === "present" ? (
+                            {record.approvalStatus === "pending" ? (
+                              <Clock className="h-4 w-4" />
+                            ) : record.approvalStatus === "rejected" ? (
+                              <XCircle className="h-4 w-4" />
+                            ) : record.status === "present" ? (
                               <CheckCircle className="h-4 w-4" />
                             ) : (
                               <XCircle className="h-4 w-4" />
                             )}
-                            {record.status.toUpperCase()}
+                            {record.approvalStatus === "pending"
+                              ? "PENDING"
+                              : record.approvalStatus === "rejected"
+                                ? "ABSENT"
+                                : record.status.toUpperCase()}
                           </span>
                         ) : !isValid ? (
                           <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
@@ -545,6 +557,12 @@ const TeacherAttendance = () => {
                     {(isConfigHoliday || isHoliday) && holidayReason && (
                       <div className="text-xs font-medium text-amber-700">
                         Reason: {holidayReason}
+                      </div>
+                    )}
+                    {record?.approvalStatus === "rejected" && (
+                      <div className="text-xs font-semibold text-rose-600">
+                        Attendance rejected. Please do not cheat when marking
+                        attendance.
                       </div>
                     )}
 
