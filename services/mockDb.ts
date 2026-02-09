@@ -81,7 +81,30 @@ class FirestoreService {
 
     if (snap.exists()) {
       const data = snap.data() as SchoolConfig;
-      return { ...data, schoolId: scopedSchoolId };
+      const config = { ...data, schoolId: scopedSchoolId };
+
+      if (config.nextTermBegins && !config.termTransitionProcessed) {
+        const nextTermDate = new Date(config.nextTermBegins + "T00:00:00");
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (!Number.isNaN(nextTermDate.getTime()) && today >= nextTermDate) {
+          const resetConfig = {
+            ...config,
+            schoolReopenDate:
+              config.nextTermBegins || config.schoolReopenDate || "",
+          };
+          await this.resetForNewTerm(resetConfig);
+          const refreshed = await getDoc(docRef);
+          if (refreshed.exists()) {
+            return {
+              ...(refreshed.data() as SchoolConfig),
+              schoolId: scopedSchoolId,
+            };
+          }
+        }
+      }
+
+      return config;
     }
 
     // Default config FOR THIS SCHOOL ONLY
@@ -1083,7 +1106,7 @@ class FirestoreService {
       currentTerm: `Term ${newTerm}`,
       academicYear: newAcademicYear,
       termTransitionProcessed: true,
-      schoolReopenDate: currentConfig.nextTermBegins || "",
+      schoolReopenDate: currentConfig.schoolReopenDate || "",
       vacationDate: "",
       nextTermBegins: "",
     };

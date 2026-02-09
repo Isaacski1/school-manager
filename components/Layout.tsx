@@ -1,5 +1,5 @@
 ﻿import schoolLogo from "../logo/apple-icon-180x180.png";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useSchool } from "../context/SchoolContext";
@@ -27,6 +27,7 @@ import {
   Shield,
   CreditCard,
   Wallet,
+  Lock,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -40,6 +41,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const schoolId = school?.id || null;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+  const isBillingRoute = location.pathname.startsWith("/admin/billing");
 
   // Notification State
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
@@ -48,6 +50,63 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+  const isFreePlan = (school as any)?.plan === "free";
+  const subscriptionGate = useMemo(() => {
+    if (!school || isFreePlan || isSuperAdmin) return null;
+    const normalizeDate = (raw: any) => {
+      if (!raw) return null;
+      const date =
+        raw instanceof Date
+          ? raw
+          : new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+      if (Number.isNaN(date.getTime())) return null;
+      return date;
+    };
+
+    const getPlanMonths = (plan?: string) => {
+      if (plan === "termly") return 4;
+      if (plan === "yearly") return 12;
+      return 1;
+    };
+
+    const plan = (school as any)?.plan || "monthly";
+    const explicitEndsAt = normalizeDate((school as any)?.planEndsAt);
+    const rawLastPayment = (school as any)?.billing?.lastPaymentAt || null;
+    const rawCreatedAt =
+      (school as any)?.createdAt || (school as any)?.billing?.createdAt || null;
+
+    let baseDate = normalizeDate(rawLastPayment) || normalizeDate(rawCreatedAt);
+    if (!baseDate) return null;
+
+    if (rawLastPayment) {
+      baseDate = new Date(baseDate);
+      baseDate.setDate(1);
+      baseDate.setHours(0, 0, 0, 0);
+    }
+
+    const planEndsAt =
+      explicitEndsAt ||
+      (() => {
+        const endDate = new Date(baseDate);
+        endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
+        return endDate;
+      })();
+
+    const graceMs = 7 * 24 * 60 * 60 * 1000;
+    const graceEndsAt = new Date(planEndsAt.getTime() + graceMs);
+    const now = new Date();
+    if (now < graceEndsAt) return null;
+
+    const status = String((school as any)?.billing?.status || "")
+      .toLowerCase()
+      .trim();
+    if (["active", "success", "paid"].includes(status)) return null;
+
+    return {
+      planEndsAt,
+      graceEndsAt,
+    };
+  }, [school, isFreePlan, isSuperAdmin]);
 
   // Fetch Notifications for Admin
   useEffect(() => {
@@ -211,63 +270,93 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </>
           ) : isAdmin ? (
             <>
-              <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
-              <NavItem
-                href="/admin/students"
-                icon={GraduationCap}
-                label="Students"
-              />
-              <NavItem href="/admin/teachers" icon={Users} label="Teachers" />
-              <NavItem
-                href="/admin/attendance"
-                icon={BarChart}
-                label="Student Attendance"
-              />
-              <NavItem
-                href="/admin/teacher-attendance"
-                icon={ClipboardCheck}
-                label="Teacher Attendance"
-              />
-              <NavItem href="/admin/reports" icon={BookOpen} label="Reports" />
-              <NavItem
-                href="/admin/report-card"
-                icon={BookOpen}
-                label="Report Card"
-              />
-              <NavItem
-                href="/admin/timetable"
-                icon={CalendarDays}
-                label="Timetable"
-              />
-              <NavItem
-                href="/admin/settings"
-                icon={Settings}
-                label="Settings"
-              />
-              <NavItem
-                href="/admin/billing"
-                icon={CreditCard}
-                label="Billing"
-              />
+              {subscriptionGate ? (
+                <NavItem
+                  href="/admin/billing"
+                  icon={CreditCard}
+                  label="Billing"
+                />
+              ) : (
+                <>
+                  <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
+                  <NavItem
+                    href="/admin/students"
+                    icon={GraduationCap}
+                    label="Students"
+                  />
+                  <NavItem
+                    href="/admin/teachers"
+                    icon={Users}
+                    label="Teachers"
+                  />
+                  <NavItem
+                    href="/admin/attendance"
+                    icon={BarChart}
+                    label="Student Attendance"
+                  />
+                  <NavItem
+                    href="/admin/teacher-attendance"
+                    icon={ClipboardCheck}
+                    label="Teacher Attendance"
+                  />
+                  <NavItem
+                    href="/admin/reports"
+                    icon={BookOpen}
+                    label="Reports"
+                  />
+                  <NavItem
+                    href="/admin/report-card"
+                    icon={BookOpen}
+                    label="Report Card"
+                  />
+                  <NavItem
+                    href="/admin/timetable"
+                    icon={CalendarDays}
+                    label="Timetable"
+                  />
+                  <NavItem
+                    href="/admin/settings"
+                    icon={Settings}
+                    label="Settings"
+                  />
+                  {!isFreePlan && (
+                    <NavItem
+                      href="/admin/billing"
+                      icon={CreditCard}
+                      label="Billing"
+                    />
+                  )}
+                </>
+              )}
             </>
           ) : (
             <>
-              <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
-              <NavItem
-                href="/teacher/my-attendance"
-                icon={ClipboardCheck}
-                label="My Attendance"
-              />
-              <NavItem
-                href="/teacher/attendance"
-                icon={Users}
-                label="Student Attendance"
-              />
-              <NavItem
-                href="/teacher/assessment"
-                icon={BookOpen}
-                label="Assessment"
-              />
+              {subscriptionGate ? (
+                <NavItem
+                  href="/admin/billing"
+                  icon={CreditCard}
+                  label="Billing"
+                />
+              ) : (
+                <>
+                  <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
+                  <NavItem
+                    href="/teacher/my-attendance"
+                    icon={ClipboardCheck}
+                    label="My Attendance"
+                  />
+                  <NavItem
+                    href="/teacher/attendance"
+                    icon={Users}
+                    label="Student Attendance"
+                  />
+                  <NavItem
+                    href="/teacher/assessment"
+                    icon={BookOpen}
+                    label="Assessment"
+                  />
+                </>
+              )}
             </>
           )}
         </nav>
@@ -414,6 +503,75 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </div>
           </div>
         </header>
+
+        {subscriptionGate && !isBillingRoute && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/70 p-4">
+            <div className="relative w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+              <div className="absolute -top-10 right-6 h-16 w-16 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-lg">
+                <Lock size={28} />
+              </div>
+              <div className="flex flex-col gap-4 pt-6">
+                {isAdmin ? (
+                  <>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-rose-500">
+                        Subscription expired
+                      </p>
+                      <h2 className="text-2xl font-bold text-slate-900 mt-1">
+                        Access paused until renewal
+                      </h2>
+                      <p className="text-sm text-slate-600 mt-2">
+                        Your one-week grace period ended on{" "}
+                        <span className="font-semibold text-slate-800">
+                          {subscriptionGate.graceEndsAt.toLocaleDateString()}
+                        </span>
+                        . Renew now to restore access for your team.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <Link
+                        to="/admin/billing"
+                        className="inline-flex items-center justify-center gap-2 rounded-full bg-[#0B4A82] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1160A8]"
+                      >
+                        <CreditCard size={16} />
+                        Renew Subscription
+                      </Link>
+                      <span className="text-xs text-slate-500">
+                        Need help? Contact your super admin.
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-rose-500">
+                        Subscription expired
+                      </p>
+                      <h2 className="text-2xl font-bold text-slate-900 mt-1">
+                        Access temporarily paused
+                      </h2>
+                      <p className="text-sm text-slate-600 mt-2">
+                        Your school’s subscription grace period ended on{" "}
+                        <span className="font-semibold text-slate-800">
+                          {subscriptionGate.graceEndsAt.toLocaleDateString()}
+                        </span>
+                        . Please contact your school admin to renew and restore
+                        access.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <span className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600">
+                        Waiting for admin renewal
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 overflow-auto p-4 md:p-8">{children}</main>
         <Toast />

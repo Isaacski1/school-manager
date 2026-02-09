@@ -4,7 +4,7 @@
  * This client automatically handles token refreshing and retries once on token expiration.
  */
 
-import { getFreshIdToken } from "./authToken";
+import { getIdTokenWithRetry } from "./authToken";
 import { API_BASE_URL } from "../src/config";
 
 const BACKEND_URL = API_BASE_URL;
@@ -39,7 +39,7 @@ async function apiRequest<T>(
 
   while (retries <= maxRetries) {
     try {
-      const token = await getFreshIdToken();
+      const token = await getIdTokenWithRetry();
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: options.method || "POST",
@@ -54,8 +54,17 @@ async function apiRequest<T>(
         // Try to parse the error response from the backend
         const errorData = await response.json().catch(() => ({}));
 
-        // Check for the specific token expired error from our backend
-        if (response.status === 401 && errorData.code === "ID_TOKEN_EXPIRED") {
+        const isInvalidToken =
+          response.status === 403 &&
+          (errorData.code === "INVALID_TOKEN" ||
+            /invalid token/i.test(errorData.error || "") ||
+            /invalid token/i.test(errorData.message || ""));
+
+        // Check for token errors from our backend
+        if (
+          (response.status === 401 && errorData.code === "ID_TOKEN_EXPIRED") ||
+          isInvalidToken
+        ) {
           // If we haven't exhausted retries, the loop will try again
           if (retries < maxRetries) {
             console.log("ID token expired, retrying request...");
@@ -86,6 +95,12 @@ async function apiRequest<T>(
           "NO_SESSION",
         );
       }
+      if (error.message === "TOKEN_REFRESH_FAILED") {
+        throw new ApiError(
+          "Your session has expired. Please log out and log in again.",
+          "SESSION_EXPIRED",
+        );
+      }
       // Handle fetch failing entirely
       if (error.name === "TypeError" && error.message === "Failed to fetch") {
         throw new ApiError(
@@ -111,7 +126,7 @@ export async function createSchool(payload: {
   phone?: string;
   address?: string;
   logoUrl?: string;
-  plan: "trial" | "monthly" | "termly" | "yearly";
+  plan: "free" | "trial" | "monthly" | "termly" | "yearly";
 }): Promise<{
   success: boolean;
   schoolId: string;

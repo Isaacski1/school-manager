@@ -216,7 +216,7 @@ app.post(
         });
       }
 
-      const validPlans = ["trial", "monthly", "termly", "yearly"];
+      const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
       if (!validPlans.includes(plan)) {
         return res.status(400).json({ error: "Invalid plan type" });
       }

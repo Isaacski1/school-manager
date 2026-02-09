@@ -17,14 +17,17 @@ import {
 import { showToast } from "../../services/toast";
 import { PAYSTACK_PUBLIC_KEY } from "../../src/config";
 import { CreditCard, ShieldCheck, Calendar, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const Billing: React.FC = () => {
   const { school } = useSchool();
+  const navigate = useNavigate();
   const [processing, setProcessing] = useState(false);
   const [amount, setAmount] = useState("0");
   const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const formatAmount = (value?: number, currency = "GHS") => {
     if (!value && value !== 0) return "-";
@@ -83,10 +86,24 @@ const Billing: React.FC = () => {
     return { status, plan };
   }, [school]);
 
+  const isFreePlan = billingStatus.plan === "free";
+
   const displayStatus = useMemo(() => {
     const latestPayment = paymentHistory[0];
     return getStatusMeta(latestPayment?.status || billingStatus.status);
   }, [billingStatus.status, paymentHistory]);
+
+  const expectedAmount = useMemo(() => {
+    const plan = billingStatus.plan || "monthly";
+    const base = 300;
+    const multiplier = plan === "termly" ? 4 : plan === "yearly" ? 12 : 1;
+    return base * multiplier;
+  }, [billingStatus.plan]);
+
+  useEffect(() => {
+    if (isFreePlan) return;
+    setAmount(String(expectedAmount));
+  }, [expectedAmount, isFreePlan]);
 
   const loadPaymentHistory = async () => {
     if (!school?.id) return;
@@ -163,11 +180,51 @@ const Billing: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isFreePlan) return;
     loadPaymentHistory();
-  }, [school?.id]);
+  }, [school?.id, isFreePlan]);
+
+  useEffect(() => {
+    if (isFreePlan) return;
+    const params = new URLSearchParams(window.location.search);
+    const reference = params.get("reference");
+    if (!reference) return;
+
+    const verifyAndRedirect = async () => {
+      try {
+        setVerifying(true);
+        const result = await verifySchoolPayment({ reference });
+        if (String(result?.status || "").toLowerCase() === "success") {
+          setShowSuccess(true);
+          setTimeout(() => {
+            navigate("/", { replace: true });
+          }, 3500);
+          return;
+        }
+
+        showToast(
+          "Payment was not completed. Please try again or verify later.",
+          {
+            type: "info",
+          },
+        );
+        await loadPaymentHistory();
+      } catch (error: any) {
+        console.error("Payment verification failed:", error);
+        showToast(error?.message || "Payment verification failed.", {
+          type: "error",
+        });
+      } finally {
+        setVerifying(false);
+      }
+    };
+
+    verifyAndRedirect();
+  }, [isFreePlan, navigate]);
 
   const handlePay = async () => {
-    const numericAmount = Number(amount);
+    if (isFreePlan) return;
+    const numericAmount = Number(expectedAmount);
     if (!numericAmount || numericAmount <= 0) {
       showToast("Enter a valid amount.", { type: "error" });
       return;
@@ -190,9 +247,52 @@ const Billing: React.FC = () => {
     }
   };
 
+  if (isFreePlan) {
+    return (
+      <Layout title="Billing & Subscription">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <ShieldCheck size={18} />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold text-slate-900">
+                  Free Plan Active
+                </h1>
+                <p className="text-sm text-slate-600 mt-1">
+                  Billing is disabled for your school. Contact your super admin
+                  if you need to change your subscription.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout title="Billing & Subscription">
       <div className="max-w-5xl mx-auto space-y-6">
+        {showSuccess && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <ShieldCheck size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Subscription renewed successfully
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Great news! Your access has been restored. Redirecting to the
+                  dashboard now.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
           <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
           <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
@@ -232,9 +332,8 @@ const Billing: React.FC = () => {
                   min="0"
                   step="1"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-200 outline-none"
-                  placeholder="e.g. 500"
+                  readOnly
+                  className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50 text-slate-700"
                 />
               </div>
               <div className="flex items-end">

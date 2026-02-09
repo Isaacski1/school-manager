@@ -39,7 +39,7 @@ const Schools = () => {
     phone: "",
     address: "",
     logoUrl: "",
-    plan: "trial" as "trial" | "monthly" | "termly" | "yearly",
+    plan: "trial" as "free" | "trial" | "monthly" | "termly" | "yearly",
   });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<School | null>(null);
@@ -644,6 +644,7 @@ const Schools = () => {
                     setFormData({ ...formData, plan: e.target.value as any })
                   }
                 >
+                  <option value="free">Free (No Billing)</option>
                   <option value="trial">Trial</option>
                   <option value="monthly">Monthly</option>
                   <option value="termly">Termly</option>

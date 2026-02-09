@@ -368,7 +368,10 @@ const Dashboard: React.FC = () => {
     const active = schools.filter((s) => s.status === "active").length;
     const inactive = schools.filter((s) => s.status === "inactive").length;
     const trial = schools.filter((s) => s.plan === "trial").length;
-    const paid = schools.filter((s) => s.plan && s.plan !== "trial").length;
+    const free = schools.filter((s) => s.plan === "free").length;
+    const paid = schools.filter(
+      (s) => s.plan && s.plan !== "trial" && s.plan !== "free",
+    ).length;
     const newSchools = schools.filter((s) => {
       if (!s.createdAt) return false;
       const created =
@@ -390,7 +393,16 @@ const Dashboard: React.FC = () => {
         .map((a) => a.schoolId),
     ).size;
 
-    return { total, active, inactive, trial, paid, newSchools, activeLast7 };
+    return {
+      total,
+      active,
+      inactive,
+      trial,
+      free,
+      paid,
+      newSchools,
+      activeLast7,
+    };
   }, [schools, activity]);
 
   const normalizePaymentStatus = (status?: string) => {
@@ -412,14 +424,17 @@ const Dashboard: React.FC = () => {
   const paymentMetrics = useMemo(() => {
     const now = new Date();
     const monthBuckets: { key: string; label: string }[] = [];
-    for (let i = 5; i >= 0; i -= 1) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    for (let month = 0; month < 12; month += 1) {
+      const d = new Date(now.getFullYear(), month, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const label = d.toLocaleString("en-US", { month: "short" });
       monthBuckets.push({ key, label });
     }
 
     const monthlyTotals = Object.fromEntries(
+      monthBuckets.map((bucket) => [bucket.key, 0]),
+    ) as Record<string, number>;
+    const monthlyFeesTotals = Object.fromEntries(
       monthBuckets.map((bucket) => [bucket.key, 0]),
     ) as Record<string, number>;
 
@@ -449,6 +464,9 @@ const Dashboard: React.FC = () => {
         if (monthlyTotals[key] !== undefined) {
           monthlyTotals[key] += amount;
         }
+        if (monthlyFeesTotals[key] !== undefined) {
+          monthlyFeesTotals[key] += amount;
+        }
       }
 
       if (status === "pending") pendingCount += 1;
@@ -471,11 +489,16 @@ const Dashboard: React.FC = () => {
         label: bucket.label,
         value: monthlyTotals[bucket.key] || 0,
       })),
+      monthlyFeesSeries: monthBuckets.map((bucket) => ({
+        label: bucket.label,
+        value: monthlyFeesTotals[bucket.key] || 0,
+      })),
     };
   }, [payments]);
 
   const planDist = useMemo(() => {
     const counts: Record<string, number> = {
+      free: 0,
       trial: 0,
       monthly: 0,
       termly: 0,
@@ -531,6 +554,25 @@ const Dashboard: React.FC = () => {
           : new Date(b.planEndsAt as any).getTime();
       return aDate - bDate;
     });
+
+  const expiredSubscriptions = schools
+    .filter((s) => s.plan !== "free" && s.planEndsAt)
+    .map((s) => {
+      const raw = s.planEndsAt as any;
+      const planEndsAt =
+        raw instanceof Timestamp ? raw.toDate() : new Date(raw);
+      const graceEndsAt = new Date(
+        planEndsAt.getTime() + 7 * 24 * 60 * 60 * 1000,
+      );
+      return {
+        ...s,
+        planEndsAt,
+        graceEndsAt,
+      };
+    })
+    .filter((s) => !Number.isNaN(s.graceEndsAt.getTime()))
+    .filter((s) => new Date() >= s.graceEndsAt)
+    .sort((a, b) => a.graceEndsAt.getTime() - b.graceEndsAt.getTime());
   const noActivityList = (() => {
     const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     const lastActivityBySchool: Record<string, Date | null> = {};
@@ -558,6 +600,11 @@ const Dashboard: React.FC = () => {
       label: "Active",
       count: kpis.active,
       color: "bg-emerald-100 text-emerald-700",
+    },
+    {
+      label: "Free",
+      count: kpis.free,
+      color: "bg-emerald-50 text-emerald-700",
     },
     { label: "Trial", count: kpis.trial, color: "bg-amber-100 text-amber-700" },
     { label: "Paid", count: kpis.paid, color: "bg-[#E6F0FA] text-[#0B4A82]" },
@@ -738,49 +785,254 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="rounded-2xl border border-slate-100 bg-white p-5">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
-                    Monthly Revenue
+                    Earnings
                   </h3>
                   <p className="text-xs text-slate-500">
                     Successful payments per month
                   </p>
                 </div>
-                <span className="text-xs font-semibold text-emerald-600">
-                  +{paymentMetrics.successRate}% success rate
+                <div className="text-xs text-slate-400">
+                  {new Date().toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-6 text-xs text-slate-500">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-[#3B82F6]" />
+                  Total Collections
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  Fees Collection
                 </span>
               </div>
-              <div className="grid grid-cols-6 gap-3 items-end h-36">
-                {paymentMetrics.monthlySeries.map((point) => {
-                  const maxValue = Math.max(
-                    1,
-                    ...paymentMetrics.monthlySeries.map((p) => p.value),
+
+              <div className="mt-4 flex items-center gap-10">
+                <div>
+                  <p className="text-xs text-slate-400">Total Collections</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {formatCurrency(paymentMetrics.paidAmount)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Fees Collection</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {formatCurrency(paymentMetrics.last30Amount)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                {(() => {
+                  const height = 180;
+                  const width = 640;
+                  const padding = 28;
+                  const minValue = 300;
+                  const maxValue = 3600;
+                  const underflowHeight = 22;
+                  const baselineY = height - padding - underflowHeight;
+                  const chartHeight = baselineY - padding;
+
+                  const toY = (value: number) => {
+                    if (value >= minValue) {
+                      const ratio = (value - minValue) / (maxValue - minValue);
+                      return baselineY - ratio * chartHeight;
+                    }
+                    const underRatio = Math.min(
+                      1,
+                      (minValue - value) / minValue,
+                    );
+                    return baselineY + underRatio * underflowHeight;
+                  };
+
+                  const points = paymentMetrics.monthlySeries.map(
+                    (point, index) => {
+                      const x =
+                        padding +
+                        (index * (width - padding * 2)) /
+                          (paymentMetrics.monthlySeries.length - 1 || 1);
+                      const y = toY(point.value);
+                      return { x, y };
+                    },
                   );
-                  const height = Math.round((point.value / maxValue) * 100);
+                  const feePoints = paymentMetrics.monthlyFeesSeries.map(
+                    (point, index) => {
+                      const x =
+                        padding +
+                        (index * (width - padding * 2)) /
+                          (paymentMetrics.monthlyFeesSeries.length - 1 || 1);
+                      const y = toY(point.value);
+                      return { x, y };
+                    },
+                  );
+
+                  const buildPath = (pts: { x: number; y: number }[]) => {
+                    if (pts.length === 0) return "";
+                    const [first, ...rest] = pts;
+                    return rest.reduce((acc, point, idx) => {
+                      const prev = pts[idx];
+                      const midX = (prev.x + point.x) / 2;
+                      return `${acc} Q ${midX} ${prev.y} ${point.x} ${point.y}`;
+                    }, `M ${first.x} ${first.y}`);
+                  };
+
+                  const areaPath = (pts: { x: number; y: number }[]) => {
+                    const line = buildPath(pts);
+                    if (!line) return "";
+                    const last = pts[pts.length - 1];
+                    const first = pts[0];
+                    return `${line} L ${last.x} ${height - padding} L ${first.x} ${height - padding} Z`;
+                  };
+
                   return (
-                    <div
-                      key={point.label}
-                      className="flex flex-col items-center gap-2"
-                    >
-                      <div
-                        className="w-10 rounded-full bg-gradient-to-t from-[#0B4A82] to-emerald-400 shadow-sm"
-                        style={{ height: `${height}%`, minHeight: "12%" }}
-                      />
-                      <span className="text-[11px] text-slate-500">
-                        {point.label}
-                      </span>
+                    <div className="w-full rounded-2xl bg-gradient-to-br from-slate-50 via-white to-slate-50 border border-slate-100 p-3 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.5)]">
+                      <svg
+                        viewBox={`0 0 ${width} ${height}`}
+                        className="w-full h-44"
+                        role="img"
+                        aria-label="Monthly earnings chart"
+                      >
+                        <defs>
+                          <linearGradient
+                            id="earningsBlue"
+                            x1="0"
+                            x2="0"
+                            y1="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#3B82F6"
+                              stopOpacity="0.65"
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#3B82F6"
+                              stopOpacity="0.05"
+                            />
+                          </linearGradient>
+                          <linearGradient
+                            id="earningsRed"
+                            x1="0"
+                            x2="0"
+                            y1="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#F43F5E"
+                              stopOpacity="0.7"
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#F43F5E"
+                              stopOpacity="0.1"
+                            />
+                          </linearGradient>
+                        </defs>
+
+                        <rect
+                          x={padding}
+                          y={padding}
+                          width={width - padding * 2}
+                          height={baselineY - padding}
+                          rx={12}
+                          fill="#FFFFFF"
+                          opacity="0.6"
+                        />
+                        <rect
+                          x={padding}
+                          y={baselineY}
+                          width={width - padding * 2}
+                          height={underflowHeight}
+                          rx={10}
+                          fill="#F1F5F9"
+                        />
+
+                        {[0, 25, 50, 75, 100].map((tick) => {
+                          const y = baselineY - (tick / 100) * chartHeight;
+                          const labelValue = Math.round(
+                            minValue + (tick / 100) * (maxValue - minValue),
+                          );
+                          return (
+                            <g key={tick}>
+                              <line
+                                x1={padding}
+                                x2={width - padding}
+                                y1={y}
+                                y2={y}
+                                stroke="#E2E8F0"
+                                strokeDasharray="4 4"
+                              />
+                              <text
+                                x={6}
+                                y={y + 4}
+                                fontSize="10"
+                                fill="#94A3B8"
+                              >
+                                GHS {labelValue.toLocaleString("en-GH")}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        <line
+                          x1={padding}
+                          x2={width - padding}
+                          y1={baselineY}
+                          y2={baselineY}
+                          stroke="#CBD5F5"
+                          strokeWidth="1.5"
+                        />
+
+                        <path d={areaPath(points)} fill="url(#earningsBlue)" />
+                        <path
+                          d={buildPath(points)}
+                          fill="none"
+                          stroke="#3B82F6"
+                          strokeWidth="2"
+                        />
+
+                        <path
+                          d={areaPath(feePoints)}
+                          fill="url(#earningsRed)"
+                        />
+                        <path
+                          d={buildPath(feePoints)}
+                          fill="none"
+                          stroke="#F43F5E"
+                          strokeWidth="2"
+                        />
+
+                        {paymentMetrics.monthlySeries.map((point, idx) => {
+                          const x =
+                            padding +
+                            (idx * (width - padding * 2)) /
+                              (paymentMetrics.monthlySeries.length - 1 || 1);
+                          return (
+                            <text
+                              key={point.label}
+                              x={x}
+                              y={height - 6}
+                              textAnchor="middle"
+                              fontSize="10"
+                              fill="#94A3B8"
+                            >
+                              {point.label}
+                            </text>
+                          );
+                        })}
+                      </svg>
                     </div>
                   );
-                })}
-              </div>
-              <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
-                <span>
-                  Last 30 days: {formatCurrency(paymentMetrics.last30Amount)}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <Activity size={12} /> Updated with payments data
-                </span>
+                })()}
               </div>
             </div>
           </Card>
@@ -881,12 +1133,82 @@ const Dashboard: React.FC = () => {
           />
           <InsightCard
             icon={<Clock size={18} />}
+            title="Expired Subscriptions"
+            count={expiredSubscriptions.length}
+            description="Grace period ended — renewal required"
+            accentColor="border-rose-400 bg-rose-50"
+          />
+          <InsightCard
+            icon={<Clock size={18} />}
             title="No Recent Activity"
             count={noActivityList.length}
             description="Last 14 days with no activity"
             accentColor="border-slate-400 bg-slate-50"
           />
         </div>
+
+        {expiredSubscriptions.length > 0 && (
+          <Card className="mb-8">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-rose-500">
+                  Renewal required
+                </p>
+                <h2 className="text-lg font-semibold text-slate-900 mt-1">
+                  Subscriptions past grace period
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  These schools have exceeded the one-week grace period and need
+                  renewal to restore access.
+                </p>
+              </div>
+              <Link
+                to="/super-admin/payments"
+                className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
+              >
+                <Wallet size={16} />
+                Review payments
+              </Link>
+            </div>
+
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                    <th className="py-2 pr-4">School</th>
+                    <th className="py-2 pr-4">Plan</th>
+                    <th className="py-2 pr-4">Grace ended</th>
+                    <th className="py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {expiredSubscriptions.slice(0, 6).map((s) => (
+                    <tr key={s.id} className="text-slate-600">
+                      <td className="py-3 pr-4">
+                        <Link
+                          to={`/super-admin/schools/${s.id}`}
+                          className="font-semibold text-slate-800 hover:text-[#0B4A82]"
+                        >
+                          {s.name}
+                        </Link>
+                        <div className="text-xs text-slate-400">{s.code}</div>
+                      </td>
+                      <td className="py-3 pr-4 capitalize">{s.plan}</td>
+                      <td className="py-3 pr-4">
+                        {s.graceEndsAt.toLocaleDateString()}
+                      </td>
+                      <td className="py-3">
+                        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-600">
+                          Renewal overdue
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
 
         {/* Plan Distribution Card */}
         <Card className="mb-8">
@@ -953,6 +1275,11 @@ const Dashboard: React.FC = () => {
               <div className="w-full lg:w-2/3">
                 <div className="grid grid-cols-2 gap-4">
                   {[
+                    {
+                      label: "Free",
+                      value: planDist.free,
+                      color: "bg-emerald-50 border-l-4 border-emerald-500",
+                    },
                     {
                       label: "Trial",
                       value: planDist.trial,
@@ -1029,6 +1356,7 @@ const Dashboard: React.FC = () => {
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#1160A8]"
               >
                 <option value="">All Plans</option>
+                <option value="free">Free</option>
                 <option value="trial">Trial</option>
                 <option value="monthly">Monthly</option>
                 <option value="termly">Termly</option>

@@ -1,4 +1,10 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
+﻿import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useLayoutEffect,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
@@ -6,6 +12,7 @@ import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
 import { collection, onSnapshot, doc, query, where } from "firebase/firestore";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
 import {
   Users,
   GraduationCap,
@@ -49,6 +56,37 @@ import AttendanceChart from "../../components/dashboard/AttendanceChart";
 
 const MemoAttendanceChart = React.memo(AttendanceChart);
 
+type AdminDashboardCache = {
+  stats: {
+    students: number;
+    teachers: number;
+    classes: number;
+    maleStudents: number;
+    femaleStudents: number;
+    classAttendance: { className: string; percentage: number; id: string }[];
+  };
+  notices: Notice[];
+  recentStudents: Student[];
+  teacherAttendance: any[];
+  teacherTermStats: any[];
+  missedAttendanceAlerts: any[];
+  missedStudentAttendanceAlerts: any[];
+  gradeDistribution: Record<string, number>;
+  topStudents: { id: string; name: string; class: string; avg: number }[];
+  gradeBuckets: Record<
+    string,
+    { id: string; name: string; class: string; avg: number }[]
+  >;
+  schoolConfig: Partial<SchoolConfig>;
+  heatmapData: Record<string, Record<string, number>>;
+  comparativeData: { className: string; avg: number }[];
+  gradeDistributionByClass: Record<string, Record<string, number>>;
+  sparklines: Record<string, number[]>;
+  lastUpdated: number;
+};
+
+const adminDashboardMemoryCache: Record<string, AdminDashboardCache> = {};
+
 const SkeletonBlock: React.FC<{ className?: string }> = ({
   className = "h-4 bg-slate-100 rounded animate-pulse",
 }) => <div className={className} />;
@@ -65,8 +103,39 @@ const SectionLoadingBadge: React.FC<{ label?: string }> = ({
   </div>
 );
 
+const parseLocalDate = (dateStr?: string | null): Date | null => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getNextTermMeta = (currentTerm: string, academicYear: string) => {
+  const match = currentTerm.match(/\d+/);
+  const currentTermNumber = match ? parseInt(match[0], 10) : CURRENT_TERM;
+  let nextTerm = currentTermNumber + 1;
+  let nextAcademicYear = academicYear;
+
+  if (currentTermNumber >= 3) {
+    nextTerm = 1;
+    const years = academicYear.split("-").map(Number);
+    if (years.length === 2 && years.every((y) => !Number.isNaN(y))) {
+      nextAcademicYear = `${years[0] + 1}-${years[1] + 1}`;
+    }
+  }
+
+  return {
+    nextTerm,
+    nextAcademicYear,
+  };
+};
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { school, schoolLoading } = useSchool();
   const schoolId = school?.id || null;
   const [stats, setStats] = useState({
@@ -146,52 +215,128 @@ const AdminDashboard = () => {
   >({ A: [], B: [], C: [], D: [], F: [] });
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
 
-  const subscriptionReminder = useMemo(() => {
+  const vacationBanner = useMemo(() => {
+    const vacationDate = parseLocalDate(schoolConfig.vacationDate || "");
+    const nextTermBegins = parseLocalDate(schoolConfig.nextTermBegins || "");
+    if (!vacationDate || !nextTermBegins) return null;
+
+    const bannerStart = new Date(vacationDate);
+    bannerStart.setDate(bannerStart.getDate() + 1);
+    bannerStart.setHours(0, 0, 0, 0);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (today < bannerStart || today >= nextTermBegins) return null;
+
+    return { vacationDate, nextTermBegins };
+  }, [schoolConfig.vacationDate, schoolConfig.nextTermBegins]);
+
+  const normalizePlanEndsAt = (raw: any) => {
+    if (!raw) return null;
+    const date =
+      raw instanceof Date
+        ? raw
+        : new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+    if (Number.isNaN(date.getTime())) return null;
+    if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      date.setHours(23, 59, 59, 999);
+    }
+    return date;
+  };
+
+  const getPlanMonths = (plan?: string) => {
+    if (plan === "termly") return 4;
+    if (plan === "yearly") return 12;
+    return 1;
+  };
+
+  const resolvePlanEndsAt = () => {
+    const plan = (school as any)?.plan || "monthly";
+    if (plan === "free") return null;
+
+    const explicitEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
+    if (explicitEndsAt) return explicitEndsAt;
+
+    const rawLastPayment = (school as any)?.billing?.lastPaymentAt || null;
     const rawCreatedAt =
       school?.createdAt || (school as any)?.billing?.createdAt || null;
-    if (!rawCreatedAt) return null;
 
-    const createdAt =
-      rawCreatedAt instanceof Date
-        ? rawCreatedAt
-        : new Date(
-            typeof rawCreatedAt?.toDate === "function"
-              ? rawCreatedAt.toDate()
-              : (rawCreatedAt as any),
-          );
-    if (Number.isNaN(createdAt.getTime())) return null;
+    const parseDate = (raw: any) => {
+      if (!raw) return null;
+      const date =
+        raw instanceof Date
+          ? raw
+          : new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+      if (Number.isNaN(date.getTime())) return null;
+      return date;
+    };
 
-    const plan = (school?.plan as string) || "monthly";
-    const planMonths = plan === "termly" ? 4 : plan === "yearly" ? 12 : 1;
-    const planLabel =
-      plan === "termly" ? "Termly" : plan === "yearly" ? "Yearly" : "Monthly";
-    const baseFee = 300;
-    const planFee = baseFee * planMonths;
+    let baseDate = parseDate(rawLastPayment) || parseDate(rawCreatedAt);
+    if (!baseDate) return null;
 
-    const dueDate = new Date(createdAt);
-    dueDate.setMonth(dueDate.getMonth() + planMonths);
+    if (rawLastPayment) {
+      baseDate = new Date(baseDate);
+      baseDate.setDate(1);
+      baseDate.setHours(0, 0, 0, 0);
+    }
+
+    const endDate = new Date(baseDate);
+    endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
+    return endDate;
+  };
+
+  const subscriptionCountdown = useMemo(() => {
+    if ((school as any)?.plan === "free") return null;
+
+    const planEndsAt = resolvePlanEndsAt();
+    if (!planEndsAt) return null;
+
     const nowDate = new Date(now);
-    const diffMs = dueDate.getTime() - nowDate.getTime();
-    const isOverdue = diffMs < 0;
-    const absMs = Math.abs(diffMs);
-    const days = Math.floor(absMs / (24 * 60 * 60 * 1000));
-    const hours = Math.floor((absMs / (60 * 60 * 1000)) % 24);
-    const minutes = Math.floor((absMs / (60 * 1000)) % 60);
-    const seconds = Math.floor((absMs / 1000) % 60);
+
+    if (nowDate >= planEndsAt) return null;
+
+    const remainingMs = Math.max(0, planEndsAt.getTime() - nowDate.getTime());
+    const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((remainingMs / (60 * 60 * 1000)) % 24);
+    const minutes = Math.floor((remainingMs / (60 * 1000)) % 60);
+    const seconds = Math.floor((remainingMs / 1000) % 60);
 
     return {
-      createdAt,
-      dueDate,
-      isOverdue,
+      planEndsAt,
       days,
       hours,
       minutes,
       seconds,
-      planLabel,
-      planMonths,
-      planFee,
     };
-  }, [school?.createdAt, now]);
+  }, [school?.planEndsAt, now, school?.plan]);
+
+  const graceCountdown = useMemo(() => {
+    if ((school as any)?.plan === "free") return null;
+
+    const planEndsAt = resolvePlanEndsAt();
+    if (!planEndsAt) return null;
+
+    const graceMs = 7 * 24 * 60 * 60 * 1000;
+    const graceEndsAt = new Date(planEndsAt.getTime() + graceMs);
+    const nowDate = new Date(now);
+
+    if (nowDate < planEndsAt || nowDate >= graceEndsAt) return null;
+
+    const remainingMs = Math.max(0, graceEndsAt.getTime() - nowDate.getTime());
+    const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((remainingMs / (60 * 60 * 1000)) % 24);
+    const minutes = Math.floor((remainingMs / (60 * 1000)) % 60);
+    const seconds = Math.floor((remainingMs / 1000) % 60);
+
+    return {
+      planEndsAt,
+      graceEndsAt,
+      days,
+      hours,
+      minutes,
+      seconds,
+    };
+  }, [school?.planEndsAt, now, school?.plan]);
 
   // Advanced visualization state
   const [heatmapData, setHeatmapData] = useState<
@@ -215,6 +360,84 @@ const AdminDashboard = () => {
     () => (schoolId ? `admin_dashboard_summary_${schoolId}` : ""),
     [schoolId],
   );
+
+  const heavyCacheKey = useMemo(
+    () => (schoolId ? `admin_dashboard_heavy_${schoolId}` : ""),
+    [schoolId],
+  );
+
+  const cachedHeavy = useMemo(() => {
+    if (!heavyCacheKey) return null;
+    const raw = localStorage.getItem(heavyCacheKey);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as AdminDashboardCache;
+    } catch (e) {
+      console.warn("Failed to parse cached dashboard data", e);
+      localStorage.removeItem(heavyCacheKey);
+      return null;
+    }
+  }, [heavyCacheKey]);
+
+  useLayoutEffect(() => {
+    if (!cachedHeavy) return;
+    setStats(cachedHeavy.stats);
+    setDashboardStatsCache(cachedHeavy.stats);
+    setNotices(cachedHeavy.notices);
+    setRecentStudents(cachedHeavy.recentStudents);
+    setTeacherAttendance(cachedHeavy.teacherAttendance);
+    setTeacherTermStats(cachedHeavy.teacherTermStats);
+    setMissedAttendanceAlerts(cachedHeavy.missedAttendanceAlerts);
+    setMissedStudentAttendanceAlerts(cachedHeavy.missedStudentAttendanceAlerts);
+    setGradeDistribution(cachedHeavy.gradeDistribution);
+    setTopStudents(cachedHeavy.topStudents);
+    setGradeBuckets(cachedHeavy.gradeBuckets);
+    setSchoolConfig((prev) => ({ ...prev, ...cachedHeavy.schoolConfig }));
+    setHeatmapData(cachedHeavy.heatmapData);
+    setComparativeData(cachedHeavy.comparativeData);
+    setGradeDistributionByClass(cachedHeavy.gradeDistributionByClass);
+    setSparklines(cachedHeavy.sparklines);
+    setLastUpdated(new Date(cachedHeavy.lastUpdated));
+    setInitialDataReady(true);
+    if (cachedHeavy.stats?.students !== undefined) {
+      setAnimatedStudents(cachedHeavy.stats.students);
+    }
+    if (cachedHeavy.stats?.classAttendance?.length) {
+      const classPctList = cachedHeavy.stats.classAttendance.map(
+        (c) => c.percentage || 0,
+      );
+      const currentAttendanceAvg =
+        classPctList.length > 0
+          ? Math.round(
+              classPctList.reduce((a, b) => a + b, 0) / classPctList.length,
+            )
+          : 0;
+      setAnimatedAttendance(currentAttendanceAvg);
+    }
+    if (cachedHeavy.gradeDistribution) {
+      const totalGrades = Object.values(cachedHeavy.gradeDistribution).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+      if (totalGrades > 0) {
+        const weights: Record<string, number> = {
+          A: 4,
+          B: 3,
+          C: 2,
+          D: 1,
+          F: 0,
+        };
+        const weightedSum = Object.entries(
+          cachedHeavy.gradeDistribution,
+        ).reduce(
+          (acc, [grade, count]) => acc + (weights[grade] ?? 0) * (count ?? 0),
+          0,
+        );
+        const avgScore = weightedSum / totalGrades;
+        setAnimatedGradeAvg(Math.round((avgScore / 4) * 100));
+      }
+    }
+  }, [cachedHeavy]);
 
   const fetchSummary = useCallback(
     async (options?: { background?: boolean }) => {
@@ -626,7 +849,21 @@ const AdminDashboard = () => {
           !config.termTransitionProcessed
         ) {
           try {
-            await db.resetForNewTerm(config);
+            const { nextTerm, nextAcademicYear } = getNextTermMeta(
+              config.currentTerm,
+              config.academicYear,
+            );
+            const updatedConfig = {
+              ...config,
+              currentTerm: `Term ${nextTerm}`,
+              academicYear: nextAcademicYear,
+              schoolReopenDate: config.nextTermBegins || "",
+              vacationDate: "",
+              nextTermBegins: "",
+              termTransitionProcessed: true,
+            };
+
+            await db.resetForNewTerm(updatedConfig);
             showToast("Term transition completed automatically.", {
               type: "success",
             });
@@ -660,23 +897,33 @@ const AdminDashboard = () => {
         // Map ID to Name for easier lookup
         const studentMap = new Map(students.map((s) => [s.id, s]));
 
-        allAssessments.forEach((a) => {
-          // Filter using the DYNAMIC term
-          if (a.term === (dynamicTerm as any) && studentMap.has(a.studentId)) {
-            if (!studentScores[a.studentId]) {
-              const s = studentMap.get(a.studentId)!;
-              studentScores[a.studentId] = {
-                total: 0,
-                count: 0,
-                name: s.name,
-                classId: s.classId,
-              };
-            }
-            const score = a.total ?? calculateTotalScore(a);
-            studentScores[a.studentId].total += score;
-            studentScores[a.studentId].count += 1;
-          }
+        const hasAssessmentData = allAssessments.some((a) => {
+          const score = a.total ?? calculateTotalScore(a);
+          return a.term === (dynamicTerm as any) && score > 0;
         });
+
+        if (hasAssessmentData) {
+          allAssessments.forEach((a) => {
+            const score = a.total ?? calculateTotalScore(a);
+            if (
+              a.term === (dynamicTerm as any) &&
+              score > 0 &&
+              studentMap.has(a.studentId)
+            ) {
+              if (!studentScores[a.studentId]) {
+                const s = studentMap.get(a.studentId)!;
+                studentScores[a.studentId] = {
+                  total: 0,
+                  count: 0,
+                  name: s.name,
+                  classId: s.classId,
+                };
+              }
+              studentScores[a.studentId].total += score;
+              studentScores[a.studentId].count += 1;
+            }
+          });
+        }
 
         // 2. Calculate Averages & Grade Distribution (also build buckets)
         const counts = { A: 0, B: 0, C: 0, D: 0, F: 0 };
@@ -738,6 +985,37 @@ const AdminDashboard = () => {
         setGradeBuckets(buckets);
         setLastUpdated(new Date());
         setInitialDataReady(true);
+        if (heavyCacheKey) {
+          const cachePayload: AdminDashboardCache = {
+            stats: fullStats,
+            notices: fetchedNotices,
+            recentStudents: students.slice(-5).reverse(),
+            teacherAttendance: teacherAttendanceWithDetails,
+            teacherTermStats: teacherTermStats,
+            missedAttendanceAlerts: missedAlerts,
+            missedStudentAttendanceAlerts: missedStudentAlerts,
+            gradeDistribution: counts,
+            topStudents: averagesList.slice(0, 5),
+            gradeBuckets: buckets,
+            schoolConfig: {
+              academicYear: config.academicYear,
+              currentTerm: config.currentTerm,
+              schoolReopenDate: config.schoolReopenDate || "",
+              schoolName: config.schoolName,
+              headTeacherRemark: config.headTeacherRemark,
+              termEndDate: config.termEndDate,
+              vacationDate: config.vacationDate,
+              nextTermBegins: config.nextTermBegins,
+              termTransitionProcessed: config.termTransitionProcessed,
+            },
+            heatmapData,
+            comparativeData,
+            gradeDistributionByClass,
+            sparklines,
+            lastUpdated: Date.now(),
+          };
+          localStorage.setItem(heavyCacheKey, JSON.stringify(cachePayload));
+        }
       } catch (err: any) {
         console.error("Dashboard fetch error:", err);
         setError(
@@ -1047,8 +1325,19 @@ const AdminDashboard = () => {
     }
 
     fetchSummary().catch((e) => console.error(e));
-    fetchHeavyData().catch((e) => console.error(e));
-  }, [schoolLoading, schoolId, fetchSummary, fetchHeavyData, summaryCacheKey]);
+    if (!cachedHeavy) {
+      fetchHeavyData().catch((e) => console.error(e));
+    } else {
+      fetchHeavyData({ background: true }).catch((e) => console.error(e));
+    }
+  }, [
+    schoolLoading,
+    schoolId,
+    fetchSummary,
+    fetchHeavyData,
+    summaryCacheKey,
+    cachedHeavy,
+  ]);
 
   // Real-time listeners: refresh stats when attendance, assessments, or config change
   useEffect(() => {
@@ -1410,8 +1699,8 @@ const AdminDashboard = () => {
 
   // Polished, responsive Student enrollment card (replaces Students StatCard)
   const StudentEnrollCard = () => (
-    <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-6 rounded-2xl shadow-md border border-amber-200 flex flex-col justify-between min-h-[140px]">
-      <div className="flex items-start justify-between gap-4">
+    <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-6 rounded-2xl shadow-md border border-amber-200 flex flex-col justify-between min-h-[140px] overflow-hidden">
+      <div className="flex items-start justify-between gap-4 min-w-0">
         <div>
           <p className="text-xs font-semibold uppercase text-amber-700">
             Students Enrolled
@@ -1446,7 +1735,7 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="hidden sm:flex items-end gap-2 flex-1 max-w-[55%]">
+        <div className="hidden sm:flex items-end gap-2 flex-1 max-w-[55%] overflow-hidden">
           {stats.classAttendance.slice(0, 8).map((c) => (
             <div key={c.id} className="flex-1 flex flex-col items-center">
               <div
@@ -2090,7 +2379,7 @@ const AdminDashboard = () => {
       <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">
-            Welcome, Headmistress
+            Welcome{user?.fullName ? `, ${user.fullName}` : ""}
           </h1>
           <p className="text-slate-500 mt-1">
             Here is what's happening in your school today.
@@ -2162,16 +2451,107 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {subscriptionReminder && (
+      {vacationBanner && (
         <div className="mb-8">
-          <div
-            className={`rounded-2xl border p-6 shadow-sm ${subscriptionReminder.isOverdue ? "border-rose-200 bg-rose-50/60" : "border-amber-200 bg-amber-50/70"}`}
-          >
+          <div className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-blue-50 p-6 shadow-sm">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div className="flex items-start gap-4">
-                <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center ${subscriptionReminder.isOverdue ? "bg-rose-500 text-white" : "bg-amber-500 text-white"}`}
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-[#0B4A82] text-white">
+                  <Calendar size={20} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-sky-700">
+                    School Vacation
+                  </p>
+                  <h3 className="text-xl font-bold text-slate-900 mt-1">
+                    Your school is currently on vacation
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-2">
+                    School will reopen on{" "}
+                    <span className="font-semibold text-slate-800">
+                      {vacationBanner.nextTermBegins.toLocaleDateString()}
+                    </span>
+                    .
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="px-4 py-2 rounded-full text-sm font-semibold bg-[#0B4A82] text-white">
+                  Vacation mode
+                </div>
+                <div className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-slate-700">
+                  <div className="text-xs uppercase text-slate-400">
+                    Next term
+                  </div>
+                  <div className="text-sm font-bold">
+                    {vacationBanner.nextTermBegins.toLocaleDateString()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {subscriptionCountdown && (
+        <div className="mb-8">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-[#0B4A82] text-white">
+                  <Calendar size={20} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                    Subscription Countdown
+                  </p>
+                  <h3 className="text-xl font-bold text-slate-900 mt-1">
+                    Renewal due soon
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-2">
+                    Your subscription ends on{" "}
+                    <span className="font-semibold text-slate-800">
+                      {subscriptionCountdown.planEndsAt.toLocaleDateString()}
+                    </span>
+                    . Renew before the end date to avoid interruption.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="px-4 py-2 rounded-full text-sm font-semibold bg-[#0B4A82] text-white">
+                  Subscription ends
+                </div>
+                <div className="px-4 py-2 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700">
+                  <div className="text-xs uppercase text-slate-400">
+                    Countdown
+                  </div>
+                  <div className="text-lg font-bold">
+                    {subscriptionCountdown.days}d {subscriptionCountdown.hours}h{" "}
+                    {subscriptionCountdown.minutes}m{" "}
+                    {subscriptionCountdown.seconds}s
+                  </div>
+                </div>
+                <Link
+                  to="/admin/billing"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
                 >
+                  <Wallet size={16} />
+                  Renew Now
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {graceCountdown && (
+        <div className="mb-8">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-6 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-amber-500 text-white">
                   <Timer size={20} />
                 </div>
                 <div>
@@ -2179,42 +2559,30 @@ const AdminDashboard = () => {
                     Subscription Reminder
                   </p>
                   <h3 className="text-xl font-bold text-slate-900 mt-1">
-                    {subscriptionReminder.isOverdue
-                      ? "Subscription overdue"
-                      : "Subscription payment due"}
+                    One-week grace period is active
                   </h3>
                   <p className="text-sm text-slate-600 mt-2">
-                    Plan:{" "}
-                    <span className="font-semibold">
-                      {subscriptionReminder.planLabel}
-                    </span>{" "}
-                    • Fee:{" "}
-                    <span className="font-semibold">
-                      GHS {subscriptionReminder.planFee}
-                    </span>
+                    Your subscription has ended. You have a one-week window to
+                    renew before access is paused.
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Started:{" "}
-                    {subscriptionReminder.createdAt.toLocaleDateString()} • Due:{" "}
-                    {subscriptionReminder.dueDate.toLocaleDateString()}
+                    Grace ends on{" "}
+                    {graceCountdown.graceEndsAt.toLocaleDateString()}.
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <div
-                  className={`px-4 py-2 rounded-full text-sm font-semibold ${subscriptionReminder.isOverdue ? "bg-rose-500 text-white" : "bg-amber-500 text-white"}`}
-                >
-                  {subscriptionReminder.isOverdue ? "Overdue" : "Time left"}
+                <div className="px-4 py-2 rounded-full text-sm font-semibold bg-amber-500 text-white">
+                  Grace period
                 </div>
                 <div className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-slate-700">
                   <div className="text-xs uppercase text-slate-400">
                     Countdown
                   </div>
                   <div className="text-lg font-bold">
-                    {subscriptionReminder.days}d {subscriptionReminder.hours}h{" "}
-                    {subscriptionReminder.minutes}m{" "}
-                    {subscriptionReminder.seconds}s
+                    {graceCountdown.days}d {graceCountdown.hours}h{" "}
+                    {graceCountdown.minutes}m {graceCountdown.seconds}s
                   </div>
                 </div>
                 <Link

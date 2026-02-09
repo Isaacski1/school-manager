@@ -23,7 +23,7 @@ export interface School {
   phone: string;
   address: string;
   status: "active" | "inactive";
-  plan: "trial" | "monthly" | "termly" | "yearly";
+  plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: Date | null;
   createdAt: Date;
   createdBy: string;

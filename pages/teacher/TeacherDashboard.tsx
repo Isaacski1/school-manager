@@ -1204,13 +1204,11 @@ const TeacherDashboard = () => {
                             <p className="text-xs text-slate-500 font-mono">
                               {slot.startTime} - {slot.endTime}
                             </p>
-                            {slot.type !== "lesson" && (
-                              <span
-                                className={`text-[10px] font-bold uppercase ${styles.badge}`}
-                              >
-                                {slot.type}
-                              </span>
-                            )}
+                            <span
+                              className={`text-[10px] font-bold uppercase ${styles.badge}`}
+                            >
+                              {slot.type}
+                            </span>
                           </div>
                           <p className={`text-sm ${styles.text}`}>
                             {slot.subject}

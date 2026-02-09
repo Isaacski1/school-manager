@@ -805,8 +805,10 @@ const SystemSettings = () => {
                   </h2>
                 </div>
                 <p className="text-rose-700 mb-4">
-                  This action will permanently delete all data and reset the
-                  system to its default state. Use with extreme caution.
+                  This will reset term data (attendance, assessments, reports,
+                  and term-specific records) for the selected term. It does not
+                  delete school accounts or core setup, but the term data cannot
+                  be recovered. Use with extreme caution.
                 </p>
                 <div className="flex flex-col space-y-4">
                   <button
@@ -823,8 +825,17 @@ const SystemSettings = () => {
             <div className="text-center mt-4">
               <button
                 onClick={() => setShowDangerZone(!showDangerZone)}
-                className="text-slate-500 text-sm underline hover:text-slate-700"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:border-[#1160A8] hover:text-[#0B4A82] hover:shadow-md"
               >
+                <span
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${
+                    showDangerZone
+                      ? "bg-rose-100 text-rose-600"
+                      : "bg-[#E6F0FA] text-[#0B4A82]"
+                  }`}
+                >
+                  {showDangerZone ? "—" : "+"}
+                </span>
                 {showDangerZone ? "Hide" : "Show"} Advanced Settings
               </button>
             </div>

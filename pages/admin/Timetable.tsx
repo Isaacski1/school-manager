@@ -217,7 +217,7 @@ const Timetable = () => {
 
   return (
     <Layout title="Manage Timetable">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)]">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-auto md:h-[calc(100vh-8rem)]">
         {/* Header Controls */}
         <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-center gap-4 bg-slate-50">
           <div className="flex items-center gap-4">
@@ -249,7 +249,7 @@ const Timetable = () => {
         </div>
 
         {/* Main Content Area */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-y-auto md:overflow-hidden">
           {/* Days Sidebar (Tabs) */}
           <div className="hidden md:flex w-40 border-r border-slate-100 bg-white flex flex-col overflow-y-auto">
             {DAYS.map((day) => {
@@ -268,7 +268,7 @@ const Timetable = () => {
           </div>
 
           {/* Editor Area */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
+          <div className="flex-1 flex flex-col overflow-y-auto md:overflow-hidden bg-slate-50/50">
             {/* Mobile Day Tabs */}
             <div className="md:hidden flex overflow-x-auto bg-white border-b border-slate-100">
               {DAYS.map((day) => {
@@ -303,7 +303,7 @@ const Timetable = () => {
             </div>
 
             {/* Slots List */}
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-3 md:space-y-4 min-h-[260px]">
+            <div className="flex-1 overflow-visible md:overflow-y-auto p-3 md:p-6 space-y-3 md:space-y-4 min-h-[260px]">
               {timetable[activeDay]?.length === 0 ? (
                 <div className="text-center w-full min-h-[260px] md:min-h-[320px] py-10 md:py-16 px-6 md:px-10 text-slate-500 border-2 border-dashed border-slate-200 rounded-2xl bg-white flex flex-col items-center justify-center">
                   <div className="text-xl md:text-2xl font-semibold mb-3 text-slate-700">

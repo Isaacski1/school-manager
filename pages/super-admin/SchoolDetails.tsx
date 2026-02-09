@@ -43,7 +43,7 @@ type SchoolFormState = {
   address: string;
   logoUrl: string;
   status: "active" | "inactive";
-  plan: "trial" | "monthly" | "termly" | "yearly";
+  plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: string;
   notes: string;
 };
@@ -785,6 +785,7 @@ const SchoolDetails = () => {
                     }
                     className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 bg-white"
                   >
+                    <option value="free">Free (No Billing)</option>
                     <option value="trial">Trial</option>
                     <option value="monthly">Monthly</option>
                     <option value="termly">Termly</option>
