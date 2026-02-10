@@ -132,6 +132,15 @@ const TeacherAttendance = () => {
     [todayDate],
   );
 
+  const hasNextTermBegunWithoutReopen = useMemo(() => {
+    if (!schoolConfig?.nextTermBegins) return false;
+    if (schoolConfig?.schoolReopenDate) return false;
+    const nextTermDateObj = parseLocalDate(schoolConfig.nextTermBegins);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today >= nextTermDateObj;
+  }, [schoolConfig?.nextTermBegins, schoolConfig?.schoolReopenDate]);
+
   const isValidAttendanceDate = (
     dateString: string,
     reopen?: string,
@@ -145,8 +154,10 @@ const TeacherAttendance = () => {
     const nextTermDateObj = nextTerm ? parseLocalDate(nextTerm) : null;
     const isHoliday = (holidayDates || []).some((h) => h.date === dateString);
 
-    // If nextTermBegins is set and checkDate >= nextTermBegins, valid for new term
-    if (nextTermDateObj && checkDate >= nextTermDateObj) return true;
+    // If next term has begun but reopen date is missing, block attendance
+    if (nextTermDateObj && checkDate >= nextTermDateObj) {
+      return !hasNextTermBegunWithoutReopen;
+    }
 
     if (isHoliday) return false;
 
@@ -241,6 +252,13 @@ const TeacherAttendance = () => {
     status: "present" | "absent",
   ) => {
     if (!user?.id || !schoolId) return;
+    if (hasNextTermBegunWithoutReopen) {
+      setActionMessage(
+        "Attendance is locked until the admin sets a school re-open date.",
+      );
+      setTimeout(() => setActionMessage(""), 4000);
+      return;
+    }
 
     setSaving((s) => ({ ...s, [date]: true }));
 
@@ -270,6 +288,13 @@ const TeacherAttendance = () => {
 
   const handleMarkHoliday = async (date: string) => {
     if (!user?.id || !schoolId) return;
+    if (hasNextTermBegunWithoutReopen) {
+      setActionMessage(
+        "Attendance is locked until the admin sets a school re-open date.",
+      );
+      setTimeout(() => setActionMessage(""), 4000);
+      return;
+    }
 
     setSaving((s) => ({ ...s, [date]: true }));
 
@@ -314,6 +339,7 @@ const TeacherAttendance = () => {
   };
 
   const isSchoolOpen = () => {
+    if (hasNextTermBegunWithoutReopen) return false;
     if (!schoolConfig?.schoolReopenDate) return true;
     return todayDate >= parseLocalDate(schoolConfig.schoolReopenDate);
   };
@@ -330,8 +356,10 @@ const TeacherAttendance = () => {
       ? parseLocalDate(schoolConfig.nextTermBegins)
       : null;
 
-    // If nextTermBegins is set and checkDate >= nextTermBegins, valid for new term
-    if (nextTermDateObj && checkDate >= nextTermDateObj) return true;
+    // If next term has begun but reopen date is missing, block session
+    if (nextTermDateObj && checkDate >= nextTermDateObj) {
+      return !hasNextTermBegunWithoutReopen;
+    }
 
     if (reopenDateObj && checkDate < reopenDateObj) return false;
     if (vacationDateObj && checkDate > vacationDateObj) return false;
@@ -561,8 +589,8 @@ const TeacherAttendance = () => {
                     )}
                     {record?.approvalStatus === "rejected" && (
                       <div className="text-xs font-semibold text-rose-600">
-                        Attendance rejected. Please do not cheat when marking
-                        attendance.
+                        Attendance is marked as Absent. Please do not cheat when
+                        marking attendance.
                       </div>
                     )}
 

@@ -41,6 +41,35 @@ const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
   const { school, schoolLoading, schoolError } = useSchool();
 
+  const getSchoolErrorDetails = (message: string) => {
+    const lower = message.toLowerCase();
+    if (lower.includes("inactive")) {
+      return {
+        title: "School Inactive",
+        description:
+          "Your school has been deactivated. Please contact your administrator for support.",
+      };
+    }
+    if (lower.includes("not found")) {
+      return {
+        title: "School Not Found",
+        description:
+          "Your school profile could not be found. Please contact your administrator.",
+      };
+    }
+    if (lower.includes("no school")) {
+      return {
+        title: "No School Assigned",
+        description:
+          "Your account does not have a school assigned. Please contact your administrator.",
+      };
+    }
+    return {
+      title: "School Access Issue",
+      description: message,
+    };
+  };
+
   // Show loading spinner while auth is initializing
   if (authLoading) {
     return (
@@ -96,6 +125,7 @@ const AppContent = () => {
 
   // Show school access error (only for non-super-admin users)
   if (schoolError && user?.role !== UserRole.SUPER_ADMIN) {
+    const details = getSchoolErrorDetails(schoolError);
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-100 p-8 text-center">
@@ -115,9 +145,9 @@ const AppContent = () => {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-slate-800 mb-4">
-            School Access Issue
+            {details.title}
           </h1>
-          <p className="text-slate-600 mb-6">{schoolError}</p>
+          <p className="text-slate-600 mb-6">{details.description}</p>
           <button
             onClick={logout}
             className="px-6 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"

@@ -12,7 +12,6 @@ import { firestore } from "../../services/firebase";
 import { useAuth } from "../../context/AuthContext";
 import { Link } from "react-router-dom";
 import { School } from "../../types";
-import logActivity from "../../services/activityLog";
 import {
   RefreshCw,
   Users,
@@ -162,10 +161,60 @@ type PaymentRecord = {
   createdAt?: Timestamp | number | string;
 };
 
+type ActivityEntry = {
+  id: string;
+  eventType?: string;
+  schoolId?: string | null;
+  actorRole?: string | null;
+  actorUid?: string | null;
+  entityId?: string | null;
+  meta?: Record<string, any> | null;
+  createdAt?: Timestamp | number | string;
+};
+
+const formatActivityDate = (value?: Timestamp | number | string) => {
+  if (!value) return "—";
+  if (value instanceof Timestamp) return value.toDate().toLocaleString();
+  const date = new Date(value as any);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+};
+
+const formatActivityLabel = (entry: ActivityEntry) => {
+  const type = entry.eventType || "activity";
+  const meta = entry.meta || {};
+  switch (type) {
+    case "school_created":
+      return `School created (${meta.name || "Unnamed"})`;
+    case "school_admin_created":
+      return `School admin created (${meta.email || "email"})`;
+    case "school_admin_password_reset":
+      return `School admin password reset (${meta.email || "email"})`;
+    case "user_provisioned":
+      return `User provisioned (${meta.email || "email"})`;
+    case "teacher_created":
+      return `Teacher created (${meta.email || "email"})`;
+    case "backup_created":
+      return `Backup created (${meta.term || "term"} ${meta.academicYear || ""})`;
+    case "billing_initiated":
+      return `Billing initiated (${meta.currency || "GHS"} ${meta.amount || ""})`;
+    case "billing_verified_success":
+      return "Billing verified (success)";
+    case "billing_verified_failed":
+      return "Billing verified (failed)";
+    case "billing_webhook_success":
+      return "Billing webhook (success)";
+    case "billing_webhook_failed":
+      return "Billing webhook (failed)";
+    default:
+      return type.replace(/_/g, " ");
+  }
+};
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [schools, setSchools] = useState<School[]>([]);
-  const [activity, setActivity] = useState<any[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [activityFilter, setActivityFilter] = useState<string>("");
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -206,7 +255,7 @@ const Dashboard: React.FC = () => {
       const events = aSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
-      }));
+      })) as ActivityEntry[];
       setActivity(events);
 
       const paymentsCol = collection(firestore, "payments");
@@ -404,6 +453,11 @@ const Dashboard: React.FC = () => {
       activeLast7,
     };
   }, [schools, activity]);
+
+  const activityFeed = useMemo(() => {
+    if (!activityFilter) return activity;
+    return activity.filter((entry) => entry.eventType === activityFilter);
+  }, [activity, activityFilter]);
 
   const normalizePaymentStatus = (status?: string) => {
     const normalized = String(status || "pending").toLowerCase();
@@ -1312,6 +1366,107 @@ const Dashboard: React.FC = () => {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+        </Card>
+
+        {/* Activity Feed */}
+        <Card className="mb-8">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-10 h-10 rounded-2xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center">
+                  <Activity size={20} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Activity Feed
+                  </h2>
+                  <p className="text-sm text-slate-600">
+                    Recent system events across all schools
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={activityFilter}
+                onChange={(e) => setActivityFilter(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              >
+                <option value="">All events</option>
+                <option value="school_created">School created</option>
+                <option value="school_admin_created">
+                  School admin created
+                </option>
+                <option value="school_admin_password_reset">
+                  School admin password reset
+                </option>
+                <option value="user_provisioned">User provisioned</option>
+                <option value="teacher_created">Teacher created</option>
+                <option value="backup_created">Backup created</option>
+                <option value="billing_initiated">Billing initiated</option>
+                <option value="billing_verified_success">
+                  Billing verified (success)
+                </option>
+                <option value="billing_verified_failed">
+                  Billing verified (failed)
+                </option>
+                <option value="billing_webhook_success">
+                  Billing webhook (success)
+                </option>
+                <option value="billing_webhook_failed">
+                  Billing webhook (failed)
+                </option>
+              </select>
+              <button
+                onClick={loadData}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 border border-slate-100 rounded-xl"
+                >
+                  <Skeleton className="h-4 w-1/3 mb-2" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ))}
+            </div>
+          ) : activityFeed.length === 0 ? (
+            <EmptyState
+              icon={<Activity className="text-slate-300" size={48} />}
+              title="No activity yet"
+              description="System events will appear here as schools use the platform."
+            />
+          ) : (
+            <div className="space-y-3">
+              {activityFeed.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl border border-slate-100 bg-white p-4"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {formatActivityLabel(entry)}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {entry.schoolId ? `School: ${entry.schoolId}` : "System"}
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {formatActivityDate(entry.createdAt)}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </Card>

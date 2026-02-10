@@ -12,7 +12,10 @@ A multi-tenant SaaS School Management System built with React (Vite), Firebase (
 
 1. Install dependencies:
    `npm install`
-2. Run the app:
+2. Create frontend env file:
+   - Copy `.env.example` to `.env.local`
+   - Fill in `VITE_FIREBASE_*` and `VITE_BACKEND_URL`
+3. Run the app:
    `npm run dev`
 
 ## Firebase Setup

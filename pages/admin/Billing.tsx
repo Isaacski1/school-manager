@@ -87,6 +87,7 @@ const Billing: React.FC = () => {
   }, [school]);
 
   const isFreePlan = billingStatus.plan === "free";
+  const isTrialPlan = billingStatus.plan === "trial";
 
   const displayStatus = useMemo(() => {
     const latestPayment = paymentHistory[0];
@@ -97,7 +98,9 @@ const Billing: React.FC = () => {
     const plan = billingStatus.plan || "monthly";
     const base = 300;
     const multiplier = plan === "termly" ? 4 : plan === "yearly" ? 12 : 1;
-    return base * multiplier;
+    const rawAmount = base * multiplier;
+    const discountRate = plan === "termly" ? 0.2 : plan === "yearly" ? 0.3 : 0;
+    return Math.round(rawAmount * (1 - discountRate));
   }, [billingStatus.plan]);
 
   useEffect(() => {
@@ -247,7 +250,7 @@ const Billing: React.FC = () => {
     }
   };
 
-  if (isFreePlan) {
+  if (isFreePlan || isTrialPlan) {
     return (
       <Layout title="Billing & Subscription">
         <div className="max-w-5xl mx-auto space-y-6">
@@ -258,7 +261,7 @@ const Billing: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-slate-900">
-                  Free Plan Active
+                  {isTrialPlan ? "Trial Plan Active" : "Free Plan Active"}
                 </h1>
                 <p className="text-sm text-slate-600 mt-1">
                   Billing is disabled for your school. Contact your super admin

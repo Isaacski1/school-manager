@@ -53,6 +53,9 @@ const SchoolDetails = () => {
   const navigate = useNavigate();
   const [school, setSchool] = useState<School | null>(null);
   const [formState, setFormState] = useState<SchoolFormState | null>(null);
+  const [resolvedSchoolId, setResolvedSchoolId] = useState<string | null>(
+    schoolId || null,
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCreateAdmin, setShowCreateAdmin] = useState(false);
@@ -78,6 +81,15 @@ const SchoolDetails = () => {
   const [logoNatural, setLogoNatural] = useState({ width: 0, height: 0 });
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
+  const formatPlanEndsAt = (value: any) => {
+    if (!value) return "";
+    const rawDate =
+      typeof value?.toDate === "function" ? value.toDate() : value;
+    const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
+    if (!parsed || Number.isNaN(parsed.getTime())) return "";
+    return parsed.toISOString().split("T")[0];
+  };
+
   const CROP_PREVIEW_SIZE = 180;
   const OUTPUT_SIZE = 512;
   const MAX_OFFSET = CROP_PREVIEW_SIZE / 2;
@@ -87,11 +99,20 @@ const SchoolDetails = () => {
 
     const fetchSchool = async () => {
       try {
-        const schoolDoc = await getDoc(doc(firestore, "schools", schoolId));
+        let schoolDoc = await getDoc(doc(firestore, "schools", schoolId));
         if (!schoolDoc.exists()) {
-          showToast("School not found", { type: "error" });
-          navigate("/super-admin/schools");
-          return;
+          const fallbackQuery = query(
+            collection(firestore, "schools"),
+            where("schoolId", "==", schoolId),
+          );
+          const fallbackSnap = await getDocs(fallbackQuery);
+          const fallbackDoc = fallbackSnap.docs[0];
+          if (!fallbackDoc) {
+            showToast("School not found", { type: "error" });
+            navigate("/super-admin/schools");
+            return;
+          }
+          schoolDoc = fallbackDoc;
         }
 
         const schoolData = {
@@ -99,6 +120,7 @@ const SchoolDetails = () => {
           ...schoolDoc.data(),
         } as School;
         setSchool(schoolData);
+        setResolvedSchoolId(schoolDoc.id);
 
         const createdAt =
           schoolData.createdAt && (schoolData.createdAt as any)?.toDate?.()
@@ -113,9 +135,7 @@ const SchoolDetails = () => {
           logoUrl: schoolData.logoUrl || "",
           status: schoolData.status || "active",
           plan: schoolData.plan || "trial",
-          planEndsAt: schoolData.planEndsAt
-            ? new Date(schoolData.planEndsAt as any).toISOString().split("T")[0]
-            : "",
+          planEndsAt: formatPlanEndsAt(schoolData.planEndsAt),
           notes: schoolData.notes || "",
         });
 
@@ -216,7 +236,7 @@ const SchoolDetails = () => {
   };
 
   const handleSave = async () => {
-    if (!schoolId || !formState) return;
+    if (!resolvedSchoolId || !formState) return;
     if (!validateForm()) return;
 
     const getCroppedLogoDataUrl = () => {
@@ -254,7 +274,7 @@ const SchoolDetails = () => {
       const croppedLogo = getCroppedLogoDataUrl();
       const nextLogoUrl = croppedLogo || formState.logoUrl.trim();
       await setDoc(
-        doc(firestore, "schools", schoolId),
+        doc(firestore, "schools", resolvedSchoolId),
         {
           name: formState.name.trim(),
           code: formState.code.trim(),
@@ -308,22 +328,20 @@ const SchoolDetails = () => {
       logoUrl: school.logoUrl || "",
       status: school.status || "active",
       plan: school.plan || "trial",
-      planEndsAt: school.planEndsAt
-        ? new Date(school.planEndsAt as any).toISOString().split("T")[0]
-        : "",
+      planEndsAt: formatPlanEndsAt(school.planEndsAt),
       notes: school.notes || "",
     });
   };
 
   const handleCreateAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!schoolId) return;
+    if (!resolvedSchoolId) return;
     if (!adminForm.fullName.trim() || !adminForm.email.trim()) return;
 
     setIsCreatingAdmin(true);
     try {
       const result = await createSchoolAdmin({
-        schoolId,
+        schoolId: resolvedSchoolId,
         fullName: adminForm.fullName.trim(),
         email: adminForm.email.trim(),
         password: adminForm.password.trim() || undefined,

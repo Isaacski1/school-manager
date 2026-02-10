@@ -195,7 +195,7 @@ const AdminDashboard = () => {
     null,
   );
 
-  const HEAVY_REFRESH_THROTTLE_MS = 30000;
+  const HEAVY_REFRESH_THROTTLE_MS = 8000;
   const STATS_POLL_INTERVAL_MS = 30000;
 
   // Configuration State
@@ -298,6 +298,7 @@ const AdminDashboard = () => {
 
   const subscriptionCountdown = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
+    if ((school as any)?.plan === "trial") return null;
 
     const planEndsAt = resolvePlanEndsAt();
     if (!planEndsAt) return null;
@@ -323,6 +324,7 @@ const AdminDashboard = () => {
 
   const graceCountdown = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
+    if ((school as any)?.plan === "trial") return null;
 
     const planEndsAt = resolvePlanEndsAt();
     if (!planEndsAt) return null;
@@ -412,8 +414,7 @@ const AdminDashboard = () => {
     setTeacherAttendance(cachedTeacherAttendance);
     const cachedPending = cachedHeavy.pendingTeacherAttendance || [];
     const filteredCachedPending = cachedPending.filter(
-      (record: any) =>
-        record.date === todayStr && record.approvalStatus === "pending",
+      (record: any) => record.approvalStatus === "pending",
     );
     setPendingTeacherAttendance(filteredCachedPending);
     setTeacherTermStats(cachedHeavy.teacherTermStats);
@@ -546,7 +547,7 @@ const AdminDashboard = () => {
           db.getSchoolConfig(schoolId),
           db.getUsers(schoolId),
           db.getAllApprovedTeacherAttendance(schoolId, today),
-          db.getTeacherAttendancePendingByDate(schoolId, today),
+          db.getAllPendingTeacherAttendance(schoolId),
           db.getAllTeacherAttendanceRecords(schoolId),
         ]);
 
@@ -796,6 +797,10 @@ const AdminDashboard = () => {
           if (!startDate || !endDate) return 0;
           const start = new Date(startDate + "T00:00:00");
           const end = new Date(endDate + "T00:00:00");
+          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            return 0;
+          }
+          if (start > end) return 0;
           let count = 0;
           const current = new Date(start);
           while (current <= end) {
@@ -809,15 +814,76 @@ const AdminDashboard = () => {
           return count;
         };
 
+        const parseLocalDateForStats = (dateStr: string): Date | null => {
+          if (!dateStr) return null;
+          if (dateStr.includes("-")) {
+            const parts = dateStr.split("-");
+            if (parts.length === 3) {
+              const [p1, p2, p3] = parts.map(Number);
+              if (parts[0].length === 4) {
+                const d = new Date(p1, p2 - 1, p3);
+                return Number.isNaN(d.getTime()) ? null : d;
+              }
+              const d = new Date(p3, p1 - 1, p2);
+              return Number.isNaN(d.getTime()) ? null : d;
+            }
+          }
+          if (dateStr.includes("/")) {
+            const parts = dateStr.split("/");
+            if (parts.length === 3) {
+              const [m, d, y] = parts.map(Number);
+              const parsed = new Date(y, m - 1, d);
+              return Number.isNaN(parsed.getTime()) ? null : parsed;
+            }
+          }
+          const fallback = new Date(dateStr);
+          return Number.isNaN(fallback.getTime()) ? null : fallback;
+        };
+
+        const recordDateRange = allTeacherRecords.reduce<{
+          min?: Date;
+          max?: Date;
+          minLabel?: string;
+          maxLabel?: string;
+        }>((acc, record) => {
+          const parsed = parseLocalDateForStats(record.date);
+          if (!parsed) return acc;
+          if (!acc.min || parsed < acc.min) {
+            acc.min = parsed;
+            acc.minLabel = record.date;
+          }
+          if (!acc.max || parsed > acc.max) {
+            acc.max = parsed;
+            acc.maxLabel = record.date;
+          }
+          return acc;
+        }, {});
+
+        const earliestRecordDate = recordDateRange.minLabel || "";
+        const latestRecordDate = recordDateRange.maxLabel || "";
+        const termStartDate =
+          config.schoolReopenDate || earliestRecordDate || today;
+        const termEndDate = config.vacationDate || latestRecordDate || today;
+
+        const parsedStart = parseLocalDateForStats(termStartDate);
+        const parsedEnd = parseLocalDateForStats(termEndDate);
+        const safeStart = parsedStart || new Date(today + "T00:00:00");
+        const safeEnd = parsedEnd || new Date(today + "T00:00:00");
+        const startLabel = `${safeStart.getFullYear()}-${String(
+          safeStart.getMonth() + 1,
+        ).padStart(2, "0")}-${String(safeStart.getDate()).padStart(2, "0")}`;
+        const endLabel = `${safeEnd.getFullYear()}-${String(
+          safeEnd.getMonth() + 1,
+        ).padStart(2, "0")}-${String(safeEnd.getDate()).padStart(2, "0")}`;
+        const normalizedStart = safeStart <= safeEnd ? startLabel : endLabel;
+        const normalizedEnd = safeStart <= safeEnd ? endLabel : startLabel;
+
         // Calculate total possible school days in the term
         const teacherHolidayDates = new Set([
           ...allTeacherRecords.filter((r) => r.isHoliday).map((r) => r.date),
           ...(config.holidayDates || []).map((h) => h.date),
         ]);
-        const totalPossibleDays = countWeekdays(
-          config.schoolReopenDate,
-          config.vacationDate,
-        );
+        const totalPossibleDays = countWeekdays(normalizedStart, normalizedEnd);
         const totalPossibleDaysWithoutHolidays = Math.max(
           0,
           totalPossibleDays - teacherHolidayDates.size,
@@ -830,8 +896,8 @@ const AdminDashboard = () => {
             const teacherRecords = allTeacherRecords.filter(
               (r) =>
                 r.teacherId === teacher.id &&
-                r.date >= (config.schoolReopenDate || "") &&
-                r.date <= (config.vacationDate || "9999-99-99") &&
+                r.date >= normalizedStart &&
+                r.date <= normalizedEnd &&
                 !r.isHoliday &&
                 r.approvalStatus !== "pending",
             );
@@ -855,12 +921,16 @@ const AdminDashboard = () => {
             };
           });
 
+        const attendanceKey = (record: any) =>
+          record.id || `${record.teacherId || "unknown"}_${record.date || ""}`;
+
         // Map today's attendance records to include teacher names and classes
         const teacherAttendanceWithDetails = teacherAttendanceData.map(
           (record) => {
             const teacher = teachers.find((t) => t.id === record.teacherId);
             return {
               ...record,
+              id: attendanceKey(record),
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
@@ -874,8 +944,7 @@ const AdminDashboard = () => {
           pendingTeacherAttendance.length > 0
             ? pendingTeacherAttendance
             : allTeacherRecords.filter(
-                (record) =>
-                  record.date === today && record.approvalStatus === "pending",
+                (record) => record.approvalStatus === "pending",
               )
         ) as any[];
 
@@ -884,6 +953,7 @@ const AdminDashboard = () => {
             const teacher = teachers.find((t) => t.id === record.teacherId);
             return {
               ...record,
+              id: attendanceKey(record),
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
@@ -896,13 +966,14 @@ const AdminDashboard = () => {
         const approvedAttendanceWithDetails = allTeacherRecords
           .filter((record) =>
             Boolean(
-              record.date === today && record.approvalStatus === "approved",
+              record.date === today && record.approvalStatus !== "pending",
             ),
           )
           .map((record) => {
             const teacher = teachers.find((t) => t.id === record.teacherId);
             return {
               ...record,
+              id: attendanceKey(record),
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
@@ -1057,15 +1128,15 @@ const AdminDashboard = () => {
         ]
           .filter((record) => record.date === today)
           .reduce((acc: any[], record: any) => {
-            if (!acc.find((item) => item.id === record.id)) {
-              acc.push(record);
+            const key = attendanceKey(record);
+            if (!acc.find((item) => attendanceKey(item) === key)) {
+              acc.push({ ...record, id: key });
             }
             return acc;
           }, []);
         setTeacherAttendance(combinedTeacherAttendance);
         const pendingTodayWithDetails = pendingAttendanceWithDetails.filter(
-          (record) =>
-            record.date === today && record.approvalStatus === "pending",
+          (record) => record.approvalStatus === "pending",
         );
         setPendingTeacherAttendance(pendingTodayWithDetails);
         setTeacherTermStats(teacherTermStats);
@@ -1201,6 +1272,9 @@ const AdminDashboard = () => {
         ...prev,
         { ...record, approvalStatus: "approved", approvedBy: user.id },
       ]);
+      if (heavyCacheKey) {
+        localStorage.removeItem(heavyCacheKey);
+      }
     } catch (error) {
       console.error("Failed to approve attendance", error);
       showToast("Failed to approve attendance.", { type: "error" });
@@ -1217,6 +1291,18 @@ const AdminDashboard = () => {
       setPendingTeacherAttendance((prev) =>
         prev.filter((item) => item.id !== record.id),
       );
+      setTeacherAttendance((prev) => [
+        ...prev,
+        {
+          ...record,
+          approvalStatus: "rejected",
+          status: "absent",
+          approvedBy: user.id,
+        },
+      ]);
+      if (heavyCacheKey) {
+        localStorage.removeItem(heavyCacheKey);
+      }
     } catch (error) {
       console.error("Failed to reject attendance", error);
       showToast("Failed to reject attendance.", { type: "error" });
@@ -1742,6 +1828,21 @@ const AdminDashboard = () => {
     return { monday, friday };
   };
 
+  const getRelativeDayLabel = (dateStr?: string) => {
+    if (!dateStr) return "";
+    const date = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return "";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round(
+      (date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    if (diffDays === 0) return "Today";
+    if (diffDays === -1) return "Yesterday";
+    if (diffDays === 1) return "Tomorrow";
+    return "";
+  };
+
   const getEffectiveCurrentWeekStart = () => {
     // If school re-open date is set and is in the future, use it as reference
     if (schoolConfig.schoolReopenDate) {
@@ -2202,7 +2303,7 @@ const AdminDashboard = () => {
           </div>
 
           <div className="space-y-4">
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
               {Object.entries(gradeDistribution).map(
                 ([grade, count]: [string, number]) => {
                   const percentage =
@@ -2826,7 +2927,7 @@ const AdminDashboard = () => {
                 </p>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
               {missedAttendanceAlerts.map((alert: any) => (
                 <div
                   key={`${alert.teacherId}-${alert.date}`}
@@ -2872,32 +2973,32 @@ const AdminDashboard = () => {
       {/* Missed Student Attendance Alerts */}
       {missedStudentAttendanceAlerts.length > 0 && (
         <div className="mb-8">
-          <div className="bg-gradient-to-r from-red-50 to-indigo-50 border border-red-200 rounded-2xl p-6 shadow-sm">
+          <div className="bg-gradient-to-r from-blue-50 to-sky-50 border border-blue-200 rounded-2xl p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-red-100 rounded-full">
-                <AlertOctagon className="text-red-600" size={24} />
+              <div className="p-2 bg-blue-100 rounded-full">
+                <AlertOctagon className="text-blue-600" size={24} />
               </div>
               <div>
-                <h3 className="font-bold text-red-900 text-lg">
+                <h3 className="font-bold text-blue-900 text-lg">
                   Missed Student Attendance
                 </h3>
-                <p className="text-red-700 text-sm">
+                <p className="text-blue-700 text-sm">
                   {missedStudentAttendanceAlerts.length} teacher
                   {missedStudentAttendanceAlerts.length !== 1 ? "s" : ""} have
                   not marked student attendance recently.
                 </p>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
               {missedStudentAttendanceAlerts.map((alert: any) => (
                 <div
                   key={`${alert.teacherId}-${alert.date}`}
-                  className="bg-white p-4 rounded-lg border border-red-100 shadow-sm"
+                  className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                        <span className="text-sm font-bold text-red-600">
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-bold text-blue-700">
                           {alert.teacherName.charAt(0)}
                         </span>
                       </div>
@@ -2911,7 +3012,7 @@ const AdminDashboard = () => {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-medium text-red-700">
+                      <p className="text-sm font-medium text-blue-700">
                         Missed for:{" "}
                         {(() => {
                           const parts = alert.date.split("-");
@@ -3259,8 +3360,13 @@ const AdminDashboard = () => {
                           <p className="text-[10px] text-slate-500 truncate">
                             {record.teacherClasses || "No classes assigned"}
                           </p>
-                          <p className="text-[10px] text-slate-400">
-                            {record.date}
+                          <p className="text-[10px] text-slate-400 flex flex-wrap items-center gap-1">
+                            <span>{record.date}</span>
+                            {getRelativeDayLabel(record.date) && (
+                              <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600">
+                                {getRelativeDayLabel(record.date)}
+                              </span>
+                            )}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">

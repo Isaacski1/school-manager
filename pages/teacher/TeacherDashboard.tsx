@@ -122,6 +122,7 @@ const TeacherDashboard = () => {
   const [currentTerm, setCurrentTerm] = useState("Term 1");
   const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
   const [isVacation, setIsVacation] = useState(false);
+  const [attendanceLocked, setAttendanceLocked] = useState(false);
 
   useEffect(() => {
     if (assignedClassIds.length > 0) {
@@ -180,6 +181,17 @@ const TeacherDashboard = () => {
 
   const getLocalDateString = (date: Date = new Date()) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+  const formatDisplayDate = (dateStr?: string) => {
+    if (!dateStr) return "TBD";
+    const parsed = new Date(dateStr + "T00:00:00");
+    if (Number.isNaN(parsed.getTime())) return dateStr;
+    return parsed.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
 
   // Schedule State
   const [timetable, setTimetable] = useState<ClassTimetable | null>(null);
@@ -272,9 +284,13 @@ const TeacherDashboard = () => {
         weekday: "short",
       });
       const status = record
-        ? record.status === "absent"
-          ? "absent"
-          : record.approvalStatus || "approved"
+        ? record.approvalStatus === "pending"
+          ? "pending"
+          : record.approvalStatus === "approved"
+            ? record.status
+            : record.approvalStatus === "rejected"
+              ? "absent"
+              : record.status || "missing"
         : "missing";
       return {
         day: dayName,
@@ -536,15 +552,18 @@ const TeacherDashboard = () => {
           }
 
           let shouldBeVacation = false;
-          if (
-            vacationStartMs !== null &&
-            todayMs >= vacationStartMs &&
-            nextTermBeginsMs !== null &&
-            todayMs < nextTermBeginsMs
-          ) {
-            shouldBeVacation = true;
+          if (vacationStartMs !== null && todayMs >= vacationStartMs) {
+            shouldBeVacation = nextTermBeginsMs
+              ? todayMs < nextTermBeginsMs
+              : true;
           }
           setIsVacation(shouldBeVacation);
+
+          const shouldLockAttendance =
+            Boolean(nextTermBeginsMs) &&
+            todayMs >= nextTermBeginsMs! &&
+            !config.schoolReopenDate;
+          setAttendanceLocked(shouldLockAttendance);
 
           console.log("--- Vacation Overlay Debug ---");
           console.log(
@@ -842,6 +861,13 @@ const TeacherDashboard = () => {
 
   const handleMarkAttendance = async (status: "present" | "absent") => {
     if (!user?.id) return;
+    if (attendanceLocked) {
+      showToast(
+        "Attendance is locked until the admin sets a school re-open date.",
+        { type: "warning" },
+      );
+      return;
+    }
     setMarkingAttendance(true);
     try {
       const today = getLocalDateString();
@@ -873,6 +899,37 @@ const TeacherDashboard = () => {
     <Layout title="Teacher Dashboard">
       {isVacation && (
         <VacationOverlay reopenDate={schoolConfig?.nextTermBegins || "TBD"} />
+      )}
+
+      {isVacation && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-yellow-50 to-orange-50 p-4 sm:p-6 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="h-12 w-12 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-md">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                  Vacation Mode
+                </p>
+                <h2 className="text-lg sm:text-xl font-bold text-amber-900 mt-1">
+                  School is on vacation
+                </h2>
+                <p className="text-sm text-amber-800 mt-1">
+                  Classes resume on{" "}
+                  <span className="font-semibold">
+                    {formatDisplayDate(schoolConfig?.nextTermBegins)}
+                  </span>
+                  . Enjoy the break!
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-full bg-white/70 px-4 py-2 text-xs font-semibold text-amber-800 shadow-sm">
+              <Calendar className="h-4 w-4" />
+              Vacation since {formatDisplayDate(schoolConfig?.vacationDate)}
+            </div>
+          </div>
+        </div>
       )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
@@ -926,8 +983,21 @@ const TeacherDashboard = () => {
           {/* Quick Stats/Actions */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Link
-              to="/teacher/attendance"
-              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-[#1160A8] transition-all relative overflow-hidden"
+              to={attendanceLocked ? "#" : "/teacher/attendance"}
+              onClick={(event) => {
+                if (!attendanceLocked) return;
+                event.preventDefault();
+                showToast(
+                  "Attendance is locked until the admin sets a school re-open date.",
+                  { type: "warning" },
+                );
+              }}
+              className={`group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 transition-all relative overflow-hidden ${
+                attendanceLocked
+                  ? "opacity-60 cursor-not-allowed"
+                  : "hover:border-[#1160A8]"
+              }`}
+              aria-disabled={attendanceLocked}
             >
               <div className="absolute right-0 top-0 w-24 h-24 bg-[#E6F0FA] rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
               <div className="relative z-10">
@@ -1279,21 +1349,21 @@ const TeacherDashboard = () => {
                 </button>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 mb-3">
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500 mb-5 mt-2">
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 Present (Approved)
               </span>
               <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 font-semibold text-rose-700">
                 <span className="h-2 w-2 rounded-full bg-rose-500" />
-                Absent (Rejected)
+                Absent
               </span>
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
                 <span className="h-2 w-2 rounded-full bg-amber-400" />
                 Pending
               </span>
             </div>
-            <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2">
+            <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2 mt-2">
               {teacherAttendanceTrend.length === 0 ? (
                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
                   <ClipboardCheck className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
@@ -1316,10 +1386,9 @@ const TeacherDashboard = () => {
                           className={`absolute bottom-0 left-0 right-0 rounded-t-lg transition-all duration-1000 ${
                             data.status === "pending"
                               ? "bg-amber-400"
-                              : data.status === "approved"
+                              : data.status === "present"
                                 ? "bg-emerald-500"
-                                : data.status === "rejected" ||
-                                    data.status === "absent"
+                                : data.status === "absent"
                                   ? "bg-rose-500"
                                   : "bg-slate-300"
                           }`}
@@ -1329,20 +1398,18 @@ const TeacherDashboard = () => {
                       <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
                         {data.status === "pending"
                           ? "Pending"
-                          : data.status === "approved"
-                            ? "Approved"
-                            : data.status === "rejected" ||
-                                data.status === "absent"
+                          : data.status === "present"
+                            ? "Present"
+                            : data.status === "absent"
                               ? "Absent"
                               : "Missing"}
                       </div>
                       <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
                         {data.status === "pending"
                           ? "Pending"
-                          : data.status === "approved"
-                            ? "Approved"
-                            : data.status === "rejected" ||
-                                data.status === "absent"
+                          : data.status === "present"
+                            ? "Present"
+                            : data.status === "absent"
                               ? "Absent"
                               : "Missing"}
                       </div>

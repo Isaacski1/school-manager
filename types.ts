@@ -51,12 +51,16 @@ export interface SchoolConfig {
 export interface Backup {
   id: string;
   schoolId: string;
+  schoolName?: string;
   timestamp: number; // Unix timestamp
   term: string;
   academicYear: string;
+  backupType?: "term-reset" | "manual";
+  dedupeKey?: string;
   data?: {
     // Make data optional
     schoolConfig?: SchoolConfig;
+    schoolSettings?: SchoolConfig;
     students: Student[];
     attendanceRecords: AttendanceRecord[];
     teacherAttendanceRecords: TeacherAttendanceRecord[];
@@ -70,6 +74,7 @@ export interface Backup {
     notices?: Notice[];
     adminNotifications?: SystemNotification[];
     activityLogs?: any[];
+    payments?: any[];
   };
   dataCollectionRef?: string; // New field to store reference to subcollection
 }

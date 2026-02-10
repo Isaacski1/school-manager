@@ -16,6 +16,8 @@ import {
   FileText,
   Clock,
   BarChart2,
+  Bell,
+  AlertCircle,
 } from "lucide-react";
 import { showToast } from "../../services/toast";
 import { CLASSES_LIST, calculateTotalScore } from "../../constants";
@@ -35,6 +37,7 @@ const getClassType = (classId: string): string => {
 const ManageBackups = () => {
   const { school } = useSchool();
   const schoolId = school?.id || null;
+  const isTrialPlan = (school as any)?.plan === "trial";
   const [backups, setBackups] = useState<Partial<Backup>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +52,6 @@ const ManageBackups = () => {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [backupToDeleteId, setBackupToDeleteId] = useState<string | null>(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
-  const [showClearAllModal, setShowClearAllModal] = useState(false);
 
   const studentSnapshots = useMemo(() => {
     if (!selectedBackup?.data?.students) return [];
@@ -231,22 +233,6 @@ const ManageBackups = () => {
     }
   };
 
-  const handleClearAllBackups = async () => {
-    setShowClearAllModal(false);
-    try {
-      if (!schoolId) return;
-      await db.deleteAllBackups(schoolId);
-      showToast("All backups cleared successfully!", { type: "success" });
-      setFilterTerm("");
-      setFilterAcademicYear("");
-      setFilterDate("");
-      await fetchBackups();
-    } catch (err: any) {
-      console.error("Error clearing all backups:", err);
-      showToast("Failed to clear all backups.", { type: "error" });
-    }
-  };
-
   useEffect(() => {
     fetchBackups();
   }, [schoolId]);
@@ -364,12 +350,6 @@ const ManageBackups = () => {
         >
           Clear Filters
         </button>
-        <button
-          onClick={() => setShowClearAllModal(true)}
-          className="ml-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          Clear All Backups
-        </button>
       </div>
 
       {/* Backups List */}
@@ -406,14 +386,16 @@ const ManageBackups = () => {
                   </button>
                   <button
                     onClick={() => handleDownloadBackup(backup.id || "")}
-                    className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-md text-sm hover:bg-emerald-200 flex items-center"
+                    disabled={isTrialPlan}
+                    className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-md text-sm hover:bg-emerald-200 flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
                     title="Download Backup"
                   >
                     <Download size={16} className="mr-1" /> Download
                   </button>
                   <button
                     onClick={() => handleDeleteRequest(backup.id || "")}
-                    className="px-3 py-1 bg-[#E6F0FA] text-[#0B4A82] rounded-md text-sm hover:bg-[#E6F0FA] flex items-center"
+                    disabled={isTrialPlan}
+                    className="px-3 py-1 bg-[#E6F0FA] text-[#0B4A82] rounded-md text-sm hover:bg-[#E6F0FA] flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
                     title="Delete Backup"
                   >
                     <Trash2 size={16} className="mr-1" /> Delete
@@ -422,6 +404,11 @@ const ManageBackups = () => {
               </div>
             ))}
           </div>
+        )}
+        {isTrialPlan && (
+          <p className="mt-3 text-xs text-slate-500">
+            Backups are disabled during the trial period.
+          </p>
         )}
       </div>
 
@@ -493,7 +480,7 @@ const ManageBackups = () => {
                           <Users className="text-[#0B4A82]" size={20} />
                         </div>
                         <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Teachers
+                          Users
                         </span>
                       </div>
                       <p className="text-2xl font-bold text-slate-800">
@@ -528,47 +515,196 @@ const ManageBackups = () => {
                         {selectedBackup.data.attendanceRecords?.length || 0}
                       </p>
                     </div>
-                  </div>
 
-                  {/* Additional Data Summary */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1">
-                        <FileText size={16} className="text-slate-400" />
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-slate-100 rounded-lg">
+                          <FileText className="text-slate-500" size={20} />
+                        </div>
                         <span className="text-xs text-slate-500 font-semibold uppercase">
                           Teacher Attendance
                         </span>
                       </div>
-                      <p className="text-lg font-bold text-slate-700">
+                      <p className="text-2xl font-bold text-slate-800">
                         {selectedBackup.data.teacherAttendanceRecords?.length ||
-                          0}{" "}
-                        records
+                          0}
                       </p>
                     </div>
 
-                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1">
-                        <BarChart2 size={16} className="text-slate-400" />
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-amber-50 rounded-lg">
+                          <BarChart2 className="text-amber-600" size={20} />
+                        </div>
                         <span className="text-xs text-slate-500 font-semibold uppercase">
                           Remarks
                         </span>
                       </div>
-                      <p className="text-lg font-bold text-slate-700">
-                        {selectedBackup.data.studentRemarks?.length || 0}{" "}
-                        records
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.studentRemarks?.length || 0}
                       </p>
                     </div>
 
-                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1">
-                        <BookOpen size={16} className="text-slate-400" />
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-indigo-50 rounded-lg">
+                          <BookOpen className="text-indigo-600" size={20} />
+                        </div>
                         <span className="text-xs text-slate-500 font-semibold uppercase">
                           Timetables
                         </span>
                       </div>
-                      <p className="text-lg font-bold text-slate-700">
-                        {selectedBackup.data.timetables?.length || 0} classes
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.timetables?.length || 0}
                       </p>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-emerald-50 rounded-lg">
+                          <Bell className="text-emerald-600" size={20} />
+                        </div>
+                        <span className="text-xs text-slate-500 font-semibold uppercase">
+                          Notices
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.notices?.length || 0}
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-rose-50 rounded-lg">
+                          <AlertCircle className="text-rose-600" size={20} />
+                        </div>
+                        <span className="text-xs text-slate-500 font-semibold uppercase">
+                          Notifications
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.adminNotifications?.length || 0}
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-sky-50 rounded-lg">
+                          <Clock className="text-sky-600" size={20} />
+                        </div>
+                        <span className="text-xs text-slate-500 font-semibold uppercase">
+                          Activity Logs
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.activityLogs?.length || 0}
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-purple-50 rounded-lg">
+                          <Calendar className="text-purple-600" size={20} />
+                        </div>
+                        <span className="text-xs text-slate-500 font-semibold uppercase">
+                          Payments
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold text-slate-800">
+                        {selectedBackup.data.payments?.length || 0}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                      <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-3">
+                        School Settings Snapshot
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 text-sm text-slate-600">
+                        <div>
+                          <p className="text-xs text-slate-400">
+                            Academic Year
+                          </p>
+                          <p className="font-semibold text-slate-800">
+                            {selectedBackup.data.schoolSettings?.academicYear ||
+                              selectedBackup.data.schoolConfig?.academicYear ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Current Term</p>
+                          <p className="font-semibold text-slate-800">
+                            {selectedBackup.data.schoolSettings?.currentTerm ||
+                              selectedBackup.data.schoolConfig?.currentTerm ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Reopen Date</p>
+                          <p className="font-semibold text-slate-800">
+                            {selectedBackup.data.schoolSettings
+                              ?.schoolReopenDate ||
+                              selectedBackup.data.schoolConfig
+                                ?.schoolReopenDate ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">
+                            Vacation Date
+                          </p>
+                          <p className="font-semibold text-slate-800">
+                            {selectedBackup.data.schoolSettings?.vacationDate ||
+                              selectedBackup.data.schoolConfig?.vacationDate ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">
+                            Next Term Begins
+                          </p>
+                          <p className="font-semibold text-slate-800">
+                            {selectedBackup.data.schoolSettings
+                              ?.nextTermBegins ||
+                              selectedBackup.data.schoolConfig
+                                ?.nextTermBegins ||
+                              "-"}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                      <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-3">
+                        Data Coverage
+                      </h4>
+                      <div className="space-y-2 text-sm text-slate-600">
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                          <span>Class Subjects</span>
+                          <span className="font-semibold text-slate-800">
+                            {selectedBackup.data.classSubjects?.length || 0}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                          <span>Student Skills</span>
+                          <span className="font-semibold text-slate-800">
+                            {selectedBackup.data.studentSkills?.length || 0}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                          <span>Admin Remarks</span>
+                          <span className="font-semibold text-slate-800">
+                            {selectedBackup.data.adminRemarks?.length || 0}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                          <span>Payments</span>
+                          <span className="font-semibold text-slate-800">
+                            {selectedBackup.data.payments?.length || 0}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -782,49 +918,6 @@ const ManageBackups = () => {
                 className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82]"
               >
                 Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Clear All Backups Confirmation Modal */}
-      {showClearAllModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-[#0B4A82]">
-                Confirm Clear All Backups
-              </h3>
-              <button
-                onClick={() => setShowClearAllModal(false)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-slate-700 mb-4">
-                Are you sure you want to delete ALL backups? This action cannot
-                be undone and will permanently remove all backup data.
-              </p>
-              <p className="text-sm text-[#0B4A82] font-semibold">
-                Warning: This will affect {backups.length} backup
-                {backups.length !== 1 ? "s" : ""}.
-              </p>
-            </div>
-            <div className="p-6 border-t border-slate-100 text-right space-x-2">
-              <button
-                onClick={() => setShowClearAllModal(false)}
-                className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleClearAllBackups}
-                className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82]"
-              >
-                Clear All
               </button>
             </div>
           </div>

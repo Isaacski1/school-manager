@@ -6,6 +6,7 @@ import admin from "firebase-admin";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,13 +16,38 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 app.use(cors());
+
+const REQUEST_LIMIT = process.env.REQUEST_BODY_LIMIT || "1mb";
 app.use(
   express.json({
+    limit: REQUEST_LIMIT,
     verify: (req, res, buf) => {
       req.rawBody = buf.toString();
     },
   }),
 );
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many requests from this IP. Please wait and try again later.",
+  },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many authentication attempts. Please wait and try again later.",
+  },
+});
+
+app.use("/api/", apiLimiter);
 
 // --- Robust Firebase Admin SDK Initialization ---
 
@@ -150,6 +176,8 @@ async function superAdminMiddleware(req, res, next) {
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
+const APP_VERSION = process.env.APP_VERSION || "1.0.0";
+const APP_ENV = process.env.APP_ENV || "development";
 
 const paystackRequest = async (endpoint, method, body) => {
   if (!PAYSTACK_SECRET_KEY) {
@@ -195,12 +223,36 @@ const updateSchoolBilling = async (schoolId, updates) => {
     );
 };
 
+const logActivity = async ({
+  eventType,
+  schoolId = null,
+  actorUid = null,
+  actorRole = null,
+  entityId = null,
+  meta = null,
+}) => {
+  try {
+    await admin.firestore().collection("activity_logs").add({
+      eventType,
+      schoolId,
+      actorUid,
+      actorRole,
+      entityId,
+      meta,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (error) {
+    console.warn("Failed to log activity", error?.message || error);
+  }
+};
+
 /**
  * Create School
  * POST /api/superadmin/create-school
  */
 app.post(
   "/api/superadmin/create-school",
+  authLimiter,
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
@@ -249,6 +301,10 @@ app.post(
       const schoolRef = admin.firestore().collection("schools").doc();
       const schoolId = schoolRef.id;
 
+      const now = Date.now();
+      const trialEndsAt =
+        plan === "trial" ? new Date(now + 30 * 24 * 60 * 60 * 1000) : null;
+
       const schoolData = {
         schoolId,
         name: name.trim(),
@@ -258,12 +314,21 @@ app.post(
         logoUrl: logoUrl ? logoUrl.trim() : "",
         status: "active",
         plan,
-        planEndsAt: null,
+        planEndsAt: trialEndsAt,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         createdBy: req.user.uid,
       };
 
       await schoolRef.set(schoolData);
+
+      await logActivity({
+        eventType: "school_created",
+        schoolId,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: schoolId,
+        meta: { name: name.trim(), plan },
+      });
 
       console.log(`School created successfully: ${schoolId}`);
       return res.json({
@@ -287,6 +352,7 @@ app.post(
  */
 app.post(
   "/api/superadmin/create-school-admin",
+  authLimiter,
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
@@ -369,6 +435,15 @@ app.post(
 
       console.log("Firestore profile created for school admin");
 
+      await logActivity({
+        eventType: "school_admin_created",
+        schoolId: schoolId.trim(),
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: userRecord.uid,
+        meta: { email: email.trim(), fullName: fullName.trim() },
+      });
+
       // Generate password reset link when password not provided
       const resetLink = password
         ? null
@@ -396,6 +471,7 @@ app.post(
  */
 app.post(
   "/api/billing/initiate",
+  authLimiter,
   authMiddleware,
   schoolAdminMiddleware,
   async (req, res) => {
@@ -467,6 +543,15 @@ app.post(
           { merge: true },
         );
 
+      await logActivity({
+        eventType: "billing_initiated",
+        schoolId,
+        actorUid: uid,
+        actorRole: "school_admin",
+        entityId: reference,
+        meta: { amount, currency, reference },
+      });
+
       await admin
         .firestore()
         .collection("schools")
@@ -499,6 +584,7 @@ app.post(
  */
 app.post(
   "/api/billing/verify",
+  authLimiter,
   authMiddleware,
   schoolAdminMiddleware,
   async (req, res) => {
@@ -565,6 +651,15 @@ app.post(
             },
             { merge: true },
           );
+
+        await logActivity({
+          eventType: "billing_verified_success",
+          schoolId,
+          actorUid: req.user.uid,
+          actorRole: "school_admin",
+          entityId: reference,
+          meta: { status: mappedStatus },
+        });
       }
 
       if (["failed", "abandoned"].includes(mappedStatus)) {
@@ -578,6 +673,15 @@ app.post(
             },
             { merge: true },
           );
+
+        await logActivity({
+          eventType: "billing_verified_failed",
+          schoolId,
+          actorUid: req.user.uid,
+          actorRole: "school_admin",
+          entityId: reference,
+          meta: { status: mappedStatus },
+        });
       }
 
       return res.json({
@@ -660,6 +764,15 @@ app.post("/api/billing/webhook", async (req, res) => {
           },
           { merge: true },
         );
+
+      await logActivity({
+        eventType: "billing_webhook_success",
+        schoolId,
+        actorUid: null,
+        actorRole: "system",
+        entityId: paymentReference,
+        meta: { reference: paymentReference, event: event.event },
+      });
     }
 
     if (
@@ -688,6 +801,15 @@ app.post("/api/billing/webhook", async (req, res) => {
           },
           { merge: true },
         );
+
+      await logActivity({
+        eventType: "billing_webhook_failed",
+        schoolId,
+        actorUid: null,
+        actorRole: "system",
+        entityId: paymentReference,
+        meta: { reference: paymentReference, event: event.event },
+      });
     }
 
     if (paymentReference && data?.status) {
@@ -719,6 +841,7 @@ app.post("/api/billing/webhook", async (req, res) => {
  */
 app.post(
   "/api/superadmin/reset-school-admin-password",
+  authLimiter,
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
@@ -740,6 +863,15 @@ app.post(
       const resetLink = await admin
         .auth()
         .generatePasswordResetLink(userRecord.email);
+
+      await logActivity({
+        eventType: "school_admin_password_reset",
+        schoolId: null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: adminUid,
+        meta: { email: userRecord.email },
+      });
 
       return res.json({
         success: true,
@@ -763,6 +895,7 @@ app.post(
  */
 app.post(
   "/api/superadmin/provision-user",
+  authLimiter,
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
@@ -814,6 +947,15 @@ app.post(
       await admin.firestore().collection("users").doc(uid).set(userData);
 
       console.log(`Firestore profile created for user ${uid}`);
+
+      await logActivity({
+        eventType: "user_provisioned",
+        schoolId: schoolId || null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: uid,
+        meta: { role, email: email.trim(), fullName: fullName.trim() },
+      });
 
       return res.json({
         success: true,
@@ -879,6 +1021,7 @@ async function schoolAdminMiddleware(req, res, next) {
  */
 app.post(
   "/api/createTeacher",
+  authLimiter,
   authMiddleware,
   schoolAdminMiddleware,
   async (req, res) => {
@@ -962,14 +1105,13 @@ app.post(
       }
 
       // Log activity
-      await admin.firestore().collection("activityLogs").add({
+      await logActivity({
         eventType: "teacher_created",
         schoolId: callerSchoolId,
-        createdBy: callerId,
-        teacherUid: userRecord.uid,
-        email: email.trim(),
-        fullName: fullName.trim(),
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        actorUid: callerId,
+        actorRole: "school_admin",
+        entityId: userRecord.uid,
+        meta: { email: email.trim(), fullName: fullName.trim() },
       });
 
       // Return success
@@ -997,6 +1139,14 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
+});
+
+app.get("/version", (req, res) => {
+  res.json({
+    version: APP_VERSION,
+    environment: APP_ENV,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Start server

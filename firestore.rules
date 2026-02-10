@@ -85,107 +85,315 @@ service cloud.firestore {
       allow read, write: if isSchoolAdmin() && userSchoolId() == document;
     }
 
+    // Field whitelisting helpers
+    function onlyAllowedFields(allowed) {
+      return request.resource.data.keys().hasOnly(allowed);
+    }
+
+    function schoolScopedCreate(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
+    function schoolScopedRead(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
+    function schoolScopedUpdate(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId;
+    }
+
     // Students collection
     match /students/{studentId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "name",
+          "gender",
+          "dob",
+          "classId",
+          "guardianName",
+          "guardianPhone"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "name",
+          "gender",
+          "dob",
+          "classId",
+          "guardianName",
+          "guardianPhone"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Attendance collection
     match /attendance/{attendanceId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "date",
+          "classId",
+          "presentStudentIds",
+          "isHoliday",
+          "holidayReason"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "date",
+          "classId",
+          "presentStudentIds",
+          "isHoliday",
+          "holidayReason"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Assessments collection
     match /assessments/{assessmentId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "subject",
+          "testScore",
+          "homeworkScore",
+          "projectScore",
+          "examScore",
+          "total"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "subject",
+          "testScore",
+          "homeworkScore",
+          "projectScore",
+          "examScore",
+          "total"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Teacher attendance collection
     match /teacher_attendance/{recordId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "date",
+          "teacherId",
+          "status",
+          "approvalStatus",
+          "approvedBy",
+          "approvedAt",
+          "rejectedBy",
+          "rejectedAt",
+          "isHoliday",
+          "holidayReason"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "date",
+          "teacherId",
+          "status",
+          "approvalStatus",
+          "approvedBy",
+          "approvedAt",
+          "rejectedBy",
+          "rejectedAt",
+          "isHoliday",
+          "holidayReason"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Notices collection
     match /notices/{noticeId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "message",
+          "date",
+          "type",
+          "createdAt"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "message",
+          "date",
+          "type",
+          "createdAt"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Student remarks collection
     match /student_remarks/{remarkId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "behaviorTag",
+          "teacherId",
+          "dateCreated"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "behaviorTag",
+          "teacherId",
+          "dateCreated"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Student skills collection
     match /student_skills/{skillId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "punctuality",
+          "neatness",
+          "conduct",
+          "attitudeToWork",
+          "classParticipation",
+          "homeworkCompletion"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "punctuality",
+          "neatness",
+          "conduct",
+          "attitudeToWork",
+          "classParticipation",
+          "homeworkCompletion"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Admin remarks collection
     match /admin_remarks/{remarkId} {
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
-         (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+          (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "adminId",
+          "dateCreated"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+      allow read: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
-         (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "adminId",
+          "dateCreated"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
         isActiveSchoolId(resource.data.schoolId);
     }
 
@@ -193,39 +401,84 @@ service cloud.firestore {
     match /admin_notifications/{notificationId} {
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
-         (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+          (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "message",
+          "createdAt",
+          "isRead",
+          "type"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
+      allow read: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
-         (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "message",
+          "createdAt",
+          "isRead",
+          "type"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
         isActiveSchoolId(resource.data.schoolId);
     }
 
     // Timetables collection
     match /timetables/{timetableId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "schoolId",
+          "classId",
+          "schedule",
+          "updatedAt"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "schoolId",
+          "classId",
+          "schedule",
+          "updatedAt"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Class subjects collection
     match /class_subjects/{subjectId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId);
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "schoolId",
+          "classId",
+          "subjects"
+        ]);
 
-      allow read, update, delete: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "schoolId",
+          "classId",
+          "subjects"
+        ]);
+
+      allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
     // Backups collection

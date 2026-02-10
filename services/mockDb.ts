@@ -1,4 +1,4 @@
-import { firestore } from "./firebase";
+import { auth, firestore } from "./firebase";
 import {
   collection,
   doc,
@@ -33,6 +33,7 @@ import {
   AdminRemark,
   Backup,
 } from "../types";
+import { logActivity } from "./activityLog";
 import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
@@ -791,9 +792,44 @@ class FirestoreService {
       where("date", "==", date),
     );
     const snap = await getDocs(q);
-    return snap.empty
-      ? undefined
-      : (snap.docs[0].data() as TeacherAttendanceRecord);
+    if (snap.empty) return undefined;
+    const records = snap.docs.map((docSnap) => {
+      const data = docSnap.data() as TeacherAttendanceRecord;
+      return { ...data, id: data.id || docSnap.id };
+    });
+    if (records.length === 1) return records[0];
+
+    const approvalRank = (status?: string) => {
+      switch (status) {
+        case "approved":
+          return 0;
+        case "rejected":
+          return 1;
+        case "pending":
+          return 2;
+        default:
+          return 3;
+      }
+    };
+
+    records.sort((a, b) => {
+      const rankDiff =
+        approvalRank(a.approvalStatus) - approvalRank(b.approvalStatus);
+      if (rankDiff !== 0) return rankDiff;
+      const aTime =
+        (a as any).approvedAt ||
+        (a as any).rejectedAt ||
+        (a as any).createdAt ||
+        0;
+      const bTime =
+        (b as any).approvedAt ||
+        (b as any).rejectedAt ||
+        (b as any).createdAt ||
+        0;
+      return bTime - aTime;
+    });
+
+    return records[0];
   }
 
   async getTeacherAttendancePendingByDate(
@@ -940,6 +976,7 @@ class FirestoreService {
     currentConfig: SchoolConfig,
     currentTerm: string,
     academicYear: string,
+    options?: { dedupeKey?: string },
   ): Promise<void> {
     console.log(`Creating backup for ${currentTerm}, ${academicYear}...`);
 
@@ -948,6 +985,23 @@ class FirestoreService {
         currentConfig.schoolId,
         "createTermBackup",
       );
+      const dedupeKey =
+        options?.dedupeKey || `${schoolId}_${currentTerm}_${academicYear}`;
+      const existingSnap = await getDocs(
+        query(
+          collection(firestore, "backups"),
+          where("schoolId", "==", schoolId),
+          where("term", "==", currentTerm),
+          where("academicYear", "==", academicYear),
+          where("backupType", "==", "term-reset"),
+        ),
+      );
+      if (!existingSnap.empty) {
+        console.log(
+          `Backup already exists for ${currentTerm}, ${academicYear}. Skipping.`,
+        );
+        return;
+      }
       const [
         students,
         users,
@@ -961,6 +1015,7 @@ class FirestoreService {
         notices,
         adminNotifications,
         activityLogs,
+        payments,
       ] = await Promise.all([
         this.getCollectionBySchoolId<Student>("students", schoolId),
         this.getCollectionBySchoolId<User>("users", schoolId),
@@ -983,6 +1038,7 @@ class FirestoreService {
           schoolId,
         ),
         this.getCollectionBySchoolId<any>("activity_logs", schoolId),
+        this.getCollectionBySchoolId<any>("payments", schoolId),
       ]);
 
       const classSubjectsSnap = await getDocs(
@@ -995,14 +1051,24 @@ class FirestoreService {
         (d) => d.data() as ClassSubjectConfig,
       );
 
+      const settingsSnap = await getDoc(doc(firestore, "settings", schoolId));
+      const schoolSettings = settingsSnap.exists()
+        ? (settingsSnap.data() as SchoolConfig)
+        : undefined;
+
       const backup: Backup = {
         id: `backup_${Date.now()}`,
         schoolId,
+        schoolName:
+          currentConfig.schoolName || schoolSettings?.schoolName || "",
         timestamp: Date.now(),
         term: currentTerm,
         academicYear: academicYear,
+        backupType: "term-reset",
+        dedupeKey,
         data: {
           schoolConfig: currentConfig,
+          schoolSettings,
           students,
           attendanceRecords,
           teacherAttendanceRecords,
@@ -1016,11 +1082,25 @@ class FirestoreService {
           notices,
           adminNotifications,
           activityLogs,
+          payments,
         },
       };
 
       await setDoc(doc(firestore, "backups", backup.id), backup);
       console.log(`Backup created successfully: ${backup.id}`);
+
+      await logActivity({
+        schoolId,
+        actorUid: auth.currentUser?.uid || null,
+        actorRole: "school_admin",
+        eventType: "backup_created",
+        entityId: backup.id,
+        meta: {
+          term: currentTerm,
+          academicYear,
+          backupType: "term-reset",
+        },
+      });
     } catch (error) {
       console.error("Error creating backup:", error);
       throw error;
@@ -1041,6 +1121,9 @@ class FirestoreService {
       currentConfig,
       currentConfig.currentTerm,
       currentConfig.academicYear,
+      {
+        dedupeKey: `${currentConfig.schoolId}_${currentConfig.currentTerm}_${currentConfig.academicYear}`,
+      },
     );
 
     const classIds = CLASSES_LIST.map((c) => c.id);

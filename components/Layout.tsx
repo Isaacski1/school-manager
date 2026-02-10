@@ -331,12 +331,12 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       {/* Sidebar */}
       <aside
         className={`
-        fixed inset-y-0 left-0 z-30 w-64 bg-[#0B4A82] text-white transform transition-transform duration-200 ease-in-out overflow-y-auto
+        fixed inset-y-0 left-0 z-30 w-72 sm:w-64 bg-[#0B4A82] text-white transform transition-transform duration-200 ease-in-out overflow-y-auto
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
         md:relative md:translate-x-0 flex flex-col shadow-xl border-r border-[#0B4A82]
       `}
       >
-        <div className="p-6 border-b border-[#0B4A82] bg-[#0B4A82] flex flex-col items-center justify-center relative">
+        <div className="p-5 sm:p-6 border-b border-[#0B4A82] bg-[#0B4A82] flex flex-col items-center justify-center relative">
           <button
             onClick={() => setSidebarOpen(false)}
             className="md:hidden absolute top-4 right-4 text-[#E6F0FA] hover:text-white"
@@ -346,7 +346,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
           {isSuperAdmin ? (
             <>
-              <div className="w-20 h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-[#E6F0FA] overflow-hidden">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-[#E6F0FA] overflow-hidden">
                 <img
                   src={schoolLogo}
                   alt="School Manager GH Logo"
@@ -354,7 +354,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 />
               </div>
               <div className="text-center">
-                <h1 className="text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
+                <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
                   Super Admin Panel
                 </h1>
                 <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
@@ -364,7 +364,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </>
           ) : (
             <>
-              <div className="w-20 h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-amber-500 overflow-hidden">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-amber-500 overflow-hidden">
                 <img
                   src={school?.logoUrl || schoolLogo}
                   alt={school?.name || "School Management System"}
@@ -372,7 +372,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 />
               </div>
               <div className="text-center">
-                <h1 className="text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
+                <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
                   {school?.name || "School Management System"}
                 </h1>
                 <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
@@ -383,7 +383,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           )}
         </div>
 
-        <nav className="flex-1 py-6 space-y-1">
+        <nav className="flex-1 py-4 sm:py-6 space-y-1">
           {isSuperAdmin ? (
             <>
               <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
@@ -502,7 +502,9 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {user?.fullName.charAt(0)}
             </div>
             <div className="ml-3">
-              <p className="text-sm font-medium text-white">{user?.fullName}</p>
+              <p className="text-sm font-medium text-white truncate max-w-[160px]">
+                {user?.fullName}
+              </p>
               <p className="text-xs text-[#E6F0FA] capitalize">
                 {user?.role === UserRole.SUPER_ADMIN
                   ? "Super Admin"
@@ -524,117 +526,119 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
-        <header className="bg-white shadow-sm h-16 flex items-center justify-between px-4 md:px-8 z-10 border-b border-[#E6F0FA]">
-          <div className="flex items-center">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="md:hidden p-2 -ml-2 text-[#0B4A82] hover:text-[#1160A8]"
-            >
-              <Menu size={24} />
-            </button>
-            <h2 className="text-xl font-bold text-[#0B4A82] ml-2 md:ml-0">
-              {title}
-            </h2>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Notification Bell - FOR ADMIN AND SUPER ADMIN */}
-            {(isAdmin || isSuperAdmin) && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className={`relative p-2 transition-colors ${showNotifications ? "text-[#0B4A82] bg-[#E6F0FA] rounded-full" : "text-slate-400 hover:text-[#0B4A82]"}`}
-                >
-                  <Bell size={20} />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-[#1160A8] rounded-full border-2 border-white"></span>
-                  )}
-                </button>
+        <header className="bg-white shadow-sm h-14 sm:h-16 flex items-center z-10 border-b border-[#E6F0FA]">
+          <div className="mx-auto w-full max-w-[1200px] 2xl:max-w-[1400px] px-3 sm:px-4 md:px-8 flex items-center justify-between gap-3">
+            <div className="flex items-center min-w-0">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="md:hidden p-2 -ml-2 text-[#0B4A82] hover:text-[#1160A8]"
+              >
+                <Menu size={24} />
+              </button>
+              <h2 className="text-base sm:text-xl font-bold text-[#0B4A82] ml-2 md:ml-0 truncate">
+                {title}
+              </h2>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-4">
+              {/* Notification Bell - FOR ADMIN AND SUPER ADMIN */}
+              {(isAdmin || isSuperAdmin) && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className={`relative p-2 transition-colors ${showNotifications ? "text-[#0B4A82] bg-[#E6F0FA] rounded-full" : "text-slate-400 hover:text-[#0B4A82]"}`}
+                  >
+                    <Bell size={20} />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-[#1160A8] rounded-full border-2 border-white"></span>
+                    )}
+                  </button>
 
-                {/* Dropdown */}
-                {showNotifications && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setShowNotifications(false)}
-                    ></div>
-                    <div className="fixed right-4 top-16 w-80 sm:w-96 bg-white bg-opacity-100 rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
-                      <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                        <h4 className="font-bold text-slate-800 text-sm">
-                          Notifications
-                        </h4>
-                        <span className="text-xs text-slate-500">
-                          {unreadCount} unread
-                        </span>
-                      </div>
-                      <div className="max-h-80 overflow-y-auto bg-white">
-                        {notifications.length === 0 ? (
-                          <div className="p-8 text-center text-slate-400 text-sm">
-                            No new activity.
-                          </div>
-                        ) : (
-                          notifications.map((n) => (
-                            <div
-                              key={n.id}
-                              className={`p-3 border-b border-slate-100 hover:bg-slate-50 transition-colors ${n.isRead ? "bg-slate-50" : "bg-white border-l-4 border-l-[#1160A8]"}`}
-                            >
-                              <div className="flex justify-between items-start gap-2">
-                                <div className="flex-1">
-                                  <p
-                                    className={`text-sm leading-snug mb-1 ${n.isRead ? "text-slate-500" : "text-slate-800 font-medium"}`}
-                                  >
-                                    {n.message}
-                                  </p>
-                                  <div className="flex items-center gap-2">
-                                    <span
-                                      className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${n.isRead ? "bg-slate-200 text-slate-500" : "bg-[#E6F0FA] text-[#0B4A82]"}`}
+                  {/* Dropdown */}
+                  {showNotifications && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setShowNotifications(false)}
+                      ></div>
+                      <div className="fixed right-3 sm:right-4 top-14 sm:top-16 w-[90vw] max-w-[22rem] sm:w-96 bg-white bg-opacity-100 rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+                        <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                          <h4 className="font-bold text-slate-800 text-sm">
+                            Notifications
+                          </h4>
+                          <span className="text-xs text-slate-500">
+                            {unreadCount} unread
+                          </span>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto bg-white">
+                          {notifications.length === 0 ? (
+                            <div className="p-8 text-center text-slate-400 text-sm">
+                              No new activity.
+                            </div>
+                          ) : (
+                            notifications.map((n) => (
+                              <div
+                                key={n.id}
+                                className={`p-3 border-b border-slate-100 hover:bg-slate-50 transition-colors ${n.isRead ? "bg-slate-50" : "bg-white border-l-4 border-l-[#1160A8]"}`}
+                              >
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="flex-1">
+                                    <p
+                                      className={`text-sm leading-snug mb-1 ${n.isRead ? "text-slate-500" : "text-slate-800 font-medium"}`}
                                     >
-                                      {n.isRead ? "Read" : "Unread"}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400">
-                                      {new Date(n.createdAt).toLocaleString()}
-                                    </span>
+                                      {n.message}
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${n.isRead ? "bg-slate-200 text-slate-500" : "bg-[#E6F0FA] text-[#0B4A82]"}`}
+                                      >
+                                        {n.isRead ? "Read" : "Unread"}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(n.createdAt).toLocaleString()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {!n.isRead && (
+                                      <button
+                                        onClick={(e) => handleMarkRead(n.id, e)}
+                                        className="text-emerald-500 hover:text-emerald-700 p-1 hover:bg-emerald-50 rounded transition-colors shrink-0"
+                                        title="Mark as read"
+                                      >
+                                        <Check size={16} />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={(e) =>
+                                        handleDeleteNotification(n.id, e)
+                                      }
+                                      className="text-slate-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors shrink-0"
+                                      title="Delete notification"
+                                    >
+                                      <X size={16} />
+                                    </button>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  {!n.isRead && (
-                                    <button
-                                      onClick={(e) => handleMarkRead(n.id, e)}
-                                      className="text-emerald-500 hover:text-emerald-700 p-1 hover:bg-emerald-50 rounded transition-colors shrink-0"
-                                      title="Mark as read"
-                                    >
-                                      <Check size={16} />
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={(e) =>
-                                      handleDeleteNotification(n.id, e)
-                                    }
-                                    className="text-slate-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors shrink-0"
-                                    title="Delete notification"
-                                  >
-                                    <X size={16} />
-                                  </button>
-                                </div>
                               </div>
-                            </div>
-                          ))
-                        )}
+                            ))
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </>
-                )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="h-6 w-px bg-slate-200 mx-2 hidden sm:block"></div>
+
+              <div className="text-sm text-slate-500 hidden sm:block font-medium">
+                {new Date().toLocaleDateString("en-GB", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
               </div>
-            )}
-
-            <div className="h-6 w-px bg-slate-200 mx-2 hidden sm:block"></div>
-
-            <div className="text-sm text-slate-500 hidden sm:block font-medium">
-              {new Date().toLocaleDateString("en-GB", {
-                weekday: "long",
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
             </div>
           </div>
         </header>
@@ -708,7 +712,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           </div>
         )}
 
-        <main className="flex-1 overflow-auto p-4 md:p-8">{children}</main>
+        <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-8">
+          <div className="mx-auto w-full max-w-[1200px] 2xl:max-w-[1400px]">
+            {children}
+          </div>
+        </main>
         <Toast />
       </div>
     </div>

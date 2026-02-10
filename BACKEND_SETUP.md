@@ -21,11 +21,12 @@ npm install --save-dev nodemon
 4. Click "Generate New Private Key"
 5. Save the JSON file securely
 
-### 3. Create `.env` file in root directory (not .env.local)
+### 3. Create `server/.env` file (backend only)
 
 ```bash
 # Server configuration
 PORT=3001
+REQUEST_BODY_LIMIT=1mb
 
 # Firebase credentials (from service account JSON)
 FIREBASE_PROJECT_ID=noble-care-management-system
@@ -97,7 +98,7 @@ Your backend URL will be something like:
 
 ## Update Frontend for Production
 
-Once your backend is deployed, update `.env.local`:
+Once your backend is deployed, update `.env.local` (frontend):
 
 ```env
 VITE_BACKEND_URL=https://your-backend-url.onrender.com

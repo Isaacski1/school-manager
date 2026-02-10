@@ -4,6 +4,7 @@ import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { Notice, ClassRoom, SchoolConfig } from "../../types";
 import { useAuth } from "../../context/AuthContext";
+import { useSchool } from "../../context/SchoolContext";
 import { requireSchoolId } from "../../services/authProfile";
 import {
   CLASSES_LIST,
@@ -54,7 +55,9 @@ const getClassGroupKey = (name: string) => {
 
 const SystemSettings = () => {
   const { user } = useAuth();
+  const { school } = useSchool();
   const schoolId = requireSchoolId(user);
+  const isTrialPlan = (school as any)?.plan === "trial";
 
   // Notices State
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -771,7 +774,7 @@ const SystemSettings = () => {
               </p>
               <button
                 onClick={handleCreateTermBackup}
-                disabled={isCreatingBackup}
+                disabled={isCreatingBackup || isTrialPlan}
                 className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 {isCreatingBackup ? (
@@ -788,11 +791,19 @@ const SystemSettings = () => {
               </button>
               <Link
                 to="/admin/backups"
-                className="mt-4 inline-flex items-center text-sm font-medium text-[#1160A8] hover:text-[#0B4A82]"
+                className={`mt-4 inline-flex items-center text-sm font-medium ${
+                  isTrialPlan
+                    ? "text-slate-400 pointer-events-none"
+                    : "text-[#1160A8] hover:text-[#0B4A82]"
+                }`}
               >
-                <History size={16} className="mr-1" /> View and Manage Previous
-                Backups
+                <History size={16} className="mr-1" /> View Previous Backups
               </Link>
+              {isTrialPlan && (
+                <p className="text-xs text-slate-500 mt-2">
+                  Backups are disabled during the trial period.
+                </p>
+              )}
             </div>
 
             {/* Secret Database Reset */}
