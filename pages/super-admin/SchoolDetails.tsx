@@ -75,6 +75,8 @@ const SchoolDetails = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetLink, setResetLink] = useState<string>("");
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [logoZoom, setLogoZoom] = useState(1);
   const [logoOffset, setLogoOffset] = useState({ x: 0, y: 0 });
@@ -381,8 +383,12 @@ const SchoolDetails = () => {
       const result = await resetSchoolAdminPassword({
         adminUid: adminUser.id,
       });
-      await navigator.clipboard.writeText(result.resetLink);
-      showToast("Reset link copied to clipboard.", { type: "success" });
+      setResetLink(result.resetLink || "");
+      setShowResetModal(true);
+      if (result.resetLink) {
+        await navigator.clipboard.writeText(result.resetLink);
+        showToast("Reset link copied to clipboard.", { type: "success" });
+      }
     } catch (error: any) {
       console.error("Failed to reset admin password", error);
       showToast(error.message || "Failed to reset admin password.", {
@@ -391,17 +397,23 @@ const SchoolDetails = () => {
     }
   };
 
-  const handleDisableAdmin = async () => {
+  const handleToggleAdminStatus = async () => {
     if (!adminUser) return;
+    const nextStatus = adminUser.status === "active" ? "inactive" : "active";
     try {
       await updateDoc(doc(firestore, "users", adminUser.id), {
-        status: "inactive",
+        status: nextStatus,
       });
-      setAdminUser({ ...adminUser, status: "inactive" });
-      showToast("Admin disabled successfully.", { type: "success" });
+      setAdminUser({ ...adminUser, status: nextStatus });
+      showToast(
+        nextStatus === "active"
+          ? "Admin activated successfully."
+          : "Admin disabled successfully.",
+        { type: "success" },
+      );
     } catch (error: any) {
-      console.error("Failed to disable admin", error);
-      showToast(error.message || "Failed to disable admin.", {
+      console.error("Failed to update admin status", error);
+      showToast(error.message || "Failed to update admin status.", {
         type: "error",
       });
     }
@@ -564,10 +576,16 @@ const SchoolDetails = () => {
                       Reset Admin Password
                     </button>
                     <button
-                      onClick={handleDisableAdmin}
-                      className="px-3 py-2 rounded-lg border border-red-200 text-sm text-red-600 hover:bg-red-50"
+                      onClick={handleToggleAdminStatus}
+                      className={`px-3 py-2 rounded-lg border text-sm ${
+                        adminUser.status === "active"
+                          ? "border-red-200 text-red-600 hover:bg-red-50"
+                          : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                      }`}
                     >
-                      Disable Admin
+                      {adminUser.status === "active"
+                        ? "Disable Admin"
+                        : "Activate Admin"}
                     </button>
                   </div>
                 </div>
@@ -1001,6 +1019,45 @@ const SchoolDetails = () => {
               >
                 {isDeleting ? "Deleting..." : "Delete"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-700">
+                <ShieldAlert size={18} />
+                <h3 className="text-lg font-semibold">Reset Admin Password</h3>
+              </div>
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600">
+              Click the link button to be redirected to the reset password page.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600"
+              >
+                Close
+              </button>
+              <a
+                href={resetLink || "#"}
+                target="_blank"
+                rel="noreferrer"
+                className={`flex-1 py-2 rounded-xl text-center text-white ${resetLink ? "bg-[#0B4A82] hover:bg-[#1160A8]" : "bg-slate-300 pointer-events-none"}`}
+              >
+                Open Reset Link
+              </a>
             </div>
           </div>
         </div>

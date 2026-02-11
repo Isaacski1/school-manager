@@ -322,6 +322,30 @@ const AdminDashboard = () => {
     };
   }, [school?.planEndsAt, now, school?.plan]);
 
+  const trialCountdown = useMemo(() => {
+    if ((school as any)?.plan !== "trial") return null;
+
+    const planEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
+    if (!planEndsAt) return null;
+
+    const nowDate = new Date(now);
+    if (nowDate >= planEndsAt) return null;
+
+    const remainingMs = Math.max(0, planEndsAt.getTime() - nowDate.getTime());
+    const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((remainingMs / (60 * 60 * 1000)) % 24);
+    const minutes = Math.floor((remainingMs / (60 * 1000)) % 60);
+    const seconds = Math.floor((remainingMs / 1000) % 60);
+
+    return {
+      planEndsAt,
+      days,
+      hours,
+      minutes,
+      seconds,
+    };
+  }, [school?.planEndsAt, now, school?.plan]);
+
   const graceCountdown = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
     if ((school as any)?.plan === "trial") return null;
@@ -2856,6 +2880,57 @@ const AdminDashboard = () => {
         </div>
       )}
 
+      {trialCountdown && (
+        <div className="mb-8">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-6 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-emerald-500 text-white">
+                  <Timer size={20} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                    Trial Countdown
+                  </p>
+                  <h3 className="text-xl font-bold text-slate-900 mt-1">
+                    Trial access ends soon
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-2">
+                    Your trial ends on{" "}
+                    <span className="font-semibold text-slate-800">
+                      {trialCountdown.planEndsAt.toLocaleDateString()}
+                    </span>
+                    . Make the most of your evaluation period.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="px-4 py-2 rounded-full text-sm font-semibold bg-emerald-500 text-white">
+                  Trial ends
+                </div>
+                <div className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-slate-700">
+                  <div className="text-xs uppercase text-slate-400">
+                    Countdown
+                  </div>
+                  <div className="text-lg font-bold">
+                    {trialCountdown.days}d {trialCountdown.hours}h{" "}
+                    {trialCountdown.minutes}m {trialCountdown.seconds}s
+                  </div>
+                </div>
+                <Link
+                  to="/admin/billing"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
+                >
+                  <Wallet size={16} />
+                  Upgrade Plan
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {graceCountdown && (
         <div className="mb-8">
           <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-6 shadow-sm">
@@ -2907,6 +2982,50 @@ const AdminDashboard = () => {
           </div>
         </div>
       )}
+
+      <div className="mb-8">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-[#0B4A82] text-white">
+                <Bell size={20} />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  Customer Support
+                </p>
+                <h3 className="text-xl font-bold text-slate-900 mt-1">
+                  Need assistance? Reach us anytime
+                </h3>
+                <p className="text-sm text-slate-600 mt-2">
+                  WhatsApp or call support:{" "}
+                  <span className="font-semibold text-slate-800">
+                    0201008784
+                  </span>
+                  .
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href="https://wa.me/233201008784"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
+                target="_blank"
+                rel="noreferrer"
+              >
+                WhatsApp
+              </a>
+              <a
+                href="tel:+233201008784"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
+              >
+                Call Support
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Missed Attendance Alerts */}
       {missedAttendanceAlerts.length > 0 && (
