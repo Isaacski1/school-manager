@@ -1996,8 +1996,8 @@ const AdminDashboard = () => {
 
   // Standalone KPI container to avoid embedding KPIs inside StatCard
   const KPIRowContainer = () => (
-    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <KPICard
           title="Students Enrolled"
           value={animatedStudents}
@@ -2710,7 +2710,7 @@ const AdminDashboard = () => {
   return (
     <Layout title="Dashboard">
       {/* Top Welcome Section */}
-      <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+      <div className="mb-8 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">
             Welcome{user?.fullName ? `, ${user.fullName}` : ""}
@@ -2734,8 +2734,8 @@ const AdminDashboard = () => {
         </div>
 
         {/* Term and Actions */}
-        <div className="flex items-center gap-4">
-          <div className="text-right mr-2 hidden sm:block">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+          <div className="text-left sm:text-right sm:mr-2 hidden sm:block">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
               Academic Period
             </p>
@@ -2744,7 +2744,7 @@ const AdminDashboard = () => {
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <Link
               to="/admin/students"
               className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors shadow-sm text-sm font-medium"
@@ -2762,7 +2762,7 @@ const AdminDashboard = () => {
           </div>
 
           {/* Live Metrics Toggle */}
-          <div className="ml-4 flex flex-col items-end text-right">
+          <div className="sm:ml-4 flex flex-col items-start sm:items-end text-left sm:text-right">
             <div className="flex items-center gap-2">
               <span
                 className={`w-3 h-3 rounded-full ${realTimeEnabled ? "bg-emerald-500" : "bg-slate-300"}`}
@@ -2830,10 +2830,10 @@ const AdminDashboard = () => {
 
       {subscriptionCountdown && (
         <div className="mb-8">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-[#0B4A82] text-white">
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center bg-[#0B4A82] text-white">
                   <Calendar size={20} />
                 </div>
                 <div>
@@ -2853,7 +2853,7 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3">
                 <div className="px-4 py-2 rounded-full text-sm font-semibold bg-[#0B4A82] text-white">
                   Subscription ends
                 </div>
@@ -2861,7 +2861,7 @@ const AdminDashboard = () => {
                   <div className="text-xs uppercase text-slate-400">
                     Countdown
                   </div>
-                  <div className="text-lg font-bold">
+                  <div className="text-base sm:text-lg font-bold">
                     {subscriptionCountdown.days}d {subscriptionCountdown.hours}h{" "}
                     {subscriptionCountdown.minutes}m{" "}
                     {subscriptionCountdown.seconds}s
@@ -3160,7 +3160,7 @@ const AdminDashboard = () => {
         </h2>
         {(summaryLoading || isRefreshing) && <SectionLoadingBadge />}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {showSkeletons ? (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 min-h-[140px]">
             <SkeletonBlock className="h-4 w-32" />
@@ -3207,7 +3207,7 @@ const AdminDashboard = () => {
         </div>
         {showSkeletons ? (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Array.from({ length: 3 }).map((_, idx) => (
                 <div
                   key={idx}

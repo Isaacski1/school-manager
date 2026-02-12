@@ -271,11 +271,11 @@ const Backups: React.FC = () => {
         Manage Term Backups
       </h1>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 mb-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6 mb-6">
         <h2 className="text-xl font-bold text-slate-800 mb-4">
           Backup Filters
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
               School
@@ -332,26 +332,28 @@ const Backups: React.FC = () => {
             />
           </div>
         </div>
-        <button
-          onClick={fetchBackups}
-          className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors flex items-center"
-        >
-          <Filter size={16} className="mr-2" /> Apply Filters
-        </button>
-        <button
-          onClick={() => {
-            setFilterSchoolId("");
-            setFilterTerm("");
-            setFilterAcademicYear("");
-            setFilterDate("");
-          }}
-          className="ml-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
-        >
-          Clear Filters
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            onClick={fetchBackups}
+            className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors flex items-center justify-center"
+          >
+            <Filter size={16} className="mr-2" /> Apply Filters
+          </button>
+          <button
+            onClick={() => {
+              setFilterSchoolId("");
+              setFilterTerm("");
+              setFilterAcademicYear("");
+              setFilterDate("");
+            }}
+            className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
+          >
+            Clear Filters
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6">
         <h2 className="text-xl font-bold text-slate-800 mb-4">
           Available Backups
         </h2>
@@ -374,7 +376,7 @@ const Backups: React.FC = () => {
               return (
                 <div
                   key={backup.id || `backup-${index}`}
-                  className="flex items-center justify-between p-4 border border-slate-200 rounded-lg"
+                  className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 p-4 border border-slate-200 rounded-xl"
                 >
                   <div>
                     <p className="font-semibold text-slate-800">
@@ -388,7 +390,7 @@ const Backups: React.FC = () => {
                       {new Date(backup.timestamp || 0).toLocaleString()}
                     </p>
                   </div>
-                  <div className="flex space-x-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => handleViewDetails(backup.id || "")}
                       className="px-3 py-1 bg-[#E6F0FA] text-[#0B4A82] rounded-md text-sm hover:bg-[#E6F0FA] flex items-center"

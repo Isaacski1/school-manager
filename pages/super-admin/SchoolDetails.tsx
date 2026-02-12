@@ -460,7 +460,7 @@ const SchoolDetails = () => {
 
   return (
     <Layout title="School Details">
-      <div className="p-6 space-y-8">
+      <div className="p-4 sm:p-6 space-y-8">
         <div className="flex flex-col gap-4">
           <button
             onClick={() => navigate("/super-admin/schools")}
@@ -469,9 +469,9 @@ const SchoolDetails = () => {
             <ArrowLeft size={16} />
             Schools / {school.name}
           </button>
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-slate-100 flex items-center justify-center overflow-hidden">
                 {school.logoUrl ? (
                   <img
                     src={school.logoUrl}
@@ -483,10 +483,10 @@ const SchoolDetails = () => {
                 )}
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-slate-900">
+                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
                   {school.name}
                 </h1>
-                <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm text-slate-500">
                   <span className="flex items-center gap-1">
                     <FileText size={14} /> Code: {school.code || "â€”"}
                   </span>
@@ -496,7 +496,7 @@ const SchoolDetails = () => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <span
                 className={`px-3 py-1 rounded-full text-sm font-medium ${
                   school.status === "active"
