@@ -178,6 +178,73 @@ const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+const buildAiSystemPrompt = (dataContext) => {
+  const base = `You are the Super Admin AI assistant for School Manager GH.
+You can propose admin actions, but you must NEVER execute them yourself.
+When you want an action, return JSON with {"reply": "...", "action": {"type": "...", "description": "...", "payload": {...}}}.
+If no action, return JSON with {"reply": "..."}.
+Allowed action types:
+- create_school: payload { name, plan, phone?, address?, logoUrl? }
+- create_school_admin: payload { schoolId, fullName, email, password? }
+- reset_school_admin_password: payload { adminUid }
+- provision_user: payload { uid, role, schoolId?, fullName, email }
+Use clear, short descriptions in "description".
+Never include secrets or API keys. Do not fabricate data. If data is missing, ask for it in reply.
+Always respond in JSON only.`;
+
+  if (!dataContext) return base;
+  return `${base}\n\nDATA_CONTEXT:\n${JSON.stringify(dataContext)}`;
+};
+
+const buildAiDataContext = async () => {
+  const schoolsSnap = await admin
+    .firestore()
+    .collection("schools")
+    .orderBy("createdAt", "desc")
+    .limit(200)
+    .get();
+  const schools = schoolsSnap.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() || {}),
+  }));
+
+  const activitySnap = await admin
+    .firestore()
+    .collection("activity_logs")
+    .orderBy("createdAt", "desc")
+    .limit(50)
+    .get();
+  const activity = activitySnap.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() || {}),
+  }));
+
+  return {
+    totals: {
+      schools: schools.length,
+      activeSchools: schools.filter((s) => s.status === "active").length,
+      inactiveSchools: schools.filter((s) => s.status === "inactive").length,
+    },
+    schools,
+    recentActivity: activity,
+  };
+};
+
+const parseAiResponse = (rawText) => {
+  if (!rawText) {
+    return { reply: "I could not generate a response." };
+  }
+  try {
+    const parsed = JSON.parse(rawText);
+    if (parsed && typeof parsed.reply === "string") return parsed;
+    return { reply: rawText };
+  } catch (error) {
+    return { reply: rawText };
+  }
+};
 
 const paystackRequest = async (endpoint, method, body) => {
   if (!PAYSTACK_SECRET_KEY) {
@@ -461,6 +528,392 @@ app.post(
       return res.status(500).json({
         error: error.message || "Failed to create school admin",
       });
+    }
+  },
+);
+
+/**
+ * Super Admin AI chat (read + propose actions)
+ * POST /api/superadmin/ai-chat
+ */
+app.post(
+  "/api/superadmin/ai-chat",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      if (!OPENAI_API_KEY) {
+        return res
+          .status(500)
+          .json({ error: "OPENAI_API_KEY is not set in the environment." });
+      }
+
+      const { messages } = req.body;
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: "messages array is required" });
+      }
+
+      const dataContext = await buildAiDataContext();
+      const systemPrompt = buildAiSystemPrompt(dataContext);
+
+      const payload = {
+        model: OPENAI_MODEL,
+        temperature: 0.2,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+      };
+
+      const response = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(500).json({
+          error: data?.error?.message || "OpenAI request failed",
+        });
+      }
+
+      const content = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseAiResponse(content);
+
+      await logActivity({
+        eventType: "superadmin_ai_chat",
+        schoolId: null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: null,
+        meta: {
+          promptCount: messages.length,
+          actionType: parsed?.action?.type || null,
+        },
+      });
+
+      return res.json({
+        reply: parsed.reply || "",
+        action: parsed.action || null,
+      });
+    } catch (error) {
+      console.error("AI chat error:", error.message || error);
+      return res.status(500).json({ error: error.message || "AI chat failed" });
+    }
+  },
+);
+
+/**
+ * Super Admin AI action confirmation executor
+ * POST /api/superadmin/ai-action
+ */
+app.post(
+  "/api/superadmin/ai-action",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { action } = req.body || {};
+      if (!action || !action.type) {
+        return res.status(400).json({ error: "action.type is required" });
+      }
+
+      const payload = action.payload || {};
+
+      switch (action.type) {
+        case "create_school": {
+          const { name, phone, address, logoUrl, plan } = payload;
+          if (!name || typeof name !== "string" || name.trim().length === 0) {
+            return res.status(400).json({
+              error: "School name is required and must be a non-empty string",
+            });
+          }
+
+          const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
+          if (!validPlans.includes(plan)) {
+            return res.status(400).json({ error: "Invalid plan type" });
+          }
+
+          const baseCode = name
+            .replace(/[^a-zA-Z0-9]/g, "")
+            .toUpperCase()
+            .substring(0, 6);
+          let schoolCode = baseCode;
+          let counter = 1;
+
+          while (true) {
+            const existingSchool = await admin
+              .firestore()
+              .collection("schools")
+              .where("code", "==", schoolCode)
+              .limit(1)
+              .get();
+
+            if (existingSchool.empty) break;
+            schoolCode = `${baseCode}${counter}`;
+            counter++;
+            if (counter > 999) {
+              schoolCode = `${baseCode}${Math.floor(Math.random() * 1000)}`;
+            }
+          }
+
+          const schoolRef = admin.firestore().collection("schools").doc();
+          const schoolId = schoolRef.id;
+
+          const now = Date.now();
+          const trialEndsAt =
+            plan === "trial" ? new Date(now + 30 * 24 * 60 * 60 * 1000) : null;
+
+          const schoolData = {
+            schoolId,
+            name: name.trim(),
+            code: schoolCode,
+            phone: phone ? phone.trim() : "",
+            address: address ? address.trim() : "",
+            logoUrl: logoUrl ? logoUrl.trim() : "",
+            status: "active",
+            plan,
+            planEndsAt: trialEndsAt,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: req.user.uid,
+          };
+
+          await schoolRef.set(schoolData);
+
+          await logActivity({
+            eventType: "school_created",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: schoolId,
+            meta: { name: name.trim(), plan },
+          });
+
+          await logActivity({
+            eventType: "superadmin_ai_action_confirmed",
+            schoolId: null,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: schoolId,
+            meta: { actionType: action.type },
+          });
+
+          return res.json({
+            success: true,
+            schoolId,
+            code: schoolCode,
+            message: "School created successfully",
+          });
+        }
+        case "create_school_admin": {
+          const { schoolId, fullName, email, password } = payload;
+
+          if (!schoolId || !fullName || !email) {
+            return res.status(400).json({
+              error: "Missing required fields: schoolId, fullName, email",
+            });
+          }
+
+          const schoolDoc = await admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId.trim())
+            .get();
+
+          if (!schoolDoc.exists) {
+            return res.status(404).json({ error: "School not found" });
+          }
+
+          if (schoolDoc.data().status !== "active") {
+            return res
+              .status(400)
+              .json({ error: "Cannot create admin for inactive school" });
+          }
+
+          try {
+            await admin.auth().getUserByEmail(email);
+            return res
+              .status(400)
+              .json({ error: "A user with this email already exists" });
+          } catch (error) {
+            if (error.code !== "auth/user-not-found") {
+              throw error;
+            }
+          }
+
+          const authPassword = password
+            ? password
+            : Math.random().toString(36).slice(-12) + "Aa1!";
+
+          if (password && password.length < 6) {
+            return res
+              .status(400)
+              .json({ error: "Password must be at least 6 characters long" });
+          }
+
+          const userRecord = await admin.auth().createUser({
+            email: email.trim(),
+            password: authPassword,
+            displayName: fullName.trim(),
+          });
+
+          const userData = {
+            fullName: fullName.trim(),
+            email: email.trim(),
+            role: "school_admin",
+            schoolId: schoolId.trim(),
+            status: "active",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          await admin
+            .firestore()
+            .collection("users")
+            .doc(userRecord.uid)
+            .set(userData);
+
+          await logActivity({
+            eventType: "school_admin_created",
+            schoolId: schoolId.trim(),
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: userRecord.uid,
+            meta: { email: email.trim(), fullName: fullName.trim() },
+          });
+
+          await logActivity({
+            eventType: "superadmin_ai_action_confirmed",
+            schoolId: schoolId.trim(),
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: userRecord.uid,
+            meta: { actionType: action.type },
+          });
+
+          return res.json({
+            success: true,
+            uid: userRecord.uid,
+            email: email.trim(),
+            message: "School admin created successfully",
+          });
+        }
+        case "reset_school_admin_password": {
+          const { adminUid } = payload;
+          if (!adminUid) {
+            return res.status(400).json({ error: "adminUid is required" });
+          }
+
+          const userRecord = await admin.auth().getUser(adminUid);
+          if (!userRecord.email) {
+            return res.status(400).json({ error: "Admin email not found" });
+          }
+
+          const resetLink = await admin
+            .auth()
+            .generatePasswordResetLink(userRecord.email);
+
+          await logActivity({
+            eventType: "school_admin_password_reset",
+            schoolId: null,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: adminUid,
+            meta: { email: userRecord.email },
+          });
+
+          await logActivity({
+            eventType: "superadmin_ai_action_confirmed",
+            schoolId: null,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: adminUid,
+            meta: { actionType: action.type },
+          });
+
+          return res.json({
+            success: true,
+            email: userRecord.email,
+            resetLink,
+            message: "Password reset link generated successfully",
+          });
+        }
+        case "provision_user": {
+          const { uid, role, schoolId, fullName, email } = payload;
+          if (!uid || !role || !fullName || !email) {
+            return res.status(400).json({
+              error: "Missing required fields: uid, role, fullName, email",
+            });
+          }
+
+          try {
+            await admin.auth().getUser(uid);
+          } catch (error) {
+            return res.status(404).json({
+              error: "User not found in Firebase Auth",
+            });
+          }
+
+          const existingDoc = await admin
+            .firestore()
+            .collection("users")
+            .doc(uid)
+            .get();
+
+          if (existingDoc.exists) {
+            return res.status(400).json({
+              error: "User profile already exists in Firestore",
+            });
+          }
+
+          const userData = {
+            fullName: fullName.trim(),
+            email: email.trim(),
+            role: role.trim(),
+            ...(schoolId && { schoolId: schoolId.trim() }),
+            status: "active",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          await admin.firestore().collection("users").doc(uid).set(userData);
+
+          await logActivity({
+            eventType: "user_provisioned",
+            schoolId: schoolId || null,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: uid,
+            meta: { role, email: email.trim(), fullName: fullName.trim() },
+          });
+
+          await logActivity({
+            eventType: "superadmin_ai_action_confirmed",
+            schoolId: schoolId || null,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: uid,
+            meta: { actionType: action.type },
+          });
+
+          return res.json({
+            success: true,
+            uid,
+            message: "User profile provisioned successfully",
+          });
+        }
+        default:
+          return res.status(400).json({ error: "Unknown action type" });
+      }
+    } catch (error) {
+      console.error("AI action error:", error.message || error);
+      return res
+        .status(500)
+        .json({ error: error.message || "AI action failed" });
     }
   },
 );

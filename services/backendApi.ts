@@ -242,4 +242,35 @@ export async function verifySchoolPayment(payload: {
   });
 }
 
+export type AiChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
+
+export type AiChatAction = {
+  type:
+    | "create_school"
+    | "create_school_admin"
+    | "reset_school_admin_password"
+    | "provision_user";
+  description?: string;
+  payload?: Record<string, any>;
+};
+
+export async function superAdminAiChat(payload: {
+  messages: AiChatMessage[];
+}): Promise<{ reply: string; action?: AiChatAction | null }> {
+  return apiRequest("/api/superadmin/ai-chat", {
+    body: payload,
+  });
+}
+
+export async function confirmSuperAdminAiAction(payload: {
+  action: AiChatAction;
+}): Promise<{ success: boolean; actionType: string; result?: any }> {
+  return apiRequest("/api/superadmin/ai-action", {
+    body: payload,
+  });
+}
+
 export { BACKEND_URL };

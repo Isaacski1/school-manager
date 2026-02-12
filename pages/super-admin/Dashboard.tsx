@@ -12,6 +12,14 @@ import { firestore } from "../../services/firebase";
 import { useAuth } from "../../context/AuthContext";
 import { Link } from "react-router-dom";
 import { School } from "../../types";
+import Modal from "../../components/Modal";
+import {
+  superAdminAiChat,
+  confirmSuperAdminAiAction,
+  AiChatAction,
+  AiChatMessage,
+} from "../../services/backendApi";
+import showToast from "../../services/toast";
 import {
   RefreshCw,
   Users,
@@ -31,6 +39,9 @@ import {
   ChevronRight,
   Wallet,
   BadgeDollarSign,
+  Bot,
+  SendHorizontal,
+  ShieldCheck,
 } from "lucide-react";
 
 // Premium Card Component
@@ -237,6 +248,19 @@ const Dashboard: React.FC = () => {
       }
     >;
   }>({ summary: {}, perSchool: {} });
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiMessages, setAiMessages] = useState<AiChatMessage[]>([
+    {
+      role: "assistant" as const,
+      content:
+        "Hello Super Admin. I can help analyze system data and propose actions. Ask me anything.",
+    },
+  ]);
+  const [aiPendingAction, setAiPendingAction] = useState<AiChatAction | null>(
+    null,
+  );
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -664,6 +688,68 @@ const Dashboard: React.FC = () => {
     { label: "Paid", count: kpis.paid, color: "bg-[#E6F0FA] text-[#0B4A82]" },
   ];
 
+  const sendAiMessage = async () => {
+    const trimmed = aiInput.trim();
+    if (!trimmed || aiLoading) return;
+    const nextMessages: AiChatMessage[] = [
+      ...aiMessages,
+      { role: "user" as const, content: trimmed },
+    ];
+    setAiMessages(nextMessages);
+    setAiInput("");
+    setAiLoading(true);
+    try {
+      const response = await superAdminAiChat({ messages: nextMessages });
+      if (response.action) {
+        setAiPendingAction(response.action);
+      }
+      setAiMessages((prev) => [
+        ...prev,
+        { role: "assistant" as const, content: response.reply || "" },
+      ]);
+    } catch (error: any) {
+      showToast(error?.message || "AI chat failed", { type: "error" });
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const confirmAiAction = async () => {
+    if (!aiPendingAction || aiLoading) return;
+    setAiLoading(true);
+    try {
+      const response = await confirmSuperAdminAiAction({
+        action: aiPendingAction,
+      });
+      showToast("Action completed successfully", { type: "success" });
+      setAiMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant" as const,
+          content: `Action completed: ${response.actionType}.`,
+        },
+      ]);
+      setAiPendingAction(null);
+      loadData();
+    } catch (error: any) {
+      showToast(error?.message || "Action failed", { type: "error" });
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const cancelAiAction = () => {
+    setAiPendingAction(null);
+    setAiMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant" as const,
+        content:
+          "Action canceled. Let me know if you want to try something else.",
+      },
+    ]);
+  };
+
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
@@ -687,6 +773,13 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setAiOpen(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#0B4A82] transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1160A8]"
+                >
+                  <Bot size={16} />
+                  Super Admin AI
+                </button>
                 <button
                   onClick={() => loadData()}
                   aria-label="Refresh dashboard"
@@ -726,6 +819,91 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
+
+        <Modal
+          isOpen={aiOpen}
+          onClose={() => setAiOpen(false)}
+          title="Super Admin AI Assistant"
+          className="max-w-3xl"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <ShieldCheck size={14} />
+              Super Admin only • Actions require confirmation
+            </div>
+            <div className="h-[420px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              {aiMessages.map((message, index) => (
+                <div
+                  key={`${message.role}-${index}`}
+                  className={`flex ${
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
+                      message.role === "user"
+                        ? "bg-[#0B4A82] text-white"
+                        : "bg-white text-slate-700 border border-slate-200"
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                </div>
+              ))}
+              {aiLoading && (
+                <div className="text-xs text-slate-400">Thinking...</div>
+              )}
+            </div>
+
+            {aiPendingAction && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <div className="text-sm font-semibold text-amber-900">
+                  Action suggested
+                </div>
+                <div className="text-xs text-amber-800 mt-1">
+                  {aiPendingAction.description || aiPendingAction.type}
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <button
+                    onClick={confirmAiAction}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
+                  >
+                    Confirm action
+                  </button>
+                  <button
+                    onClick={cancelAiAction}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendAiMessage();
+                  }
+                }}
+                className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1160A8]"
+                placeholder="Ask the Super Admin AI..."
+              />
+              <button
+                onClick={sendAiMessage}
+                disabled={aiLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0B4A82] text-white text-sm font-semibold hover:bg-[#0B4A82] disabled:opacity-60"
+              >
+                <SendHorizontal size={16} />
+                Send
+              </button>
+            </div>
+          </div>
+        </Modal>
 
         {/* KPI Cards - Premium Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
