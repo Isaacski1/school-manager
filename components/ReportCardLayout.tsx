@@ -319,12 +319,15 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
               <tbody>
                 {data.allStudentsAssessments &&
                   performance.map((p: any, i: number) => {
-                    const grade = calculateGrade(p.total);
-                    const subjectScores = data.allStudentsAssessments
-                      .filter((a: any) => a.subject === p.subject)
-                      .map((a: any) => a.total);
-                    subjectScores.sort((a: number, b: number) => b - a);
-                    const position = subjectScores.indexOf(p.total) + 1;
+                    const grade = calculateGrade(p.total, data?.gradingScale);
+                    let position = 0;
+                    if (data?.positionRule === "subject") {
+                      const subjectScores = data.allStudentsAssessments
+                        .filter((a: any) => a.subject === p.subject)
+                        .map((a: any) => a.total);
+                      subjectScores.sort((a: number, b: number) => b - a);
+                      position = subjectScores.indexOf(p.total) + 1;
+                    }
                     const positionSuffix =
                       ["st", "nd", "rd"][position - 1] || "th";
 
@@ -348,7 +351,11 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                         <td className="p-1.5 border text-center font-bold">
                           {p.total}
                         </td>
-                        <td className="p-1.5 border text-center">{`${position}${positionSuffix}`}</td>
+                        <td className="p-1.5 border text-center">
+                          {data?.positionRule === "subject" && position
+                            ? `${position}${positionSuffix}`
+                            : "-"}
+                        </td>
                         <td
                           className={`p-1.5 border text-center font-bold ${getGradeColor(grade.grade).split(" ")[0]}`}
                         >

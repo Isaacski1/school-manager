@@ -35,6 +35,13 @@ import SchoolDetails from "./pages/super-admin/SchoolDetails";
 import Dashboard from "./pages/super-admin/Dashboard";
 import SuperAdminBackups from "./pages/super-admin/Backups";
 import SuperAdminPayments from "./pages/super-admin/Payments";
+import SuperAdminUsers from "./pages/super-admin/Users";
+import SuperAdminAnalytics from "./pages/super-admin/Analytics";
+import SuperAdminBroadcasts from "./pages/super-admin/Broadcasts";
+import LoginHistory from "./pages/super-admin/security/LoginHistory";
+import SuspiciousEvents from "./pages/super-admin/security/SuspiciousEvents";
+import AuditLogs from "./pages/super-admin/security/AuditLogs";
+import SecuritySettings from "./pages/super-admin/security/SecuritySettings";
 import Layout from "./components/Layout";
 
 const AppContent = () => {
@@ -372,6 +379,62 @@ const AppRoutes = () => {
             <Layout title="Payments">
               <SuperAdminPayments />
             </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/users"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminUsers />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/analytics"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminAnalytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/broadcasts"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminBroadcasts />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/security/login-history"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <LoginHistory />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/security/suspicious"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuspiciousEvents />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/security/audit-logs"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <AuditLogs />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/security/settings"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SecuritySettings />
           </ProtectedRoute>
         }
       />

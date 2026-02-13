@@ -12,11 +12,16 @@ import {
   query,
   where,
   getDocs,
+  getCountFromServer,
   writeBatch,
 } from "firebase/firestore";
-import { School } from "../../types";
+import { PlanConfig, School } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { createSchool } from "../../services/backendApi";
+import {
+  createOrUpdatePlan,
+  createSchool,
+  updateSchoolPlan,
+} from "../../services/backendApi";
 import {
   Plus,
   Building,
@@ -34,6 +39,7 @@ const Schools = () => {
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     phone: "",
@@ -41,6 +47,22 @@ const Schools = () => {
     logoUrl: "",
     plan: "trial" as "free" | "trial" | "monthly" | "termly" | "yearly",
   });
+  const [cloneFromTemplate, setCloneFromTemplate] = useState(false);
+  const [templateType, setTemplateType] = useState<"default" | "school">(
+    "default",
+  );
+  const [templateSchoolId, setTemplateSchoolId] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [plans, setPlans] = useState<PlanConfig[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [studentCounts, setStudentCounts] = useState<Record<string, number>>(
+    {},
+  );
+  const [planForm, setPlanForm] = useState<{
+    id: string;
+    name: string;
+    maxStudents: number;
+  }>({ id: "starter", name: "Starter", maxStudents: 0 });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<School | null>(null);
   const [isCreatingSchool, setIsCreatingSchool] = useState(false);
@@ -70,6 +92,23 @@ const Schools = () => {
     return date.toLocaleDateString();
   };
 
+  const loadPlans = async () => {
+    setPlansLoading(true);
+    try {
+      const plansSnap = await getDocs(collection(firestore, "plans"));
+      const planData = plansSnap.docs.map(
+        (docSnap) =>
+          ({ id: docSnap.id, ...(docSnap.data() as any) }) as PlanConfig,
+      );
+      setPlans(planData);
+    } catch (error: any) {
+      console.error("Failed to load plans", error);
+      showToast("Failed to load plan configurations.", { type: "error" });
+    } finally {
+      setPlansLoading(false);
+    }
+  };
+
   useEffect(() => {
     const schoolsRef = collection(firestore, "schools");
     const unsubscribe = onSnapshot(schoolsRef, (snapshot) => {
@@ -84,8 +123,37 @@ const Schools = () => {
       setLoading(false);
     });
 
+    loadPlans();
+
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    const loadCounts = async () => {
+      if (!schools.length) {
+        setStudentCounts({});
+        return;
+      }
+      try {
+        const entries = await Promise.all(
+          schools.map(async (school) => {
+            const snap = await getCountFromServer(
+              query(
+                collection(firestore, "students"),
+                where("schoolId", "==", school.id),
+              ),
+            );
+            return [school.id, snap.data().count] as const;
+          }),
+        );
+        setStudentCounts(Object.fromEntries(entries));
+      } catch (error) {
+        console.error("Failed to load student counts", error);
+      }
+    };
+
+    loadCounts();
+  }, [schools]);
 
   const handleCreateSchool = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +198,11 @@ const Schools = () => {
         address: formData.address.trim(),
         logoUrl: croppedLogo || "",
         plan: formData.plan,
+        cloneFromTemplate,
+        templateType,
+        templateSchoolId:
+          templateType === "school" ? templateSchoolId : undefined,
+        planId: planId || undefined,
       });
 
       setFormData({
@@ -139,6 +212,10 @@ const Schools = () => {
         logoUrl: "",
         plan: "trial",
       });
+      setCloneFromTemplate(false);
+      setTemplateType("default");
+      setTemplateSchoolId("");
+      setPlanId("");
       setLogoPreview("");
       setLogoZoom(1);
       setLogoOffset({ x: 0, y: 0 });
@@ -306,6 +383,55 @@ const Schools = () => {
     setShowDeleteModal(true);
   };
 
+  const handleSavePlan = async () => {
+    if (!planForm.id || !planForm.name) return;
+    try {
+      await createOrUpdatePlan({
+        id: planForm.id,
+        name: planForm.name,
+        maxStudents: Number(planForm.maxStudents),
+      });
+      showToast("Plan saved successfully.", { type: "success" });
+      await loadPlans();
+    } catch (error: any) {
+      console.error("Plan save failed", error);
+      showToast(error?.message || "Failed to save plan.", { type: "error" });
+    }
+  };
+
+  const handleAssignPlan = async (schoolId: string, nextPlanId: string) => {
+    if (!nextPlanId) return;
+    try {
+      await updateSchoolPlan({ schoolId, planId: nextPlanId });
+      showToast("Plan assigned successfully.", { type: "success" });
+    } catch (error: any) {
+      console.error("Plan assignment failed", error);
+      showToast(error?.message || "Failed to assign plan.", { type: "error" });
+    }
+  };
+
+  const resolvePlanName = (school: School) => {
+    const planKey = school.subscription?.planId;
+    const match = plans.find((p) => p.id === planKey);
+    return match?.name || school.plan || "—";
+  };
+
+  const resolvePlanLimit = (school: School) => {
+    const planKey = school.subscription?.planId;
+    const match = plans.find((p) => p.id === planKey);
+    return match?.maxStudents ?? school.limits?.maxStudents ?? 0;
+  };
+
+  const resolveUsageStatus = (used: number, limit: number) => {
+    if (!limit) return { label: "N/A", color: "bg-slate-100 text-slate-600" };
+    const ratio = used / Math.max(limit, 1);
+    if (ratio >= 1)
+      return { label: "Limit reached", color: "bg-red-100 text-red-700" };
+    if (ratio >= 0.9)
+      return { label: "Near limit", color: "bg-amber-100 text-amber-700" };
+    return { label: "OK", color: "bg-emerald-100 text-emerald-700" };
+  };
+
   if (loading) {
     return (
       <Layout title="Schools">
@@ -320,7 +446,7 @@ const Schools = () => {
     <Layout title="Schools">
       <div className="p-6">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">
               Schools Management
@@ -329,13 +455,21 @@ const Schools = () => {
               Manage all schools in the system
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
-          >
-            <Plus size={18} className="mr-2" />
-            Create School
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowPlanModal(true)}
+              className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              Manage Plans
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
+            >
+              <Plus size={18} className="mr-2" />
+              Create School
+            </button>
+          </div>
         </div>
 
         {/* Schools Table */}
@@ -348,6 +482,8 @@ const Schools = () => {
                   <th className="px-6 py-4">Code</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Plan</th>
+                  <th className="px-6 py-4">Students Used</th>
+                  <th className="px-6 py-4">Limit Status</th>
                   <th className="px-6 py-4">Created</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
@@ -356,7 +492,7 @@ const Schools = () => {
                 {schools.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       No schools created yet.
@@ -393,7 +529,46 @@ const Schools = () => {
                           {school.status === "active" ? "Active" : "Inactive"}
                         </span>
                       </td>
-                      <td className="px-6 py-4 capitalize">{school.plan}</td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-2">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                            {resolvePlanName(school)}
+                          </span>
+                          <select
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white"
+                            value={school.subscription?.planId || ""}
+                            onChange={(e) =>
+                              handleAssignPlan(school.id, e.target.value)
+                            }
+                          >
+                            <option value="">Select plan</option>
+                            {plans.map((plan) => (
+                              <option key={plan.id} value={plan.id}>
+                                {plan.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        {`${
+                          school.studentsCount ?? studentCounts[school.id] ?? 0
+                        }/${resolvePlanLimit(school) || "—"}`}
+                      </td>
+                      <td className="px-6 py-4">
+                        {(() => {
+                          const used = Number(school.studentsCount || 0);
+                          const limit = Number(resolvePlanLimit(school) || 0);
+                          const status = resolveUsageStatus(used, limit);
+                          return (
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${status.color}`}
+                            >
+                              {status.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td className="px-6 py-4">
                         {formatCreatedAt(school.createdAt)}
                       </td>
@@ -652,6 +827,99 @@ const Schools = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Subscription Plan (Limits)
+                </label>
+                <select
+                  disabled={isCreatingSchool || plansLoading}
+                  className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  value={planId}
+                  onChange={(e) => setPlanId(e.target.value)}
+                >
+                  <option value="">Select plan (optional)</option>
+                  {plans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>
+                      {plan.name}
+                    </option>
+                  ))}
+                </select>
+                {planId && (
+                  <p className="text-xs text-slate-500 mt-2">
+                    Plan limit:{" "}
+                    {plans.find((plan) => plan.id === planId)?.maxStudents ?? 0}{" "}
+                    students
+                  </p>
+                )}
+              </div>
+
+              <div className="border border-slate-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-800">
+                      Clone from Template
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      Copy settings from a template or an existing school.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCloneFromTemplate((prev) => !prev)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      cloneFromTemplate ? "bg-emerald-500" : "bg-slate-200"
+                    }`}
+                    aria-pressed={cloneFromTemplate}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        cloneFromTemplate ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+                {cloneFromTemplate && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        Template Type
+                      </label>
+                      <select
+                        className="w-full border border-slate-300 p-2 rounded-lg text-sm"
+                        value={templateType}
+                        onChange={(e) =>
+                          setTemplateType(
+                            e.target.value as "default" | "school",
+                          )
+                        }
+                      >
+                        <option value="default">Default Template</option>
+                        <option value="school">Existing School</option>
+                      </select>
+                    </div>
+                    {templateType === "school" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Select School Template
+                        </label>
+                        <select
+                          className="w-full border border-slate-300 p-2 rounded-lg text-sm"
+                          value={templateSchoolId}
+                          onChange={(e) => setTemplateSchoolId(e.target.value)}
+                        >
+                          <option value="">Choose a school</option>
+                          {schools.map((school) => (
+                            <option key={school.id} value={school.id}>
+                              {school.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
                 <button
                   type="button"
@@ -718,6 +986,138 @@ const Schools = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Plan Management Modal */}
+      {showPlanModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative overflow-hidden">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-slate-900">
+                Plan Configuration
+              </h3>
+              <button
+                onClick={() => setShowPlanModal(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Plan Key
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    value={planForm.id}
+                    onChange={(e) =>
+                      setPlanForm((prev) => ({ ...prev, id: e.target.value }))
+                    }
+                    placeholder="starter"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Plan Name
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    value={planForm.name}
+                    onChange={(e) =>
+                      setPlanForm((prev) => ({ ...prev, name: e.target.value }))
+                    }
+                    placeholder="Starter"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Max Students
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    value={planForm.maxStudents}
+                    onChange={(e) =>
+                      setPlanForm((prev) => ({
+                        ...prev,
+                        maxStudents: Number(e.target.value),
+                      }))
+                    }
+                    placeholder="200"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowPlanModal(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavePlan}
+                  className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
+                >
+                  <Save size={18} className="mr-2" />
+                  Save Plan
+                </button>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <h4 className="text-sm font-semibold text-slate-700 mb-2">
+                  Existing Plans
+                </h4>
+                <div className="space-y-2">
+                  {plans.length === 0 ? (
+                    <p className="text-sm text-slate-500">
+                      {plansLoading
+                        ? "Loading plans..."
+                        : "No plans created yet."}
+                    </p>
+                  ) : (
+                    plans.map((plan) => (
+                      <div
+                        key={plan.id}
+                        className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">
+                            {plan.name}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Key: {plan.id} · Max Students: {plan.maxStudents}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlanForm({
+                              id: plan.id,
+                              name: plan.name,
+                              maxStudents: plan.maxStudents,
+                            })
+                          }
+                          className="text-xs text-[#1160A8] hover:underline"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { auth } from "../services/firebase";
+import { logSecurityLogin } from "../services/backendApi";
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -40,6 +41,11 @@ const Login = () => {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      await logSecurityLogin({
+        status: "SUCCESS",
+        email,
+        userAgent: navigator.userAgent,
+      });
       // AuthContext listener will handle the redirection via the useEffect above
     } catch (err: any) {
       console.error(err);
@@ -53,6 +59,12 @@ const Login = () => {
       } else if (err.code === "auth/too-many-requests") {
         msg = "Too many failed attempts. Please try again later.";
       }
+      await logSecurityLogin({
+        status: "FAILED",
+        email,
+        errorCode: err?.code || null,
+        userAgent: navigator.userAgent,
+      });
       setFormError(msg);
       setLoading(false);
     }

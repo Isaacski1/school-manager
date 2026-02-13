@@ -127,15 +127,35 @@ export async function createSchool(payload: {
   address?: string;
   logoUrl?: string;
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
+  cloneFromTemplate?: boolean;
+  templateType?: "default" | "school";
+  templateSchoolId?: string;
+  planId?: string;
 }): Promise<{
   success: boolean;
   schoolId: string;
   code: string;
+  clonedFrom?: string;
   message: string;
 }> {
   return apiRequest("/api/superadmin/create-school", {
     body: payload,
   });
+}
+
+export async function createOrUpdatePlan(payload: {
+  id: string;
+  name: string;
+  maxStudents: number;
+}): Promise<{ success: boolean; id: string; message: string }> {
+  return apiRequest("/api/superadmin/upsert-plan", { body: payload });
+}
+
+export async function updateSchoolPlan(payload: {
+  schoolId: string;
+  planId: string;
+}): Promise<{ success: boolean; message: string }> {
+  return apiRequest("/api/superadmin/update-school-plan", { body: payload });
 }
 
 /**
@@ -172,6 +192,24 @@ export async function resetSchoolAdminPassword(payload: {
   message: string;
 }> {
   return apiRequest("/api/superadmin/reset-school-admin-password", {
+    body: payload,
+  });
+}
+
+/**
+ * Update a school admin email via backend
+ * REQUIRES: Caller must be super_admin
+ */
+export async function updateSchoolAdminEmail(payload: {
+  adminUid: string;
+  newEmail: string;
+  fullName?: string;
+}): Promise<{
+  success: boolean;
+  email: string;
+  message: string;
+}> {
+  return apiRequest("/api/superadmin/update-school-admin-email", {
     body: payload,
   });
 }
@@ -215,6 +253,15 @@ export async function createTeacher(payload: {
   return apiRequest("/api/createTeacher", {
     body: payload,
   });
+}
+
+export async function logSecurityLogin(payload: {
+  status: "SUCCESS" | "FAILED";
+  email?: string | null;
+  errorCode?: string | null;
+  userAgent?: string | null;
+}): Promise<{ success: boolean }> {
+  return apiRequest("/api/security/log-login", { body: payload });
 }
 
 export async function initiateSchoolBilling(payload: {

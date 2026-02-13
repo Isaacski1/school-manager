@@ -13,6 +13,18 @@ export interface User {
   assignedClassIds?: string[];
   status: "active" | "inactive";
   createdAt?: Date;
+  lastLogin?: Date | number | string | null;
+  lastLoginAt?: number | null;
+  isActive?: boolean;
+  disabledAt?: Date | number | null;
+  disabledBy?: string | null;
+  disabledReason?: string | null;
+  tokenVersion?: number;
+  tokensRevokedAt?: Date | number | null;
+  forcedLogoutAt?: Date | number | null;
+  forcedLogoutBy?: string | null;
+  roleUpdatedAt?: Date | number | null;
+  roleUpdatedBy?: string | null;
 }
 
 export interface School {
@@ -28,6 +40,99 @@ export interface School {
   createdAt: Date;
   createdBy: string;
   notes?: string;
+  subscription?: {
+    planId?: string;
+  };
+  limits?: {
+    maxStudents?: number;
+  };
+  studentsCount?: number;
+}
+
+export interface PlanConfig {
+  id: string;
+  name: string;
+  maxStudents: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export type BroadcastType = "GENERAL" | "SYSTEM_UPDATE" | "MAINTENANCE";
+export type BroadcastPriority = "NORMAL" | "IMPORTANT" | "CRITICAL";
+export type BroadcastTargetType = "ALL" | "SCHOOLS";
+export type BroadcastStatus = "DRAFT" | "PUBLISHED" | "SCHEDULED";
+
+export interface PlatformBroadcast {
+  id: string;
+  title: string;
+  message: string;
+  type: BroadcastType;
+  priority: BroadcastPriority;
+  targetType: BroadcastTargetType;
+  targetSchoolIds?: string[];
+  createdAt: Date | number;
+  createdBy: string;
+  publishAt?: Date | number | null;
+  expiresAt?: Date | number | null;
+  status: BroadcastStatus;
+  version?: string;
+  whatsNew?: string[];
+  effectiveDate?: string | Date | number | null;
+  maintenanceStart?: string | Date | number | null;
+  maintenanceEnd?: string | Date | number | null;
+  maintenanceDowntime?: boolean;
+}
+
+export type LoginStatus = "SUCCESS" | "FAILED";
+export type SuspiciousSeverity = "LOW" | "MEDIUM" | "HIGH";
+export type SuspiciousStatus = "OPEN" | "RESOLVED";
+
+export interface SecurityLoginLog {
+  id: string;
+  userId?: string | null;
+  name?: string | null;
+  email?: string | null;
+  role?: UserRole | string | null;
+  schoolId?: string | null;
+  schoolName?: string | null;
+  timestamp: number;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  status: LoginStatus;
+  errorCode?: string | null;
+}
+
+export interface SuspiciousEvent {
+  id: string;
+  eventType: string;
+  severity: SuspiciousSeverity;
+  userId?: string | null;
+  schoolId?: string | null;
+  relatedLogIds?: string[];
+  createdAt: number;
+  status: SuspiciousStatus;
+  resolvedBy?: string | null;
+  resolvedAt?: number | null;
+  resolutionNote?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export interface AuditLog {
+  id: string;
+  actionType: string;
+  actorId: string;
+  actorRole: UserRole | string;
+  targetType: "SCHOOL" | "USER" | "SUBSCRIPTION" | "SETTINGS" | "BROADCAST";
+  targetId?: string | null;
+  schoolId?: string | null;
+  timestamp: number;
+  metadata?: Record<string, any>;
+}
+
+export interface PlatformSecuritySettings {
+  enabledForSuperAdmins: boolean;
+  updatedAt: number;
+  updatedBy: string;
 }
 
 export interface SchoolConfig {
@@ -46,6 +151,13 @@ export interface SchoolConfig {
   nextTermBegins: string;
   termTransitionProcessed: boolean;
   holidayDates?: { date: string; reason?: string }[];
+  gradingScale?: {
+    A: number;
+    B: number;
+    C: number;
+    D: number;
+  };
+  positionRule?: "total" | "average" | "subject";
 }
 
 export interface Backup {

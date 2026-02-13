@@ -266,6 +266,41 @@ exports.createSchoolAdmin = functions.https.onCall(async (data, context) => {
   }
 });
 
+exports.trackStudentsCount = functions.firestore
+  .document("students/{studentId}")
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? change.before.data() : null;
+    const after = change.after.exists ? change.after.data() : null;
+    const beforeSchoolId = before?.schoolId || null;
+    const afterSchoolId = after?.schoolId || null;
+
+    const updates = [];
+
+    const applyDelta = async (schoolId, delta) => {
+      if (!schoolId || delta === 0) return;
+      const schoolRef = admin.firestore().collection("schools").doc(schoolId);
+      await admin.firestore().runTransaction(async (tx) => {
+        const snap = await tx.get(schoolRef);
+        if (!snap.exists) return;
+        const current = Number(snap.data().studentsCount || 0);
+        const next = Math.max(0, current + delta);
+        tx.set(schoolRef, { studentsCount: next }, { merge: true });
+      });
+    };
+
+    if (!before && after) {
+      updates.push(applyDelta(afterSchoolId, 1));
+    } else if (before && !after) {
+      updates.push(applyDelta(beforeSchoolId, -1));
+    } else if (before && after && beforeSchoolId !== afterSchoolId) {
+      updates.push(applyDelta(beforeSchoolId, -1));
+      updates.push(applyDelta(afterSchoolId, 1));
+    }
+
+    await Promise.all(updates);
+    return null;
+  });
+
 exports.deleteSchool = functions.https.onCall(async (data, context) => {
   // Check if user is authenticated
   if (!context.auth) {

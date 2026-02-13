@@ -32,6 +32,7 @@ import {
   SchoolConfig,
   AdminRemark,
   Backup,
+  PlatformBroadcast,
 } from "../types";
 import { logActivity } from "./activityLog";
 import {
@@ -121,6 +122,13 @@ class FirestoreService {
       nextTermBegins: "",
       termTransitionProcessed: false,
       holidayDates: [],
+      gradingScale: {
+        A: 80,
+        B: 70,
+        C: 60,
+        D: 45,
+      },
+      positionRule: "total",
     };
   }
 
@@ -140,6 +148,61 @@ class FirestoreService {
     return querySnapshot.docs.map(
       (docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as User,
     );
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    const querySnapshot = await getDocs(collection(firestore, "users"));
+    return querySnapshot.docs.map(
+      (docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as User,
+    );
+  }
+
+  async updateUserStatus(payload: {
+    userId: string;
+    isActive: boolean;
+    disabledAt?: number | null;
+    disabledBy?: string | null;
+    disabledReason?: string | null;
+  }): Promise<void> {
+    const { userId, isActive, disabledAt, disabledBy, disabledReason } =
+      payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      isActive,
+      status: isActive ? "active" : "inactive",
+      disabledAt: isActive ? null : disabledAt || Date.now(),
+      disabledBy: isActive ? null : disabledBy || null,
+      disabledReason: isActive ? null : disabledReason || null,
+    });
+  }
+
+  async updateUserRole(payload: {
+    userId: string;
+    role: UserRole;
+    schoolId?: string | null;
+    roleUpdatedAt?: number | null;
+    roleUpdatedBy?: string | null;
+  }): Promise<void> {
+    const { userId, role, schoolId, roleUpdatedAt, roleUpdatedBy } = payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      role,
+      ...(schoolId !== undefined ? { schoolId } : {}),
+      roleUpdatedAt: roleUpdatedAt || Date.now(),
+      roleUpdatedBy: roleUpdatedBy || null,
+    });
+  }
+
+  async forceLogoutUser(payload: {
+    userId: string;
+    tokenVersion?: number;
+    forcedLogoutAt?: number | null;
+    forcedLogoutBy?: string | null;
+  }): Promise<void> {
+    const { userId, tokenVersion, forcedLogoutAt, forcedLogoutBy } = payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      tokenVersion: (tokenVersion ?? 0) + 1,
+      forcedLogoutAt: forcedLogoutAt || Date.now(),
+      forcedLogoutBy: forcedLogoutBy || null,
+    });
   }
 
   async addUser(user: User): Promise<void> {
@@ -459,6 +522,47 @@ class FirestoreService {
 
   async deleteNotice(id: string): Promise<void> {
     await deleteDoc(doc(firestore, "notices", id));
+  }
+
+  // --- Platform Broadcasts ---
+  async getPlatformBroadcasts(schoolId?: string): Promise<PlatformBroadcast[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getPlatformBroadcasts",
+    );
+    const q = query(
+      collection(firestore, "platformBroadcasts"),
+      orderBy("createdAt", "desc"),
+    );
+    const snap = await getDocs(q);
+    const now = Date.now();
+    return snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as PlatformBroadcast) }))
+      .filter((b) => {
+        const publishAt = b.publishAt
+          ? b.publishAt instanceof Date
+            ? b.publishAt.getTime()
+            : typeof (b.publishAt as any)?.toDate === "function"
+              ? (b.publishAt as any).toDate().getTime()
+              : new Date(b.publishAt as any).getTime()
+          : null;
+        const expiresAt = b.expiresAt
+          ? b.expiresAt instanceof Date
+            ? b.expiresAt.getTime()
+            : typeof (b.expiresAt as any)?.toDate === "function"
+              ? (b.expiresAt as any).toDate().getTime()
+              : new Date(b.expiresAt as any).getTime()
+          : null;
+        const matchesTarget =
+          b.targetType === "ALL" ||
+          (b.targetType === "SCHOOLS" &&
+            (b.targetSchoolIds || []).includes(scopedSchoolId));
+        const isPublished =
+          b.status === "PUBLISHED" || b.status === "SCHEDULED";
+        const isLive = !publishAt || publishAt <= now;
+        const isActive = !expiresAt || expiresAt > now;
+        return matchesTarget && isPublished && isLive && isActive;
+      });
   }
 
   // --- Student Remarks ---

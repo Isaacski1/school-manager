@@ -8,8 +8,15 @@ import React, {
 import { User, UserRole } from "../types";
 import { auth, firestore } from "../services/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 import { loadUserProfile } from "../services/authProfile";
+import { safeLogAnalyticsEvent } from "../services/analytics";
 
 interface AuthContextType {
   user: User | null;
@@ -46,6 +53,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         try {
           const userProfile = await loadUserProfile(firebaseUser);
           setUser(userProfile);
+
+          try {
+            await updateDoc(doc(firestore, "users", firebaseUser.uid), {
+              lastLoginAt: serverTimestamp(),
+            });
+            await safeLogAnalyticsEvent({
+              schoolId: userProfile.schoolId || null,
+              actionType: "USER_LOGIN",
+              userRole: userProfile.role || null,
+              userId: userProfile.id || firebaseUser.uid,
+            });
+          } catch (updateError) {
+            console.warn("Failed to update last login timestamp", updateError);
+          }
         } catch (err: any) {
           console.error("Error fetching user profile:", err);
           setUser(null);

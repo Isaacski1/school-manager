@@ -167,6 +167,18 @@ const ManageStudents = () => {
     e.preventDefault();
     if (!formData.name || !formData.classId) return;
 
+    if (!editingId) {
+      const limit = Number(school?.limits?.maxStudents || 0);
+      const used = Number(school?.studentsCount ?? students.length);
+      if (limit > 0 && used >= limit) {
+        showToast(
+          "Student limit reached for your plan. Upgrade to add more students.",
+          { type: "error" },
+        );
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       if (editingId) {

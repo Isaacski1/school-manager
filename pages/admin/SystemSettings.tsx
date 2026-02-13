@@ -94,6 +94,8 @@ const SystemSettings = () => {
     headTeacherRemark: "",
     termEndDate: "",
     holidayDates: [],
+    gradingScale: { A: 80, B: 70, C: 60, D: 45 },
+    positionRule: "total",
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false); // New state
@@ -157,6 +159,8 @@ const SystemSettings = () => {
       schoolId,
       ...data,
       holidayDates: data.holidayDates || [],
+      gradingScale: data.gradingScale || { A: 80, B: 70, C: 60, D: 45 },
+      positionRule: data.positionRule || "total",
     }));
   };
 
@@ -449,7 +453,7 @@ const SystemSettings = () => {
           {/* Left Column */}
           <div className="space-y-8">
             {/* General Config */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-sky-100 rounded-2xl shadow-sm border border-slate-100 p-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
@@ -639,9 +643,110 @@ const SystemSettings = () => {
               </div>
             </div>
 
+            <div className="bg-indigo-100 rounded-2xl shadow-sm border border-slate-100 p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">
+                    Grading & Remark Settings
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Configure grade thresholds, positions, and default remarks.
+                  </p>
+                </div>
+                <button
+                  onClick={handleSaveConfig}
+                  disabled={savingConfig}
+                  className="flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-full transition-colors"
+                >
+                  <Save size={14} className="mr-1" />{" "}
+                  {savingConfig ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Default Head Teacher Remark
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={config.headTeacherRemark}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        headTeacherRemark: e.target.value,
+                      })
+                    }
+                    className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    placeholder="Default remark shown on report cards"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {(
+                    [
+                      { key: "A", label: "A (>=)" },
+                      { key: "B", label: "B (>=)" },
+                      { key: "C", label: "C (>=)" },
+                      { key: "D", label: "D (>=)" },
+                    ] as const
+                  ).map((item) => (
+                    <div key={item.key}>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        {item.label}
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={config.gradingScale?.[item.key] ?? ""}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            gradingScale: {
+                              A: config.gradingScale?.A ?? 80,
+                              B: config.gradingScale?.B ?? 70,
+                              C: config.gradingScale?.C ?? 60,
+                              D: config.gradingScale?.D ?? 45,
+                              [item.key]: Number(e.target.value || 0),
+                            },
+                          })
+                        }
+                        className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Position Rule
+                  </label>
+                  <select
+                    value={config.positionRule || "total"}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        positionRule: e.target
+                          .value as SchoolConfig["positionRule"],
+                      })
+                    }
+                    className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                  >
+                    <option value="total">Total score rank</option>
+                    <option value="average">Average score rank</option>
+                    <option value="subject">Subject-by-subject rank</option>
+                  </select>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Choose how positions are calculated on report cards.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Subject Management */}
             {/* Subject Management */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-emerald-100 rounded-2xl shadow-sm border border-slate-100 p-6">
               <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
                 <Book className="mr-2 text-[#0B4A82]" size={24} />
                 Manage Class Subjects
@@ -762,12 +867,12 @@ const SystemSettings = () => {
             </div>
 
             {/* Term Backup Section */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-              <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
-                <Save className="mr-2 text-purple-600" size={24} />
+            <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-6">
+              <h2 className="text-xl font-bold mb-6 text-white flex items-center">
+                <Save className="mr-2 text-amber-200" size={24} />
                 Term Data Backup
               </h2>
-              <p className="text-sm text-slate-600 mb-4">
+              <p className="text-sm text-slate-300 mb-4">
                 Create a full backup of the current term's academic records,
                 attendance, and student data. Backups can be viewed and restored
                 from the "Manage Backups" section.
@@ -793,14 +898,14 @@ const SystemSettings = () => {
                 to="/admin/backups"
                 className={`mt-4 inline-flex items-center text-sm font-medium ${
                   isTrialPlan
-                    ? "text-slate-400 pointer-events-none"
-                    : "text-[#1160A8] hover:text-[#0B4A82]"
+                    ? "text-slate-900 pointer-events-none"
+                    : "text-[#ffffff] hover:text-[#dedede]"
                 }`}
               >
                 <History size={16} className="mr-1" /> View Previous Backups
               </Link>
               {isTrialPlan && (
-                <p className="text-xs text-slate-500 mt-2">
+                <p className="text-xs text-slate-300 mt-2">
                   Backups are disabled during the trial period.
                 </p>
               )}
@@ -808,14 +913,14 @@ const SystemSettings = () => {
 
             {/* Secret Database Reset */}
             {showDangerZone && (
-              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6">
+              <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-6">
                 <div className="flex items-center mb-4">
-                  <Shield className="text-rose-600 mr-2" size={24} />
-                  <h2 className="text-xl font-bold text-rose-800">
+                  <Shield className="text-rose-200 mr-2" size={24} />
+                  <h2 className="text-xl font-bold text-rose-200">
                     Danger Zone: Database Reset
                   </h2>
                 </div>
-                <p className="text-rose-700 mb-4">
+                <p className="text-rose-200 mb-4">
                   This will reset term data (attendance, assessments, reports,
                   and term-specific records) for the selected term. It does not
                   delete school accounts or core setup, but the term data cannot
@@ -836,13 +941,13 @@ const SystemSettings = () => {
             <div className="text-center mt-4">
               <button
                 onClick={() => setShowDangerZone(!showDangerZone)}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:border-[#1160A8] hover:text-[#0B4A82] hover:shadow-md"
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200 shadow-sm transition-all hover:border-white/20 hover:text-white hover:shadow-md"
               >
                 <span
                   className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${
                     showDangerZone
-                      ? "bg-rose-100 text-rose-600"
-                      : "bg-[#E6F0FA] text-[#0B4A82]"
+                      ? "bg-rose-500/20 text-rose-200"
+                      : "bg-cyan-500/20 text-cyan-200"
                   }`}
                 >
                   {showDangerZone ? "—" : "+"}
@@ -853,18 +958,18 @@ const SystemSettings = () => {
           </div>
 
           {/* Right Column: Notices Management */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
-            <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
-              <Megaphone className="mr-2 text-emerald-600" size={24} />
+          <div className="bg-red-800 rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-white/10 p-6 flex flex-col h-full max-h-[720px]">
+            <h2 className="text-xl font-bold mb-6 text-white flex items-center">
+              <Megaphone className="mr-2 text-emerald-200" size={24} />
               School Notices
             </h2>
 
             <form
               onSubmit={handleAddNotice}
-              className="mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-200"
+              className="mb-6 bg-white/5 p-4 rounded-2xl border border-white/10"
             >
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
                   Date
                 </label>
                 <div className="relative">
@@ -879,7 +984,7 @@ const SystemSettings = () => {
                 </div>
               </div>
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
                   Notice Message
                 </label>
                 <textarea
@@ -893,7 +998,7 @@ const SystemSettings = () => {
               </div>
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                  <label className="flex items-center text-sm cursor-pointer">
+                  <label className="flex items-center text-sm cursor-pointer text-white">
                     <input
                       type="radio"
                       name="type"
@@ -903,7 +1008,7 @@ const SystemSettings = () => {
                     />
                     Info
                   </label>
-                  <label className="flex items-center text-sm cursor-pointer">
+                  <label className="flex items-center text-sm cursor-pointer text-white">
                     <input
                       type="radio"
                       name="type"
@@ -933,8 +1038,8 @@ const SystemSettings = () => {
               </div>
             </form>
 
-            <div className="flex-1 overflow-y-auto pr-1">
-              <h3 className="text-sm font-bold text-slate-500 uppercase mb-3">
+            <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+              <h3 className="text-sm font-bold text-slate-100 uppercase mb-3">
                 Active Notices
               </h3>
               <div className="space-y-3">
@@ -946,16 +1051,16 @@ const SystemSettings = () => {
                   notices.map((notice) => (
                     <div
                       key={notice.id}
-                      className="flex justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors"
+                      className="flex justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-900 transition-colors"
                     >
                       <div
                         className={`border-l-2 pl-3 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
                       >
-                        <p className="text-sm text-slate-800 font-medium">
+                        <p className="text-sm text-slate-100 font-medium">
                           {notice.message}
                         </p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {notice.date} â€¢{" "}
+                        <p className="text-xs text-slate-300 mt-1">
+                          {notice.date} &bull;{" "}
                           {notice.type === "urgent" ? "Urgent" : "General Info"}
                         </p>
                       </div>

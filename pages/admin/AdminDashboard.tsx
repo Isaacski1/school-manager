@@ -43,6 +43,7 @@ import {
   TeacherAttendanceRecord,
   SchoolConfig,
   UserRole,
+  PlatformBroadcast,
 } from "../../types";
 import {
   CLASSES_LIST,
@@ -153,6 +154,7 @@ const AdminDashboard = () => {
     }[],
   });
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [broadcasts, setBroadcasts] = useState<PlatformBroadcast[]>([]);
   const [recentStudents, setRecentStudents] = useState<Student[]>([]);
   const [dashboardStatsCache, setDashboardStatsCache] = useState<
     typeof stats | null
@@ -559,6 +561,7 @@ const AdminDashboard = () => {
           dashboardStats,
           students,
           fetchedNotices,
+          fetchedBroadcasts,
           config,
           teachers,
           teacherAttendanceData,
@@ -568,6 +571,7 @@ const AdminDashboard = () => {
           db.getDashboardStats(schoolId),
           db.getStudents(schoolId),
           db.getNotices(schoolId),
+          db.getPlatformBroadcasts(schoolId),
           db.getSchoolConfig(schoolId),
           db.getUsers(schoolId),
           db.getAllApprovedTeacherAttendance(schoolId, today),
@@ -1145,6 +1149,7 @@ const AdminDashboard = () => {
           );
         }
         setNotices(fetchedNotices);
+        setBroadcasts(fetchedBroadcasts);
         setRecentStudents(students.slice(-5).reverse());
         const combinedTeacherAttendance = [
           ...approvedAttendanceWithDetails,
@@ -3394,6 +3399,51 @@ const AdminDashboard = () => {
             </Link>
           </div>
           <div className="p-4 space-y-4 flex-1 overflow-y-auto max-h-[400px]">
+            {broadcasts.length > 0 && (
+              <div className="space-y-2">
+                {broadcasts.map((b) => (
+                  <div
+                    key={b.id}
+                    className={`rounded-xl border px-4 py-3 ${
+                      b.type === "MAINTENANCE"
+                        ? "border-red-200 bg-red-900/30"
+                        : b.type === "SYSTEM_UPDATE"
+                          ? "border-emerald-200 bg-emerald-900/20"
+                          : "border-slate-200 bg-slate-900/20"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-slate-100 text-sm">
+                        {b.title}
+                      </h4>
+                      <span className="text-[10px] font-semibold text-slate-300">
+                        {b.priority}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-200 mt-1 whitespace-pre-line">
+                      {b.message}
+                    </p>
+                    {b.type === "SYSTEM_UPDATE" && b.whatsNew?.length && (
+                      <ul className="list-disc pl-5 text-xs text-slate-200 mt-2 space-y-1">
+                        {b.whatsNew.map((item, idx) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {b.type === "MAINTENANCE" && (
+                      <p className="text-[11px] text-slate-300 mt-2">
+                        {b.maintenanceStart
+                          ? `Start: ${String(b.maintenanceStart)}`
+                          : ""}{" "}
+                        {b.maintenanceEnd
+                          ? `End: ${String(b.maintenanceEnd)}`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {notices.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 text-slate-400">
                 <Calendar size={40} className="mb-2 opacity-20" />

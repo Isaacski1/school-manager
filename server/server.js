@@ -135,6 +135,10 @@ async function authMiddleware(req, res, next) {
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     req.user = decodedToken;
+    req.userIp =
+      (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
+      req.socket?.remoteAddress ||
+      null;
     next();
   } catch (error) {
     console.error("Token verification error:", error.code, error.message);
@@ -313,6 +317,149 @@ const logActivity = async ({
   }
 };
 
+const DEFAULT_CLASS_SUBJECTS = {
+  c_n1: [
+    "Language & Literacy",
+    "Numeracy",
+    "Environmental Studies",
+    "Creative Arts",
+    "Physical Development",
+    "Social & Emotional Development",
+    "Rhymes, Songs & Storytelling",
+  ],
+  c_n2: [
+    "Language & Literacy",
+    "Numeracy",
+    "Environmental Studies",
+    "Creative Arts",
+    "Physical Development",
+    "Social & Emotional Development",
+    "Rhymes, Songs & Storytelling",
+  ],
+  c_kg1: [
+    "Literacy & Language",
+    "Numeracy",
+    "OWOP",
+    "Creative Art",
+    "Physical Education",
+  ],
+  c_kg2: [
+    "Literacy & Language",
+    "Numeracy",
+    "OWOP",
+    "Creative Art",
+    "Physical Education",
+  ],
+  c_p1: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_p2: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_p3: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_p4: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_p5: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_p6: [
+    "English Language",
+    "Mathematics",
+    "Science",
+    "ICT",
+    "Religious & Moral Education (RME)",
+    "Ghanaian Language",
+    "Our World Our People (OWOP)",
+    "Creative Arts",
+    "Physical Education",
+  ],
+  c_jhs1: [
+    "English Language",
+    "Mathematics",
+    "Integrated Science",
+    "Social Studies",
+    "Religious & Moral Education (RME)",
+    "ICT",
+    "French",
+    "Ghanaian Language",
+    "Creative Arts & Design",
+    "Physical Education",
+    "Career Technology",
+    "Computing / Coding",
+  ],
+  c_jhs2: [
+    "English Language",
+    "Mathematics",
+    "Integrated Science",
+    "Social Studies",
+    "Religious & Moral Education (RME)",
+    "ICT",
+    "French",
+    "Ghanaian Language",
+    "Creative Arts & Design",
+    "Physical Education",
+    "Career Technology",
+    "Computing / Coding",
+  ],
+  c_jhs3: [
+    "English Language",
+    "Mathematics",
+    "Integrated Science",
+    "Social Studies",
+    "Religious & Moral Education (RME)",
+    "ICT",
+    "French",
+    "Ghanaian Language",
+    "Creative Arts & Design",
+    "Physical Education",
+    "Career Technology",
+    "Computing / Coding",
+  ],
+};
+
 /**
  * Create School
  * POST /api/superadmin/create-school
@@ -327,7 +474,17 @@ app.post(
     console.log("Caller (super_admin):", req.user.email);
 
     try {
-      const { name, phone, address, logoUrl, plan } = req.body;
+      const {
+        name,
+        phone,
+        address,
+        logoUrl,
+        plan,
+        cloneFromTemplate,
+        templateType,
+        templateSchoolId,
+        planId,
+      } = req.body;
 
       if (!name || typeof name !== "string" || name.trim().length === 0) {
         return res.status(400).json({
@@ -382,11 +539,130 @@ app.post(
         status: "active",
         plan,
         planEndsAt: trialEndsAt,
+        subscription: planId ? { planId: String(planId) } : {},
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         createdBy: req.user.uid,
       };
 
       await schoolRef.set(schoolData);
+
+      const shouldClone = Boolean(cloneFromTemplate);
+      let clonedFrom = null;
+
+      if (shouldClone) {
+        const settingsRef = admin.firestore().collection("settings");
+        const classSubjectsRef = admin.firestore().collection("class_subjects");
+        const targetSettingsRef = settingsRef.doc(schoolId);
+
+        const existingSettings = await targetSettingsRef.get();
+        if (existingSettings.exists) {
+          return res.status(409).json({
+            error: "Settings already exist for this school; cloning skipped",
+          });
+        }
+
+        let sourceSettings = null;
+        let sourceLabel = null;
+
+        if (templateType === "school" && templateSchoolId) {
+          const sourceSettingsDoc = await settingsRef
+            .doc(String(templateSchoolId))
+            .get();
+          if (!sourceSettingsDoc.exists) {
+            return res
+              .status(404)
+              .json({ error: "Template school settings not found" });
+          }
+          sourceSettings = sourceSettingsDoc.data();
+          sourceLabel = String(templateSchoolId);
+        } else {
+          const systemTemplateDoc = await settingsRef.doc("default").get();
+          sourceSettings = systemTemplateDoc.exists
+            ? systemTemplateDoc.data()
+            : {
+                academicYear: "",
+                currentTerm: "Term 1",
+                schoolReopenDate: "",
+                vacationDate: "",
+                nextTermBegins: "",
+                termTransitionProcessed: false,
+                headTeacherRemark:
+                  "An outstanding performance. The school is proud of you.",
+                termEndDate: "",
+                holidayDates: [],
+                gradingScale: { A: 80, B: 70, C: 60, D: 45 },
+                positionRule: "total",
+              };
+          sourceLabel = "default";
+        }
+
+        const clonedSettings = {
+          ...(sourceSettings || {}),
+          schoolId,
+          schoolName: name.trim(),
+          address: address ? address.trim() : "",
+          phone: phone ? phone.trim() : "",
+          email: "",
+          logoUrl: logoUrl ? logoUrl.trim() : "",
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        await targetSettingsRef.set(clonedSettings, { merge: true });
+
+        if (templateType === "school" && templateSchoolId) {
+          const sourceSubjectsSnap = await classSubjectsRef
+            .where("schoolId", "==", String(templateSchoolId))
+            .get();
+          if (!sourceSubjectsSnap.empty) {
+            const batch = admin.firestore().batch();
+            sourceSubjectsSnap.docs.forEach((docSnap) => {
+              const data = docSnap.data() || {};
+              const classId = data.classId;
+              if (!classId) return;
+              batch.set(classSubjectsRef.doc(`${schoolId}_${classId}`), {
+                schoolId,
+                classId,
+                subjects: Array.isArray(data.subjects) ? data.subjects : [],
+              });
+            });
+            await batch.commit();
+          }
+        } else {
+          const batch = admin.firestore().batch();
+          Object.entries(DEFAULT_CLASS_SUBJECTS).forEach(
+            ([classId, subjects]) => {
+              batch.set(classSubjectsRef.doc(`${schoolId}_${classId}`), {
+                schoolId,
+                classId,
+                subjects,
+              });
+            },
+          );
+          await batch.commit();
+        }
+
+        clonedFrom = sourceLabel;
+      }
+
+      if (planId) {
+        const planDoc = await admin
+          .firestore()
+          .collection("plans")
+          .doc(String(planId))
+          .get();
+        if (!planDoc.exists) {
+          return res.status(400).json({ error: "Invalid planId" });
+        }
+        const planData = planDoc.data() || {};
+        const maxStudents = Number(planData.maxStudents || 0);
+        await schoolRef.set(
+          {
+            limits: { maxStudents },
+          },
+          { merge: true },
+        );
+      }
 
       await logActivity({
         eventType: "school_created",
@@ -394,20 +670,199 @@ app.post(
         actorUid: req.user.uid,
         actorRole: "super_admin",
         entityId: schoolId,
-        meta: { name: name.trim(), plan },
+        meta: {
+          name: name.trim(),
+          plan,
+          ...(clonedFrom ? { clonedFrom } : {}),
+        },
       });
+
+      if (clonedFrom) {
+        await logActivity({
+          eventType: "school_settings_cloned",
+          schoolId,
+          actorUid: req.user.uid,
+          actorRole: "super_admin",
+          entityId: schoolId,
+          meta: { templateId: clonedFrom },
+        });
+      }
 
       console.log(`School created successfully: ${schoolId}`);
       return res.json({
         success: true,
         schoolId,
         code: schoolCode,
+        ...(clonedFrom ? { clonedFrom } : {}),
         message: "School created successfully",
       });
     } catch (error) {
       console.error("Error creating school:", error.message);
       return res.status(500).json({
         error: error.message || "Failed to create school",
+      });
+    }
+  },
+);
+
+/**
+ * Log security login events
+ * POST /api/security/log-login
+ */
+app.post("/api/security/log-login", authLimiter, async (req, res) => {
+  try {
+    const { status, email, errorCode, userAgent } = req.body || {};
+    if (!status || !email) {
+      return res.status(400).json({ error: "status and email are required" });
+    }
+
+    let userDoc = null;
+    let userData = null;
+    let schoolData = null;
+
+    const userSnap = await admin
+      .firestore()
+      .collection("users")
+      .where("email", "==", String(email).toLowerCase())
+      .limit(1)
+      .get();
+    if (!userSnap.empty) {
+      userDoc = userSnap.docs[0];
+      userData = userDoc.data();
+      if (userData?.schoolId) {
+        const schoolDoc = await admin
+          .firestore()
+          .collection("schools")
+          .doc(String(userData.schoolId))
+          .get();
+        if (schoolDoc.exists) schoolData = schoolDoc.data();
+      }
+    }
+
+    const ipAddress =
+      (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
+      req.socket?.remoteAddress ||
+      null;
+
+    const logRef = admin.firestore().collection("securityLoginLogs").doc();
+    await logRef.set({
+      userId: userDoc?.id || null,
+      name: userData?.fullName || null,
+      email: String(email).toLowerCase(),
+      role: userData?.role || null,
+      schoolId: userData?.schoolId || null,
+      schoolName: schoolData?.name || null,
+      timestamp: Date.now(),
+      userAgent: userAgent || req.headers["user-agent"] || null,
+      ipAddress,
+      status,
+      errorCode: errorCode || null,
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Failed to log login event", error);
+    return res.status(500).json({ error: "Failed to log login event" });
+  }
+});
+
+/**
+ * Create or update a plan
+ * POST /api/superadmin/upsert-plan
+ */
+app.post(
+  "/api/superadmin/upsert-plan",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { id, name, maxStudents } = req.body || {};
+      if (!id || !name || typeof maxStudents !== "number") {
+        return res
+          .status(400)
+          .json({ error: "id, name, and maxStudents are required" });
+      }
+
+      await admin
+        .firestore()
+        .collection("plans")
+        .doc(String(id))
+        .set(
+          {
+            name: String(name).trim(),
+            maxStudents: Number(maxStudents),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+      return res.json({
+        success: true,
+        id: String(id),
+        message: "Plan saved successfully",
+      });
+    } catch (error) {
+      console.error("Error saving plan:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to save plan",
+      });
+    }
+  },
+);
+
+/**
+ * Update school plan assignment
+ * POST /api/superadmin/update-school-plan
+ */
+app.post(
+  "/api/superadmin/update-school-plan",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { schoolId, planId } = req.body || {};
+      if (!schoolId || !planId) {
+        return res
+          .status(400)
+          .json({ error: "schoolId and planId are required" });
+      }
+
+      const planDoc = await admin
+        .firestore()
+        .collection("plans")
+        .doc(String(planId))
+        .get();
+
+      if (!planDoc.exists) {
+        return res.status(400).json({ error: "Invalid planId" });
+      }
+
+      const planData = planDoc.data() || {};
+      const maxStudents = Number(planData.maxStudents || 0);
+
+      await admin
+        .firestore()
+        .collection("schools")
+        .doc(String(schoolId))
+        .set(
+          {
+            subscription: { planId: String(planId) },
+            limits: { maxStudents },
+          },
+          { merge: true },
+        );
+
+      return res.json({
+        success: true,
+        message: "School plan updated successfully",
+      });
+    } catch (error) {
+      console.error("Error updating school plan:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to update school plan",
       });
     }
   },
@@ -1336,6 +1791,92 @@ app.post(
       console.error("Error resetting admin password:", error.message);
       return res.status(500).json({
         error: error.message || "Failed to reset admin password",
+      });
+    }
+  },
+);
+
+/**
+ * Update School Admin Email
+ * POST /api/superadmin/update-school-admin-email
+ */
+app.post(
+  "/api/superadmin/update-school-admin-email",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    console.log("Received POST /api/superadmin/update-school-admin-email");
+    console.log("Caller (super_admin):", req.user.email);
+
+    try {
+      const { adminUid, newEmail, fullName } = req.body;
+
+      if (!adminUid || !newEmail) {
+        return res
+          .status(400)
+          .json({ error: "adminUid and newEmail are required" });
+      }
+
+      const trimmedEmail = String(newEmail).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        return res.status(400).json({ error: "Invalid email address" });
+      }
+
+      const userRecord = await admin.auth().getUser(adminUid);
+
+      if (!userRecord) {
+        return res.status(404).json({ error: "Admin user not found" });
+      }
+
+      if (userRecord.email && userRecord.email !== trimmedEmail) {
+        try {
+          const existing = await admin.auth().getUserByEmail(trimmedEmail);
+          if (existing.uid !== adminUid) {
+            return res
+              .status(400)
+              .json({ error: "A user with this email already exists" });
+          }
+        } catch (error) {
+          if (error.code !== "auth/user-not-found") {
+            throw error;
+          }
+        }
+      }
+
+      await admin.auth().updateUser(adminUid, {
+        email: trimmedEmail,
+        ...(fullName ? { displayName: String(fullName).trim() } : {}),
+      });
+
+      const userDocRef = admin.firestore().collection("users").doc(adminUid);
+      await userDocRef.set(
+        {
+          email: trimmedEmail,
+          ...(fullName ? { fullName: String(fullName).trim() } : {}),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      await logActivity({
+        eventType: "school_admin_email_updated",
+        schoolId: null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: adminUid,
+        meta: { email: trimmedEmail },
+      });
+
+      return res.json({
+        success: true,
+        email: trimmedEmail,
+        message: "Admin email updated successfully",
+      });
+    } catch (error) {
+      console.error("Error updating admin email:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to update admin email",
       });
     }
   },

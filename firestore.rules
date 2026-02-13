@@ -38,6 +38,14 @@ service cloud.firestore {
         get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active';
     }
 
+    function maxStudentsForSchool(schoolId) {
+      return get(/databases/$(database)/documents/schools/$(schoolId)).data.limits.maxStudents;
+    }
+
+    function studentsCountForSchool(schoolId) {
+      return get(/databases/$(database)/documents/schools/$(schoolId)).data.studentsCount;
+    }
+
     // Users collection - STRICT security
     match /users/{userId} {
       // Super admin can create/delete any user and change role/schoolId
@@ -115,6 +123,9 @@ service cloud.firestore {
     // Students collection
     match /students/{studentId} {
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        (maxStudentsForSchool(request.resource.data.schoolId) == null ||
+         studentsCountForSchool(request.resource.data.schoolId) <
+           maxStudentsForSchool(request.resource.data.schoolId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -504,6 +515,43 @@ service cloud.firestore {
 
       // Updates/deletes: only super_admin
       allow update, delete: if isSuperAdmin();
+    }
+
+    // Platform-wide broadcasts
+    match /platformBroadcasts/{broadcastId} {
+      allow create, update, delete: if isSuperAdmin();
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (
+          request.auth != null &&
+          (
+            resource.data.targetType == 'ALL' ||
+            (resource.data.targetType == 'SCHOOLS' &&
+              resource.data.targetSchoolIds.hasAny([userSchoolId()]))
+          )
+        )
+      );
+    }
+
+    // Security login logs (super admin only)
+    match /securityLoginLogs/{logId} {
+      allow create: if isSuperAdmin();
+      allow read, update, delete: if isSuperAdmin();
+    }
+
+    // Suspicious events (super admin only)
+    match /suspiciousEvents/{eventId} {
+      allow create, read, update, delete: if isSuperAdmin();
+    }
+
+    // Audit logs (super admin only)
+    match /auditLogs/{logId} {
+      allow create, read, update, delete: if isSuperAdmin();
+    }
+
+    // Platform security settings (super admin only)
+    match /platformSecuritySettings/{docId} {
+      allow create, read, update, delete: if isSuperAdmin();
     }
 
     // Default deny

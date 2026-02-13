@@ -75,11 +75,17 @@ export const jhsSubjects = [
   "Computing / Coding",
 ];
 
-export const calculateGrade = (total: number): ComputedGrade => {
-  if (total >= 80) return { total, grade: "A", remark: "Excellent" };
-  if (total >= 70) return { total, grade: "B", remark: "Very Good" };
-  if (total >= 60) return { total, grade: "C", remark: "Good" };
-  if (total >= 45) return { total, grade: "D", remark: "Pass" };
+export const calculateGrade = (
+  total: number,
+  scale?: { A: number; B: number; C: number; D: number },
+): ComputedGrade => {
+  const gradingScale = scale || { A: 80, B: 70, C: 60, D: 45 };
+  if (total >= gradingScale.A)
+    return { total, grade: "A", remark: "Excellent" };
+  if (total >= gradingScale.B)
+    return { total, grade: "B", remark: "Very Good" };
+  if (total >= gradingScale.C) return { total, grade: "C", remark: "Good" };
+  if (total >= gradingScale.D) return { total, grade: "D", remark: "Pass" };
   return { total, grade: "F", remark: "Fail" };
 };
 

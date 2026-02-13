@@ -13,6 +13,7 @@ import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
 import {
   Notice,
+  PlatformBroadcast,
   TimeSlot,
   ClassTimetable,
   TeacherAttendanceRecord,
@@ -136,6 +137,7 @@ const TeacherDashboard = () => {
     .join(", ");
 
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [broadcasts, setBroadcasts] = useState<PlatformBroadcast[]>([]);
 
   // Teacher Attendance State
   const [teacherAttendance, setTeacherAttendance] =
@@ -648,8 +650,10 @@ const TeacherDashboard = () => {
 
       // Notices
       const noticeData = await db.getNotices(schoolId);
+      const broadcastData = await db.getPlatformBroadcasts(schoolId);
       if (!isMounted) return;
       setNotices(noticeData);
+      setBroadcasts(broadcastData);
 
       // Teacher Attendance
       const today = getLocalDateString();
@@ -1432,6 +1436,51 @@ const TeacherDashboard = () => {
               <Bell className="w-5 h-5 mr-2 text-[#1160A8]" /> Notice Board
             </h3>
             <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
+              {broadcasts.length > 0 && (
+                <div className="space-y-2">
+                  {broadcasts.map((b) => (
+                    <div
+                      key={b.id}
+                      className={`rounded-xl border px-4 py-3 ${
+                        b.type === "MAINTENANCE"
+                          ? "border-red-200 bg-red-50"
+                          : b.type === "SYSTEM_UPDATE"
+                            ? "border-emerald-200 bg-emerald-50"
+                            : "border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-800 text-sm">
+                          {b.title}
+                        </h4>
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          {b.priority}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">
+                        {b.message}
+                      </p>
+                      {b.type === "SYSTEM_UPDATE" && b.whatsNew?.length && (
+                        <ul className="list-disc pl-5 text-xs text-slate-600 mt-2 space-y-1">
+                          {b.whatsNew.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {b.type === "MAINTENANCE" && (
+                        <p className="text-[11px] text-slate-500 mt-2">
+                          {b.maintenanceStart
+                            ? `Start: ${String(b.maintenanceStart)}`
+                            : ""}{" "}
+                          {b.maintenanceEnd
+                            ? `End: ${String(b.maintenanceEnd)}`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               {notices.length === 0 ? (
                 <div className="text-center py-6 text-slate-400 italic text-sm">
                   No announcements at this time.

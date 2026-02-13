@@ -37,6 +37,8 @@ import {
   CreditCard,
   Wallet,
   Lock,
+  BarChart3,
+  Megaphone,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -391,6 +393,37 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 href="/super-admin/schools"
                 icon={GraduationCap}
                 label="Schools"
+              />
+              <NavItem href="/super-admin/users" icon={Users} label="Users" />
+              <NavItem
+                href="/super-admin/broadcasts"
+                icon={Megaphone}
+                label="Broadcasts"
+              />
+              <NavItem
+                href="/super-admin/security/login-history"
+                icon={Lock}
+                label="Login History"
+              />
+              <NavItem
+                href="/super-admin/security/suspicious"
+                icon={Shield}
+                label="Suspicious Events"
+              />
+              <NavItem
+                href="/super-admin/security/audit-logs"
+                icon={FileText}
+                label="Audit Logs"
+              />
+              <NavItem
+                href="/super-admin/security/settings"
+                icon={Settings}
+                label="Security Settings"
+              />
+              <NavItem
+                href="/super-admin/analytics"
+                icon={BarChart3}
+                label="Analytics"
               />
               <NavItem
                 href="/super-admin/backups"
