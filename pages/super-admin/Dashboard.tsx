@@ -1566,11 +1566,11 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full lg:w-auto">
+            <div className="flex items-center gap-2">
               <select
                 value={activityFilter}
                 onChange={(e) => setActivityFilter(e.target.value)}
-                className="w-full sm:w-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
               >
                 <option value="">All events</option>
                 <option value="school_created">School created</option>
@@ -1599,7 +1599,7 @@ const Dashboard: React.FC = () => {
               </select>
               <button
                 onClick={loadData}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 <RefreshCw size={14} />
                 Refresh
@@ -1974,7 +1974,7 @@ const Dashboard: React.FC = () => {
                 Live today per school
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
               {schools.map((school) => {
                 const status = dailyChecklist.perSchool[school.id] || {
                   attendance: false,
@@ -2002,24 +2002,22 @@ const Dashboard: React.FC = () => {
                     key={school.id}
                     className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow"
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="flex items-center justify-between">
+                      <div>
                         <p className="text-sm text-slate-500">School</p>
-                        <p className="text-lg font-semibold text-slate-900 truncate">
+                        <p className="text-lg font-semibold text-slate-900">
                           {school.name}
                         </p>
-                        <p className="text-xs text-slate-400 truncate">
-                          {school.code}
-                        </p>
+                        <p className="text-xs text-slate-400">{school.code}</p>
                       </div>
-                      <div className="text-left sm:text-right">
+                      <div className="text-right">
                         <p className="text-xs text-slate-500">Completion</p>
                         <p className="text-lg font-bold text-emerald-600">
                           {completedCount}/{activityItems.length}
                         </p>
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
                       {activityItems.map((item) => (
                         <div
                           key={item.label}

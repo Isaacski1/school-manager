@@ -15,7 +15,6 @@ import { db } from "../services/mockDb";
 import { firestore } from "../services/firebase";
 import { UserRole, SystemNotification } from "../types";
 import Toast from "./Toast";
-import InstallPrompt from "./InstallPrompt";
 
 import {
   LogOut,
@@ -40,7 +39,7 @@ import {
   Lock,
   BarChart3,
   Megaphone,
-  Archive,
+  History,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -324,7 +323,6 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
   return (
     <div className="h-screen bg-[#fafafa] flex">
-      <InstallPrompt />
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div
@@ -457,7 +455,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   />
                   <NavItem
                     href="/admin/student-history"
-                    icon={Archive}
+                    icon={History}
                     label="Student History"
                   />
                   <NavItem
@@ -490,6 +488,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                     icon={CalendarDays}
                     label="Timetable"
                   />
+                  <NavItem
+                    href="/admin/settings"
+                    icon={Settings}
+                    label="Settings"
+                  />
                   {!isFreePlan && (
                     <NavItem
                       href="/admin/billing"
@@ -497,11 +500,6 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                       label="Billing"
                     />
                   )}
-                  <NavItem
-                    href="/admin/settings"
-                    icon={Settings}
-                    label="Settings"
-                  />
                 </>
               )}
             </>

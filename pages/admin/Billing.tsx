@@ -103,13 +103,6 @@ const Billing: React.FC = () => {
     return Math.round(rawAmount * (1 - discountRate));
   }, [billingStatus.plan]);
 
-  const discountPercent = useMemo(() => {
-    const plan = billingStatus.plan || "monthly";
-    if (plan === "termly") return 20;
-    if (plan === "yearly") return 30;
-    return 0;
-  }, [billingStatus.plan]);
-
   useEffect(() => {
     if (isFreePlan) return;
     setAmount(String(expectedAmount));
@@ -345,12 +338,6 @@ const Billing: React.FC = () => {
                   readOnly
                   className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50 text-slate-700"
                 />
-                {discountPercent > 0 && (
-                  <p className="mt-2 text-xs text-emerald-700">
-                    You have gotten a discount of {discountPercent}% on your{" "}
-                    {billingStatus.plan} plan.
-                  </p>
-                )}
               </div>
               <div className="flex items-end">
                 <button

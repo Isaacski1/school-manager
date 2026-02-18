@@ -15,8 +15,8 @@ import { UserRole } from "./types";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ManageStudents from "./pages/admin/ManageStudents";
-import StudentHistory from "./pages/admin/StudentHistory";
 import ManageTeachers from "./pages/admin/ManageTeachers";
+import StudentHistory from "./pages/admin/StudentHistory";
 import AttendanceStats from "./pages/admin/AttendanceStats";
 import TeacherAttendanceStats from "./pages/admin/TeacherAttendanceStats";
 import Reports from "./pages/admin/Reports";
@@ -44,6 +44,7 @@ import SuspiciousEvents from "./pages/super-admin/security/SuspiciousEvents";
 import AuditLogs from "./pages/super-admin/security/AuditLogs";
 import SecuritySettings from "./pages/super-admin/security/SecuritySettings";
 import Layout from "./components/Layout";
+import SplashScreen from "./components/SplashScreen";
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
@@ -78,16 +79,9 @@ const AppContent = () => {
     };
   };
 
-  // Show loading spinner while auth is initializing
+  // Show splash screen while auth is initializing
   if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0B4A82] mb-4"></div>
-          <p className="text-slate-600">Authenticating...</p>
-        </div>
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   // Show account not provisioned error
@@ -195,16 +189,9 @@ const ProtectedRoute = ({
 }) => {
   const { user, isAuthenticated, authLoading } = useAuth();
 
-  // Show loading while auth is being determined
+  // Show splash screen while auth is being determined
   if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0B4A82] mb-4"></div>
-          <p className="text-slate-600">Authenticating...</p>
-        </div>
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   if (!isAuthenticated) {

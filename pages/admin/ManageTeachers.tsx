@@ -372,24 +372,24 @@ const ManageTeachers = () => {
                         {isMissingSchoolId ? (
                           <div className="flex items-center gap-2">
                             <AlertCircle size={16} className="text-red-600" />
-                            <span className="text-red-700 font-semibold text-xs whitespace-nowrap">
+                            <span className="text-red-700 font-semibold text-xs">
                               Missing schoolId
                             </span>
                           </div>
                         ) : (
-                          <span className="text-emerald-700 text-xs font-medium whitespace-nowrap">
+                          <span className="text-emerald-700 text-xs font-medium">
                             ✓ Complete
                           </span>
                         )}
                       </td>
 
                       <td className="px-6 py-3">
-                        <div className="flex flex-wrap gap-1 justify-center sm:justify-start">
+                        <div className="flex flex-wrap gap-1">
                           {classNames.length > 0 ? (
                             classNames.map((name) => (
                               <span
                                 key={name}
-                                className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap"
+                                className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
                               >
                                 {name}
                               </span>

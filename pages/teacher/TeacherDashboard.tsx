@@ -208,6 +208,8 @@ const TeacherDashboard = () => {
     { day: string; percentage: number; status?: string }[]
   >([]);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [totalSchoolDays, setTotalSchoolDays] = useState(0);
+  const [totalSchoolWeeks, setTotalSchoolWeeks] = useState(0);
 
   // Class Overview State
   const [totalStudents, setTotalStudents] = useState(0);
@@ -566,6 +568,34 @@ const TeacherDashboard = () => {
             todayMs >= nextTermBeginsMs! &&
             !config.schoolReopenDate;
           setAttendanceLocked(shouldLockAttendance);
+
+          const countWeekdays = (startDate: string, endDate: string) => {
+            const start = new Date(startDate + "T00:00:00");
+            const end = new Date(endDate + "T00:00:00");
+            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+              return 0;
+            }
+            if (start > end) return 0;
+            let count = 0;
+            const current = new Date(start);
+            while (current <= end) {
+              const dayOfWeek = current.getDay();
+              if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                count++;
+              }
+              current.setDate(current.getDate() + 1);
+            }
+            return count;
+          };
+
+          const safeStart = config.schoolReopenDate || getLocalDateString();
+          const safeEnd = config.vacationDate || getLocalDateString();
+          const totalPossibleDays = countWeekdays(safeStart, safeEnd);
+          const holidayCount = (config.holidayDates || []).length;
+          const totalDays = Math.max(0, totalPossibleDays - holidayCount);
+          const totalWeeks = Math.max(0, Math.ceil(totalDays / 5));
+          setTotalSchoolDays(totalDays);
+          setTotalSchoolWeeks(totalWeeks);
 
           console.log("--- Vacation Overlay Debug ---");
           console.log(
@@ -950,6 +980,24 @@ const TeacherDashboard = () => {
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center">
+          <div className="flex flex-wrap gap-2">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Total School Days
+              </p>
+              <p className="text-lg font-bold text-slate-800">
+                {totalSchoolDays || "—"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Total Weeks
+              </p>
+              <p className="text-lg font-bold text-slate-800">
+                {totalSchoolWeeks || "—"}
+              </p>
+            </div>
+          </div>
           {/* Class Context Switcher */}
           {assignedClassIds.length > 1 && (
             <div className="flex items-center bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm">

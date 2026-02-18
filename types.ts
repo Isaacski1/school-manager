@@ -216,6 +216,7 @@ export interface Student {
   classId: string;
   guardianName: string;
   guardianPhone: string;
+  studentStatus?: "graduated" | "stopped" | "active";
 }
 
 export interface AttendanceRecord {

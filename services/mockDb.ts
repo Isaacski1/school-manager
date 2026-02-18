@@ -269,131 +269,7 @@ class FirestoreService {
   }
 
   async deleteStudent(id: string): Promise<void> {
-    const studentRef = doc(firestore, "students", id);
-    const snap = await getDoc(studentRef);
-    if (snap.exists()) {
-      const student = snap.data() as Student;
-      const [assessments, remarks, skills, adminRemarks, attendanceRecords] =
-        await Promise.all([
-          this.getAllAssessments(student.schoolId),
-          this.getStudentRemarks(student.schoolId, student.classId),
-          this.getStudentSkills(student.schoolId, student.classId),
-          this.getAdminRemarksByStudent(student.schoolId, student.id),
-          this.getClassAttendance(student.schoolId, student.classId),
-        ]);
-
-      const studentAttendance = attendanceRecords.filter((record) =>
-        record.presentStudentIds.includes(student.id),
-      );
-      const attendanceTotal = attendanceRecords.filter(
-        (r) => !r.isHoliday,
-      ).length;
-      const attendancePresent = studentAttendance.length;
-      const attendancePercentage =
-        attendanceTotal === 0
-          ? 0
-          : Math.round((attendancePresent / attendanceTotal) * 100);
-
-      const archiveId = `${student.id}_${Date.now()}`;
-      await setDoc(doc(firestore, "students_archive", archiveId), {
-        ...student,
-        archivedAt: Date.now(),
-        archivedReason: "manual_delete",
-        archivedAssessments: assessments.filter(
-          (a) => a.studentId === student.id,
-        ),
-        archivedRemarks: remarks.filter((r) => r.studentId === student.id),
-        archivedSkills: skills.filter((s) => s.studentId === student.id),
-        archivedAdminRemarks: adminRemarks,
-        archivedAttendanceSummary: {
-          total: attendanceTotal,
-          present: attendancePresent,
-          percentage: attendancePercentage,
-        },
-      });
-    }
-    await deleteDoc(studentRef);
-  }
-
-  async deleteStudentsByClass(
-    schoolId: string | undefined,
-    classId: string,
-  ): Promise<number> {
-    const scopedSchoolId = this.requireSchoolId(
-      schoolId,
-      "deleteStudentsByClass",
-    );
-    const q = query(
-      collection(firestore, "students"),
-      where("schoolId", "==", scopedSchoolId),
-      where("classId", "==", classId),
-    );
-    const snap = await getDocs(q);
-    const students = snap.docs.map((d) => d.data() as Student);
-    if (students.length > 0) {
-      const [assessments, remarks, skills, attendanceRecords] =
-        await Promise.all([
-          this.getAllAssessments(scopedSchoolId),
-          this.getStudentRemarks(scopedSchoolId, classId),
-          this.getStudentSkills(scopedSchoolId, classId),
-          this.getClassAttendance(scopedSchoolId, classId),
-        ]);
-
-      const attendanceTotal = attendanceRecords.filter(
-        (r) => !r.isHoliday,
-      ).length;
-
-      const archiveWrites = await Promise.all(
-        students.map(async (student) => {
-          const studentAttendance = attendanceRecords.filter((record) =>
-            record.presentStudentIds.includes(student.id),
-          );
-          const attendancePresent = studentAttendance.length;
-          const attendancePercentage =
-            attendanceTotal === 0
-              ? 0
-              : Math.round((attendancePresent / attendanceTotal) * 100);
-          const adminRemarks = await this.getAdminRemarksByStudent(
-            scopedSchoolId,
-            student.id,
-          );
-          const archiveId = `${student.id}_${Date.now()}`;
-          return setDoc(doc(firestore, "students_archive", archiveId), {
-            ...student,
-            archivedAt: Date.now(),
-            archivedReason: "class_reset",
-            archivedAssessments: assessments.filter(
-              (a) => a.studentId === student.id,
-            ),
-            archivedRemarks: remarks.filter((r) => r.studentId === student.id),
-            archivedSkills: skills.filter((s) => s.studentId === student.id),
-            archivedAdminRemarks: adminRemarks,
-            archivedAttendanceSummary: {
-              total: attendanceTotal,
-              present: attendancePresent,
-              percentage: attendancePercentage,
-            },
-          });
-        }),
-      );
-      await Promise.all(archiveWrites);
-    }
-
-    const deletions = snap.docs.map((d) =>
-      deleteDoc(doc(firestore, "students", d.id)),
-    );
-    await Promise.all(deletions);
-    return snap.size;
-  }
-
-  async getStudentHistory(schoolId?: string): Promise<any[]> {
-    const scopedSchoolId = this.requireSchoolId(schoolId, "getStudentHistory");
-    const q = query(
-      collection(firestore, "students_archive"),
-      where("schoolId", "==", scopedSchoolId),
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as any);
+    await deleteDoc(doc(firestore, "students", id));
   }
 
   // --- Subjects ---
@@ -585,6 +461,24 @@ class FirestoreService {
     return this.getCollectionBySchoolId<Assessment>("assessments", schoolId);
   }
 
+  async getStudentAssessmentsByStudent(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<Assessment[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentAssessmentsByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as Assessment);
+  }
+
   async saveAssessment(assessment: Assessment): Promise<void> {
     const scopedSchoolId = this.requireSchoolId(
       assessment.schoolId,
@@ -727,6 +621,24 @@ class FirestoreService {
     return snap.docs.map((d) => d.data() as StudentRemark);
   }
 
+  async getStudentRemarksByStudent(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<StudentRemark[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentRemarksByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "student_remarks"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as StudentRemark);
+  }
+
   async saveStudentRemark(remark: StudentRemark): Promise<void> {
     this.requireSchoolId(remark.schoolId, "saveStudentRemark");
     await setDoc(doc(firestore, "student_remarks", remark.id), remark);
@@ -743,6 +655,24 @@ class FirestoreService {
       collection(firestore, "student_skills"),
       where("schoolId", "==", scopedSchoolId),
       where("classId", "==", classId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as StudentSkills);
+  }
+
+  async getStudentSkillsByStudent(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<StudentSkills[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentSkillsByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "student_skills"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
     );
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as StudentSkills);
@@ -1261,24 +1191,6 @@ class FirestoreService {
   async saveAdminRemark(remark: AdminRemark): Promise<void> {
     this.requireSchoolId(remark.schoolId, "saveAdminRemark");
     await setDoc(doc(firestore, "admin_remarks", remark.id), remark);
-  }
-
-  async getAdminRemarksByStudent(
-    schoolId?: string,
-    studentId?: string,
-  ): Promise<AdminRemark[]> {
-    const scopedSchoolId = this.requireSchoolId(
-      schoolId,
-      "getAdminRemarksByStudent",
-    );
-    if (!studentId) return [];
-    const q = query(
-      collection(firestore, "admin_remarks"),
-      where("schoolId", "==", scopedSchoolId),
-      where("studentId", "==", studentId),
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as AdminRemark);
   }
 
   /**

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="School Manager GH">
+  <rect width="512" height="512" rx="96" fill="#0B4A82" />
+  <path
+    d="M96 208L256 112l160 96v32H96v-32z"
+    fill="#E6F0FA"
+  />
+  <path
+    d="M144 256h224v128H144z"
+    fill="#FFFFFF"
+  />
+  <path
+    d="M192 256v128M256 256v128M320 256v128"
+    stroke="#0B4A82"
+    stroke-width="16"
+  />
+  <rect x="112" y="384" width="288" height="32" rx="16" fill="#E6F0FA" />
+  <circle cx="256" cy="216" r="20" fill="#0B4A82" />
+</svg>

@@ -60,9 +60,6 @@ const ManageStudents = () => {
   const [promotionTermNumber, setPromotionTermNumber] = useState<1 | 2 | 3>(1);
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [selectedPromoteIds, setSelectedPromoteIds] = useState<string[]>([]);
-  const [showResetClassModal, setShowResetClassModal] = useState(false);
-  const [resetClassId, setResetClassId] = useState("c_jhs3");
-  const [isResettingClass, setIsResettingClass] = useState(false);
 
   const fetchData = async () => {
     if (!schoolId) {
@@ -152,11 +149,6 @@ const ManageStudents = () => {
       filterClass !== "all" ? filterClass : CLASSES_LIST[0]?.id || "c_p1";
     setPromotionClassId(initialClassId);
     setShowPromotionModal(true);
-  };
-
-  const handleOpenResetClass = () => {
-    setResetClassId(filterClass !== "all" ? filterClass : "c_jhs3");
-    setShowResetClassModal(true);
   };
 
   const handleEdit = async (student: Student) => {
@@ -276,29 +268,6 @@ const ManageStudents = () => {
     }
   };
 
-  const handleResetClass = async () => {
-    if (!schoolId) return;
-    setIsResettingClass(true);
-    try {
-      const deletedCount = await db.deleteStudentsByClass(
-        schoolId,
-        resetClassId,
-      );
-      showToast(`Cleared ${deletedCount} students from the class.`, {
-        type: "success",
-      });
-      setShowResetClassModal(false);
-      await fetchData();
-    } catch (error) {
-      console.error("Reset class failed", error);
-      showToast("Failed to reset class. Please try again.", {
-        type: "error",
-      });
-    } finally {
-      setIsResettingClass(false);
-    }
-  };
-
   const promptDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleteId(id);
@@ -311,17 +280,26 @@ const ManageStudents = () => {
     // Close modal immediately
     setDeleteId(null);
 
-    // Optimistic update: remove from UI immediately
     const previousStudents = [...students];
+    const targetStudent = students.find((s) => s.id === idToDelete);
+    if (!targetStudent) return;
+
+    // Optimistic update: remove from UI immediately
     setStudents((prev) => prev.filter((s) => s.id !== idToDelete));
 
     try {
-      await db.deleteStudent(idToDelete);
+      await db.updateStudent({
+        ...targetStudent,
+        studentStatus: "stopped",
+      });
+      showToast("Student moved to Stopped School history.", {
+        type: "success",
+      });
     } catch (error) {
-      console.error("Delete failed", error);
+      console.error("Archive failed", error);
       // Revert state if DB fails
       setStudents(previousStudents);
-      showToast("Failed to delete student. Please try again.", {
+      showToast("Failed to update student. Please try again.", {
         type: "error",
       });
     }
@@ -571,13 +549,6 @@ const ManageStudents = () => {
               >
                 <ArrowUpRight size={16} />
                 Promote Students
-              </button>
-              <button
-                onClick={handleOpenResetClass}
-                className="flex items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-rose-700 px-5 py-2 text-sm font-semibold shadow-sm transition hover:scale-[1.01] hover:bg-rose-100"
-              >
-                <XCircle size={16} />
-                Reset Class
               </button>
               <button
                 onClick={handleOpenAdd}
@@ -1151,74 +1122,6 @@ const ManageStudents = () => {
                 </div>
               );
             })()}
-          </div>
-        </div>
-      )}
-
-      {/* Reset Class Modal */}
-      {showResetClassModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-            <div className="p-6 border-b border-slate-100">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Reset Class
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    This removes all student profiles from the selected class.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowResetClassModal(false)}
-                  className="text-slate-400 hover:text-slate-700 bg-white p-2 rounded-full shadow-sm"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Select Class to Reset
-                </label>
-                <select
-                  value={resetClassId}
-                  onChange={(e) => setResetClassId(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-rose-200"
-                >
-                  {CLASSES_LIST.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-3 text-xs text-rose-700">
-                This action only deletes student profiles for the class. Reports
-                and historical data remain untouched.
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 p-6 pt-0">
-              <button
-                type="button"
-                onClick={() => setShowResetClassModal(false)}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleResetClass}
-                disabled={isResettingClass}
-                className={`px-4 py-2 bg-rose-600 text-white rounded-lg font-medium shadow-sm transition-colors ${isResettingClass ? "opacity-60 cursor-not-allowed hover:bg-rose-600" : "hover:bg-rose-700"}`}
-              >
-                {isResettingClass ? "Resetting..." : "Reset Class"}
-              </button>
-            </div>
           </div>
         </div>
       )}

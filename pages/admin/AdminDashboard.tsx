@@ -227,6 +227,39 @@ const AdminDashboard = () => {
     Record<string, { id: string; name: string; class: string; avg: number }[]>
   >({ A: [], B: [], C: [], D: [], F: [] });
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
+  const [totalSchoolDays, setTotalSchoolDays] = useState<number>(0);
+  const [totalSchoolWeeks, setTotalSchoolWeeks] = useState<number>(0);
+  const countWeekdaysRange = useCallback(
+    (startDate?: string, endDate?: string) => {
+      if (!startDate || !endDate) return 0;
+      const start = new Date(startDate + "T00:00:00");
+      const end = new Date(endDate + "T00:00:00");
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()))
+        return 0;
+      if (start > end) return 0;
+      let count = 0;
+      const current = new Date(start);
+      while (current <= end) {
+        const day = current.getDay();
+        if (day !== 0 && day !== 6) count++;
+        current.setDate(current.getDate() + 1);
+      }
+      return count;
+    },
+    [],
+  );
+  const fallbackSchoolDays = useMemo(() => {
+    const reopen = schoolConfig.schoolReopenDate;
+    const end =
+      schoolConfig.vacationDate || new Date().toISOString().split("T")[0];
+    const total = countWeekdaysRange(reopen, end);
+    const holidays = schoolConfig.holidayDates?.length || 0;
+    const days = Math.max(0, total - holidays);
+    return {
+      days,
+      weeks: Math.max(0, Math.ceil(days / 5)),
+    };
+  }, [schoolConfig, countWeekdaysRange]);
 
   const vacationBanner = useMemo(() => {
     const vacationDate = parseLocalDate(schoolConfig.vacationDate || "");
@@ -916,6 +949,12 @@ const AdminDashboard = () => {
           0,
           totalPossibleDays - teacherHolidayDates.size,
         );
+        const computedWeeks = Math.max(
+          0,
+          Math.ceil(totalPossibleDaysWithoutHolidays / 5),
+        );
+        setTotalSchoolDays(totalPossibleDaysWithoutHolidays);
+        setTotalSchoolWeeks(computedWeeks);
 
         // Calculate term statistics for each teacher (only from school reopen date to vacation date)
         const teacherTermStats = teachers
@@ -1188,9 +1227,34 @@ const AdminDashboard = () => {
             (record.date === today || record.date === yesterdayStr),
         );
         setPendingTeacherAttendance(pendingTodayWithDetails);
+        const groupAlertsByTeacher = (alerts: any[]) => {
+          const grouped = new Map<string, any>();
+          alerts.forEach((alert) => {
+            if (!grouped.has(alert.teacherId)) {
+              grouped.set(alert.teacherId, {
+                teacherId: alert.teacherId,
+                teacherName: alert.teacherName,
+                classes: alert.classes,
+                className: alert.className,
+                dates: [alert.date],
+              });
+            } else {
+              const current = grouped.get(alert.teacherId);
+              current.dates.push(alert.date);
+            }
+          });
+
+          return Array.from(grouped.values()).map((alert) => ({
+            ...alert,
+            dates: Array.from(new Set(alert.dates)).sort(),
+          }));
+        };
+
         setTeacherTermStats(teacherTermStats);
-        setMissedAttendanceAlerts(missedAlerts);
-        setMissedStudentAttendanceAlerts(missedStudentAlerts);
+        setMissedAttendanceAlerts(groupAlertsByTeacher(missedAlerts));
+        setMissedStudentAttendanceAlerts(
+          groupAlertsByTeacher(missedStudentAlerts),
+        );
 
         setGradeDistribution(counts);
         setTopStudents(averagesList.slice(0, 5));
@@ -1205,8 +1269,9 @@ const AdminDashboard = () => {
             teacherAttendance: todayTeacherAttendance,
             pendingTeacherAttendance: pendingTodayWithDetails,
             teacherTermStats: teacherTermStats,
-            missedAttendanceAlerts: missedAlerts,
-            missedStudentAttendanceAlerts: missedStudentAlerts,
+            missedAttendanceAlerts: groupAlertsByTeacher(missedAlerts),
+            missedStudentAttendanceAlerts:
+              groupAlertsByTeacher(missedStudentAlerts),
             gradeDistribution: counts,
             topStudents: averagesList.slice(0, 5),
             gradeBuckets: buckets,
@@ -2782,8 +2847,26 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        {/* Term and Actions */}
+        {/* Term, School Days, and Actions */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+          <div className="flex flex-wrap gap-2">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Total School Days
+              </p>
+              <p className="text-lg font-bold text-slate-800">
+                {totalSchoolDays || fallbackSchoolDays.days}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Total Weeks
+              </p>
+              <p className="text-lg font-bold text-slate-800">
+                {totalSchoolWeeks || fallbackSchoolDays.weeks}
+              </p>
+            </div>
+          </div>
           <div className="text-left sm:text-right sm:mr-2 hidden sm:block">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
               Academic Period
@@ -3090,19 +3173,19 @@ const AdminDashboard = () => {
                 </h3>
                 <p className="text-red-700 text-sm">
                   {missedAttendanceAlerts.length} teacher
-                  {missedAttendanceAlerts.length !== 1 ? "s" : ""} have missed
-                  attendance recently.
+                  {missedAttendanceAlerts.length !== 1 ? "s" : ""} need to mark
+                  attendance for recent days.
                 </p>
               </div>
             </div>
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
               {missedAttendanceAlerts.map((alert: any) => (
                 <div
-                  key={`${alert.teacherId}-${alert.date}`}
+                  key={alert.teacherId}
                   className="bg-white p-4 rounded-lg border border-red-100 shadow-sm"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
                       <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
                         <span className="text-sm font-bold text-red-600">
                           {alert.teacherName.charAt(0)}
@@ -3115,18 +3198,28 @@ const AdminDashboard = () => {
                         <p className="text-sm text-slate-500">
                           {alert.classes}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {alert.dates.map((date: string) => (
+                            <span
+                              key={date}
+                              className="text-[11px] font-semibold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full"
+                            >
+                              {(() => {
+                                const parts = date.split("-");
+                                if (parts.length === 3) {
+                                  return `${parts[1]}/${parts[2]}/${parts[0]}`;
+                                }
+                                return date;
+                              })()}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium text-red-700">
-                        Missed:{" "}
-                        {(() => {
-                          const parts = alert.date.split("-");
-                          if (parts.length === 3) {
-                            return `${parts[1]}/${parts[2]}/${parts[0]}`;
-                          }
-                          return alert.date;
-                        })()}
+                        Missed: {alert.dates.length} day
+                        {alert.dates.length !== 1 ? "s" : ""}
                       </p>
                       <p className="text-xs text-slate-400">Please follow up</p>
                     </div>
@@ -3152,19 +3245,19 @@ const AdminDashboard = () => {
                 </h3>
                 <p className="text-blue-700 text-sm">
                   {missedStudentAttendanceAlerts.length} teacher
-                  {missedStudentAttendanceAlerts.length !== 1 ? "s" : ""} have
-                  not marked student attendance recently.
+                  {missedStudentAttendanceAlerts.length !== 1 ? "s" : ""} still
+                  need to mark student attendance.
                 </p>
               </div>
             </div>
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
               {missedStudentAttendanceAlerts.map((alert: any) => (
                 <div
-                  key={`${alert.teacherId}-${alert.date}`}
+                  key={alert.teacherId}
                   className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
                       <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                         <span className="text-sm font-bold text-blue-700">
                           {alert.teacherName.charAt(0)}
@@ -3177,18 +3270,28 @@ const AdminDashboard = () => {
                         <p className="text-sm text-slate-500">
                           {alert.className}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {alert.dates.map((date: string) => (
+                            <span
+                              key={date}
+                              className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full"
+                            >
+                              {(() => {
+                                const parts = date.split("-");
+                                if (parts.length === 3) {
+                                  return `${parts[1]}/${parts[2]}/${parts[0]}`;
+                                }
+                                return date;
+                              })()}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium text-blue-700">
-                        Missed for:{" "}
-                        {(() => {
-                          const parts = alert.date.split("-");
-                          if (parts.length === 3) {
-                            return `${parts[1]}/${parts[2]}/${parts[0]}`;
-                          }
-                          return alert.date;
-                        })()}
+                        Missed: {alert.dates.length} day
+                        {alert.dates.length !== 1 ? "s" : ""}
                       </p>
                       <p className="text-xs text-slate-400">
                         Action may be required
