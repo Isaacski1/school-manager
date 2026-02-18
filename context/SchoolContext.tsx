@@ -25,6 +25,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   const [school, setSchool] = useState<School | null>(null);
   const [schoolLoading, setSchoolLoading] = useState(false);
   const [schoolError, setSchoolError] = useState<string | null>(null);
+  const [cachedSchool, setCachedSchool] = useState<School | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,13 +49,14 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       setSchoolLoading(true);
 
       const cacheKey = `school_${user.schoolId}`;
-      const cachedSchool = localStorage.getItem(cacheKey);
+      const cached = localStorage.getItem(cacheKey);
 
-      if (cachedSchool) {
+      if (cached) {
         try {
-          const parsedSchool = JSON.parse(cachedSchool);
+          const parsedSchool = JSON.parse(cached);
           if (parsedSchool.status === "active") {
             if (!cancelled) setSchool(parsedSchool);
+            if (!cancelled) setCachedSchool(parsedSchool);
           }
         } catch {
           localStorage.removeItem(cacheKey);
@@ -91,6 +93,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
             localStorage.setItem(cacheKey, JSON.stringify(schoolData));
             if (!cancelled) setSchool(schoolData);
+            if (!cancelled) setCachedSchool(schoolData);
+            window.dispatchEvent(new Event("school-branding-updated"));
           },
           (error) => {
             console.error("Error loading school data:", error);
@@ -118,7 +122,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   return (
     <SchoolContext.Provider
       value={{
-        school,
+        school: school || cachedSchool,
         schoolLoading,
         schoolError,
       }}

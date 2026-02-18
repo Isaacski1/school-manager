@@ -45,10 +45,41 @@ import AuditLogs from "./pages/super-admin/security/AuditLogs";
 import SecuritySettings from "./pages/super-admin/security/SecuritySettings";
 import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
+import InstallPrompt from "./components/InstallPrompt";
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
   const { school, schoolLoading, schoolError } = useSchool();
+
+  const [brandingVersion, setBrandingVersion] = React.useState(0);
+
+  React.useEffect(() => {
+    const handleBrandingUpdate = () => setBrandingVersion((prev) => prev + 1);
+    window.addEventListener("school-branding-updated", handleBrandingUpdate);
+    return () =>
+      window.removeEventListener(
+        "school-branding-updated",
+        handleBrandingUpdate,
+      );
+  }, []);
+
+  const cachedSchool = React.useMemo(() => {
+    const resolvedSchoolId =
+      localStorage.getItem("activeSchoolId") ||
+      user?.schoolId ||
+      localStorage.getItem("lastSchoolId") ||
+      "";
+    if (!resolvedSchoolId) return null;
+    const cacheKey = `school_${resolvedSchoolId}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (!cached) return null;
+    try {
+      return JSON.parse(cached) as { name?: string; logoUrl?: string };
+    } catch {
+      localStorage.removeItem(cacheKey);
+      return null;
+    }
+  }, [user?.schoolId, brandingVersion]);
 
   const getSchoolErrorDetails = (message: string) => {
     const lower = message.toLowerCase();
@@ -81,7 +112,38 @@ const AppContent = () => {
 
   // Show splash screen while auth is initializing
   if (authLoading) {
-    return <SplashScreen />;
+    const hasSchoolBranding = Boolean(
+      localStorage.getItem("activeSchoolId") &&
+      (cachedSchool?.name || cachedSchool?.logoUrl),
+    );
+    return (
+      <SplashScreen
+        hideDefaultBranding={Boolean(
+          localStorage.getItem("activeSchoolId") || cachedSchool,
+        )}
+        schoolName={hasSchoolBranding ? cachedSchool?.name || "" : ""}
+        schoolLogoUrl={hasSchoolBranding ? cachedSchool?.logoUrl || "" : ""}
+      />
+    );
+  }
+
+  const isSchoolUser =
+    user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER;
+  const splashSchoolName = school?.name || cachedSchool?.name || "";
+  const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
+
+  if (
+    user &&
+    (isSchoolUser || cachedSchool) &&
+    (schoolLoading || (!school && !schoolError))
+  ) {
+    return (
+      <SplashScreen
+        hideDefaultBranding
+        schoolName={splashSchoolName}
+        schoolLogoUrl={splashSchoolLogo}
+      />
+    );
   }
 
   // Show account not provisioned error
@@ -163,6 +225,7 @@ const AppContent = () => {
 
   return (
     <ErrorBoundary>
+      <InstallPrompt />
       <AppRoutes />
     </ErrorBoundary>
   );

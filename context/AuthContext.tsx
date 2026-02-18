@@ -54,6 +54,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           const userProfile = await loadUserProfile(firebaseUser);
           setUser(userProfile);
 
+          if (userProfile.schoolId) {
+            localStorage.setItem("lastSchoolId", userProfile.schoolId);
+            localStorage.setItem("activeSchoolId", userProfile.schoolId);
+
+            try {
+              const schoolDoc = await getDoc(
+                doc(firestore, "schools", userProfile.schoolId),
+              );
+              if (schoolDoc.exists()) {
+                const schoolData = {
+                  id: schoolDoc.id,
+                  ...schoolDoc.data(),
+                };
+                localStorage.setItem(
+                  `school_${userProfile.schoolId}`,
+                  JSON.stringify(schoolData),
+                );
+                window.dispatchEvent(new Event("school-branding-updated"));
+              }
+            } catch (schoolError) {
+              console.warn("Failed to prefetch school branding", schoolError);
+            }
+          } else {
+            localStorage.removeItem("lastSchoolId");
+            localStorage.removeItem("activeSchoolId");
+          }
+
           try {
             await updateDoc(doc(firestore, "users", firebaseUser.uid), {
               lastLoginAt: serverTimestamp(),
@@ -128,6 +155,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       } else {
         setUser(null);
         setError(null);
+        localStorage.removeItem("activeSchoolId");
       }
 
       setAuthLoading(false);

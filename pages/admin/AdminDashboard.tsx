@@ -164,6 +164,7 @@ const AdminDashboard = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [heavyLoading, setHeavyLoading] = useState(false);
+  const skipSkeletonsOnRefreshRef = React.useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
@@ -180,7 +181,7 @@ const AdminDashboard = () => {
     useState<any[]>([]);
 
   // Real-time metrics
-  const [realTimeEnabled, setRealTimeEnabled] = useState(false);
+  const [realTimeEnabled, setRealTimeEnabled] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const pollRef = React.useRef<number | null>(null);
   const heavyRefreshTimerRef = React.useRef<number | null>(null);
@@ -197,8 +198,35 @@ const AdminDashboard = () => {
     null,
   );
 
-  const HEAVY_REFRESH_THROTTLE_MS = 8000;
-  const STATS_POLL_INTERVAL_MS = 30000;
+  const HEAVY_REFRESH_THROTTLE_MS = 2000;
+  const STATS_POLL_INTERVAL_MS = 10000;
+  const parseYmdDate = (value?: string) => {
+    if (!value) return null;
+    const parts = value.split("-");
+    if (parts.length !== 3) return null;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day);
+  };
+
+  const isPendingWithinReopenWindow = (
+    value?: string,
+    baseDate?: Date,
+    reopenDate?: string,
+  ) => {
+    const target = parseYmdDate(value || "");
+    if (!target) return false;
+    const base = baseDate ? new Date(baseDate) : new Date();
+    base.setHours(0, 0, 0, 0);
+    target.setHours(0, 0, 0, 0);
+    if (target > base) return false;
+    const reopen = parseYmdDate(reopenDate || "");
+    if (!reopen) return true;
+    reopen.setHours(0, 0, 0, 0);
+    return target >= reopen;
+  };
 
   // Configuration State
   const [schoolConfig, setSchoolConfig] = useState<Partial<SchoolConfig>>({
@@ -456,30 +484,25 @@ const AdminDashboard = () => {
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
-    if (cachedHeavy.attendanceDate && cachedHeavy.attendanceDate !== todayStr) {
-      localStorage.removeItem(heavyCacheKey);
-      setTeacherAttendance([]);
-      setPendingTeacherAttendance([]);
-      setTeacherTermStats([]);
-      return;
-    }
+    const isCacheStale =
+      cachedHeavy.attendanceDate && cachedHeavy.attendanceDate !== todayStr;
+    skipSkeletonsOnRefreshRef.current = true;
     setStats(cachedHeavy.stats);
     setDashboardStatsCache(cachedHeavy.stats);
     setNotices(cachedHeavy.notices);
     setRecentStudents(cachedHeavy.recentStudents);
-    const cachedTeacherAttendance = (
-      cachedHeavy.teacherAttendance || []
-    ).filter((record: any) => record.date === todayStr);
+    const cachedTeacherAttendance = isCacheStale
+      ? cachedHeavy.teacherAttendance || []
+      : (cachedHeavy.teacherAttendance || []).filter(
+          (record: any) => record.date === todayStr,
+        );
     const cachedPending = cachedHeavy.pendingTeacherAttendance || [];
     const filteredCachedPending = cachedPending.filter(
       (record: any) => record.approvalStatus === "pending",
     );
     const cachedApprovedToday = cachedTeacherAttendance;
     setTeacherAttendance(cachedApprovedToday);
-    const filteredCachedPendingNotToday = filteredCachedPending.filter(
-      (record: any) => record.date !== todayStr,
-    );
-    setPendingTeacherAttendance(filteredCachedPendingNotToday);
+    setPendingTeacherAttendance(filteredCachedPending);
     setTeacherTermStats(cachedHeavy.teacherTermStats);
     setMissedAttendanceAlerts(cachedHeavy.missedAttendanceAlerts);
     setMissedStudentAttendanceAlerts(cachedHeavy.missedStudentAttendanceAlerts);
@@ -1218,13 +1241,14 @@ const AdminDashboard = () => {
           [],
         );
         setTeacherAttendance(todayTeacherAttendance);
-        const yesterdayDate = new Date(localToday);
-        yesterdayDate.setDate(localToday.getDate() - 1);
-        const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getDate()).padStart(2, "0")}`;
         const pendingTodayWithDetails = pendingAttendanceWithDetails.filter(
           (record) =>
             record.approvalStatus === "pending" &&
-            (record.date === today || record.date === yesterdayStr),
+            isPendingWithinReopenWindow(
+              record.date,
+              localToday,
+              config.schoolReopenDate,
+            ),
         );
         setPendingTeacherAttendance(pendingTodayWithDetails);
         const groupAlertsByTeacher = (alerts: any[]) => {
@@ -1536,6 +1560,67 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchPendingTeacherAttendance = useCallback(async () => {
+    if (!schoolId) return;
+    try {
+      const localToday = new Date();
+      const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
+      const [pendingTeacherAttendance, teachers, config] = await Promise.all([
+        db.getAllPendingTeacherAttendance(schoolId),
+        db.getUsers(schoolId),
+        db.getSchoolConfig(schoolId),
+      ]);
+
+      const pendingAttendanceWithDetails = pendingTeacherAttendance.map(
+        (record) => {
+          const teacher = teachers.find((t: any) => t.id === record.teacherId);
+          const resolvedId =
+            record.id ||
+            `${record.schoolId || schoolId || "unknown"}_${record.teacherId || "unknown"}_${record.date || ""}`;
+          return {
+            ...record,
+            id: resolvedId,
+            teacherName: teacher?.fullName || "Unknown",
+            teacherClasses:
+              teacher?.assignedClassIds
+                ?.map(
+                  (id: string) => CLASSES_LIST.find((c) => c.id === id)?.name,
+                )
+                .join(", ") || "Not Assigned",
+          };
+        },
+      ) as any[];
+
+      const pendingWithWindow = pendingAttendanceWithDetails.filter(
+        (record) =>
+          record.approvalStatus === "pending" &&
+          isPendingWithinReopenWindow(
+            record.date,
+            localToday,
+            config.schoolReopenDate,
+          ),
+      );
+
+      const todayAttendanceWithDetails = pendingAttendanceWithDetails.filter(
+        (record) => record.date === today,
+      );
+
+      setPendingTeacherAttendance(pendingWithWindow);
+      setTeacherAttendance((prev) => {
+        if (!todayAttendanceWithDetails.length) return prev;
+        const merged = [...prev];
+        todayAttendanceWithDetails.forEach((record) => {
+          if (!merged.find((item) => item.id === record.id)) {
+            merged.push(record);
+          }
+        });
+        return merged;
+      });
+    } catch (error) {
+      console.error("Failed to refresh pending teacher attendance", error);
+    }
+  }, [schoolId]);
+
   // Aggregate assessment data for advanced visualizations
   const fetchVisualizations = async () => {
     try {
@@ -1721,11 +1806,14 @@ const AdminDashboard = () => {
 
     setLoading(false);
 
+    let hasCachedSummary = false;
+    const hasCachedHeavy = Boolean(cachedHeavy);
     if (summaryCacheKey) {
       const cachedSummary = localStorage.getItem(summaryCacheKey);
       if (cachedSummary) {
         try {
           const parsed = JSON.parse(cachedSummary);
+          hasCachedSummary = true;
           setStats((prev) => ({
             ...prev,
             students: parsed.students ?? prev.students,
@@ -1743,11 +1831,16 @@ const AdminDashboard = () => {
       }
     }
 
-    fetchSummary().catch((e) => console.error(e));
+    fetchSummary(
+      hasCachedSummary || hasCachedHeavy ? { background: true } : undefined,
+    ).catch((e) => console.error(e));
     if (!cachedHeavy) {
       fetchHeavyData().catch((e) => console.error(e));
     } else {
       fetchHeavyData({ background: true }).catch((e) => console.error(e));
+      fetchPendingTeacherAttendance().catch((e) =>
+        console.error("Error refreshing pending attendance", e),
+      );
     }
   }, [
     schoolLoading,
@@ -1790,6 +1883,9 @@ const AdminDashboard = () => {
       fetchStats().catch((e) =>
         console.error("Error refreshing stats on teacher attendance change", e),
       );
+      fetchPendingTeacherAttendance().catch((e) =>
+        console.error("Error refreshing pending attendance", e),
+      );
       scheduleHeavyRefresh();
     });
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
@@ -1826,6 +1922,9 @@ const AdminDashboard = () => {
     pollRef.current = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchStats();
+        fetchPendingTeacherAttendance().catch((e) =>
+          console.error("Error refreshing pending attendance", e),
+        );
       }
     }, STATS_POLL_INTERVAL_MS);
 
@@ -1835,7 +1934,7 @@ const AdminDashboard = () => {
         pollRef.current = null;
       }
     };
-  }, [realTimeEnabled]);
+  }, [realTimeEnabled, fetchPendingTeacherAttendance]);
 
   useEffect(() => {
     return () => {
@@ -2592,7 +2691,8 @@ const AdminDashboard = () => {
     );
   };
 
-  const showSkeletons = summaryLoading || !initialDataReady;
+  const showSkeletons =
+    (summaryLoading || !initialDataReady) && !skipSkeletonsOnRefreshRef.current;
 
   // --- Advanced Visualization Components ---
   const scoreToColor = (v: number) => {

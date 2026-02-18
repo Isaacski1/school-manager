@@ -1,4 +1,4 @@
-const CACHE_NAME = "school-manager-cache-v1";
+const CACHE_NAME = "school-manager-cache-v2";
 const OFFLINE_URL = "/offline.html";
 const PRECACHE_ASSETS = [
   OFFLINE_URL,
@@ -23,7 +23,13 @@ self.addEventListener("activate", (event) => {
           keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)),
         ),
       )
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then((clients) =>
+        clients.forEach((client) =>
+          client.postMessage({ type: "SW_ACTIVATED" }),
+        ),
+      ),
   );
 });
 
