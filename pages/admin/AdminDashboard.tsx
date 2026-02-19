@@ -1377,13 +1377,7 @@ const AdminDashboard = () => {
       (schoolConfig.schoolReopenDate || "");
 
     if (termChanged || reopenChanged) {
-      localStorage.removeItem(heavyCacheKey);
-      setTeacherAttendance([]);
-      setPendingTeacherAttendance([]);
-      setTeacherTermStats([]);
-      setMissedAttendanceAlerts([]);
-      setMissedStudentAttendanceAlerts([]);
-      fetchHeavyData({ background: true }).catch((e) =>
+      fetchHeavyData({ background: true, force: true }).catch((e) =>
         console.error("Error refreshing after term reset", e),
       );
     }
@@ -2691,8 +2685,13 @@ const AdminDashboard = () => {
     );
   };
 
+  const hasHeavyCache = Boolean(cachedHeavy);
   const showSkeletons =
-    (summaryLoading || !initialDataReady) && !skipSkeletonsOnRefreshRef.current;
+    (summaryLoading || !initialDataReady) &&
+    !skipSkeletonsOnRefreshRef.current &&
+    !hasHeavyCache;
+  const showSummaryLoading = (summaryLoading || isRefreshing) && !hasHeavyCache;
+  const showHeavyLoading = (heavyLoading || isRefreshing) && !hasHeavyCache;
 
   // --- Advanced Visualization Components ---
   const scoreToColor = (v: number) => {
@@ -3410,7 +3409,7 @@ const AdminDashboard = () => {
         <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
           Overview
         </h2>
-        {(summaryLoading || isRefreshing) && <SectionLoadingBadge />}
+        {showSummaryLoading && <SectionLoadingBadge />}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {showSkeletons ? (
@@ -3455,7 +3454,7 @@ const AdminDashboard = () => {
           <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
             Live KPIs
           </h2>
-          {(summaryLoading || isRefreshing) && <SectionLoadingBadge />}
+          {showSummaryLoading && <SectionLoadingBadge />}
         </div>
         {showSkeletons ? (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
@@ -3482,7 +3481,7 @@ const AdminDashboard = () => {
         <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
           Attendance & Demographics
         </h2>
-        {(heavyLoading || isRefreshing) && <SectionLoadingBadge />}
+        {showHeavyLoading && <SectionLoadingBadge />}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
         <div className="lg:col-span-2 h-[550px]">
@@ -3524,7 +3523,7 @@ const AdminDashboard = () => {
         <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
           Academic Performance
         </h2>
-        {(heavyLoading || isRefreshing) && <SectionLoadingBadge />}
+        {showHeavyLoading && <SectionLoadingBadge />}
       </div>
       <PerformanceSection />
 
@@ -3537,7 +3536,7 @@ const AdminDashboard = () => {
               <h3 className="font-bold text-slate-800">New Admissions</h3>
               <p className="text-xs text-slate-500">Recently added students</p>
             </div>
-            {(heavyLoading || isRefreshing) && <SectionLoadingBadge />}
+            {showHeavyLoading && <SectionLoadingBadge />}
             <Link
               to="/admin/students"
               className="text-sm text-[#0B4A82] hover:text-[#0B4A82] font-medium bg-[#E6F0FA] px-3 py-1 rounded-full transition-colors"
@@ -3635,9 +3634,7 @@ const AdminDashboard = () => {
               <h3 className="font-bold text-[#E6F0FA]">Notice Board</h3>
               <p className="text-xs text-slate-300">School announcements</p>
             </div>
-            {(heavyLoading || isRefreshing) && (
-              <SectionLoadingBadge label="Refreshing" />
-            )}
+            {showHeavyLoading && <SectionLoadingBadge label="Refreshing" />}
             <Link
               to="/admin/settings"
               className="p-2 rounded-lg hover:bg-white/10 text-slate-300 transition-colors"
@@ -3747,7 +3744,7 @@ const AdminDashboard = () => {
                   Current day's staff presence overview
                 </p>
               </div>
-              {(heavyLoading || isRefreshing) && <SectionLoadingBadge />}
+              {showHeavyLoading && <SectionLoadingBadge />}
               <div className="bg-emerald-100 p-1.5 sm:p-2 rounded-full">
                 <Users className="text-emerald-600" size={16} />
               </div>
@@ -3934,7 +3931,7 @@ const AdminDashboard = () => {
                     Term-wide staff attendance statistics
                   </p>
                 </div>
-                {(heavyLoading || isRefreshing) && <SectionLoadingBadge />}
+                {showHeavyLoading && <SectionLoadingBadge />}
                 <div className="bg-[#E6F0FA] p-1.5 sm:p-2 rounded-full">
                   <BarChart2 className="text-[#0B4A82]" size={16} />
                 </div>

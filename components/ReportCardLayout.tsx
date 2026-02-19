@@ -319,22 +319,54 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
               <tbody>
                 {data.allStudentsAssessments &&
                   performance.map((p: any, i: number) => {
-                    const grade = calculateGrade(p.total, data?.gradingScale);
+                    const toScore = (value: any) => {
+                      if (typeof value === "number") return value;
+                      const parsed = Number(value);
+                      return Number.isFinite(parsed) ? parsed : 0;
+                    };
+                    const currentScore =
+                      toScore(p.total) ||
+                      toScore(p.testScore) +
+                        toScore(p.homeworkScore) +
+                        toScore(p.projectScore) +
+                        toScore(p.examScore);
+                    const normalizedCurrentScore = Number.isFinite(currentScore)
+                      ? currentScore
+                      : 0;
+                    const grade = calculateGrade(
+                      currentScore,
+                      data?.gradingScale,
+                    );
                     let position = 0;
                     let positionLabel = "-";
-                    if (data?.positionRule === "subject") {
+                    if (true) {
                       const subjectScores = data.allStudentsAssessments
                         .filter((a: any) => a.subject === p.subject)
-                        .map((a: any) => a.total);
+                        .map((a: any) => toScore(a.total))
+                        .filter((score: number) => Number.isFinite(score));
                       subjectScores.sort((a: number, b: number) => b - a);
-                      position = subjectScores.indexOf(p.total) + 1;
+                      const scorePositions = new Map<number, number>();
+                      let lastScore: number | null = null;
+                      let lastPosition = 0;
+                      subjectScores.forEach((score, index) => {
+                        if (lastScore === null || score !== lastScore) {
+                          lastPosition = index + 1;
+                          lastScore = score;
+                        }
+                        if (!scorePositions.has(score)) {
+                          scorePositions.set(score, lastPosition);
+                        }
+                      });
+                      position =
+                        scorePositions.get(normalizedCurrentScore) || 0;
+                      position =
+                        subjectScores.filter((score) => score > currentScore)
+                          .length + 1;
                     }
                     const positionSuffix =
                       ["st", "nd", "rd"][position - 1] || "th";
-                    if (data?.positionRule === "subject" && position) {
+                    if (position) {
                       positionLabel = `${position}${positionSuffix}`;
-                    } else if (data?.positionRule === "total") {
-                      positionLabel = summary?.classPosition || "-";
                     }
 
                     return (

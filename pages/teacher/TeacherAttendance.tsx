@@ -71,20 +71,18 @@ const TeacherAttendance = () => {
   const todayDate = useMemo(() => getLocalTodayDate(), []);
   const todayString = useMemo(() => toYYYYMMDD(todayDate), [todayDate]);
 
-  const getConsecutiveSchoolDates = (
-    startDate: Date,
-    numDays: number,
-    backward: boolean = false,
-  ) => {
+  const getSchoolDatesBetween = (startDate: Date, endDate: Date) => {
     const dates: string[] = [];
-    let current = new Date(startDate);
+    const current = new Date(startDate);
     current.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(0, 0, 0, 0);
 
-    while (dates.length < numDays) {
+    while (current <= end) {
       if (current.getDay() !== 0 && current.getDay() !== 6) {
         dates.push(toYYYYMMDD(current));
       }
-      current.setDate(current.getDate() + (backward ? -1 : 1));
+      current.setDate(current.getDate() + 1);
     }
     return dates;
   };
@@ -97,9 +95,9 @@ const TeacherAttendance = () => {
       ? parseLocalDate(schoolConfig.vacationDate)
       : null;
 
-    // Start from today and go backward to show past dates for marking missed attendance
-    const startDate = new Date(todayDate);
-    const generatedDates = getConsecutiveSchoolDates(startDate, 20, true); // Go backward 20 school days
+    const startDate = reopenObj || new Date(todayDate);
+    const endDate = new Date(todayDate);
+    const generatedDates = getSchoolDatesBetween(startDate, endDate);
 
     return generatedDates
       .filter((dateString) => {

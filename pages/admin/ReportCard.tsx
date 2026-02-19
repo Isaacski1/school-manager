@@ -132,7 +132,9 @@ const ReportCard = () => {
         .then((all) => all.filter((a) => a.studentId === selectedStudent));
 
       const termAssessmentsRaw = assessments.filter(
-        (a) => a.term === termNumber,
+        (a) =>
+          a.term === termNumber &&
+          String(a.academicYear || "") === String(schoolConfig.academicYear),
       );
       const termAssessments = Object.values(
         termAssessmentsRaw.reduce(
@@ -224,26 +226,70 @@ const ReportCard = () => {
         return "F";
       };
 
-      const allStudentsAssessmentsForClass = await db
+      const allStudentsAssessmentsForClassRaw = await db
         .getAllAssessments(schoolId)
         .then((all) =>
           all.filter(
-            (a) => a.classId === selectedClass && a.term === termNumber,
+            (a) =>
+              a.classId === selectedClass &&
+              a.term === termNumber &&
+              String(a.academicYear || "") ===
+                String(schoolConfig.academicYear),
           ),
         );
+
+      const allStudentsAssessmentsForClass = Object.values(
+        allStudentsAssessmentsForClassRaw.reduce(
+          (acc, assessment) => {
+            const subjectKey = assessment.subject || "";
+            if (!subjectKey) return acc;
+            const computedTotal =
+              Number(assessment.testScore || 0) +
+              Number(assessment.homeworkScore || 0) +
+              Number(assessment.projectScore || 0) +
+              Number(assessment.examScore || 0);
+            const rawTotal = (assessment as any).total;
+            const normalizedTotal =
+              typeof rawTotal === "number"
+                ? rawTotal
+                : Number(rawTotal ?? computedTotal) || computedTotal;
+            const key = `${assessment.studentId}_${subjectKey}`;
+            const current = acc[key] as any;
+            if (!current || normalizedTotal >= (current.total || 0)) {
+              acc[key] = { ...assessment, total: normalizedTotal };
+            }
+            return acc;
+          },
+          {} as Record<string, any>,
+        ),
+      );
 
       const allStudentsTotalScores = students.map((s) => {
         const studentAssessments = allStudentsAssessmentsForClass.filter(
           (a) => a.studentId === s.id,
         );
-        const totalScore = studentAssessments.reduce(
-          (acc, a) => acc + (a.total || 0),
-          0,
-        );
+        const totalScore = studentAssessments.reduce((acc, a) => {
+          const rawTotal = (a as any).total;
+          const computedTotal =
+            Number(a.testScore || 0) +
+            Number(a.homeworkScore || 0) +
+            Number(a.projectScore || 0) +
+            Number(a.examScore || 0);
+          const normalized =
+            typeof rawTotal === "number"
+              ? rawTotal
+              : Number(rawTotal ?? computedTotal) || computedTotal;
+          return acc + normalized;
+        }, 0);
         return { studentId: s.id, totalScore };
       });
 
-      allStudentsTotalScores.sort((a, b) => b.totalScore - a.totalScore);
+      allStudentsTotalScores.sort((a, b) => {
+        if (b.totalScore !== a.totalScore) {
+          return b.totalScore - a.totalScore;
+        }
+        return a.studentId.localeCompare(b.studentId);
+      });
 
       const rank =
         allStudentsTotalScores.findIndex(
