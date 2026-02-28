@@ -46,13 +46,14 @@ const Schools = () => {
     address: "",
     logoUrl: "",
     plan: "trial" as "free" | "trial" | "monthly" | "termly" | "yearly",
+    featurePlan: "starter" as "starter" | "standard",
+    billingStartType: "term_start" as "term_start" | "mid_term",
   });
   const [cloneFromTemplate, setCloneFromTemplate] = useState(false);
   const [templateType, setTemplateType] = useState<"default" | "school">(
     "default",
   );
   const [templateSchoolId, setTemplateSchoolId] = useState("");
-  const [planId, setPlanId] = useState("");
   const [plans, setPlans] = useState<PlanConfig[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [studentCounts, setStudentCounts] = useState<Record<string, number>>(
@@ -198,11 +199,12 @@ const Schools = () => {
         address: formData.address.trim(),
         logoUrl: croppedLogo || "",
         plan: formData.plan,
+        featurePlan: formData.featurePlan,
+        billingStartType: formData.billingStartType,
         cloneFromTemplate,
         templateType,
         templateSchoolId:
           templateType === "school" ? templateSchoolId : undefined,
-        planId: planId || undefined,
       });
 
       setFormData({
@@ -211,11 +213,12 @@ const Schools = () => {
         address: "",
         logoUrl: "",
         plan: "trial",
+        featurePlan: "starter",
+        billingStartType: "term_start",
       });
       setCloneFromTemplate(false);
       setTemplateType("default");
       setTemplateSchoolId("");
-      setPlanId("");
       setLogoPreview("");
       setLogoZoom(1);
       setLogoOffset({ x: 0, y: 0 });
@@ -402,6 +405,14 @@ const Schools = () => {
   const handleAssignPlan = async (schoolId: string, nextPlanId: string) => {
     if (!nextPlanId) return;
     try {
+      if (["starter", "standard"].includes(nextPlanId)) {
+        await updateDoc(doc(firestore, "schools", schoolId), {
+          featurePlan: nextPlanId,
+        });
+        showToast("Feature plan updated successfully.", { type: "success" });
+        return;
+      }
+
       await updateSchoolPlan({ schoolId, planId: nextPlanId });
       showToast("Plan assigned successfully.", { type: "success" });
     } catch (error: any) {
@@ -536,17 +547,13 @@ const Schools = () => {
                           </span>
                           <select
                             className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white"
-                            value={school.subscription?.planId || ""}
+                            value={school.featurePlan || "starter"}
                             onChange={(e) =>
                               handleAssignPlan(school.id, e.target.value)
                             }
                           >
-                            <option value="">Select plan</option>
-                            {plans.map((plan) => (
-                              <option key={plan.id} value={plan.id}>
-                                {plan.name}
-                              </option>
-                            ))}
+                            <option value="starter">Starter</option>
+                            <option value="standard">Standard</option>
                           </select>
                         </div>
                       </td>
@@ -623,7 +630,7 @@ const Schools = () => {
       {/* Create School Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl relative overflow-hidden">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl relative overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900">
                 Create New School
@@ -636,7 +643,10 @@ const Schools = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateSchool} className="space-y-4">
+            <form
+              onSubmit={handleCreateSchool}
+              className="space-y-4 overflow-y-auto pr-1"
+            >
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
                   School Name
@@ -809,7 +819,7 @@ const Schools = () => {
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Plan
+                  Subscription Plan
                 </label>
                 <select
                   disabled={isCreatingSchool}
@@ -829,28 +839,44 @@ const Schools = () => {
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Subscription Plan (Limits)
+                  Feature Plan
                 </label>
                 <select
-                  disabled={isCreatingSchool || plansLoading}
+                  disabled={isCreatingSchool}
                   className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
-                  value={planId}
-                  onChange={(e) => setPlanId(e.target.value)}
+                  value={formData.featurePlan}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      featurePlan: e.target.value as "starter" | "standard",
+                    })
+                  }
                 >
-                  <option value="">Select plan (optional)</option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name}
-                    </option>
-                  ))}
+                  <option value="starter">Starter</option>
+                  <option value="standard">Standard</option>
                 </select>
-                {planId && (
-                  <p className="text-xs text-slate-500 mt-2">
-                    Plan limit:{" "}
-                    {plans.find((plan) => plan.id === planId)?.maxStudents ?? 0}{" "}
-                    students
-                  </p>
-                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Billing Start
+                </label>
+                <select
+                  disabled={isCreatingSchool}
+                  className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  value={formData.billingStartType}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      billingStartType: e.target.value as
+                        | "term_start"
+                        | "mid_term",
+                    })
+                  }
+                >
+                  <option value="term_start">Beginning of Term</option>
+                  <option value="mid_term">Mid-term Signup</option>
+                </select>
               </div>
 
               <div className="border border-slate-200 rounded-lg p-4 space-y-3">

@@ -6,6 +6,8 @@ import { createTeacher } from "../../services/backendApi";
 import { User, UserRole } from "../../types";
 import { CLASSES_LIST } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
+import { logActivity } from "../../services/activityLog";
 
 import {
   Plus,
@@ -40,6 +42,7 @@ type TeacherFormData = Partial<User> & {
 
 const ManageTeachers = () => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const schoolId = school?.id || ""; // ✅ current school scope
 
   const [teachers, setTeachers] = useState<TeacherWithClasses[]>([]);
@@ -160,12 +163,43 @@ const ManageTeachers = () => {
       });
       setShowPassword(false);
 
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_created",
+        entityId: formData.email || "",
+        meta: {
+          status: "success",
+          module: "Teachers",
+          teacherName: formData.fullName || "",
+          email: formData.email || "",
+          assignedClasses: formData.assignedClassIds || [],
+          actorName: user?.fullName || "",
+        },
+      });
+
       await fetchData();
     } catch (error: any) {
       console.error("Error creating teacher:", error);
       showToast(error?.message || "Failed to create teacher.", {
         type: "error",
         duration: 7000,
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_create_failed",
+        entityId: formData.email || "",
+        meta: {
+          status: "failed",
+          module: "Teachers",
+          teacherName: formData.fullName || "",
+          email: formData.email || "",
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     } finally {
       setIsSubmitting(false);
@@ -217,11 +251,41 @@ const ManageTeachers = () => {
       );
 
       await Promise.all(deletePromises);
+
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_deleted",
+        entityId: idToDelete,
+        meta: {
+          status: "success",
+          module: "Teachers",
+          teacherName: teacherToDelete.fullName || "",
+          email: teacherToDelete.email || "",
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Failed to delete teacher", error);
       setTeachers(previousTeachers);
       showToast("Failed to delete teacher profile. Please try again.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_delete_failed",
+        entityId: idToDelete,
+        meta: {
+          status: "failed",
+          module: "Teachers",
+          teacherName: teacherToDelete.fullName || "",
+          email: teacherToDelete.email || "",
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     }
   };
@@ -254,6 +318,23 @@ const ManageTeachers = () => {
     try {
       await db.updateUserAssignedClasses(editTeacher.id, editClasses);
       showToast("Teacher classes updated successfully.", { type: "success" });
+
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_classes_updated",
+        entityId: editTeacher.id,
+        meta: {
+          status: "success",
+          module: "Teachers",
+          teacherName: editTeacher.fullName || "",
+          email: editTeacher.email || "",
+          assignedClasses: editClasses,
+          actorName: user?.fullName || "",
+        },
+      });
+
       setShowEditModal(false);
       setEditTeacher(null);
       setEditClasses([]);
@@ -262,6 +343,22 @@ const ManageTeachers = () => {
       console.error("Error updating teacher classes:", error);
       showToast(error?.message || "Failed to update teacher classes.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_classes_update_failed",
+        entityId: editTeacher.id,
+        meta: {
+          status: "failed",
+          module: "Teachers",
+          teacherName: editTeacher.fullName || "",
+          email: editTeacher.email || "",
+          assignedClasses: editClasses,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     } finally {
       setIsSavingEdit(false);
@@ -285,6 +382,18 @@ const ManageTeachers = () => {
       });
 
       setRepairModalUid(null);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_repaired",
+        entityId: repairModalUid,
+        meta: {
+          status: "success",
+          module: "Teachers",
+          actorName: user?.fullName || "",
+        },
+      });
       await fetchData();
     } catch (error: any) {
       console.error("Error repairing teacher:", error);
@@ -292,6 +401,19 @@ const ManageTeachers = () => {
         error?.details || error?.message || "Failed to repair teacher account.",
         { type: "error", duration: 6000 },
       );
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_repair_failed",
+        entityId: repairModalUid,
+        meta: {
+          status: "failed",
+          module: "Teachers",
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setIsRepairing(false);
     }

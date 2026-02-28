@@ -5,6 +5,7 @@ import { db } from "../../services/mockDb";
 import { Student, StudentSkills } from "../../types";
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM } from "../../constants";
 import { Save, Edit } from "lucide-react";
+import { logActivity } from "../../services/activityLog";
 
 const skillOptions = [
   "Excellent",
@@ -139,10 +140,39 @@ const EditSkills = () => {
 
       setMessage("Skills saved successfully!");
       setTimeout(() => setMessage(""), 3000);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "skills_saved",
+        entityId: selectedClassId,
+        meta: {
+          status: "success",
+          module: "Skills",
+          classId: selectedClassId,
+          term: config.currentTerm,
+          academicYear: config.academicYear,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (err) {
       console.error(err);
       setMessage("Error saving skills");
       setTimeout(() => setMessage(""), 3000);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "skills_save_failed",
+        entityId: selectedClassId,
+        meta: {
+          status: "failed",
+          module: "Skills",
+          classId: selectedClassId,
+          error: (err as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setSaving(false);
     }

@@ -16,6 +16,7 @@ import {
 import { showToast } from "../../services/toast";
 import { useAuth } from "../../context/AuthContext";
 import { requireSchoolId } from "../../services/authProfile";
+import { logActivity } from "../../services/activityLog";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -89,6 +90,19 @@ const Timetable = () => {
         showToast("Timetable subjects updated to match system settings!", {
           type: "success",
         });
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "timetable_synced",
+          entityId: selectedClass,
+          meta: {
+            status: "success",
+            module: "Timetable",
+            classId: selectedClass,
+            actorName: user?.fullName || "",
+          },
+        });
       }
 
       setTimetable(schedule);
@@ -150,9 +164,42 @@ const Timetable = () => {
       schedule: timetable,
       updatedAt: Date.now(),
     };
-    await db.saveTimetable(data);
-    setLoading(false);
-    showToast("Timetable saved successfully!", { type: "success" });
+    try {
+      await db.saveTimetable(data);
+      showToast("Timetable saved successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "timetable_saved",
+        entityId: selectedClass,
+        meta: {
+          status: "success",
+          module: "Timetable",
+          classId: selectedClass,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to save timetable", error);
+      showToast("Failed to save timetable.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "timetable_save_failed",
+        entityId: selectedClass,
+        meta: {
+          status: "failed",
+          module: "Timetable",
+          classId: selectedClass,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getClosingTime = (day: string) => {

@@ -11,6 +11,11 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useSchool } from "../context/SchoolContext";
+import {
+  canAccessFeature,
+  FeatureKey,
+  resolveFeaturePlan,
+} from "../services/featureAccess";
 import { db } from "../services/mockDb";
 import { firestore } from "../services/firebase";
 import { UserRole, SystemNotification } from "../types";
@@ -40,6 +45,8 @@ import {
   BarChart3,
   Megaphone,
   History,
+  Activity,
+  BadgeDollarSign,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -63,6 +70,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const isFreePlan = (school as any)?.plan === "free";
+  const hasFeature = (feature: FeatureKey) =>
+    canAccessFeature(user, school, feature);
   const subscriptionGate = useMemo(() => {
     if (!school || isFreePlan || isSuperAdmin) return null;
     const normalizeDate = (raw: any) => {
@@ -447,57 +456,95 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 />
               ) : (
                 <>
-                  <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
-                  <NavItem
-                    href="/admin/students"
-                    icon={GraduationCap}
-                    label="Students"
-                  />
-                  <NavItem
-                    href="/admin/student-history"
-                    icon={History}
-                    label="Student History"
-                  />
-                  <NavItem
-                    href="/admin/teachers"
-                    icon={Users}
-                    label="Teachers"
-                  />
-                  <NavItem
-                    href="/admin/attendance"
-                    icon={BarChart}
-                    label="Student Attendance"
-                  />
-                  <NavItem
-                    href="/admin/teacher-attendance"
-                    icon={ClipboardCheck}
-                    label="Teacher Attendance"
-                  />
-                  <NavItem
-                    href="/admin/reports"
-                    icon={BookOpen}
-                    label="Reports"
-                  />
-                  <NavItem
-                    href="/admin/report-card"
-                    icon={BookOpen}
-                    label="Report Card"
-                  />
-                  <NavItem
-                    href="/admin/timetable"
-                    icon={CalendarDays}
-                    label="Timetable"
-                  />
-                  <NavItem
-                    href="/admin/settings"
-                    icon={Settings}
-                    label="Settings"
-                  />
+                  {hasFeature("admin_dashboard") && (
+                    <NavItem
+                      href="/"
+                      icon={LayoutDashboard}
+                      label="Dashboard"
+                    />
+                  )}
+                  {hasFeature("student_management") && (
+                    <NavItem
+                      href="/admin/students"
+                      icon={GraduationCap}
+                      label="Students"
+                    />
+                  )}
+                  {hasFeature("student_history") && (
+                    <NavItem
+                      href="/admin/student-history"
+                      icon={History}
+                      label="Student History"
+                    />
+                  )}
+                  {hasFeature("teacher_management") && (
+                    <NavItem
+                      href="/admin/teachers"
+                      icon={Users}
+                      label="Teachers"
+                    />
+                  )}
+                  {hasFeature("attendance") && (
+                    <NavItem
+                      href="/admin/attendance"
+                      icon={BarChart}
+                      label="Student Attendance"
+                    />
+                  )}
+                  {hasFeature("teacher_attendance") && (
+                    <NavItem
+                      href="/admin/teacher-attendance"
+                      icon={ClipboardCheck}
+                      label="Teacher Attendance"
+                    />
+                  )}
+                  {hasFeature("basic_exam_reports") && (
+                    <NavItem
+                      href="/admin/reports"
+                      icon={BookOpen}
+                      label="Reports"
+                    />
+                  )}
+                  {hasFeature("basic_exam_reports") && (
+                    <NavItem
+                      href="/admin/report-card"
+                      icon={BookOpen}
+                      label="Report Card"
+                    />
+                  )}
+                  {hasFeature("timetable") && (
+                    <NavItem
+                      href="/admin/timetable"
+                      icon={CalendarDays}
+                      label="Timetable"
+                    />
+                  )}
+                  {hasFeature("fees_payments") && (
+                    <NavItem
+                      href="/admin/fees"
+                      icon={BadgeDollarSign}
+                      label="Fees & Payments"
+                    />
+                  )}
+                  {hasFeature("activity_monitor") && (
+                    <NavItem
+                      href="/admin/activity"
+                      icon={Activity}
+                      label="Activity Monitor"
+                    />
+                  )}
                   {!isFreePlan && (
                     <NavItem
                       href="/admin/billing"
                       icon={CreditCard}
                       label="Billing"
+                    />
+                  )}
+                  {hasFeature("academic_year") && (
+                    <NavItem
+                      href="/admin/settings"
+                      icon={Settings}
+                      label="Settings"
                     />
                   )}
                 </>
@@ -513,22 +560,34 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 />
               ) : (
                 <>
-                  <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
-                  <NavItem
-                    href="/teacher/my-attendance"
-                    icon={ClipboardCheck}
-                    label="My Attendance"
-                  />
-                  <NavItem
-                    href="/teacher/attendance"
-                    icon={Users}
-                    label="Student Attendance"
-                  />
-                  <NavItem
-                    href="/teacher/assessment"
-                    icon={BookOpen}
-                    label="Assessment"
-                  />
+                  {hasFeature("teacher_dashboard") && (
+                    <NavItem
+                      href="/"
+                      icon={LayoutDashboard}
+                      label="Dashboard"
+                    />
+                  )}
+                  {hasFeature("teacher_attendance") && (
+                    <NavItem
+                      href="/teacher/my-attendance"
+                      icon={ClipboardCheck}
+                      label="My Attendance"
+                    />
+                  )}
+                  {hasFeature("attendance") && (
+                    <NavItem
+                      href="/teacher/attendance"
+                      icon={Users}
+                      label="Student Attendance"
+                    />
+                  )}
+                  {hasFeature("basic_exam_reports") && (
+                    <NavItem
+                      href="/teacher/assessment"
+                      icon={BookOpen}
+                      label="Assessment"
+                    />
+                  )}
                 </>
               )}
             </>
@@ -752,7 +811,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         )}
 
         <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-8">
-          <div className="mx-auto w-full max-w-[1200px] 2xl:max-w-[1400px]">
+          <div className="mx-auto w-full max-w-[1500px] 2xl:max-w-[1800px]">
             {children}
           </div>
         </main>

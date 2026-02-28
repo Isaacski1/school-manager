@@ -3,6 +3,8 @@ import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
+import { logActivity } from "../../services/activityLog";
 import { Student } from "../../types";
 import {
   CLASS_PROMOTION_MAP,
@@ -28,6 +30,7 @@ import {
 
 const ManageStudents = () => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const schoolId = school?.id || null;
   const [students, setStudents] = useState<Student[]>([]);
   const [filterClass, setFilterClass] = useState("all");
@@ -256,12 +259,40 @@ const ManageStudents = () => {
     try {
       await db.updateStudentsClassBulk(schoolId, updates);
       showToast(`Promoted ${updates.length} students.`, { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "students_promoted",
+        entityId: promotionClassId,
+        meta: {
+          status: "success",
+          module: "Students",
+          classId: promotionClassId,
+          promotedCount: updates.length,
+          actorName: user?.fullName || "",
+        },
+      });
       setShowPromotionModal(false);
       await fetchData();
     } catch (error) {
       console.error("Promotion failed", error);
       showToast("Failed to promote students. Please try again.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "students_promotion_failed",
+        entityId: promotionClassId,
+        meta: {
+          status: "failed",
+          module: "Students",
+          classId: promotionClassId,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     } finally {
       setIsPromoting(false);
@@ -295,12 +326,41 @@ const ManageStudents = () => {
       showToast("Student moved to Stopped School history.", {
         type: "success",
       });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "student_archived",
+        entityId: targetStudent.id,
+        meta: {
+          status: "success",
+          module: "Students",
+          studentName: targetStudent.name,
+          classId: targetStudent.classId,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Archive failed", error);
       // Revert state if DB fails
       setStudents(previousStudents);
       showToast("Failed to update student. Please try again.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "student_archive_failed",
+        entityId: targetStudent.id,
+        meta: {
+          status: "failed",
+          module: "Students",
+          studentName: targetStudent.name,
+          classId: targetStudent.classId,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     }
   };
@@ -331,6 +391,20 @@ const ManageStudents = () => {
         };
         await db.updateStudent(updatedStudent);
         showToast("Student updated successfully.", { type: "success" });
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "student_updated",
+          entityId: updatedStudent.id,
+          meta: {
+            status: "success",
+            module: "Students",
+            studentName: updatedStudent.name,
+            classId: updatedStudent.classId,
+            actorName: user?.fullName || "",
+          },
+        });
       } else {
         const newStudent: Student = {
           id: Math.random().toString(36).substr(2, 9),
@@ -344,6 +418,20 @@ const ManageStudents = () => {
         };
         await db.addStudent(newStudent);
         showToast("Student added successfully.", { type: "success" });
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "student_created",
+          entityId: newStudent.id,
+          meta: {
+            status: "success",
+            module: "Students",
+            studentName: newStudent.name,
+            classId: newStudent.classId,
+            actorName: user?.fullName || "",
+          },
+        });
       }
 
       await fetchData();
@@ -351,6 +439,23 @@ const ManageStudents = () => {
     } catch (error) {
       console.error("Save failed", error);
       showToast("Failed to save student. Please try again.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: editingId
+          ? "student_update_failed"
+          : "student_create_failed",
+        entityId: editingId || "new",
+        meta: {
+          status: "failed",
+          module: "Students",
+          studentName: formData.name || "",
+          classId: formData.classId || "",
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setIsSaving(false);
     }

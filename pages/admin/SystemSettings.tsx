@@ -2,10 +2,12 @@
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
+import { logActivity } from "../../services/activityLog";
 import { Notice, ClassRoom, SchoolConfig } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { requireSchoolId } from "../../services/authProfile";
+import { canAccessFeature } from "../../services/featureAccess";
 import {
   CLASSES_LIST,
   nurserySubjects,
@@ -58,6 +60,7 @@ const SystemSettings = () => {
   const { school } = useSchool();
   const schoolId = requireSchoolId(user);
   const isTrialPlan = (school as any)?.plan === "trial";
+  const canUseBackups = canAccessFeature(user, school, "backups");
 
   // Notices State
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -185,12 +188,45 @@ const SystemSettings = () => {
   // --- Config Handlers ---
   const handleSaveConfig = async () => {
     setSavingConfig(true);
-    await db.updateSchoolConfig({
-      ...config,
-      holidayDates: config.holidayDates || [],
-    });
-    setSavingConfig(false);
-    showToast("Configuration saved successfully!", { type: "success" });
+    try {
+      await db.updateSchoolConfig({
+        ...config,
+        holidayDates: config.holidayDates || [],
+      });
+      showToast("Configuration saved successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "settings_updated",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to save config", error);
+      showToast("Failed to save configuration. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "settings_update_failed",
+        entityId: schoolId,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    } finally {
+      setSavingConfig(false);
+    }
   };
 
   const handleAddHolidayDate = async () => {
@@ -209,13 +245,48 @@ const SystemSettings = () => {
       ].sort((a, b) => a.date.localeCompare(b.date)),
     };
     setConfig(nextConfig);
-    await db.updateSchoolConfig({
-      ...nextConfig,
-      holidayDates: nextConfig.holidayDates || [],
-    });
-    showToast("Holiday date saved.", { type: "success" });
-    setNewHolidayDate("");
-    setNewHolidayReason("");
+    try {
+      await db.updateSchoolConfig({
+        ...nextConfig,
+        holidayDates: nextConfig.holidayDates || [],
+      });
+      showToast("Holiday date saved.", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "holiday_added",
+        entityId: newHolidayDate,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          date: newHolidayDate,
+          reason: trimmedReason || "",
+          actorName: user?.fullName || "",
+        },
+      });
+      setNewHolidayDate("");
+      setNewHolidayReason("");
+    } catch (error: any) {
+      console.error("Failed to add holiday", error);
+      showToast("Failed to add holiday. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "holiday_add_failed",
+        entityId: newHolidayDate,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          date: newHolidayDate,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    }
   };
 
   const handleRemoveHolidayDate = async (date: string) => {
@@ -225,11 +296,45 @@ const SystemSettings = () => {
       holidayDates: current.filter((h) => h.date !== date),
     };
     setConfig(nextConfig);
-    await db.updateSchoolConfig({
-      ...nextConfig,
-      holidayDates: nextConfig.holidayDates || [],
-    });
-    showToast("Holiday date removed.", { type: "success" });
+    try {
+      await db.updateSchoolConfig({
+        ...nextConfig,
+        holidayDates: nextConfig.holidayDates || [],
+      });
+      showToast("Holiday date removed.", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "holiday_removed",
+        entityId: date,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          date,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to remove holiday", error);
+      showToast("Failed to remove holiday. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "holiday_remove_failed",
+        entityId: date,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          date,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    }
   };
 
   const handleCreateTermBackup = async () => {
@@ -243,10 +348,39 @@ const SystemSettings = () => {
         config.academicYear,
       );
       showToast("Term backup created successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "backup_created",
+        entityId: `${config.currentTerm}-${config.academicYear}`,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          term: config.currentTerm,
+          academicYear: config.academicYear,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Error creating term backup:", error);
       showToast("Failed to create term backup. Please try again.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "backup_create_failed",
+        entityId: `${config.currentTerm}-${config.academicYear}`,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          term: config.currentTerm,
+          academicYear: config.academicYear,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     } finally {
       setIsCreatingBackup(false);
@@ -267,9 +401,36 @@ const SystemSettings = () => {
       setConfig(updatedConfig);
       await db.updateSchoolConfig(updatedConfig);
       showToast("Logo uploaded successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "logo_updated",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          fileName: file.name,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Logo upload error:", error);
       showToast("Failed to upload logo. Please try again.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "logo_update_failed",
+        entityId: schoolId,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          fileName: file.name,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setUploadingLogo(false);
     }
@@ -303,17 +464,78 @@ const SystemSettings = () => {
       // but resetting prevents accidental wrong dates. Let's keep it.
       fetchNotices();
       showToast("Notice added successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "notice_created",
+        entityId: noticeDate,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          noticeType,
+          date: noticeDate,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Error adding notice:", error);
       showToast("Failed to add notice. Please try again.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "notice_create_failed",
+        entityId: noticeDate,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          noticeType,
+          date: noticeDate,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setIsAddingNotice(false);
     }
   };
 
   const handleDeleteNotice = async (id: string) => {
-    await db.deleteNotice(id);
-    fetchNotices();
+    try {
+      await db.deleteNotice(id);
+      fetchNotices();
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "notice_deleted",
+        entityId: id,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to delete notice", error);
+      showToast("Failed to delete notice. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "notice_delete_failed",
+        entityId: id,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    }
   };
 
   // --- Subjects Handlers ---
@@ -321,14 +543,48 @@ const SystemSettings = () => {
     e.preventDefault();
     if (!newSubjectName.trim() || !selectedClassId) return;
     const targetClassIds = getGroupClassIds(selectedClassId);
-    await Promise.all(
-      targetClassIds.map((classId) =>
-        db.addSubject(classId, newSubjectName.trim(), schoolId),
-      ),
-    );
-    setNewSubjectName("");
-    fetchSubjects();
-    showToast("Subject added successfully!", { type: "success" });
+    try {
+      await Promise.all(
+        targetClassIds.map((classId) =>
+          db.addSubject(classId, newSubjectName.trim(), schoolId),
+        ),
+      );
+      setNewSubjectName("");
+      fetchSubjects();
+      showToast("Subject added successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_created",
+        entityId: newSubjectName.trim(),
+        meta: {
+          status: "success",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to add subject", error);
+      showToast("Failed to add subject. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_create_failed",
+        entityId: newSubjectName.trim(),
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    }
   };
 
   const handleDeleteSubject = (name: string) => {
@@ -350,10 +606,37 @@ const SystemSettings = () => {
       showToast(`Subject "${subjectToDeleteName}" deleted successfully!`, {
         type: "success",
       });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_deleted",
+        entityId: subjectToDeleteName,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (error) {
       console.error("Error deleting subject:", error);
       showToast("Failed to delete subject. Please try again.", {
         type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_delete_failed",
+        entityId: subjectToDeleteName,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
       });
     } finally {
       setSubjectToDeleteName(null);
@@ -368,19 +651,54 @@ const SystemSettings = () => {
     if (!editingSubject || !editingSubject.current.trim() || !selectedClassId)
       return;
     const targetClassIds = getGroupClassIds(selectedClassId);
-    await Promise.all(
-      targetClassIds.map((classId) =>
-        db.updateSubject(
-          classId,
-          editingSubject.original,
-          editingSubject.current.trim(),
-          schoolId,
+    try {
+      await Promise.all(
+        targetClassIds.map((classId) =>
+          db.updateSubject(
+            classId,
+            editingSubject.original,
+            editingSubject.current.trim(),
+            schoolId,
+          ),
         ),
-      ),
-    );
-    setEditingSubject(null);
-    fetchSubjects();
-    showToast("Subject updated successfully!", { type: "success" });
+      );
+      setEditingSubject(null);
+      fetchSubjects();
+      showToast("Subject updated successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_updated",
+        entityId: editingSubject.original,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          nextName: editingSubject.current.trim(),
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to update subject", error);
+      showToast("Failed to update subject. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "subject_update_failed",
+        entityId: editingSubject.original,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          classGroup: selectedClassId,
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    }
   };
 
   // --- Danger Zone Handler ---
@@ -428,11 +746,36 @@ const SystemSettings = () => {
       );
 
       showToast("Term data reset successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "term_reset",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      });
       // Reload the page to reflect changes
       window.location.reload();
     } catch (error: any) {
       console.error("Term Reset error:", error);
       showToast(`Term Reset Failed: ${error.message}`, { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "term_reset_failed",
+        entityId: schoolId,
+        meta: {
+          status: "failed",
+          module: "System Settings",
+          error: error?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setTermResetting(false);
     }
@@ -977,52 +1320,54 @@ const SystemSettings = () => {
             </div>
 
             {/* Term Backup Section */}
-            <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-6">
-              <h2 className="text-xl font-bold mb-6 text-white flex items-center">
-                <Save className="mr-2 text-amber-200" size={24} />
-                Term Data Backup
-              </h2>
-              <p className="text-sm text-slate-300 mb-4">
-                Create a full backup of the current term's academic records,
-                attendance, and student data. Backups can be viewed and restored
-                from the "Manage Backups" section.
-              </p>
-              <button
-                onClick={handleCreateTermBackup}
-                disabled={isCreatingBackup || isTrialPlan}
-                className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {isCreatingBackup ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Save size={16} className="mr-2" /> Create Current Term
-                    Backup
-                  </>
-                )}
-              </button>
-              <Link
-                to="/admin/backups"
-                className={`mt-4 inline-flex items-center text-sm font-medium ${
-                  isTrialPlan
-                    ? "text-slate-900 pointer-events-none"
-                    : "text-[#ffffff] hover:text-[#dedede]"
-                }`}
-              >
-                <History size={16} className="mr-1" /> View Previous Backups
-              </Link>
-              {isTrialPlan && (
-                <p className="text-xs text-slate-300 mt-2">
-                  Backups are disabled during the trial period.
+            {canUseBackups && (
+              <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-6">
+                <h2 className="text-xl font-bold mb-6 text-white flex items-center">
+                  <Save className="mr-2 text-amber-200" size={24} />
+                  Term Data Backup
+                </h2>
+                <p className="text-sm text-slate-300 mb-4">
+                  Create a full backup of the current term's academic records,
+                  attendance, and student data. Backups can be viewed and
+                  restored from the "Manage Backups" section.
                 </p>
-              )}
-            </div>
+                <button
+                  onClick={handleCreateTermBackup}
+                  disabled={isCreatingBackup || isTrialPlan}
+                  className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {isCreatingBackup ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} className="mr-2" /> Create Current Term
+                      Backup
+                    </>
+                  )}
+                </button>
+                <Link
+                  to="/admin/backups"
+                  className={`mt-4 inline-flex items-center text-sm font-medium ${
+                    isTrialPlan
+                      ? "text-slate-900 pointer-events-none"
+                      : "text-[#ffffff] hover:text-[#dedede]"
+                  }`}
+                >
+                  <History size={16} className="mr-1" /> View Previous Backups
+                </Link>
+                {isTrialPlan && (
+                  <p className="text-xs text-slate-300 mt-2">
+                    Backups are disabled during the trial period.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Secret Database Reset */}
-            {showDangerZone && (
+            {canUseBackups && showDangerZone && (
               <div className="bg-red-700 border border-rose-500/20 rounded-2xl p-6">
                 <div className="flex items-center mb-4">
                   <Shield className="text-rose-200 mr-2" size={24} />
@@ -1048,23 +1393,25 @@ const SystemSettings = () => {
               </div>
             )}
 
-            <div className="text-center mt-4">
-              <button
-                onClick={() => setShowDangerZone(!showDangerZone)}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-red-700 px-4 py-2 text-sm font-semibold text-slate-200 shadow-sm transition-all hover:border-white/20 hover:text-white hover:shadow-md"
-              >
-                <span
-                  className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${
-                    showDangerZone
-                      ? "bg-red-600 text-rose-100"
-                      : "bg-rose-600 text-cyan-100"
-                  }`}
+            {canUseBackups && (
+              <div className="text-center mt-4">
+                <button
+                  onClick={() => setShowDangerZone(!showDangerZone)}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-red-700 px-4 py-2 text-sm font-semibold text-slate-200 shadow-sm transition-all hover:border-white/20 hover:text-white hover:shadow-md"
                 >
-                  {showDangerZone ? "—" : "+"}
-                </span>
-                {showDangerZone ? "Hide" : "Show"} Advanced Settings
-              </button>
-            </div>
+                  <span
+                    className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${
+                      showDangerZone
+                        ? "bg-red-600 text-rose-100"
+                        : "bg-rose-600 text-cyan-100"
+                    }`}
+                  >
+                    {showDangerZone ? "—" : "+"}
+                  </span>
+                  {showDangerZone ? "Hide" : "Show"} Advanced Settings
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right Column: Notices Management */}

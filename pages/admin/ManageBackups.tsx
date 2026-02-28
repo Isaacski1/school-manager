@@ -22,6 +22,8 @@ import {
 import { showToast } from "../../services/toast";
 import { CLASSES_LIST, calculateTotalScore } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
+import { logActivity } from "../../services/activityLog";
 
 const getClassType = (classId: string): string => {
   if (!classId) return "CLASS";
@@ -36,6 +38,7 @@ const getClassType = (classId: string): string => {
 
 const ManageBackups = () => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const schoolId = school?.id || null;
   const isTrialPlan = (school as any)?.plan === "trial";
   const [backups, setBackups] = useState<Partial<Backup>[]>([]);
@@ -201,14 +204,54 @@ const ManageBackups = () => {
         document.body.removeChild(link);
         URL.revokeObjectURL(href);
         showToast("Backup downloaded successfully!", { type: "success" });
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "backup_downloaded",
+          entityId: id,
+          meta: {
+            status: "success",
+            module: "Backups",
+            academicYear: details.academicYear,
+            term: details.term,
+            actorName: user?.fullName || "",
+          },
+        });
       } else {
         showToast("No data available to download for this backup.", {
           type: "error",
+        });
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "backup_download_failed",
+          entityId: id,
+          meta: {
+            status: "failed",
+            module: "Backups",
+            error: "No data available",
+            actorName: user?.fullName || "",
+          },
         });
       }
     } catch (err) {
       console.error("Error downloading backup:", err);
       showToast("Failed to download backup.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "backup_download_failed",
+        entityId: id,
+        meta: {
+          status: "failed",
+          module: "Backups",
+          error: (err as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     }
   };
 
@@ -220,6 +263,18 @@ const ManageBackups = () => {
       await db.deleteBackup(schoolId, backupToDeleteId);
       console.log("Backup deleted successfully in DB.");
       showToast("Backup deleted successfully!", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "backup_deleted",
+        entityId: backupToDeleteId,
+        meta: {
+          status: "success",
+          module: "Backups",
+          actorName: user?.fullName || "",
+        },
+      });
       setShowDeleteConfirmModal(false);
       setBackupToDeleteId(null);
       setFilterTerm("");
@@ -230,6 +285,19 @@ const ManageBackups = () => {
     } catch (err: any) {
       console.error("Error during backup deletion or refresh:", err);
       showToast("Failed to delete backup or refresh list.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "backup_delete_failed",
+        entityId: backupToDeleteId,
+        meta: {
+          status: "failed",
+          module: "Backups",
+          error: err?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     }
   };
 

@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 
 const rootElement = document.getElementById("root");
@@ -14,29 +15,25 @@ root.render(
   </React.StrictMode>,
 );
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      if (registration.waiting) {
-        await registration.update();
-      }
-      registration.addEventListener("updatefound", () => {
-        const installing = registration.installing;
-        if (!installing) return;
-        installing.addEventListener("statechange", () => {
-          if (installing.state === "activated") {
-            window.dispatchEvent(new Event("sw-activated"));
-          }
-        });
-      });
-      navigator.serviceWorker.addEventListener("message", (event) => {
-        if (event.data?.type === "SW_ACTIVATED") {
+const updateSW = registerSW({
+  immediate: true,
+  onRegisteredSW(_, registration) {
+    if (!registration) return;
+    registration.addEventListener("updatefound", () => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener("statechange", () => {
+        if (installing.state === "activated") {
           window.dispatchEvent(new Event("sw-activated"));
         }
       });
-    } catch (error) {
-      console.error("Service worker registration failed:", error);
-    }
-  });
-}
+    });
+  },
+  onRegisterError(error) {
+    console.error("Service worker registration failed:", error);
+  },
+});
+
+window.addEventListener("sw-update", () => {
+  updateSW(true);
+});

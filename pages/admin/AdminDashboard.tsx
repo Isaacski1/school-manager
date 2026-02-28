@@ -37,6 +37,7 @@ import {
   Timer,
   AlertTriangle,
 } from "lucide-react";
+import { canAccessFeature } from "../../services/featureAccess";
 import {
   Notice,
   Student,
@@ -141,6 +142,7 @@ const AdminDashboard = () => {
   const { user } = useAuth();
   const { school, schoolLoading } = useSchool();
   const schoolId = school?.id || null;
+  const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
   const [stats, setStats] = useState({
     students: 0,
     teachers: 0,
@@ -278,9 +280,10 @@ const AdminDashboard = () => {
   );
   const fallbackSchoolDays = useMemo(() => {
     const reopen = schoolConfig.schoolReopenDate;
-    const end =
-      schoolConfig.vacationDate || new Date().toISOString().split("T")[0];
-    const total = countWeekdaysRange(reopen, end);
+    const todayStr = new Date().toISOString().split("T")[0];
+    const end = schoolConfig.vacationDate || todayStr;
+    const effectiveEnd = end < todayStr ? end : todayStr;
+    const total = countWeekdaysRange(reopen, effectiveEnd);
     const holidays = schoolConfig.holidayDates?.length || 0;
     const days = Math.max(0, total - holidays);
     return {
@@ -945,14 +948,17 @@ const AdminDashboard = () => {
 
         const earliestRecordDate = recordDateRange.minLabel || "";
         const latestRecordDate = recordDateRange.maxLabel || "";
+        const todayStr = today;
         const termStartDate =
-          config.schoolReopenDate || earliestRecordDate || today;
-        const termEndDate = config.vacationDate || latestRecordDate || today;
+          config.schoolReopenDate || earliestRecordDate || todayStr;
+        const termEndDate = config.vacationDate || latestRecordDate || todayStr;
 
         const parsedStart = parseLocalDateForStats(termStartDate);
         const parsedEnd = parseLocalDateForStats(termEndDate);
-        const safeStart = parsedStart || new Date(today + "T00:00:00");
-        const safeEnd = parsedEnd || new Date(today + "T00:00:00");
+        const parsedToday = parseLocalDateForStats(todayStr) || new Date();
+        const safeStart = parsedStart || parsedToday;
+        const safeEndRaw = parsedEnd || parsedToday;
+        const safeEnd = safeEndRaw > parsedToday ? parsedToday : safeEndRaw;
         const startLabel = `${safeStart.getFullYear()}-${String(
           safeStart.getMonth() + 1,
         ).padStart(2, "0")}-${String(safeStart.getDate()).padStart(2, "0")}`;
@@ -2360,14 +2366,16 @@ const AdminDashboard = () => {
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center gap-3">
-            <Link
-              to="/admin/teachers"
-              className="text-xs bg-white px-3 py-1 rounded-md font-medium text-sky-700 shadow-sm hover:underline"
-            >
-              Manage Staff
-            </Link>
-          </div>
+          {hasFeature("teacher_management") && (
+            <div className="hidden sm:flex items-center gap-3">
+              <Link
+                to="/admin/teachers"
+                className="text-xs bg-white px-3 py-1 rounded-md font-medium text-sky-700 shadow-sm hover:underline"
+              >
+                Manage Staff
+              </Link>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
@@ -2976,20 +2984,24 @@ const AdminDashboard = () => {
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <Link
-              to="/admin/students"
-              className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors shadow-sm text-sm font-medium"
-            >
-              <UserPlus size={16} className="mr-2" />
-              Add Student
-            </Link>
-            <Link
-              to="/admin/teachers"
-              className="flex items-center px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors shadow-sm text-sm font-medium"
-            >
-              <Users size={16} className="mr-2" />
-              Add Staff
-            </Link>
+            {hasFeature("student_management") && (
+              <Link
+                to="/admin/students"
+                className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors shadow-sm text-sm font-medium"
+              >
+                <UserPlus size={16} className="mr-2" />
+                Add Student
+              </Link>
+            )}
+            {hasFeature("teacher_management") && (
+              <Link
+                to="/admin/teachers"
+                className="flex items-center px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors shadow-sm text-sm font-medium"
+              >
+                <Users size={16} className="mr-2" />
+                Add Staff
+              </Link>
+            )}
           </div>
 
           {/* Live Metrics Toggle */}
@@ -3098,13 +3110,15 @@ const AdminDashboard = () => {
                     {subscriptionCountdown.seconds}s
                   </div>
                 </div>
-                <Link
-                  to="/admin/billing"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
-                >
-                  <Wallet size={16} />
-                  Renew Now
-                </Link>
+                {hasFeature("billing") && (
+                  <Link
+                    to="/admin/billing"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
+                  >
+                    <Wallet size={16} />
+                    Renew Now
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -3149,13 +3163,15 @@ const AdminDashboard = () => {
                     {trialCountdown.minutes}m {trialCountdown.seconds}s
                   </div>
                 </div>
-                <Link
-                  to="/admin/billing"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
-                >
-                  <Wallet size={16} />
-                  Upgrade Plan
-                </Link>
+                {hasFeature("billing") && (
+                  <Link
+                    to="/admin/billing"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#1160A8] transition-colors"
+                  >
+                    <Wallet size={16} />
+                    Upgrade Plan
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -3201,13 +3217,15 @@ const AdminDashboard = () => {
                     {graceCountdown.minutes}m {graceCountdown.seconds}s
                   </div>
                 </div>
-                <Link
-                  to="/admin/billing"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#0B4A82] transition-colors"
-                >
-                  <Wallet size={16} />
-                  Go to Billing
-                </Link>
+                {hasFeature("billing") && (
+                  <Link
+                    to="/admin/billing"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#0B4A82] transition-colors"
+                  >
+                    <Wallet size={16} />
+                    Go to Billing
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -3537,12 +3555,14 @@ const AdminDashboard = () => {
               <p className="text-xs text-slate-500">Recently added students</p>
             </div>
             {showHeavyLoading && <SectionLoadingBadge />}
-            <Link
-              to="/admin/students"
-              className="text-sm text-[#0B4A82] hover:text-[#0B4A82] font-medium bg-[#E6F0FA] px-3 py-1 rounded-full transition-colors"
-            >
-              View All
-            </Link>
+            {hasFeature("student_management") && (
+              <Link
+                to="/admin/students"
+                className="text-sm text-[#0B4A82] hover:text-[#0B4A82] font-medium bg-[#E6F0FA] px-3 py-1 rounded-full transition-colors"
+              >
+                View All
+              </Link>
+            )}
           </div>
           <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full text-left text-sm text-slate-600">
@@ -3635,12 +3655,14 @@ const AdminDashboard = () => {
               <p className="text-xs text-slate-300">School announcements</p>
             </div>
             {showHeavyLoading && <SectionLoadingBadge label="Refreshing" />}
-            <Link
-              to="/admin/settings"
-              className="p-2 rounded-lg hover:bg-white/10 text-slate-300 transition-colors"
-            >
-              <Settings size={18} />
-            </Link>
+            {hasFeature("academic_year") && (
+              <Link
+                to="/admin/settings"
+                className="p-2 rounded-lg hover:bg-white/10 text-slate-300 transition-colors"
+              >
+                <Settings size={18} />
+              </Link>
+            )}
           </div>
           <div className="p-4 space-y-4 flex-1 overflow-y-auto max-h-[400px]">
             {broadcasts.length > 0 && (
@@ -3722,12 +3744,14 @@ const AdminDashboard = () => {
             )}
           </div>
           <div className="p-4 bg-slate-900/50 text-center">
-            <Link
-              to="/admin/timetable"
-              className="text-xs font-semibold text-amber-400 hover:text-amber-300 uppercase tracking-wide flex items-center justify-center w-full"
-            >
-              View Calendar <ArrowUpRight size={12} className="ml-1" />
-            </Link>
+            {hasFeature("timetable") && (
+              <Link
+                to="/admin/timetable"
+                className="text-xs font-semibold text-amber-400 hover:text-amber-300 uppercase tracking-wide flex items-center justify-center w-full"
+              >
+                View Calendar <ArrowUpRight size={12} className="ml-1" />
+              </Link>
+            )}
           </div>
         </div>
 

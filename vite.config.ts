@@ -16,7 +16,13 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg"],
+        includeAssets: [
+          "favicon.ico",
+          "apple-touch-icon.png",
+          "mask-icon.svg",
+          "pwa-192x192.png",
+          "pwa-512x512.png",
+        ],
         strategies: "injectManifest",
         srcDir: "src",
         filename: "sw.ts",
@@ -28,17 +34,27 @@ export default defineConfig(({ mode }) => {
           name: "School Manager GH",
           short_name: "School Manager",
           description: "School Management System",
-          theme_color: "#ffffff",
+          start_url: "/",
+          scope: "/",
+          display: "standalone",
+          theme_color: "#2563eb",
+          background_color: "#ffffff",
           icons: [
             {
-              src: "pwa-192x192.png",
+              src: "/pwa-192x192.png",
               sizes: "192x192",
               type: "image/png",
             },
             {
-              src: "pwa-512x512.png",
+              src: "/pwa-512x512.png",
               sizes: "512x512",
               type: "image/png",
+            },
+            {
+              src: "/pwa-512x512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "maskable",
             },
           ],
         },
@@ -51,7 +67,6 @@ export default defineConfig(({ mode }) => {
       },
     },
 
-    // ✅ Fix blank page on GitHub Pages (use relative paths)
-    base: "./",
+    base: "/",
   };
 });

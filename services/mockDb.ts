@@ -34,7 +34,15 @@ import {
   AdminRemark,
   Backup,
   PlatformBroadcast,
+  FeeDefinition,
+  FeeTerm,
+  StudentFeeLedger,
+  StudentFeePayment,
+  PaymentMethod,
+  FinanceSettings,
+  School,
 } from "../types";
+import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
 import { logActivity } from "./activityLog";
 import {
   CURRENT_TERM,
@@ -60,6 +68,45 @@ class FirestoreService {
     return schoolId;
   }
 
+  private async requireFeature(
+    schoolId?: string,
+    feature?: FeatureKey,
+  ): Promise<void> {
+    if (!feature) return;
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      `requireFeature(${feature})`,
+    );
+    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+    const school = schoolSnap.exists()
+      ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+      : null;
+    const plan = resolveFeaturePlan(school);
+    if (!hasFeature(plan, feature)) {
+      throw new Error("FEATURE_ACCESS_DENIED");
+    }
+  }
+
+  private async requireFeatures(
+    schoolId?: string,
+    features: FeatureKey[] = [],
+  ): Promise<void> {
+    if (!features.length) return;
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      `requireFeatures(${features.join(",")})`,
+    );
+    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+    const school = schoolSnap.exists()
+      ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+      : null;
+    const plan = resolveFeaturePlan(school);
+    const missing = features.filter((feature) => !hasFeature(plan, feature));
+    if (missing.length > 0) {
+      throw new Error("FEATURE_ACCESS_DENIED");
+    }
+  }
+
   private async getCollectionBySchoolId<T>(
     collectionName: string,
     schoolId?: string,
@@ -76,8 +123,31 @@ class FirestoreService {
     return snap.docs.map((doc) => doc.data() as T);
   }
 
+  async getFinanceSettings(schoolId?: string): Promise<FinanceSettings> {
+    await this.requireFeature(schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getFinanceSettings");
+    const docRef = doc(
+      firestore,
+      "schools",
+      scopedSchoolId,
+      "financeSettings",
+      "main",
+    );
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as FinanceSettings;
+    }
+    return { schoolId: scopedSchoolId, financeVersion: "v1" };
+  }
+
+  private async useFinanceV2(schoolId?: string): Promise<boolean> {
+    const settings = await this.getFinanceSettings(schoolId);
+    return settings.financeVersion === "v2";
+  }
+
   // --- Config ---
   async getSchoolConfig(schoolId?: string): Promise<SchoolConfig> {
+    await this.requireFeatures(schoolId, ["academic_year", "admin_dashboard"]);
     const scopedSchoolId = this.requireSchoolId(schoolId, "getSchoolConfig");
     const docRef = doc(firestore, "settings", scopedSchoolId);
     const snap = await getDoc(docRef);
@@ -134,12 +204,27 @@ class FirestoreService {
   }
 
   async updateSchoolConfig(config: SchoolConfig): Promise<void> {
+    await this.requireFeature(config.schoolId, "academic_year");
     const docId = this.requireSchoolId(config.schoolId, "updateSchoolConfig");
     await setDoc(doc(firestore, "settings", docId), config);
   }
 
+  async saveFinanceSettings(settings: FinanceSettings): Promise<void> {
+    await this.requireFeature(settings.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      settings.schoolId,
+      "saveFinanceSettings",
+    );
+    await setDoc(
+      doc(firestore, "schools", scopedSchoolId, "financeSettings", "main"),
+      settings,
+      { merge: true },
+    );
+  }
+
   // --- Users ---
   async getUsers(schoolId?: string): Promise<User[]> {
+    await this.requireFeature(schoolId, "teacher_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getUsers");
     const q = query(
       collection(firestore, "users"),
@@ -207,10 +292,19 @@ class FirestoreService {
   }
 
   async addUser(user: User): Promise<void> {
+    await this.requireFeature(user.schoolId || undefined, "teacher_management");
     await setDoc(doc(firestore, "users", user.id), user);
   }
 
   async deleteUser(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "users", id));
+    if (existing.exists()) {
+      const data = existing.data() as User;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "teacher_management",
+      );
+    }
     await deleteDoc(doc(firestore, "users", id));
   }
 
@@ -218,6 +312,14 @@ class FirestoreService {
     id: string,
     assignedClassIds: string[],
   ): Promise<void> {
+    const existing = await getDoc(doc(firestore, "users", id));
+    if (existing.exists()) {
+      const data = existing.data() as User;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "teacher_management",
+      );
+    }
     await updateDoc(doc(firestore, "users", id), {
       assignedClassIds,
     });
@@ -225,6 +327,7 @@ class FirestoreService {
 
   // --- Students ---
   async getStudents(schoolId?: string, classId?: string): Promise<Student[]> {
+    await this.requireFeature(schoolId, "student_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getStudents");
     const studentsRef = collection(firestore, "students");
     const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
@@ -235,11 +338,13 @@ class FirestoreService {
   }
 
   async addStudent(student: Student): Promise<void> {
+    await this.requireFeature(student.schoolId, "student_management");
     this.requireSchoolId(student.schoolId, "addStudent");
     await setDoc(doc(firestore, "students", student.id), student);
   }
 
   async updateStudent(student: Student): Promise<void> {
+    await this.requireFeature(student.schoolId, "student_management");
     this.requireSchoolId(student.schoolId, "updateStudent");
     await updateDoc(doc(firestore, "students", student.id), {
       ...student,
@@ -251,6 +356,7 @@ class FirestoreService {
     schoolId: string | undefined,
     updates: { id: string; classId: string }[],
   ): Promise<void> {
+    await this.requireFeature(schoolId, "student_management");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "updateStudentsClassBulk",
@@ -269,11 +375,20 @@ class FirestoreService {
   }
 
   async deleteStudent(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "students", id));
+    if (existing.exists()) {
+      const data = existing.data() as Student;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "student_management",
+      );
+    }
     await deleteDoc(doc(firestore, "students", id));
   }
 
   // --- Subjects ---
   async getSubjects(schoolId?: string, classId?: string): Promise<string[]> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getSubjects");
     if (!classId) return [];
     const q = query(
@@ -293,6 +408,7 @@ class FirestoreService {
     name: string,
     schoolId: string,
   ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "addSubject");
     const current = await this.getSubjects(scopedSchoolId, classId);
     if (!current.includes(name)) {
@@ -313,6 +429,7 @@ class FirestoreService {
     newName: string,
     schoolId: string,
   ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "updateSubject");
     const current = await this.getSubjects(scopedSchoolId, classId);
     const idx = current.indexOf(oldName);
@@ -334,6 +451,7 @@ class FirestoreService {
     name: string,
     schoolId: string,
   ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "deleteSubject");
     const current = await this.getSubjects(scopedSchoolId, classId);
     const updated = current.filter((s) => s !== name);
@@ -352,6 +470,7 @@ class FirestoreService {
     subjects: string[],
     schoolId: string,
   ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "seedClassSubjects");
     await setDoc(
       doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
@@ -364,6 +483,7 @@ class FirestoreService {
   }
 
   async resetAllClassSubjects(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "resetAllClassSubjects",
@@ -385,6 +505,7 @@ class FirestoreService {
     classId?: string,
     date?: string,
   ): Promise<AttendanceRecord | undefined> {
+    await this.requireFeature(schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getAttendance");
     if (!classId || !date) return undefined;
     const q = query(
@@ -401,6 +522,7 @@ class FirestoreService {
     schoolId?: string,
     classId?: string,
   ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getClassAttendance");
     if (!classId) return [];
     const q = query(
@@ -416,6 +538,7 @@ class FirestoreService {
     schoolId?: string,
     date?: string,
   ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getAttendanceByDate",
@@ -431,6 +554,7 @@ class FirestoreService {
   }
 
   async saveAttendance(record: AttendanceRecord): Promise<void> {
+    await this.requireFeature(record.schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(
       record.schoolId,
       "saveAttendance",
@@ -445,6 +569,7 @@ class FirestoreService {
     classId?: string,
     subject?: string,
   ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getAssessments");
     if (!classId || !subject) return [];
     const q = query(
@@ -458,6 +583,7 @@ class FirestoreService {
   }
 
   async getAllAssessments(schoolId?: string): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     return this.getCollectionBySchoolId<Assessment>("assessments", schoolId);
   }
 
@@ -465,6 +591,7 @@ class FirestoreService {
     schoolId?: string,
     studentId?: string,
   ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getStudentAssessmentsByStudent",
@@ -480,6 +607,7 @@ class FirestoreService {
   }
 
   async saveAssessment(assessment: Assessment): Promise<void> {
+    await this.requireFeature(assessment.schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(
       assessment.schoolId,
       "saveAssessment",
@@ -496,6 +624,7 @@ class FirestoreService {
     seedDefaults = false,
     newTerm?: number,
   ): Promise<void> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "resetAssessmentsForClass",
@@ -546,6 +675,7 @@ class FirestoreService {
 
   // --- Notices ---
   async getNotices(schoolId?: string): Promise<Notice[]> {
+    await this.requireFeature(schoolId, "admin_dashboard");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getNotices");
     const q = query(
       collection(firestore, "notices"),
@@ -556,16 +686,23 @@ class FirestoreService {
   }
 
   async addNotice(notice: Notice): Promise<void> {
+    await this.requireFeature(notice.schoolId, "admin_dashboard");
     this.requireSchoolId(notice.schoolId, "addNotice");
     await setDoc(doc(firestore, "notices", notice.id), notice);
   }
 
   async deleteNotice(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "notices", id));
+    if (existing.exists()) {
+      const data = existing.data() as Notice;
+      await this.requireFeature(data.schoolId || undefined, "admin_dashboard");
+    }
     await deleteDoc(doc(firestore, "notices", id));
   }
 
   // --- Platform Broadcasts ---
   async getPlatformBroadcasts(schoolId?: string): Promise<PlatformBroadcast[]> {
+    await this.requireFeature(schoolId, "admin_dashboard");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getPlatformBroadcasts",
@@ -610,6 +747,7 @@ class FirestoreService {
     schoolId?: string,
     classId?: string,
   ): Promise<StudentRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getStudentRemarks");
     if (!classId) return [];
     const q = query(
@@ -625,6 +763,7 @@ class FirestoreService {
     schoolId?: string,
     studentId?: string,
   ): Promise<StudentRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getStudentRemarksByStudent",
@@ -640,6 +779,7 @@ class FirestoreService {
   }
 
   async saveStudentRemark(remark: StudentRemark): Promise<void> {
+    await this.requireFeature(remark.schoolId, "basic_exam_reports");
     this.requireSchoolId(remark.schoolId, "saveStudentRemark");
     await setDoc(doc(firestore, "student_remarks", remark.id), remark);
   }
@@ -649,6 +789,7 @@ class FirestoreService {
     schoolId?: string,
     classId?: string,
   ): Promise<StudentSkills[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getStudentSkills");
     if (!classId) return [];
     const q = query(
@@ -664,6 +805,7 @@ class FirestoreService {
     schoolId?: string,
     studentId?: string,
   ): Promise<StudentSkills[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getStudentSkillsByStudent",
@@ -679,6 +821,7 @@ class FirestoreService {
   }
 
   async saveStudentSkills(skills: StudentSkills): Promise<void> {
+    await this.requireFeature(skills.schoolId, "basic_exam_reports");
     this.requireSchoolId(skills.schoolId, "saveStudentSkills");
     await setDoc(doc(firestore, "student_skills", skills.id), skills);
   }
@@ -733,6 +876,7 @@ class FirestoreService {
     schoolId?: string,
     classId?: string,
   ): Promise<ClassTimetable | undefined> {
+    await this.requireFeature(schoolId, "timetable");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getTimetable");
     if (!classId) return undefined;
     const q = query(
@@ -746,6 +890,7 @@ class FirestoreService {
   }
 
   async saveTimetable(timetable: ClassTimetable): Promise<void> {
+    await this.requireFeature(timetable.schoolId, "timetable");
     const scopedSchoolId = this.requireSchoolId(
       timetable.schoolId,
       "saveTimetable",
@@ -762,6 +907,7 @@ class FirestoreService {
     studentId: string,
     classId: string,
   ) {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const attendanceRecords = await this.getClassAttendance(schoolId, classId);
     const holidayDates = new Set(
       attendanceRecords.filter((r) => r.isHoliday).map((r) => r.date),
@@ -865,6 +1011,7 @@ class FirestoreService {
   }
 
   async getDashboardStats(schoolId?: string) {
+    await this.requireFeature(schoolId, "basic_analytics");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getDashboardStats");
     const [studentsSnap, usersSnap, attendanceSnap] = await Promise.all([
       getDocs(
@@ -928,6 +1075,7 @@ class FirestoreService {
   }
 
   async getDashboardSummary(schoolId?: string) {
+    await this.requireFeature(schoolId, "basic_analytics");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getDashboardSummary",
@@ -960,6 +1108,7 @@ class FirestoreService {
     teacherId?: string,
     date?: string,
   ): Promise<TeacherAttendanceRecord | undefined> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getTeacherAttendance",
@@ -1016,6 +1165,7 @@ class FirestoreService {
     schoolId?: string,
     date?: string,
   ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     if (!date) return [];
     const records = await this.getAllTeacherAttendance(schoolId, date);
     return records.filter((record) => record.approvalStatus === "pending");
@@ -1024,6 +1174,7 @@ class FirestoreService {
   async getAllPendingTeacherAttendance(
     schoolId?: string,
   ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const records = await this.getAllTeacherAttendanceRecords(schoolId);
     return records.filter((record) => record.approvalStatus === "pending");
   }
@@ -1032,6 +1183,7 @@ class FirestoreService {
     schoolId?: string,
     date?: string,
   ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "getAllTeacherAttendance",
@@ -1050,12 +1202,14 @@ class FirestoreService {
     schoolId?: string,
     date?: string,
   ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     if (!date) return [];
     const records = await this.getAllTeacherAttendance(schoolId, date);
     return records.filter((record) => record.approvalStatus === "approved");
   }
 
   async saveTeacherAttendance(record: TeacherAttendanceRecord): Promise<void> {
+    await this.requireFeature(record.schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       record.schoolId,
       "saveTeacherAttendance",
@@ -1074,6 +1228,7 @@ class FirestoreService {
     adminId: string,
     options?: { teacherId?: string; date?: string },
   ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "approveTeacherAttendance",
@@ -1115,6 +1270,7 @@ class FirestoreService {
     adminId: string,
     options?: { teacherId?: string; date?: string },
   ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "rejectTeacherAttendance",
@@ -1152,6 +1308,7 @@ class FirestoreService {
   async getAllTeacherAttendanceRecords(
     schoolId?: string,
   ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     return this.getCollectionBySchoolId<TeacherAttendanceRecord>(
       "teacher_attendance",
       schoolId,
@@ -1159,6 +1316,7 @@ class FirestoreService {
   }
 
   async resetAllTeacherAttendance(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "resetAllTeacherAttendance",
@@ -1179,6 +1337,7 @@ class FirestoreService {
     schoolId?: string,
     remarkId?: string,
   ): Promise<AdminRemark | undefined> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getAdminRemark");
     if (!remarkId) return undefined;
     const docRef = doc(firestore, "admin_remarks", remarkId);
@@ -1189,6 +1348,7 @@ class FirestoreService {
   }
 
   async saveAdminRemark(remark: AdminRemark): Promise<void> {
+    await this.requireFeature(remark.schoolId, "basic_exam_reports");
     this.requireSchoolId(remark.schoolId, "saveAdminRemark");
     await setDoc(doc(firestore, "admin_remarks", remark.id), remark);
   }
@@ -1202,6 +1362,7 @@ class FirestoreService {
     academicYear: string,
     options?: { dedupeKey?: string },
   ): Promise<void> {
+    await this.requireFeature(currentConfig.schoolId, "backups");
     console.log(`Creating backup for ${currentTerm}, ${academicYear}...`);
 
     try {
@@ -1567,6 +1728,7 @@ class FirestoreService {
     academicYear?: string;
     date?: string;
   }): Promise<Partial<Backup>[]> {
+    await this.requireFeature(filters?.schoolId, "backups");
     const scopedSchoolId = this.requireSchoolId(
       filters?.schoolId,
       "getBackups",
@@ -1596,6 +1758,7 @@ class FirestoreService {
     schoolId?: string,
     id?: string,
   ): Promise<Backup | undefined> {
+    await this.requireFeature(schoolId, "backups");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getBackupDetails");
     if (!id) return undefined;
     const snap = await getDoc(doc(firestore, "backups", id));
@@ -1605,6 +1768,7 @@ class FirestoreService {
   }
 
   async deleteBackup(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
     const scopedSchoolId = this.requireSchoolId(schoolId, "deleteBackup");
     if (!id) return;
     const existing = await this.getBackupDetails(scopedSchoolId, id);
@@ -1613,6 +1777,7 @@ class FirestoreService {
   }
 
   async deleteAllBackups(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
     const scopedSchoolId = this.requireSchoolId(schoolId, "deleteAllBackups");
     const q = query(
       collection(firestore, "backups"),
@@ -1623,6 +1788,177 @@ class FirestoreService {
       deleteDoc(doc(firestore, "backups", d.id)),
     );
     await Promise.all(deletions);
+  }
+
+  // --- Fees & Payments ---
+  async getFees(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string | null;
+  }): Promise<FeeDefinition[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(filters.schoolId, "getFees");
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.academicYear)
+      conditions.push(where("academicYear", "==", filters.academicYear));
+    if (filters.term) conditions.push(where("term", "==", filters.term));
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const feesCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "fees")
+      : collection(firestore, "fees");
+    const q = query(feesCollection, ...conditions);
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as FeeDefinition) }));
+  }
+
+  async saveFee(fee: FeeDefinition): Promise<void> {
+    await this.requireFeature(fee.schoolId, "fees_payments");
+    this.requireSchoolId(fee.schoolId, "saveFee");
+    const useV2 = await this.useFinanceV2(fee.schoolId);
+    const docRef = useV2
+      ? doc(firestore, "schools", fee.schoolId, "fees", fee.id)
+      : doc(firestore, "fees", fee.id);
+    await setDoc(docRef, fee);
+  }
+
+  async deleteFee(feeId: string, schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "fees_payments");
+    await deleteDoc(doc(firestore, "fees", feeId));
+    if (schoolId && (await this.useFinanceV2(schoolId))) {
+      await deleteDoc(doc(firestore, "schools", schoolId, "fees", feeId));
+    }
+  }
+
+  async getStudentLedgers(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+  }): Promise<StudentFeeLedger[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      filters.schoolId,
+      "getStudentLedgers",
+    );
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.academicYear)
+      conditions.push(where("academicYear", "==", filters.academicYear));
+    if (filters.term) conditions.push(where("term", "==", filters.term));
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const ledgerCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "feeLedgers")
+      : collection(firestore, "student_ledgers");
+    const q = query(ledgerCollection, ...conditions);
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as StudentFeeLedger),
+    }));
+  }
+
+  async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
+    await this.requireFeature(ledger.schoolId, "fees_payments");
+    this.requireSchoolId(ledger.schoolId, "upsertStudentLedger");
+    const useV2 = await this.useFinanceV2(ledger.schoolId);
+    const docRef = useV2
+      ? doc(firestore, "schools", ledger.schoolId, "feeLedgers", ledger.id)
+      : doc(firestore, "student_ledgers", ledger.id);
+    await setDoc(docRef, ledger, {
+      merge: true,
+    });
+  }
+
+  async getPayments(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+    studentId?: string;
+  }): Promise<StudentFeePayment[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      filters.schoolId,
+      "getPayments",
+    );
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.academicYear)
+      conditions.push(where("academicYear", "==", filters.academicYear));
+    if (filters.term) conditions.push(where("term", "==", filters.term));
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    if (filters.studentId)
+      conditions.push(where("studentId", "==", filters.studentId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const paymentsCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "payments")
+      : collection(firestore, "payments");
+    const q = query(paymentsCollection, ...conditions);
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as StudentFeePayment),
+    }));
+  }
+
+  async recordStudentPayment(payment: StudentFeePayment): Promise<void> {
+    await this.requireFeature(payment.schoolId, "fees_payments");
+    this.requireSchoolId(payment.schoolId, "recordStudentPayment");
+    const useV2 = await this.useFinanceV2(payment.schoolId);
+    const docRef = useV2
+      ? doc(firestore, "schools", payment.schoolId, "payments", payment.id)
+      : doc(firestore, "payments", payment.id);
+    await setDoc(docRef, payment);
+  }
+
+  async updateStudentPayment(
+    paymentId: string,
+    updates: Partial<StudentFeePayment>,
+    schoolId?: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "fees_payments");
+    if (!paymentId) return;
+    await updateDoc(doc(firestore, "payments", paymentId), updates);
+    if (schoolId && (await this.useFinanceV2(schoolId))) {
+      await updateDoc(
+        doc(firestore, "schools", schoolId, "payments", paymentId),
+        updates,
+      );
+    }
+  }
+
+  async computeLedgerTotals(
+    ledger: StudentFeeLedger,
+    payments: StudentFeePayment[],
+  ): Promise<{
+    totalDue: number;
+    totalPaid: number;
+    balance: number;
+    status: "Unpaid" | "Part-paid" | "Paid";
+  }> {
+    const totalDue = ledger.fees.reduce((sum, fee) => sum + fee.amount, 0);
+    const openingPaid = ledger.openingPaidAmount || 0;
+    const totalPaid = payments
+      .filter(
+        (payment) =>
+          payment.studentId === ledger.studentId &&
+          payment.academicYear === ledger.academicYear &&
+          payment.term === ledger.term,
+      )
+      .reduce((sum, payment) => sum + payment.amountPaid, 0);
+    const totalPaidIncludingOpening = openingPaid + totalPaid;
+    const balance = Math.max(0, totalDue - totalPaidIncludingOpening);
+    const status =
+      totalPaidIncludingOpening <= 0
+        ? "Unpaid"
+        : balance > 0
+          ? "Part-paid"
+          : "Paid";
+    return { totalDue, totalPaid: totalPaidIncludingOpening, balance, status };
   }
 }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
+import { logActivity } from "../../services/activityLog";
 import { Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
 import {
@@ -29,6 +30,7 @@ const Attendance = () => {
   const [holidayReason, setHolidayReason] = useState("");
   const [hasMarkedAttendance, setHasMarkedAttendance] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [adminHoliday, setAdminHoliday] = useState<{
     date: string;
     reason?: string;
@@ -221,7 +223,7 @@ const Attendance = () => {
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
     try {
       if (isHoliday) {
         const existingSameDate = await db.getAttendanceByDate(schoolId, date);
@@ -245,6 +247,24 @@ const Attendance = () => {
       });
       setHasMarkedAttendance(!isHoliday);
 
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: isHoliday ? "attendance_holiday_saved" : "attendance_saved",
+        entityId: `${schoolId}_${selectedClassId}_${date}`,
+        meta: {
+          status: "success",
+          module: "Attendance",
+          classId: selectedClassId,
+          date,
+          presentCount: isHoliday ? 0 : presentIds.size,
+          holiday: isHoliday,
+          holidayReason: isHoliday ? holidayReason.trim() : "",
+          actorName: user?.fullName || "",
+        },
+      });
+
       // Notification logic
       const className =
         CLASSES_LIST.find((c) => c.id === selectedClassId)?.name ||
@@ -265,8 +285,27 @@ const Attendance = () => {
       setTimeout(() => setMessage(""), 3000);
     } catch (err) {
       console.error(err);
+      try {
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "attendance_save_failed",
+          entityId: `${schoolId}_${selectedClassId}_${date}`,
+          meta: {
+            status: "failed",
+            module: "Attendance",
+            classId: selectedClassId,
+            date,
+            actorName: user?.fullName || "",
+            error: (err as any)?.message || "Unknown error",
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log activity", logErr);
+      }
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -420,6 +459,7 @@ const Attendance = () => {
                 onClick={handleSave}
                 disabled={
                   loading ||
+                  saving ||
                   !selectedClassId ||
                   isDateBlocked() ||
                   !!adminHoliday
@@ -428,10 +468,12 @@ const Attendance = () => {
               >
                 <Save size={18} />
                 {loading
-                  ? "Saving..."
-                  : isHoliday
-                    ? "Save Holiday"
-                    : "Save Register"}
+                  ? "Loading..."
+                  : saving
+                    ? "Saving..."
+                    : isHoliday
+                      ? "Save Holiday"
+                      : "Save Register"}
               </button>
             </div>
           </div>

@@ -84,6 +84,203 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Finance v2 subcollections (scoped by school)
+    match /schools/{schoolId}/fees/{feeId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "feeName",
+          "amount",
+          "classId",
+          "academicYear",
+          "term",
+          "createdAt",
+          "createdBy",
+          "feeFrequency",
+          "appliesTo",
+          "effectiveFromDate",
+          "dueDate",
+          "selectedStudentIds",
+          "applyToAcademicYear",
+          "applyToTerm"
+        ]);
+
+      allow read: if schoolScopedRead(schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "feeName",
+          "amount",
+          "classId",
+          "academicYear",
+          "term",
+          "createdAt",
+          "createdBy",
+          "feeFrequency",
+          "appliesTo",
+          "effectiveFromDate",
+          "dueDate",
+          "selectedStudentIds",
+          "applyToAcademicYear",
+          "applyToTerm"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
+    match /schools/{schoolId}/feeLedgers/{ledgerId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "academicYear",
+          "term",
+          "fees",
+          "createdAt",
+          "updatedAt",
+          "openingPaidAmount",
+          "openingBalance",
+          "openingStatus",
+          "openingDate"
+        ]);
+
+      allow read: if schoolScopedRead(schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "academicYear",
+          "term",
+          "fees",
+          "createdAt",
+          "updatedAt",
+          "openingPaidAmount",
+          "openingBalance",
+          "openingStatus",
+          "openingDate"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
+    match /schools/{schoolId}/payments/{paymentId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "feeId",
+          "feeName",
+          "amountPaid",
+          "paymentMethod",
+          "receiptNumber",
+          "academicYear",
+          "term",
+          "createdAt",
+          "recordedBy",
+          "amount",
+          "currency",
+          "reference",
+          "status",
+          "event",
+          "adminEmail",
+          "schoolName",
+          "isOpeningPayment"
+        ]);
+
+      allow read: if schoolScopedRead(schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "feeId",
+          "feeName",
+          "amountPaid",
+          "paymentMethod",
+          "receiptNumber",
+          "academicYear",
+          "term",
+          "createdAt",
+          "recordedBy",
+          "amount",
+          "currency",
+          "reference",
+          "status",
+          "event",
+          "adminEmail",
+          "schoolName",
+          "isOpeningPayment"
+        ]);
+
+      allow delete: if isSuperAdmin();
+    }
+
+    match /schools/{schoolId}/financeSettings/{docId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == schoolId &&
+        onlyAllowedFields([
+          "schoolId",
+          "financeVersion",
+          "onboardingMode",
+          "onboardingDate",
+          "createdAt",
+          "updatedAt"
+        ]);
+
+      allow read: if schoolScopedRead(schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "schoolId",
+          "financeVersion",
+          "onboardingMode",
+          "onboardingDate",
+          "createdAt",
+          "updatedAt"
+        ]);
+
+      allow delete: if isSuperAdmin();
+    }
+
     // Settings collection (per school config)
     match /settings/{document} {
       // Super admin can read/write all settings
@@ -469,6 +666,124 @@ service cloud.firestore {
         ]);
 
       allow delete: if schoolScopedRead(resource.data.schoolId);
+    }
+
+    // Fees collection
+    match /fees/{feeId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "feeName",
+          "amount",
+          "classId",
+          "academicYear",
+          "term",
+          "createdAt",
+          "createdBy"
+        ]);
+
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "feeName",
+          "amount",
+          "classId",
+          "academicYear",
+          "term",
+          "createdAt",
+          "createdBy"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Student fee ledgers collection
+    match /student_ledgers/{ledgerId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "academicYear",
+          "term",
+          "fees",
+          "createdAt",
+          "updatedAt"
+        ]);
+
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "academicYear",
+          "term",
+          "fees",
+          "createdAt",
+          "updatedAt"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId);
+    }
+
+    // Student fee payments collection
+    match /payments/{paymentId} {
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "feeId",
+          "feeName",
+          "amountPaid",
+          "paymentMethod",
+          "receiptNumber",
+          "academicYear",
+          "term",
+          "createdAt",
+          "recordedBy",
+          "amount",
+          "currency",
+          "reference",
+          "status",
+          "event",
+          "adminEmail",
+          "schoolName"
+        ]);
+
+      allow read: if schoolScopedRead(resource.data.schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
+        isActiveSchoolId(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId;
+
+      allow delete: if isSuperAdmin();
     }
 
     // Class subjects collection

@@ -5,6 +5,7 @@ import { db } from "../../services/mockDb";
 import { Student, StudentRemark } from "../../types";
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM } from "../../constants";
 import { Save, MessageSquare } from "lucide-react";
+import { logActivity } from "../../services/activityLog";
 
 const WriteRemarks = () => {
   const { user } = useAuth();
@@ -121,10 +122,39 @@ const WriteRemarks = () => {
 
       setMessage("Remarks saved successfully!");
       setTimeout(() => setMessage(""), 3000);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "remarks_saved",
+        entityId: selectedClassId,
+        meta: {
+          status: "success",
+          module: "Remarks",
+          classId: selectedClassId,
+          term: config.currentTerm,
+          academicYear: config.academicYear,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (err) {
       console.error(err);
       setMessage("Error saving remarks");
       setTimeout(() => setMessage(""), 3000);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "remarks_save_failed",
+        entityId: selectedClassId,
+        meta: {
+          status: "failed",
+          module: "Remarks",
+          classId: selectedClassId,
+          error: (err as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setSaving(false);
     }

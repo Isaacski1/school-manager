@@ -3,6 +3,7 @@ import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
 import { TeacherAttendanceRecord } from "../../types";
+import { logActivity } from "../../services/activityLog";
 import {
   Calendar,
   CheckCircle,
@@ -95,7 +96,15 @@ const TeacherAttendance = () => {
       ? parseLocalDate(schoolConfig.vacationDate)
       : null;
 
-    const startDate = reopenObj || new Date(todayDate);
+    const lookbackDate = new Date(todayDate);
+    lookbackDate.setDate(lookbackDate.getDate() - 10);
+    let startDate = lookbackDate;
+    if (reopenObj && reopenObj > lookbackDate) {
+      startDate = reopenObj;
+    }
+    if (startDate > todayDate) {
+      startDate = new Date(todayDate);
+    }
     const endDate = new Date(todayDate);
     const generatedDates = getSchoolDatesBetween(startDate, endDate);
 
@@ -236,7 +245,11 @@ const TeacherAttendance = () => {
         user.id,
         previousSchoolDay,
       );
-      if (!record) setMissedAttendanceAlert(previousSchoolDay);
+      if (!record) {
+        setMissedAttendanceAlert(previousSchoolDay);
+      } else {
+        setMissedAttendanceAlert(null);
+      }
     };
 
     checkMissed();
@@ -280,6 +293,21 @@ const TeacherAttendance = () => {
       "attendance",
       schoolId,
     );
+
+    await logActivity({
+      schoolId,
+      actorUid: user?.id || null,
+      actorRole: user?.role || null,
+      eventType: "teacher_attendance_submitted",
+      entityId: record.id,
+      meta: {
+        status: "success",
+        module: "Teacher Attendance",
+        date,
+        attendanceStatus: status,
+        actorName: user?.fullName || "",
+      },
+    });
 
     setSaving((s) => ({ ...s, [date]: false }));
   };
@@ -327,6 +355,21 @@ const TeacherAttendance = () => {
         "attendance",
         schoolId,
       );
+
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_attendance_holiday_submitted",
+        entityId: record.id,
+        meta: {
+          status: "success",
+          module: "Teacher Attendance",
+          date,
+          holidayReason: record.holidayReason || "",
+          actorName: user?.fullName || "",
+        },
+      });
 
       setActionMessage("Holiday saved successfully!");
       setTimeout(() => setActionMessage(""), 3000);

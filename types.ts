@@ -37,11 +37,15 @@ export interface School {
   status: "active" | "inactive";
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: Date | null;
+  featurePlan?: "starter" | "standard";
   createdAt: Date;
   createdBy: string;
   notes?: string;
   subscription?: {
     planId?: string;
+  };
+  billing?: {
+    startType?: "term_start" | "mid_term";
   };
   limits?: {
     maxStudents?: number;
@@ -55,6 +59,82 @@ export interface PlanConfig {
   maxStudents: number;
   createdAt?: Date;
   updatedAt?: Date;
+}
+
+export type FeeTerm = "Term 1" | "Term 2" | "Term 3";
+export type PaymentMethod = "Cash" | "MoMo" | "Bank";
+export type FeeFrequency = "one_time" | "per_term" | "per_year";
+export type FeeAppliesTo =
+  | "all_students"
+  | "class"
+  | "selected_students"
+  | "new_students_only";
+export type OnboardingMode = "fresh_start" | "full_history";
+
+export interface FeeDefinition {
+  id: string;
+  schoolId: string;
+  feeName: string;
+  amount: number;
+  classId?: string | null;
+  academicYear: string;
+  term: FeeTerm;
+  feeFrequency?: FeeFrequency;
+  appliesTo?: FeeAppliesTo;
+  effectiveFromDate?: string | null;
+  dueDate?: string | null;
+  selectedStudentIds?: string[];
+  applyToAcademicYear?: string | null;
+  applyToTerm?: FeeTerm | null;
+  createdAt: Date | number;
+  createdBy: string;
+}
+
+export interface StudentFeeLedger {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  academicYear: string;
+  term: FeeTerm;
+  fees: Array<{
+    feeId: string;
+    feeName: string;
+    amount: number;
+    openingPaidAmount?: number;
+    openingBalance?: number;
+    openingStatus?: "Paid" | "Part-paid" | "Unpaid";
+  }>;
+  openingPaidAmount?: number;
+  openingBalance?: number;
+  openingStatus?: "Paid" | "Part-paid" | "Unpaid";
+  openingDate?: string | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number;
+}
+
+export interface StudentFeePayment {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  feeId: string;
+  feeName: string;
+  amountPaid: number;
+  paymentMethod: PaymentMethod;
+  receiptNumber?: string | null;
+  academicYear: string;
+  term: FeeTerm;
+  isOpeningPayment?: boolean;
+  createdAt: Date | number;
+  recordedBy: string;
+}
+
+export interface FinanceSettings {
+  schoolId: string;
+  financeVersion: "v1" | "v2";
+  onboardingMode?: OnboardingMode;
+  onboardingDate?: string | null;
 }
 
 export type BroadcastType = "GENERAL" | "SYSTEM_UPDATE" | "MAINTENANCE";
@@ -217,6 +297,7 @@ export interface Student {
   guardianName: string;
   guardianPhone: string;
   studentStatus?: "graduated" | "stopped" | "active";
+  createdAt?: Date | number;
 }
 
 export interface AttendanceRecord {

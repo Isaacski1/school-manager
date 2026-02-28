@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { loadUserProfile } from "../services/authProfile";
 import { safeLogAnalyticsEvent } from "../services/analytics";
+import { logActivity } from "../services/activityLog";
 
 interface AuthContextType {
   user: User | null;
@@ -90,6 +91,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               actionType: "USER_LOGIN",
               userRole: userProfile.role || null,
               userId: userProfile.id || firebaseUser.uid,
+            });
+            await logActivity({
+              schoolId: userProfile.schoolId || null,
+              actorUid: userProfile.id || firebaseUser.uid || null,
+              actorRole: userProfile.role || null,
+              eventType: "user_login",
+              entityId: userProfile.id || firebaseUser.uid,
+              meta: {
+                status: "success",
+                module: "Authentication",
+                actorName: userProfile.fullName || "",
+                email: userProfile.email || "",
+              },
             });
           } catch (updateError) {
             console.warn("Failed to update last login timestamp", updateError);

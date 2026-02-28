@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SchoolProvider, useSchool } from "./context/SchoolContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { requireRole } from "./services/authProfile";
+import { canAccessFeature, FeatureKey } from "./services/featureAccess";
 import { UserRole } from "./types";
 
 // Pages
@@ -25,6 +26,8 @@ import SystemSettings from "./pages/admin/SystemSettings";
 import ManageBackups from "./pages/admin/ManageBackups";
 import Timetable from "./pages/admin/Timetable";
 import Billing from "./pages/admin/Billing";
+import FeesPayments from "./pages/admin/FeesPayments";
+import ActivityMonitor from "./pages/admin/ActivityMonitor";
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import Attendance from "./pages/teacher/Attendance";
 import TeacherAttendance from "./pages/teacher/TeacherAttendance";
@@ -246,11 +249,14 @@ const App = () => {
 const ProtectedRoute = ({
   children,
   allowedRoles,
+  requiredFeature,
 }: {
   children: React.ReactElement;
   allowedRoles?: UserRole[];
+  requiredFeature?: FeatureKey;
 }) => {
   const { user, isAuthenticated, authLoading } = useAuth();
+  const { school } = useSchool();
 
   // Show splash screen while auth is being determined
   if (authLoading) {
@@ -270,6 +276,12 @@ const ProtectedRoute = ({
           ? "/admin/students" // Use a specific admin route instead of root
           : "/teacher";
     return <Navigate to={redirectPath} replace />;
+  }
+
+  if (requiredFeature && !canAccessFeature(user, school, requiredFeature)) {
+    const fallbackPath =
+      user?.role === UserRole.TEACHER ? "/teacher" : "/admin/students";
+    return <Navigate to={fallbackPath} replace />;
   }
 
   return children;
@@ -307,7 +319,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/students"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="student_management"
+          >
             <ManageStudents />
           </ProtectedRoute>
         }
@@ -315,7 +330,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/student-history"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="student_history"
+          >
             <StudentHistory />
           </ProtectedRoute>
         }
@@ -323,7 +341,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/teachers"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="teacher_management"
+          >
             <ManageTeachers />
           </ProtectedRoute>
         }
@@ -331,7 +352,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/attendance"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="attendance"
+          >
             <AttendanceStats />
           </ProtectedRoute>
         }
@@ -339,7 +363,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/teacher-attendance"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="teacher_attendance"
+          >
             <TeacherAttendanceStats />
           </ProtectedRoute>
         }
@@ -347,7 +374,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/reports"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="basic_exam_reports"
+          >
             <Reports />
           </ProtectedRoute>
         }
@@ -355,7 +385,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/report-card"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="basic_exam_reports"
+          >
             <ReportCard />
           </ProtectedRoute>
         }
@@ -363,7 +396,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/timetable"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="timetable"
+          >
             <Timetable />
           </ProtectedRoute>
         }
@@ -372,7 +408,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/settings"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="academic_year"
+          >
             <SystemSettings />
           </ProtectedRoute>
         }
@@ -381,7 +420,10 @@ const AppRoutes = () => {
       <Route
         path="/admin/backups"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="backups"
+          >
             <ManageBackups />
           </ProtectedRoute>
         }
@@ -390,8 +432,34 @@ const AppRoutes = () => {
       <Route
         path="/admin/billing"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="billing"
+          >
             <Billing />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/fees"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="fees_payments"
+          >
+            <FeesPayments />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/activity"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="activity_monitor"
+          >
+            <ActivityMonitor />
           </ProtectedRoute>
         }
       />
@@ -502,7 +570,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="teacher_dashboard"
+          >
             <TeacherDashboard />
           </ProtectedRoute>
         }
@@ -510,7 +581,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher/attendance"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="attendance"
+          >
             <Attendance />
           </ProtectedRoute>
         }
@@ -518,7 +592,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher/assessment"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="basic_exam_reports"
+          >
             <Assessment />
           </ProtectedRoute>
         }
@@ -526,7 +603,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher/my-attendance"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="teacher_attendance"
+          >
             <TeacherAttendance />
           </ProtectedRoute>
         }
@@ -534,7 +614,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher/write-remarks"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="basic_exam_reports"
+          >
             <WriteRemarks />
           </ProtectedRoute>
         }
@@ -542,7 +625,10 @@ const AppRoutes = () => {
       <Route
         path="/teacher/edit-skills"
         element={
-          <ProtectedRoute allowedRoles={[UserRole.TEACHER]}>
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="basic_exam_reports"
+          >
             <EditSkills />
           </ProtectedRoute>
         }

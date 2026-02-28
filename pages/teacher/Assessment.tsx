@@ -13,6 +13,7 @@ import {
 } from "../../constants";
 import { Save } from "lucide-react";
 import { showToast } from "../../services/toast";
+import { logActivity } from "../../services/activityLog";
 
 const nurserySubjects = [
   "Language & Literacy",
@@ -307,9 +308,42 @@ const AssessmentPage = () => {
       );
 
       showToast("Saved Successfully", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "assessments_saved",
+        entityId: `${selectedClassId}_${selectedSubject}`,
+        meta: {
+          status: "success",
+          module: "Assessment",
+          classId: selectedClassId,
+          subject: selectedSubject,
+          term: schoolConfig.currentTerm,
+          academicYear: schoolConfig.academicYear,
+          actorName: user?.fullName || "",
+        },
+      });
     } catch (e) {
       console.error(e);
       showToast("Error saving data", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "assessments_save_failed",
+        entityId: `${selectedClassId}_${selectedSubject}`,
+        meta: {
+          status: "failed",
+          module: "Assessment",
+          classId: selectedClassId,
+          subject: selectedSubject,
+          term: schoolConfig.currentTerm,
+          academicYear: schoolConfig.academicYear,
+          error: (e as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setSaving(false);
     }

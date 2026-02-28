@@ -7,6 +7,8 @@ import ReportCardLayout from "../../components/ReportCardLayout";
 import { Save, Edit2, X, MessageSquare } from "lucide-react";
 import { showToast } from "../../services/toast";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
+import { logActivity } from "../../services/activityLog";
 
 // No global placeholder logo for report cards (use school-specific logo only)
 const DEFAULT_SCHOOL_LOGO = "";
@@ -56,6 +58,7 @@ const PASS_THRESHOLD = 500;
 
 const ReportCard = () => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const schoolId = school?.id || null;
 
   const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
@@ -430,9 +433,38 @@ const ReportCard = () => {
 
       await db.saveAdminRemark(remarkData);
       setEditingAdminRemark(false);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "admin_remark_saved",
+        entityId: remarkData.id,
+        meta: {
+          status: "success",
+          module: "Report Card",
+          studentId: selectedStudent,
+          classId: selectedClass,
+          actorName: user?.fullName || "",
+        },
+      });
       generateReport();
     } catch (error) {
       console.error("Error saving admin remark:", error);
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "admin_remark_save_failed",
+        entityId: selectedStudent,
+        meta: {
+          status: "failed",
+          module: "Report Card",
+          studentId: selectedStudent,
+          classId: selectedClass,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
     } finally {
       setSavingRemark(false);
     }

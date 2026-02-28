@@ -127,6 +127,8 @@ export async function createSchool(payload: {
   address?: string;
   logoUrl?: string;
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
+  featurePlan?: "starter" | "standard";
+  billingStartType?: "term_start" | "mid_term";
   cloneFromTemplate?: boolean;
   templateType?: "default" | "school";
   templateSchoolId?: string;

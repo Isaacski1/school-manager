@@ -484,6 +484,8 @@ app.post(
         templateType,
         templateSchoolId,
         planId,
+        featurePlan,
+        billingStartType,
       } = req.body;
 
       if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -495,6 +497,11 @@ app.post(
       const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
       if (!validPlans.includes(plan)) {
         return res.status(400).json({ error: "Invalid plan type" });
+      }
+
+      const validFeaturePlans = ["starter", "standard"];
+      if (featurePlan && !validFeaturePlans.includes(featurePlan)) {
+        return res.status(400).json({ error: "Invalid feature plan type" });
       }
 
       // Generate unique school code
@@ -539,6 +546,11 @@ app.post(
         status: "active",
         plan,
         planEndsAt: trialEndsAt,
+        featurePlan: featurePlan || "starter",
+        billing: {
+          startType:
+            billingStartType === "mid_term" ? "mid_term" : "term_start",
+        },
         subscription: planId ? { planId: String(planId) } : {},
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         createdBy: req.user.uid,
@@ -1083,7 +1095,15 @@ app.post(
 
       switch (action.type) {
         case "create_school": {
-          const { name, phone, address, logoUrl, plan } = payload;
+          const {
+            name,
+            phone,
+            address,
+            logoUrl,
+            plan,
+            featurePlan,
+            billingStartType,
+          } = payload;
           if (!name || typeof name !== "string" || name.trim().length === 0) {
             return res.status(400).json({
               error: "School name is required and must be a non-empty string",
@@ -1093,6 +1113,11 @@ app.post(
           const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
           if (!validPlans.includes(plan)) {
             return res.status(400).json({ error: "Invalid plan type" });
+          }
+
+          const validFeaturePlans = ["starter", "standard"];
+          if (featurePlan && !validFeaturePlans.includes(featurePlan)) {
+            return res.status(400).json({ error: "Invalid feature plan type" });
           }
 
           const baseCode = name
@@ -1135,6 +1160,11 @@ app.post(
             status: "active",
             plan,
             planEndsAt: trialEndsAt,
+            featurePlan: featurePlan || "starter",
+            billing: {
+              startType:
+                billingStartType === "mid_term" ? "mid_term" : "term_start",
+            },
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             createdBy: req.user.uid,
           };

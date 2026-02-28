@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
+import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
 import {
   initiateSchoolBilling,
@@ -28,6 +29,7 @@ const Billing: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [schoolConfig, setSchoolConfig] = useState<any>(null);
 
   const formatAmount = (value?: number, currency = "GHS") => {
     if (!value && value !== 0) return "-";
@@ -89,6 +91,21 @@ const Billing: React.FC = () => {
   const isFreePlan = billingStatus.plan === "free";
   const isTrialPlan = billingStatus.plan === "trial";
 
+  const parseSchoolDate = (value?: string | null) => {
+    if (!value) return null;
+    const parsed = new Date(`${value}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const diffDays = (start: Date, end: Date) => {
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const startMid = new Date(start);
+    const endMid = new Date(end);
+    startMid.setHours(0, 0, 0, 0);
+    endMid.setHours(0, 0, 0, 0);
+    return Math.floor((endMid.getTime() - startMid.getTime()) / msPerDay);
+  };
+
   const displayStatus = useMemo(() => {
     const latestPayment = paymentHistory[0];
     return getStatusMeta(latestPayment?.status || billingStatus.status);
@@ -100,13 +117,56 @@ const Billing: React.FC = () => {
     const multiplier = plan === "termly" ? 4 : plan === "yearly" ? 12 : 1;
     const rawAmount = base * multiplier;
     const discountRate = plan === "termly" ? 0.2 : plan === "yearly" ? 0.3 : 0;
-    return Math.round(rawAmount * (1 - discountRate));
-  }, [billingStatus.plan]);
+    const discounted = rawAmount * (1 - discountRate);
+
+    if (plan !== "termly") {
+      return Math.round(discounted);
+    }
+
+    const startType = (school as any)?.billing?.startType || "term_start";
+    if (startType === "term_start") {
+      return Math.round(discounted);
+    }
+
+    const startDate = parseSchoolDate(schoolConfig?.schoolReopenDate);
+    const endDate = parseSchoolDate(schoolConfig?.vacationDate);
+    if (!startDate || !endDate || endDate <= startDate) {
+      return Math.round(discounted);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (today <= startDate) {
+      return Math.round(discounted);
+    }
+
+    const totalDays = diffDays(startDate, endDate) + 1;
+    const remainingDays = Math.max(0, diffDays(today, endDate) + 1);
+    if (!totalDays || remainingDays <= 0) {
+      return Math.round(discounted);
+    }
+
+    const prorated = (discounted * remainingDays) / totalDays;
+    return Math.max(1, Math.round(prorated));
+  }, [billingStatus.plan, schoolConfig]);
 
   useEffect(() => {
     if (isFreePlan) return;
     setAmount(String(expectedAmount));
   }, [expectedAmount, isFreePlan]);
+
+  useEffect(() => {
+    if (!school?.id) return;
+    const loadConfig = async () => {
+      try {
+        const data = await db.getSchoolConfig(school.id);
+        setSchoolConfig(data);
+      } catch (error) {
+        console.error("Failed to load school config for billing", error);
+      }
+    };
+    loadConfig();
+  }, [school?.id]);
 
   const loadPaymentHistory = async () => {
     if (!school?.id) return;

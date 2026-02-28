@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
+import { useSchool } from "../../context/SchoolContext";
 import {
   CLASSES_LIST,
   CURRENT_TERM,
@@ -24,6 +25,7 @@ import {
   SchoolConfig,
 } from "../../types";
 import { showToast } from "../../services/toast";
+import { canAccessFeature } from "../../services/featureAccess";
 import {
   ClipboardCheck,
   BookOpen,
@@ -112,6 +114,8 @@ const jhsSubjects = [
 const TeacherDashboard = () => {
   const { user } = useAuth();
   const schoolId = user?.schoolId || null;
+  const { school } = useSchool();
+  const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
 
   const [subjects, setSubjects] = useState<string[]>([]);
 
@@ -148,7 +152,7 @@ const TeacherDashboard = () => {
     dates: string[];
   }>({ show: false, dates: [] });
   const [missedStudentAttendanceModal, setMissedStudentAttendanceModal] =
-    useState<{ show: boolean; date: string }>({ show: false, date: "" });
+    useState<{ show: boolean; dates: string[] }>({ show: false, dates: [] });
 
   // Remarks Modal State
   const [remarksModalOpen, setRemarksModalOpen] = useState(false);
@@ -347,7 +351,7 @@ const TeacherDashboard = () => {
           today.getTime() === nextTermBeginsObj.getTime()
         ) {
           setMissedAttendanceModal({ show: false, dates: [] });
-          setMissedStudentAttendanceModal({ show: false, date: "" });
+          setMissedStudentAttendanceModal({ show: false, dates: [] });
           return;
         }
 
@@ -370,8 +374,17 @@ const TeacherDashboard = () => {
           let checkDate = new Date();
           checkDate.setDate(checkDate.getDate() - 1); // Start from yesterday
 
-          // Go back until we reach the reopen date
-          while (checkDate >= reopenDateObj) {
+          const lookbackDate = new Date();
+          lookbackDate.setDate(lookbackDate.getDate() - 10);
+          lookbackDate.setHours(0, 0, 0, 0);
+
+          let startDate = lookbackDate;
+          if (reopenDateObj && reopenDateObj > lookbackDate) {
+            startDate = reopenDateObj;
+          }
+
+          // Go back until we reach the safe start date
+          while (checkDate >= startDate) {
             const dayOfWeek = checkDate.getDay();
             const isVacationDay =
               vacationDateObj &&
@@ -402,23 +415,49 @@ const TeacherDashboard = () => {
             setMissedAttendanceModal({ show: false, dates: [] });
           }
 
-          // Check for missed student attendance (keep only the most recent for student attendance)
-          if (selectedClassId && missedDates.length > 0) {
-            const mostRecentMissed = missedDates[0]; // First in array is most recent
-            const studentAttendanceRecord = await db.getAttendance(
-              schoolId,
-              selectedClassId,
-              mostRecentMissed,
-            );
-            if (!isMounted) return;
-            if (!studentAttendanceRecord) {
+          // Check for missed student attendance (all missed dates since reopen)
+          if (selectedClassId) {
+            const studentMissedDates: string[] = [];
+            let checkStudentDate = new Date();
+            checkStudentDate.setDate(checkStudentDate.getDate() - 1);
+
+            const studentStartDate = reopenDateObj || lookbackDate;
+
+            while (checkStudentDate >= studentStartDate) {
+              const dayOfWeek = checkStudentDate.getDay();
+              const isVacationDay =
+                vacationDateObj &&
+                checkStudentDate.toDateString() ===
+                  vacationDateObj.toDateString();
+
+              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
+                checkStudentDate.setDate(checkStudentDate.getDate() - 1);
+                continue;
+              }
+
+              const dateString = `${checkStudentDate.getFullYear()}-${String(checkStudentDate.getMonth() + 1).padStart(2, "0")}-${String(checkStudentDate.getDate()).padStart(2, "0")}`;
+              const studentAttendanceRecord = await db.getAttendance(
+                schoolId,
+                selectedClassId,
+                dateString,
+              );
+              if (!isMounted) return;
+              if (!studentAttendanceRecord) {
+                studentMissedDates.push(dateString);
+              }
+              checkStudentDate.setDate(checkStudentDate.getDate() - 1);
+            }
+
+            if (studentMissedDates.length > 0) {
               setMissedStudentAttendanceModal({
                 show: true,
-                date: mostRecentMissed,
+                dates: studentMissedDates,
               });
             } else {
-              setMissedStudentAttendanceModal({ show: false, date: "" });
+              setMissedStudentAttendanceModal({ show: false, dates: [] });
             }
+          } else {
+            setMissedStudentAttendanceModal({ show: false, dates: [] });
           }
         }
       } catch (error) {
@@ -1066,51 +1105,55 @@ const TeacherDashboard = () => {
               </div>
             </Link>
 
-            <Link
-              to="/teacher/assessment"
-              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-amber-500 transition-all relative overflow-hidden"
-            >
-              <div className="absolute right-0 top-0 w-24 h-24 bg-amber-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-              <div className="relative z-10">
-                <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-amber-500 transition-colors">
-                  <BookOpen className="w-6 h-6 text-amber-600 group-hover:text-white" />
-                </div>
-                <h3 className="font-bold text-lg text-slate-800 mb-1">
-                  Gradebook
-                </h3>
-                <p className="text-sm text-slate-500">
-                  Record marks for tests, homework & exams.
-                </p>
-              </div>
-            </Link>
-
-            <Link
-              to="/teacher/my-attendance"
-              className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-green-500 transition-all relative overflow-hidden w-full text-left"
-            >
-              <div className="absolute right-0 top-0 w-24 h-24 bg-green-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-              <div className="relative z-10">
-                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-green-500 transition-colors">
-                  <ClipboardCheck className="w-6 h-6 text-green-600 group-hover:text-white" />
-                </div>
-                <h3 className="font-bold text-lg text-slate-800 mb-1">
-                  My Attendance
-                </h3>
-                <p className="text-sm text-slate-500">
-                  Mark weekly attendance & view records
-                </p>
-                {teacherAttendance && (
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                    <span>Last marked: {teacherAttendance.date}</span>
-                    {teacherAttendance.approvalStatus === "pending" && (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                        Pending approval
-                      </span>
-                    )}
+            {hasFeature("basic_exam_reports") && (
+              <Link
+                to="/teacher/assessment"
+                className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-amber-500 transition-all relative overflow-hidden"
+              >
+                <div className="absolute right-0 top-0 w-24 h-24 bg-amber-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-amber-500 transition-colors">
+                    <BookOpen className="w-6 h-6 text-amber-600 group-hover:text-white" />
                   </div>
-                )}
-              </div>
-            </Link>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Gradebook
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Record marks for tests, homework & exams.
+                  </p>
+                </div>
+              </Link>
+            )}
+
+            {hasFeature("teacher_attendance") && (
+              <Link
+                to="/teacher/my-attendance"
+                className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-green-500 transition-all relative overflow-hidden w-full text-left"
+              >
+                <div className="absolute right-0 top-0 w-24 h-24 bg-green-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4 group-hover:bg-green-500 transition-colors">
+                    <ClipboardCheck className="w-6 h-6 text-green-600 group-hover:text-white" />
+                  </div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    My Attendance
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Mark weekly attendance & view records
+                  </p>
+                  {teacherAttendance && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>Last marked: {teacherAttendance.date}</span>
+                      {teacherAttendance.approvalStatus === "pending" && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          Pending approval
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </Link>
+            )}
 
             <button
               onClick={async () => {
@@ -1679,15 +1722,17 @@ const TeacherDashboard = () => {
                   Remind Me Later
                 </button>
 
-                <Link
-                  to="/teacher/my-attendance"
-                  onClick={() =>
-                    setMissedAttendanceModal({ show: false, dates: [] })
-                  }
-                  className="flex-1 px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors text-center"
-                >
-                  Mark Attendance Now
-                </Link>
+                {hasFeature("teacher_attendance") && (
+                  <Link
+                    to="/teacher/my-attendance"
+                    onClick={() =>
+                      setMissedAttendanceModal({ show: false, dates: [] })
+                    }
+                    className="flex-1 px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors text-center"
+                  >
+                    Mark Attendance Now
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -1717,38 +1762,46 @@ const TeacherDashboard = () => {
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-sm text-red-800">
                   Please mark student attendance for{" "}
-                  <strong>{assignedClass?.name}</strong> on{" "}
-                  <strong>
-                    {(() => {
-                      const parts =
-                        missedStudentAttendanceModal.date.split("-");
-                      if (parts.length === 3) {
-                        return `${parts[1]}/${parts[2]}/${parts[0]}`;
-                      }
-                      return missedStudentAttendanceModal.date;
-                    })()}
-                  </strong>{" "}
-                  to keep records accurate.
+                  <strong>{assignedClass?.name}</strong> on the following dates
+                  to keep records accurate:
                 </p>
+                <ul className="mt-3 space-y-1">
+                  {missedStudentAttendanceModal.dates.map((date) => (
+                    <li key={date} className="text-sm font-semibold">
+                      {(() => {
+                        const parts = date.split("-");
+                        if (parts.length === 3) {
+                          return `${parts[1]}/${parts[2]}/${parts[0]}`;
+                        }
+                        return date;
+                      })()}
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="flex gap-3">
                 <button
                   onClick={() =>
-                    setMissedStudentAttendanceModal({ show: false, date: "" })
+                    setMissedStudentAttendanceModal({ show: false, dates: [] })
                   }
                   className="flex-1 px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
                 >
                   Remind Me Later
                 </button>
-                <Link
-                  to="/teacher/attendance"
-                  onClick={() =>
-                    setMissedStudentAttendanceModal({ show: false, date: "" })
-                  }
-                  className="flex-1 px-4 py-2 text-center bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Take Attendance
-                </Link>
+                {hasFeature("attendance") && (
+                  <Link
+                    to="/teacher/attendance"
+                    onClick={() =>
+                      setMissedStudentAttendanceModal({
+                        show: false,
+                        dates: [],
+                      })
+                    }
+                    className="flex-1 px-4 py-2 text-center bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    Take Attendance
+                  </Link>
+                )}
               </div>
             </div>
           </div>
