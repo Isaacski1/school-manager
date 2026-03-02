@@ -627,10 +627,36 @@ const TeacherDashboard = () => {
             return count;
           };
 
-          const safeStart = config.schoolReopenDate || getLocalDateString();
-          const safeEnd = config.vacationDate || getLocalDateString();
-          const totalPossibleDays = countWeekdays(safeStart, safeEnd);
-          const holidayCount = (config.holidayDates || []).length;
+          const reopenDateObj = config.schoolReopenDate
+            ? new Date(config.schoolReopenDate + "T00:00:00")
+            : null;
+          if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
+
+          const vacationDateObj = config.vacationDate
+            ? new Date(config.vacationDate + "T00:00:00")
+            : null;
+          if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
+
+          let effectiveStart = getLocalDateString();
+          if (reopenDateObj && reopenDateObj <= today) {
+            effectiveStart = getLocalDateString(reopenDateObj);
+          }
+
+          let effectiveEnd = getLocalDateString();
+          if (vacationDateObj && vacationDateObj < today) {
+            effectiveEnd = getLocalDateString(vacationDateObj);
+          }
+
+          const totalPossibleDays = countWeekdays(effectiveStart, effectiveEnd);
+          const holidayCount = (config.holidayDates || []).filter((date) => {
+            if (!date) return false;
+            const holiday = new Date(date + "T00:00:00");
+            if (Number.isNaN(holiday.getTime())) return false;
+            return (
+              holiday >= new Date(effectiveStart + "T00:00:00") &&
+              holiday <= new Date(effectiveEnd + "T00:00:00")
+            );
+          }).length;
           const totalDays = Math.max(0, totalPossibleDays - holidayCount);
           const totalWeeks = Math.max(0, Math.ceil(totalDays / 5));
           setTotalSchoolDays(totalDays);
