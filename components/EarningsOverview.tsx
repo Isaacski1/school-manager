@@ -606,142 +606,135 @@ const EarningsOverview: React.FC<Props> = ({
         </div>
       )}
 
-      {showEmpty ? (
-        <div className="mt-6 rounded-2xl border border-slate-100 bg-white p-10 text-center">
-          <div className="text-lg font-semibold text-slate-900">
-            {range === "Custom" ? "Select a custom range" : "No payments yet"}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
+              {BUCKETS.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setBucket(option)}
+                  className={`px-3 py-1 rounded-full transition ${
+                    bucket === option
+                      ? "bg-white text-slate-900 shadow"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
+              {CHART_TYPES.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setChartType(option)}
+                  className={`px-3 py-1 rounded-full transition ${
+                    chartType === option
+                      ? "bg-white text-slate-900 shadow"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-500">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-[#2563EB]"
+                checked={compare}
+                onChange={(event) => setCompare(event.target.checked)}
+              />
+              Compare to previous period
+            </label>
           </div>
-          <p className="text-sm text-slate-500 mt-2">
-            {range === "Custom"
-              ? "Choose a start and end date to view analytics."
-              : "Record your first payment to unlock analytics."}
-          </p>
-          {onRecordPayment && (
+
+          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
             <button
-              onClick={onRecordPayment}
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#0B4A82] px-4 py-2 text-sm font-semibold text-white"
+              onClick={() =>
+                setVisibleSeries((prev) => ({
+                  ...prev,
+                  total: !prev.total,
+                }))
+              }
+              className="inline-flex items-center gap-2"
             >
-              Record Payment
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: chartColors.total }}
+              />
+              Total Collections
             </button>
-          )}
-        </div>
-      ) : (
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
-                {BUCKETS.map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setBucket(option)}
-                    className={`px-3 py-1 rounded-full transition ${
-                      bucket === option
-                        ? "bg-white text-slate-900 shadow"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
-                {CHART_TYPES.map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setChartType(option)}
-                    className={`px-3 py-1 rounded-full transition ${
-                      chartType === option
-                        ? "bg-white text-slate-900 shadow"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-              <label className="flex items-center gap-2 text-xs text-slate-500">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-slate-300 text-[#2563EB]"
-                  checked={compare}
-                  onChange={(event) => setCompare(event.target.checked)}
-                />
-                Compare to previous period
-              </label>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-              <button
-                onClick={() =>
-                  setVisibleSeries((prev) => ({
-                    ...prev,
-                    total: !prev.total,
-                  }))
-                }
-                className="inline-flex items-center gap-2"
-              >
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: chartColors.total }}
-                />
-                Total Collections
-              </button>
-              <button
-                onClick={() =>
-                  setVisibleSeries((prev) => ({
-                    ...prev,
-                    fees: !prev.fees,
-                  }))
-                }
-                className="inline-flex items-center gap-2"
-              >
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: chartColors.fees }}
-                />
-                Fees Collected
-              </button>
-            </div>
-
-            <div className="mt-4">{renderChart()}</div>
+            <button
+              onClick={() =>
+                setVisibleSeries((prev) => ({
+                  ...prev,
+                  fees: !prev.fees,
+                }))
+              }
+              className="inline-flex items-center gap-2"
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: chartColors.fees }}
+              />
+              Fees Collected
+            </button>
           </div>
 
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-slate-900">
-                Payment Methods
+          <div className="mt-4">
+            {showEmpty ? (
+              <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
+                {range === "Custom"
+                  ? "Select a custom range to view analytics."
+                  : "No payments in this range."}
               </div>
-              <div className="mt-4 h-44">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      dataKey="value"
-                      data={paymentMethods}
-                      innerRadius={50}
-                      outerRadius={70}
-                      paddingAngle={2}
-                    >
-                      {paymentMethods.map((entry, index) => (
-                        <Cell
-                          key={entry.name}
-                          fill={
-                            ["#2563EB", "#F97316", "#10B981", "#F43F5E"][
-                              index % 4
-                            ]
-                          }
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value: number) =>
-                        formatCurrency(value, currency)
-                      }
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-2 space-y-2 text-xs text-slate-500">
-                {paymentMethods.map((method) => (
+            ) : (
+              renderChart()
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">
+              Payment Methods
+            </div>
+            <div className="mt-4 h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    dataKey="value"
+                    data={paymentMethods}
+                    innerRadius={50}
+                    outerRadius={70}
+                    paddingAngle={2}
+                  >
+                    {paymentMethods.map((entry, index) => (
+                      <Cell
+                        key={entry.name}
+                        fill={
+                          ["#2563EB", "#F97316", "#10B981", "#F43F5E"][
+                            index % 4
+                          ]
+                        }
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value: number) =>
+                      formatCurrency(value, currency)
+                    }
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-2 space-y-2 text-xs text-slate-500">
+              {paymentMethods.length === 0 ? (
+                <div className="text-slate-400">No payment methods yet.</div>
+              ) : (
+                paymentMethods.map((method) => (
                   <div
                     key={method.name}
                     className="flex items-center justify-between"
@@ -751,16 +744,20 @@ const EarningsOverview: React.FC<Props> = ({
                       {formatCurrency(method.value, currency)}
                     </span>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
             </div>
+          </div>
 
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-slate-900">
-                Top Classes
-              </div>
-              <div className="mt-4 space-y-3">
-                {topClasses.map((entry) => (
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">
+              Top Classes
+            </div>
+            <div className="mt-4 space-y-3">
+              {topClasses.length === 0 ? (
+                <div className="text-xs text-slate-400">No classes yet.</div>
+              ) : (
+                topClasses.map((entry) => (
                   <div key={entry.name}>
                     <div className="flex items-center justify-between text-xs text-slate-500">
                       <span>{entry.name}</span>
@@ -780,16 +777,20 @@ const EarningsOverview: React.FC<Props> = ({
                       />
                     </div>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
             </div>
+          </div>
 
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-slate-900">
-                Recent Successful Payments
-              </div>
-              <div className="mt-4 space-y-3">
-                {recentPayments.map((entry, index) => (
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">
+              Recent Successful Payments
+            </div>
+            <div className="mt-4 space-y-3">
+              {recentPayments.length === 0 ? (
+                <div className="text-xs text-slate-400">No payments yet.</div>
+              ) : (
+                recentPayments.map((entry, index) => (
                   <div
                     key={`${entry.date}-${entry.totalCollections}-${index}`}
                     className="flex items-center justify-between text-xs text-slate-500"
@@ -807,12 +808,12 @@ const EarningsOverview: React.FC<Props> = ({
                       <div>{entry.transactions} txns</div>
                     </div>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
             </div>
           </div>
         </div>
-      )}
+      </div>
     </section>
   );
 };
