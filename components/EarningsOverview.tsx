@@ -162,6 +162,10 @@ const SkeletonCard = () => (
   </div>
 );
 
+const SkeletonLine = ({ className }: { className: string }) => (
+  <div className={`rounded bg-slate-100 animate-pulse ${className}`} />
+);
+
 const EarningsOverview: React.FC<Props> = ({
   data,
   loading,
@@ -170,6 +174,9 @@ const EarningsOverview: React.FC<Props> = ({
   onRetry,
   onRecordPayment,
 }) => {
+  const safeData = Array.isArray(data) ? data : [];
+  const isLoading = Boolean(loading);
+  const hasError = Boolean(error);
   const [range, setRange] =
     useState<(typeof RANGE_OPTIONS)[number]>("This year");
   const [showCustomRange, setShowCustomRange] = useState(false);
@@ -197,13 +204,13 @@ const EarningsOverview: React.FC<Props> = ({
 
   const filtered = useMemo(() => {
     if (start && end) {
-      return data.filter((entry) => {
+      return safeData.filter((entry) => {
         const date = toDate(entry.date);
         return date >= start && date <= end;
       });
     }
-    return range === "Custom" ? [] : useFilteredData(data, range);
-  }, [data, end, range, start]);
+    return range === "Custom" ? [] : useFilteredData(safeData, range);
+  }, [safeData, end, range, start]);
   const series = useMemo(
     () => aggregateSeries(filtered, bucket),
     [filtered, bucket],
@@ -272,43 +279,6 @@ const EarningsOverview: React.FC<Props> = ({
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 5);
   }, [filtered]);
-
-  if (loading) {
-    return (
-      <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="h-4 w-32 rounded bg-slate-100 animate-pulse" />
-            <div className="mt-2 h-3 w-48 rounded bg-slate-100 animate-pulse" />
-          </div>
-          <div className="h-8 w-40 rounded bg-slate-100 animate-pulse" />
-        </div>
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, idx) => (
-            <SkeletonCard key={idx} />
-          ))}
-        </div>
-        <div className="mt-6 h-64 rounded-2xl bg-slate-50 animate-pulse" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-3xl border border-rose-100 bg-rose-50 p-6 text-rose-700">
-        <div className="text-lg font-semibold">Unable to load earnings</div>
-        <p className="text-sm mt-2">{error}</p>
-        {onRetry && (
-          <button
-            onClick={onRetry}
-            className="mt-4 inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
-          >
-            Retry
-          </button>
-        )}
-      </div>
-    );
-  }
 
   const showEmpty = !filtered.length;
 
@@ -529,36 +499,55 @@ const EarningsOverview: React.FC<Props> = ({
         </div>
       </div>
 
+      {hasError && (
+        <div className="mt-4 rounded-2xl border border-rose-100 bg-rose-50 p-4 text-rose-700">
+          <div className="text-sm font-semibold">Unable to load earnings</div>
+          <p className="text-xs mt-1">{error}</p>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-3 inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpiCards.map((card) => (
-          <div
-            key={card.label}
-            className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {card.label}
-            </div>
-            <div className="mt-3 text-2xl font-bold text-slate-900">
-              {card.value}
-            </div>
-            <div className="mt-2 flex items-center gap-2 text-xs font-semibold">
-              {card.trend >= 0 ? (
-                <ArrowUpRight size={14} className="text-emerald-500" />
-              ) : (
-                <ArrowDownRight size={14} className="text-rose-500" />
-              )}
-              <span
-                className={
-                  card.trend >= 0 ? "text-emerald-600" : "text-rose-600"
-                }
+        {isLoading
+          ? Array.from({ length: 4 }).map((_, idx) => (
+              <SkeletonCard key={idx} />
+            ))
+          : kpiCards.map((card) => (
+              <div
+                key={card.label}
+                className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 transition hover:-translate-y-0.5 hover:shadow-md"
               >
-                {Math.abs(card.trend)}%
-              </span>
-              <span className="text-slate-400">vs previous</span>
-            </div>
-            <div className="mt-4 h-1 w-full rounded-full bg-slate-200" />
-          </div>
-        ))}
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {card.label}
+                </div>
+                <div className="mt-3 text-2xl font-bold text-slate-900">
+                  {hasError ? "--" : card.value}
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-xs font-semibold">
+                  {card.trend >= 0 ? (
+                    <ArrowUpRight size={14} className="text-emerald-500" />
+                  ) : (
+                    <ArrowDownRight size={14} className="text-rose-500" />
+                  )}
+                  <span
+                    className={
+                      card.trend >= 0 ? "text-emerald-600" : "text-rose-600"
+                    }
+                  >
+                    {hasError ? "--" : `${Math.abs(card.trend)}%`}
+                  </span>
+                  <span className="text-slate-400">vs previous</span>
+                </div>
+                <div className="mt-4 h-1 w-full rounded-full bg-slate-200" />
+              </div>
+            ))}
       </div>
 
       {showCustomRange && (
@@ -684,11 +673,15 @@ const EarningsOverview: React.FC<Props> = ({
           </div>
 
           <div className="mt-4">
-            {showEmpty ? (
+            {isLoading ? (
+              <div className="h-[280px] rounded-2xl bg-slate-50 animate-pulse" />
+            ) : showEmpty || hasError ? (
               <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
-                {range === "Custom"
-                  ? "Select a custom range to view analytics."
-                  : "No payments in this range."}
+                {hasError
+                  ? "Failed to load earnings data."
+                  : range === "Custom"
+                    ? "Select a custom range to view analytics."
+                    : "No payments in this range."}
               </div>
             ) : (
               renderChart()
@@ -702,36 +695,52 @@ const EarningsOverview: React.FC<Props> = ({
               Payment Methods
             </div>
             <div className="mt-4 h-44">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    dataKey="value"
-                    data={paymentMethods}
-                    innerRadius={50}
-                    outerRadius={70}
-                    paddingAngle={2}
-                  >
-                    {paymentMethods.map((entry, index) => (
-                      <Cell
-                        key={entry.name}
-                        fill={
-                          ["#2563EB", "#F97316", "#10B981", "#F43F5E"][
-                            index % 4
-                          ]
-                        }
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: number) =>
-                      formatCurrency(value, currency)
-                    }
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              {isLoading ? (
+                <div className="h-full rounded-2xl bg-slate-50 animate-pulse" />
+              ) : paymentMethods.length === 0 || hasError ? (
+                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-xs text-slate-400">
+                  {hasError
+                    ? "Payment methods unavailable"
+                    : "No payment methods yet."}
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      dataKey="value"
+                      data={paymentMethods}
+                      innerRadius={50}
+                      outerRadius={70}
+                      paddingAngle={2}
+                    >
+                      {paymentMethods.map((entry, index) => (
+                        <Cell
+                          key={entry.name}
+                          fill={
+                            ["#2563EB", "#F97316", "#10B981", "#F43F5E"][
+                              index % 4
+                            ]
+                          }
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value: number) =>
+                        formatCurrency(value, currency)
+                      }
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
             <div className="mt-2 space-y-2 text-xs text-slate-500">
-              {paymentMethods.length === 0 ? (
+              {isLoading ? (
+                <>
+                  <SkeletonLine className="h-3 w-2/3" />
+                  <SkeletonLine className="h-3 w-1/2" />
+                  <SkeletonLine className="h-3 w-3/4" />
+                </>
+              ) : paymentMethods.length === 0 || hasError ? (
                 <div className="text-slate-400">No payment methods yet.</div>
               ) : (
                 paymentMethods.map((method) => (
@@ -754,8 +763,16 @@ const EarningsOverview: React.FC<Props> = ({
               Top Classes
             </div>
             <div className="mt-4 space-y-3">
-              {topClasses.length === 0 ? (
-                <div className="text-xs text-slate-400">No classes yet.</div>
+              {isLoading ? (
+                <>
+                  <SkeletonLine className="h-3 w-4/5" />
+                  <SkeletonLine className="h-3 w-3/5" />
+                  <SkeletonLine className="h-3 w-2/3" />
+                </>
+              ) : topClasses.length === 0 || hasError ? (
+                <div className="text-xs text-slate-400">
+                  {hasError ? "Top classes unavailable." : "No classes yet."}
+                </div>
               ) : (
                 topClasses.map((entry) => (
                   <div key={entry.name}>
@@ -787,8 +804,16 @@ const EarningsOverview: React.FC<Props> = ({
               Recent Successful Payments
             </div>
             <div className="mt-4 space-y-3">
-              {recentPayments.length === 0 ? (
-                <div className="text-xs text-slate-400">No payments yet.</div>
+              {isLoading ? (
+                <>
+                  <SkeletonLine className="h-4 w-full" />
+                  <SkeletonLine className="h-4 w-5/6" />
+                  <SkeletonLine className="h-4 w-2/3" />
+                </>
+              ) : recentPayments.length === 0 || hasError ? (
+                <div className="text-xs text-slate-400">
+                  {hasError ? "Payments unavailable." : "No payments yet."}
+                </div>
               ) : (
                 recentPayments.map((entry, index) => (
                   <div

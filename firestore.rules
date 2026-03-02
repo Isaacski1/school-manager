@@ -18,6 +18,10 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'school_admin';
     }
 
+    function isSchoolAdminForSchool(schoolId) {
+      return isSchoolAdmin() && userSchoolId() == schoolId;
+    }
+
     function isTeacher() {
       return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -109,7 +113,7 @@ service cloud.firestore {
           "applyToTerm"
         ]);
 
-      allow read: if schoolScopedRead(schoolId);
+      allow read: if schoolScopedReadAllowInactive(schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -309,6 +313,18 @@ service cloud.firestore {
         isActiveSchoolId(schoolId);
     }
 
+    function schoolScopedReadAllowInactive(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || isSchoolAdminForSchool(schoolId));
+    }
+
+    function activityLogsQueryMatchesSchool() {
+      return request.query.where.size() == 1 &&
+        request.query.where[0].field == "schoolId" &&
+        request.query.where[0].op == "==" &&
+        request.query.where[0].value == userSchoolId();
+    }
+
     function schoolScopedUpdate(schoolId) {
       return isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
@@ -334,7 +350,7 @@ service cloud.firestore {
           "guardianPhone"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if schoolScopedReadAllowInactive(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -826,7 +842,7 @@ service cloud.firestore {
       );
 
       // List (query) — only super_admin allowed to list all logs via queries
-      allow list: if isSuperAdmin();
+      allow list: if isSuperAdmin() || (isSchoolAdmin() && activityLogsQueryMatchesSchool());
 
       // Updates/deletes: only super_admin
       allow update, delete: if isSuperAdmin();

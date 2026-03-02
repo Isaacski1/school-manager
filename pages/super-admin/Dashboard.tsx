@@ -46,6 +46,7 @@ import {
 import EarningsOverview, {
   EarningsRecord,
 } from "../../components/EarningsOverview";
+import ErrorBoundary from "../../components/ErrorBoundary";
 
 // Premium Card Component
 const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({
@@ -276,22 +277,38 @@ const Dashboard: React.FC = () => {
     setLoading(true);
     setEarningsError(null);
     try {
+      const activityQuery =
+        user?.role === "super_admin"
+          ? query(
+              collection(firestore, "activity_logs"),
+              orderBy("createdAt", "desc"),
+              limit(20),
+            )
+          : query(
+              collection(firestore, "activity_logs"),
+              where("schoolId", "==", user?.schoolId || "__missing__"),
+              orderBy("createdAt", "desc"),
+              limit(20),
+            );
+
+      const paymentsQuery =
+        user?.role === "super_admin"
+          ? query(
+              collection(firestore, "payments"),
+              orderBy("createdAt", "desc"),
+              limit(400),
+            )
+          : query(
+              collection(firestore, "payments"),
+              where("schoolId", "==", user?.schoolId || "__missing__"),
+              orderBy("createdAt", "desc"),
+              limit(400),
+            );
+
       const [sSnap, aSnap, paymentsSnap] = await Promise.all([
         getDocs(collection(firestore, "schools")),
-        getDocs(
-          query(
-            collection(firestore, "activity_logs"),
-            orderBy("createdAt", "desc"),
-            limit(20),
-          ),
-        ),
-        getDocs(
-          query(
-            collection(firestore, "payments"),
-            orderBy("createdAt", "desc"),
-            limit(400),
-          ),
-        ),
+        getDocs(activityQuery),
+        getDocs(paymentsQuery),
       ]);
 
       const rows: School[] = sSnap.docs.map((d) => ({
@@ -1107,16 +1124,18 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            <EarningsOverview
-              data={earningsOverviewData}
-              loading={loading}
-              error={earningsError}
-              currency="GHS"
-              onRetry={loadData}
-              onRecordPayment={() =>
-                window.location.assign("/super-admin/payments")
-              }
-            />
+            <ErrorBoundary>
+              <EarningsOverview
+                data={earningsOverviewData}
+                loading={loading}
+                error={earningsError}
+                currency="GHS"
+                onRetry={loadData}
+                onRecordPayment={() =>
+                  window.location.assign("/super-admin/payments")
+                }
+              />
+            </ErrorBoundary>
           </Card>
 
           <Card>
