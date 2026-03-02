@@ -708,15 +708,34 @@ const SystemSettings = () => {
 
   const deleteCollectionInBatches = async (collectionName: string) => {
     const collectionRef = collection(firestore, collectionName);
-    const snapshot = await getDocs(collectionRef);
-    const deletions = snapshot.docs.map((doc) => deleteDoc(doc.ref));
-    await Promise.all(deletions);
+    const batchSize = 200;
+
+    while (true) {
+      const snapshot = await getDocs(query(collectionRef, limit(batchSize)));
+      if (snapshot.empty) break;
+
+      const batch = writeBatch(firestore);
+      snapshot.docs.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      await batch.commit();
+
+      if (snapshot.size < batchSize) break;
+    }
   };
 
   const confirmTermReset = async () => {
     setShowTermResetModal(false);
     setTermResetting(true);
     try {
+      if (canUseBackups) {
+        await db.createTermBackup(
+          config,
+          config.currentTerm,
+          config.academicYear,
+        );
+      }
+
       const collectionsToDelete = [
         "attendance",
         "assessments",
@@ -728,10 +747,12 @@ const SystemSettings = () => {
         "admin_notifications",
       ];
 
-      for (const colName of collectionsToDelete) {
-        console.log(`Deleting collection: ${colName}`);
-        await deleteCollectionInBatches(colName);
-      }
+      await Promise.all(
+        collectionsToDelete.map(async (colName) => {
+          console.log(`Deleting collection: ${colName}`);
+          await deleteCollectionInBatches(colName);
+        }),
+      );
 
       // Reset relevant school config fields
       const schoolConfigRef = doc(firestore, "settings", schoolId);
