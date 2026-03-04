@@ -52,7 +52,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         setLoading(true);
 
         try {
+          console.info("[Auth] Firebase user", {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+          });
           const userProfile = await loadUserProfile(firebaseUser);
+          console.info("[Auth] user profile", userProfile);
           setUser(userProfile);
 
           if (userProfile.schoolId) {

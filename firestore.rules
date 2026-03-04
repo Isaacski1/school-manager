@@ -18,10 +18,6 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'school_admin';
     }
 
-    function isSchoolAdminForSchool(schoolId) {
-      return isSchoolAdmin() && userSchoolId() == schoolId;
-    }
-
     function isTeacher() {
       return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -33,13 +29,17 @@ service cloud.firestore {
     }
 
     function isActiveUser() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active' ||
+        !get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['status']);
     }
 
     function isActiveSchoolId(schoolId) {
       return schoolId != null &&
         exists(/databases/$(database)/documents/schools/$(schoolId)) &&
-        get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active';
+        (
+          get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active' ||
+          !get(/databases/$(database)/documents/schools/$(schoolId)).data.keys().hasAny(['status'])
+        );
     }
 
     function maxStudentsForSchool(schoolId) {
@@ -48,6 +48,12 @@ service cloud.firestore {
 
     function studentsCountForSchool(schoolId) {
       return get(/databases/$(database)/documents/schools/$(schoolId)).data.studentsCount;
+    }
+
+    // This rule allows super admins to perform collection group queries on 'payments'.
+    // It is required for the super admin payments dashboard.
+    match /{path=**}/payments/{paymentId} {
+      allow read: if isSuperAdmin();
     }
 
     // Users collection - STRICT security
@@ -113,7 +119,7 @@ service cloud.firestore {
           "applyToTerm"
         ]);
 
-      allow read: if schoolScopedReadAllowInactive(schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -164,7 +170,7 @@ service cloud.firestore {
           "openingDate"
         ]);
 
-      allow read: if schoolScopedRead(schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -219,6 +225,11 @@ service cloud.firestore {
           "schoolName",
           "isOpeningPayment"
         ]);
+
+      allow get: if schoolScopedRead(schoolId);
+
+      allow list: if isSuperAdmin() ||
+        (isAuthenticated() && isSchoolAdmin() && userSchoolId() == schoolId);
 
       allow read: if schoolScopedRead(schoolId);
 
@@ -308,21 +319,11 @@ service cloud.firestore {
 
     function schoolScopedRead(schoolId) {
       return isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId)) &&
-        isActiveSchoolId(schoolId);
-    }
-
-    function schoolScopedReadAllowInactive(schoolId) {
-      return isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() || isSchoolAdminForSchool(schoolId));
-    }
-
-    function activityLogsQueryMatchesSchool() {
-      return request.query.where.size() == 1 &&
-        request.query.where[0].field == "schoolId" &&
-        request.query.where[0].op == "==" &&
-        request.query.where[0].value == userSchoolId();
+        (
+          isSuperAdmin() ||
+          (((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId) &&
+            isActiveSchoolId(schoolId))
+        );
     }
 
     function schoolScopedUpdate(schoolId) {
@@ -350,7 +351,7 @@ service cloud.firestore {
           "guardianPhone"
         ]);
 
-      allow read: if schoolScopedReadAllowInactive(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -380,7 +381,7 @@ service cloud.firestore {
           "holidayReason"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -414,7 +415,7 @@ service cloud.firestore {
           "total"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -453,7 +454,7 @@ service cloud.firestore {
           "holidayReason"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -486,7 +487,7 @@ service cloud.firestore {
           "createdAt"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -517,7 +518,7 @@ service cloud.firestore {
           "dateCreated"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -593,7 +594,7 @@ service cloud.firestore {
           "dateCreated"
         ]);
 
-      allow read: if isAuthenticated() && isActiveUser() &&
+      allow read: if isAuthenticated() && (isSuperAdmin() || isActiveUser()) &&
         (isSuperAdmin() ||
           (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
         isActiveSchoolId(resource.data.schoolId);
@@ -636,10 +637,20 @@ service cloud.firestore {
           "type"
         ]);
 
-      allow read: if isAuthenticated() && isActiveUser() &&
+      allow get: if isAuthenticated() &&
         (isSuperAdmin() ||
-          (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
-        isActiveSchoolId(resource.data.schoolId);
+          (isActiveUser() && isSchoolAdmin() && userSchoolId() == resource.data.schoolId));
+
+      // Allow super‑admins to enumerate all notifications. School admins
+      // should only see notifications that belong to their school, which is
+      // expressed by validating the incoming query.  Without this rule a
+      // query such as `where('schoolId','==', '<id>')` will be rejected with
+      // a permissions error even though the documents themselves would be
+      // readable via the `get` rule above.  The client code always includes
+      // that filter via `db.getSystemNotifications(schoolId)`.
+      allow list: if isSuperAdmin() ||
+        (isAuthenticated() && isSchoolAdmin() &&
+          request.query.where('schoolId', '==', userSchoolId()));
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
@@ -671,7 +682,7 @@ service cloud.firestore {
           "updatedAt"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -792,7 +803,14 @@ service cloud.firestore {
           "schoolName"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      // Super admin can get/list/read all payments without restrictions
+      // School admins can only read their own school's payments with a where filter
+      allow get: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
+      
+      allow list: if isSuperAdmin() ||
+        (isAuthenticated() && isSchoolAdmin() && request.query.where('schoolId', '==', userSchoolId()));
+      
+      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&
@@ -823,6 +841,14 @@ service cloud.firestore {
       allow delete: if schoolScopedRead(resource.data.schoolId);
     }
 
+    // Analytics events (super admin + school scoped)
+    match /analyticsEvents/{eventId} {
+      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        (isSuperAdmin() || schoolScopedRead(resource.data.schoolId));
+      allow update, delete: if isSuperAdmin();
+    }
+
     // Backups collection
     match /backups/{backupId} {
       // Only super admin can access backups
@@ -842,16 +868,27 @@ service cloud.firestore {
       );
 
       // List (query) — only super_admin allowed to list all logs via queries
-      allow list: if isSuperAdmin() || (isSchoolAdmin() && activityLogsQueryMatchesSchool());
+      allow list: if isSuperAdmin();
 
       // Updates/deletes: only super_admin
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // School-scoped activity logs
+    match /schools/{schoolId}/activityLogs/{logId} {
+      allow create: if isAuthenticated() &&
+        (isSuperAdmin() || schoolScopedRead(schoolId));
+      allow get: if isAuthenticated() &&
+        (isSuperAdmin() || schoolScopedRead(schoolId));
+      allow list: if isAuthenticated() &&
+        (isSuperAdmin() || schoolScopedRead(schoolId));
       allow update, delete: if isSuperAdmin();
     }
 
     // Platform-wide broadcasts
     match /platformBroadcasts/{broadcastId} {
       allow create, update, delete: if isSuperAdmin();
-      allow read: if isAuthenticated() && (
+      allow get: if isAuthenticated() && (
         isSuperAdmin() ||
         (
           request.auth != null &&
@@ -862,6 +899,7 @@ service cloud.firestore {
           )
         )
       );
+      allow list: if isAuthenticated();
     }
 
     // Security login logs (super admin only)

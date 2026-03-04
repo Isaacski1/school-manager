@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   collection,
+  collectionGroup,
   query,
   getDocs,
   orderBy,
@@ -10,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { firestore } from "../../services/firebase";
 import { useAuth } from "../../context/AuthContext";
+import { UserRole } from "../../types";
 import { Link } from "react-router-dom";
 import { School } from "../../types";
 import Modal from "../../components/Modal";
@@ -46,7 +48,6 @@ import {
 import EarningsOverview, {
   EarningsRecord,
 } from "../../components/EarningsOverview";
-import ErrorBoundary from "../../components/ErrorBoundary";
 
 // Premium Card Component
 const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({
@@ -174,12 +175,6 @@ type PaymentRecord = {
   schoolId?: string;
   schoolName?: string;
   createdAt?: Timestamp | number | string;
-  paymentMethod?: string;
-  className?: string;
-  outstanding?: number;
-  module?: string;
-  verifiedAt?: number | Timestamp | string | null;
-  paidAt?: number | Timestamp | string | null;
 };
 
 type ActivityEntry = {
@@ -233,12 +228,27 @@ const formatActivityLabel = (entry: ActivityEntry) => {
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
+  // Restrict this page to super-admin users only to avoid permission errors
+  if (!user || user.role !== UserRole.SUPER_ADMIN) {
+    return (
+      <div className="p-8">
+        <EmptyState
+          icon={<ShieldCheck size={36} className="text-amber-500" />}
+          title="Access denied"
+          description="You do not have permission to view the Super Admin dashboard."
+          action={{
+            label: "Go to my dashboard",
+            onClick: () => (window.location.href = "/"),
+          }}
+        />
+      </div>
+    );
+  }
   const [schools, setSchools] = useState<School[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [activityFilter, setActivityFilter] = useState<string>("");
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [earningsError, setEarningsError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [planFilter, setPlanFilter] = useState<string>("");
@@ -275,64 +285,51 @@ const Dashboard: React.FC = () => {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    setEarningsError(null);
     try {
-      const activityQuery =
-        user?.role === "super_admin"
-          ? query(
-              collection(firestore, "activity_logs"),
-              orderBy("createdAt", "desc"),
-              limit(20),
-            )
-          : query(
-              collection(firestore, "activity_logs"),
-              where("schoolId", "==", user?.schoolId || "__missing__"),
-              orderBy("createdAt", "desc"),
-              limit(20),
-            );
-
-      const paymentsQuery =
-        user?.role === "super_admin"
-          ? query(
-              collection(firestore, "payments"),
-              orderBy("createdAt", "desc"),
-              limit(400),
-            )
-          : query(
-              collection(firestore, "payments"),
-              where("schoolId", "==", user?.schoolId || "__missing__"),
-              orderBy("createdAt", "desc"),
-              limit(400),
-            );
-
-      const [sSnap, aSnap, paymentsSnap] = await Promise.all([
-        getDocs(collection(firestore, "schools")),
-        getDocs(activityQuery),
-        getDocs(paymentsQuery),
-      ]);
-
+      const sCol = collection(firestore, "schools");
+      const sSnap = await getDocs(sCol);
       const rows: School[] = sSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
       }));
       setSchools(rows as School[]);
 
+      const aCol = collection(firestore, "activity_logs");
+      const aQ = query(aCol, orderBy("createdAt", "desc"), limit(20));
+      const aSnap = await getDocs(aQ);
       const events = aSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
       })) as ActivityEntry[];
       setActivity(events);
 
-      const paymentRows = paymentsSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-      })) as PaymentRecord[];
+      const [rootPaymentsSnap, scopedPaymentsSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(firestore, "payments"),
+            orderBy("createdAt", "desc"),
+            limit(400),
+          ),
+        ),
+        getDocs(query(collectionGroup(firestore, "payments"), limit(400))),
+      ]);
+      const paymentRows = [
+        ...rootPaymentsSnap.docs,
+        ...scopedPaymentsSnap.docs,
+      ].map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          ...data,
+          amount: data.amount ?? data.amountPaid,
+          createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
+        } as PaymentRecord;
+      });
       setPayments(paymentRows);
 
       setLastUpdated(new Date());
     } catch (err) {
       console.error(err);
-      setEarningsError("Failed to load earnings data.");
     } finally {
       setLoading(false);
     }
@@ -520,19 +517,7 @@ const Dashboard: React.FC = () => {
 
   const normalizePaymentStatus = (status?: string) => {
     const normalized = String(status || "pending").toLowerCase();
-    if (
-      [
-        "success",
-        "successful",
-        "paid",
-        "completed",
-        "confirmed",
-        "active",
-      ].includes(normalized)
-    )
-      return "success";
-    if (["ongoing", "processing", "pending"].includes(normalized))
-      return "pending";
+    if (["success", "paid", "active"].includes(normalized)) return "success";
     if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
     if (["abandoned", "cancelled", "canceled"].includes(normalized))
       return "failed";
@@ -570,12 +555,7 @@ const Dashboard: React.FC = () => {
     let failedCount = 0;
     let last30Amount = 0;
 
-    const isConfirmed = (payment: PaymentRecord) =>
-      payment.verifiedAt || payment.paidAt;
-
     payments.forEach((payment) => {
-      const moduleValue = String(payment.module || "").toLowerCase();
-      if (moduleValue && moduleValue !== "billing") return;
       const status = normalizePaymentStatus(payment.status);
       const amountRaw = payment.amount ?? 0;
       const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
@@ -599,24 +579,7 @@ const Dashboard: React.FC = () => {
         }
       }
 
-      if (status === "pending") {
-        if (isConfirmed(payment)) {
-          paidAmount += amount;
-          paidCount += 1;
-          if (createdAt >= last30Cutoff) {
-            last30Amount += amount;
-          }
-          const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, "0")}`;
-          if (monthlyTotals[key] !== undefined) {
-            monthlyTotals[key] += amount;
-          }
-          if (monthlyFeesTotals[key] !== undefined) {
-            monthlyFeesTotals[key] += amount;
-          }
-        } else {
-          pendingCount += 1;
-        }
-      }
+      if (status === "pending") pendingCount += 1;
       if (status === "failed") failedCount += 1;
     });
 
@@ -641,45 +604,6 @@ const Dashboard: React.FC = () => {
         value: monthlyFeesTotals[bucket.key] || 0,
       })),
     };
-  }, [payments]);
-
-  const earningsOverviewData = useMemo<EarningsRecord[]>(() => {
-    const isConfirmed = (payment: PaymentRecord) =>
-      payment.verifiedAt || payment.paidAt;
-    return payments
-      .filter(
-        (payment) =>
-          ["success", "pending"].includes(
-            normalizePaymentStatus(payment.status),
-          ) &&
-          (!payment.module ||
-            String(payment.module || "").toLowerCase() === "billing"),
-      )
-      .filter(
-        (payment) =>
-          normalizePaymentStatus(payment.status) === "success" ||
-          isConfirmed(payment),
-      )
-      .map((payment) => {
-        const createdAt =
-          payment.createdAt instanceof Timestamp
-            ? payment.createdAt.toDate()
-            : new Date(payment.createdAt || 0);
-        const date = Number.isNaN(createdAt.getTime()) ? new Date() : createdAt;
-        const amountRaw = payment.amount ?? 0;
-        const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
-        const outstanding = payment.outstanding ?? 0;
-        return {
-          date: date.toISOString().slice(0, 10),
-          totalCollections: amount,
-          feesCollections: amount,
-          outstanding,
-          transactions: 1,
-          paymentMethod: payment.paymentMethod || "MoMo",
-          className: payment.className || payment.schoolName || "General",
-        };
-      })
-      .sort((a, b) => a.date.localeCompare(b.date));
   }, [payments]);
 
   const planDist = useMemo(() => {
@@ -1124,18 +1048,257 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            <ErrorBoundary>
-              <EarningsOverview
-                data={earningsOverviewData}
-                loading={loading}
-                error={earningsError}
-                currency="GHS"
-                onRetry={loadData}
-                onRecordPayment={() =>
-                  window.location.assign("/super-admin/payments")
-                }
-              />
-            </ErrorBoundary>
+            <div className="rounded-2xl border border-slate-100 bg-white p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Earnings
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Successful payments per month
+                  </p>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {new Date().toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-6 text-xs text-slate-500">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-[#3B82F6]" />
+                  Total Collections
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  Fees Collection
+                </span>
+              </div>
+
+              <div className="mt-4 flex items-center gap-10">
+                <div>
+                  <p className="text-xs text-slate-400">Total Collections</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {formatCurrency(paymentMetrics.paidAmount)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Fees Collection</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {formatCurrency(paymentMetrics.last30Amount)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                {(() => {
+                  const height = 180;
+                  const width = 640;
+                  const padding = 28;
+                  const minValue = 300;
+                  const maxValue = 3600;
+                  const underflowHeight = 22;
+                  const baselineY = height - padding - underflowHeight;
+                  const chartHeight = baselineY - padding;
+
+                  const toY = (value: number) => {
+                    if (value >= minValue) {
+                      const ratio = (value - minValue) / (maxValue - minValue);
+                      return baselineY - ratio * chartHeight;
+                    }
+                    const underRatio = Math.min(
+                      1,
+                      (minValue - value) / minValue,
+                    );
+                    return baselineY + underRatio * underflowHeight;
+                  };
+
+                  const points = paymentMetrics.monthlySeries.map(
+                    (point, index) => {
+                      const x =
+                        padding +
+                        (index * (width - padding * 2)) /
+                          (paymentMetrics.monthlySeries.length - 1 || 1);
+                      const y = toY(point.value);
+                      return { x, y };
+                    },
+                  );
+                  const feePoints = paymentMetrics.monthlyFeesSeries.map(
+                    (point, index) => {
+                      const x =
+                        padding +
+                        (index * (width - padding * 2)) /
+                          (paymentMetrics.monthlyFeesSeries.length - 1 || 1);
+                      const y = toY(point.value);
+                      return { x, y };
+                    },
+                  );
+
+                  const buildPath = (pts: { x: number; y: number }[]) => {
+                    if (pts.length === 0) return "";
+                    const [first, ...rest] = pts;
+                    return rest.reduce((acc, point, idx) => {
+                      const prev = pts[idx];
+                      const midX = (prev.x + point.x) / 2;
+                      return `${acc} Q ${midX} ${prev.y} ${point.x} ${point.y}`;
+                    }, `M ${first.x} ${first.y}`);
+                  };
+
+                  const areaPath = (pts: { x: number; y: number }[]) => {
+                    const line = buildPath(pts);
+                    if (!line) return "";
+                    const last = pts[pts.length - 1];
+                    const first = pts[0];
+                    return `${line} L ${last.x} ${height - padding} L ${first.x} ${height - padding} Z`;
+                  };
+
+                  return (
+                    <div className="w-full rounded-2xl bg-gradient-to-br from-slate-50 via-white to-slate-50 border border-slate-100 p-3 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.5)]">
+                      <svg
+                        viewBox={`0 0 ${width} ${height}`}
+                        className="w-full h-44"
+                        role="img"
+                        aria-label="Monthly earnings chart"
+                      >
+                        <defs>
+                          <linearGradient
+                            id="earningsBlue"
+                            x1="0"
+                            x2="0"
+                            y1="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#3B82F6"
+                              stopOpacity="0.65"
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#3B82F6"
+                              stopOpacity="0.05"
+                            />
+                          </linearGradient>
+                          <linearGradient
+                            id="earningsRed"
+                            x1="0"
+                            x2="0"
+                            y1="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#F43F5E"
+                              stopOpacity="0.7"
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#F43F5E"
+                              stopOpacity="0.1"
+                            />
+                          </linearGradient>
+                        </defs>
+
+                        <rect
+                          x={padding}
+                          y={padding}
+                          width={width - padding * 2}
+                          height={baselineY - padding}
+                          rx={12}
+                          fill="#FFFFFF"
+                          opacity="0.6"
+                        />
+                        <rect
+                          x={padding}
+                          y={baselineY}
+                          width={width - padding * 2}
+                          height={underflowHeight}
+                          rx={10}
+                          fill="#F1F5F9"
+                        />
+
+                        {[0, 25, 50, 75, 100].map((tick) => {
+                          const y = baselineY - (tick / 100) * chartHeight;
+                          const labelValue = Math.round(
+                            minValue + (tick / 100) * (maxValue - minValue),
+                          );
+                          return (
+                            <g key={tick}>
+                              <line
+                                x1={padding}
+                                x2={width - padding}
+                                y1={y}
+                                y2={y}
+                                stroke="#E2E8F0"
+                                strokeDasharray="4 4"
+                              />
+                              <text
+                                x={6}
+                                y={y + 4}
+                                fontSize="10"
+                                fill="#94A3B8"
+                              >
+                                GHS {labelValue.toLocaleString("en-GH")}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        <line
+                          x1={padding}
+                          x2={width - padding}
+                          y1={baselineY}
+                          y2={baselineY}
+                          stroke="#CBD5F5"
+                          strokeWidth="1.5"
+                        />
+
+                        <path d={areaPath(points)} fill="url(#earningsBlue)" />
+                        <path
+                          d={buildPath(points)}
+                          fill="none"
+                          stroke="#3B82F6"
+                          strokeWidth="2"
+                        />
+
+                        <path
+                          d={areaPath(feePoints)}
+                          fill="url(#earningsRed)"
+                        />
+                        <path
+                          d={buildPath(feePoints)}
+                          fill="none"
+                          stroke="#F43F5E"
+                          strokeWidth="2"
+                        />
+
+                        {paymentMetrics.monthlySeries.map((point, idx) => {
+                          const x =
+                            padding +
+                            (idx * (width - padding * 2)) /
+                              (paymentMetrics.monthlySeries.length - 1 || 1);
+                          return (
+                            <text
+                              key={point.label}
+                              x={x}
+                              y={height - 6}
+                              textAnchor="middle"
+                              fontSize="10"
+                              fill="#94A3B8"
+                            >
+                              {point.label}
+                            </text>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
           </Card>
 
           <Card>

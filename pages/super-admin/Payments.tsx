@@ -81,17 +81,61 @@ const Payments: React.FC = () => {
   const loadPayments = async () => {
     setLoading(true);
     try {
-      const paymentsCol = collection(firestore, "payments");
-      const paymentsQuery = query(paymentsCol, orderBy("createdAt", "desc"));
+      console.log("[PAYMENTS] Starting to load payments...");
+      const paymentsRef = collection(firestore, "payments");
+      const paymentsQuery = query(paymentsRef, orderBy("createdAt", "desc"));
+
+      console.log("[PAYMENTS] Executing query...");
       const snap = await getDocs(paymentsQuery);
-      const rows = snap.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as any),
-      })) as PaymentRecord[];
+      console.log("[PAYMENTS] Query result:", {
+        docsCount: snap.docs.length,
+        empty: snap.empty,
+      });
+
+      const rows = snap.docs
+        .map((doc) => {
+          const data = doc.data() as any;
+          console.log("[PAYMENTS] Processing doc:", doc.id, data);
+          return {
+            id: doc.id,
+            schoolId: data.schoolId || "",
+            schoolName: data.schoolName || "Unknown School",
+            adminEmail: data.adminEmail || "",
+            amount: data.amount ?? data.amountPaid,
+            currency: data.currency || "GHS",
+            status: data.status || "pending",
+            reference: data.reference || "",
+            createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
+          } as PaymentRecord;
+        })
+        .sort((a, b) => {
+          const aTime =
+            a.createdAt instanceof Timestamp
+              ? a.createdAt.toMillis()
+              : typeof a.createdAt === "number"
+                ? a.createdAt
+                : new Date(a.createdAt || 0).getTime();
+          const bTime =
+            b.createdAt instanceof Timestamp
+              ? b.createdAt.toMillis()
+              : typeof b.createdAt === "number"
+                ? b.createdAt
+                : new Date(b.createdAt || 0).getTime();
+          return bTime - aTime;
+        });
+      console.log("[PAYMENTS] Processed rows:", rows);
       setPayments(rows);
-    } catch (error) {
-      console.error("Failed to load payments", error);
-      showToast("Failed to load payment data.", { type: "error" });
+      showToast(`Loaded ${rows.length} payment(s).`, { type: "success" });
+    } catch (error: any) {
+      console.error("[PAYMENTS] Failed to load payments", error);
+      console.error("[PAYMENTS] Error details:", {
+        message: error.message,
+        code: error.code,
+        type: error.type,
+      });
+      showToast(`Failed to load payment data: ${error.message}`, {
+        type: "error",
+      });
     } finally {
       setLoading(false);
     }
@@ -160,62 +204,73 @@ const Payments: React.FC = () => {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-100">
-                <th className="py-3 pr-4">School</th>
-                <th className="py-3 pr-4">Admin Email</th>
-                <th className="py-3 pr-4">Amount</th>
-                <th className="py-3 pr-4">Currency</th>
-                <th className="py-3 pr-4">Status</th>
-                <th className="py-3 pr-4">Reference</th>
-                <th className="py-3">Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPayments.map((payment) => (
-                <tr key={payment.id} className="border-b border-slate-100">
-                  <td className="py-3 pr-4">
-                    <div className="font-medium text-slate-800">
-                      {payment.schoolName || "-"}
-                    </div>
-                    <div className="text-xs text-slate-400">
-                      {payment.schoolId || ""}
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4 text-slate-600">
-                    {payment.adminEmail || "-"}
-                  </td>
-                  <td className="py-3 pr-4 text-slate-700">
-                    {formatAmount(payment.amount, payment.currency)}
-                  </td>
-                  <td className="py-3 pr-4 text-slate-600">
-                    {payment.currency || "GHS"}
-                  </td>
-                  <td className="py-3 pr-4">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${getStatusMeta(payment.status).className}`}
-                    >
-                      {getStatusMeta(payment.status).label}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4 text-slate-500">
-                    {payment.reference || "-"}
-                  </td>
-                  <td className="py-3 text-slate-500">
-                    {formatDate(payment.createdAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!filteredPayments.length && !loading && (
-            <div className="text-center text-sm text-slate-400 py-10">
-              No payments found yet.
+        {loading && (
+          <div className="text-center py-10">
+            <div className="text-sm text-slate-600 mb-2">
+              Loading payments...
             </div>
-          )}
-        </div>
+            <div className="w-8 h-8 border-4 border-slate-200 border-t-[#0B4A82] rounded-full animate-spin mx-auto" />
+          </div>
+        )}
+
+        {!loading && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-100">
+                  <th className="py-3 pr-4">School</th>
+                  <th className="py-3 pr-4">Admin Email</th>
+                  <th className="py-3 pr-4">Amount</th>
+                  <th className="py-3 pr-4">Currency</th>
+                  <th className="py-3 pr-4">Status</th>
+                  <th className="py-3 pr-4">Reference</th>
+                  <th className="py-3">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPayments.map((payment) => (
+                  <tr key={payment.id} className="border-b border-slate-100">
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-800">
+                        {payment.schoolName || "-"}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        {payment.schoolId || ""}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {payment.adminEmail || "-"}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-700">
+                      {formatAmount(payment.amount, payment.currency)}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {payment.currency || "GHS"}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${getStatusMeta(payment.status).className}`}
+                      >
+                        {getStatusMeta(payment.status).label}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-500">
+                      {payment.reference || "-"}
+                    </td>
+                    <td className="py-3 text-slate-500">
+                      {formatDate(payment.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!filteredPayments.length && (
+              <div className="text-center text-sm text-slate-400 py-10">
+                No payments found yet.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

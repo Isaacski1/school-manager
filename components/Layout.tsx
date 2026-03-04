@@ -1,5 +1,5 @@
 ﻿import schoolLogo from "../logo/apple-icon-180x180.png";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   collection,
@@ -66,6 +66,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const notificationsPollRef = useRef(true);
 
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
@@ -190,47 +191,37 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   // Fetch Notifications for Admin / Super Admin
   useEffect(() => {
     if (isAdmin || isSuperAdmin) {
+      let intervalId: ReturnType<typeof setInterval> | null = null;
+      notificationsPollRef.current = true;
       const fetchNotifications = async () => {
         try {
           if (!schoolId && !isSuperAdmin) return;
+          console.info("[Notifications] fetch", {
+            isSuperAdmin,
+            schoolId: schoolId || null,
+            path: "admin_notifications",
+          });
 
           if (isSuperAdmin) {
             const dismissedIds = new Set(loadSuperAdminDismissed());
             const readIds = new Set(loadSuperAdminRead());
-            const paymentsQuery = query(
-              collection(firestore, "payments"),
+            const superAdminQuery = query(
+              collection(firestore, "admin_notifications"),
               orderBy("createdAt", "desc"),
               limit(20),
             );
-            const snap = await getDocs(paymentsQuery);
+            const snap = await getDocs(superAdminQuery);
             const notes: SystemNotification[] = snap.docs
               .filter((doc) => !dismissedIds.has(doc.id))
               .map((doc) => {
-                const payment = doc.data() as any;
-                const amountLabel = formatPaymentAmount(
-                  payment.amount,
-                  payment.currency || "GHS",
-                );
-                const status = String(
-                  payment.status || "pending",
-                ).toLowerCase();
-                const statusLabel = ["success", "paid", "active"].includes(
-                  status,
-                )
-                  ? "paid"
-                  : ["failed", "failure", "past_due"].includes(status)
-                    ? "failed"
-                    : "pending";
-                const schoolLabel =
-                  payment.schoolName || payment.schoolId || "";
-
+                const notice = doc.data() as any;
                 return {
                   id: doc.id,
-                  schoolId: payment.schoolId || "system",
-                  message: `${schoolLabel} payment ${statusLabel}${amountLabel ? ` · ${amountLabel}` : ""}`,
-                  createdAt: toTimestamp(payment.createdAt),
+                  schoolId: notice.schoolId || "system",
+                  message: notice.message || "System notification",
+                  createdAt: toTimestamp(notice.createdAt),
                   isRead: readIds.has(doc.id),
-                  type: "system",
+                  type: notice.type || "system",
                 };
               });
             setNotifications(notes);
@@ -241,15 +232,28 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           const notes = await db.getSystemNotifications(schoolId);
           setNotifications(notes);
           setUnreadCount(notes.filter((n) => !n.isRead).length);
-        } catch (e) {
+        } catch (e: any) {
           console.error("Failed to fetch notifications", e);
+          const message = String(e?.message || "").toLowerCase();
+          if (
+            message.includes("permission") ||
+            message.includes("insufficient")
+          ) {
+            notificationsPollRef.current = false;
+            if (intervalId) clearInterval(intervalId);
+          }
         }
       };
       fetchNotifications();
 
       // Poll every 30 seconds for simplicity in this MVP
-      const interval = setInterval(fetchNotifications, 30000);
-      return () => clearInterval(interval);
+      intervalId = setInterval(() => {
+        if (!notificationsPollRef.current) return;
+        fetchNotifications();
+      }, 30000);
+      return () => {
+        if (intervalId) clearInterval(intervalId);
+      };
     }
   }, [isAdmin, isSuperAdmin, schoolId]);
 

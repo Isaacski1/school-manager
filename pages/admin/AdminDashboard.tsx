@@ -620,6 +620,26 @@ const AdminDashboard = () => {
         const localToday = new Date();
         const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
 
+        // Wrap each call to prevent permission errors from blocking the whole dashboard
+        const wrapCall = async <T,>(
+          fn: () => Promise<T>,
+          fallback: T,
+        ): Promise<T> => {
+          try {
+            return await fn();
+          } catch (err) {
+            const msg = String((err as any)?.message || "");
+            if (msg.includes("permission") || msg.includes("insufficient")) {
+              console.warn(
+                "Permission denied for dashboard call, continuing with fallback",
+                err,
+              );
+              return fallback;
+            }
+            throw err;
+          }
+        };
+
         const [
           dashboardStats,
           students,
@@ -631,15 +651,34 @@ const AdminDashboard = () => {
           pendingTeacherAttendance,
           allTeacherRecords,
         ] = await Promise.all([
-          db.getDashboardStats(schoolId),
-          db.getStudents(schoolId),
-          db.getNotices(schoolId),
-          db.getPlatformBroadcasts(schoolId),
-          db.getSchoolConfig(schoolId),
-          db.getUsers(schoolId),
-          db.getAllApprovedTeacherAttendance(schoolId, today),
-          db.getAllPendingTeacherAttendance(schoolId),
-          db.getAllTeacherAttendanceRecords(schoolId),
+          wrapCall(() => db.getDashboardStats(schoolId), {
+            studentsCount: 0,
+            teachersCount: 0,
+            gender: { male: 0, female: 0 },
+            classAttendance: [],
+          }),
+          wrapCall(() => db.getStudents(schoolId), []),
+          wrapCall(() => db.getNotices(schoolId), []),
+          wrapCall(() => db.getPlatformBroadcasts(schoolId), []),
+          wrapCall(() => db.getSchoolConfig(schoolId), {
+            schoolId: schoolId || "",
+            schoolName: "",
+            academicYear: "",
+            currentTerm: "",
+            headTeacherRemark: "",
+            termEndDate: "",
+            schoolReopenDate: "",
+            vacationDate: "",
+            nextTermBegins: "",
+            termTransitionProcessed: false,
+          }),
+          wrapCall(() => db.getUsers(schoolId), []),
+          wrapCall(
+            () => db.getAllApprovedTeacherAttendance(schoolId, today),
+            [],
+          ),
+          wrapCall(() => db.getAllPendingTeacherAttendance(schoolId), []),
+          wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId), []),
         ]);
 
         // Check for missed attendance on recent school days (weekdays)
@@ -1327,9 +1366,25 @@ const AdminDashboard = () => {
         }
       } catch (err: any) {
         console.error("Dashboard fetch error:", err);
-        setError(
-          "Failed to load dashboard data. Please check your internet connection or database permissions.",
-        );
+        const message = (err && (err.code || err.message)) || String(err);
+
+        // Only show error message for non-permission issues
+        // Permission errors are now handled per-call with fallbacks
+        if (
+          typeof message === "string" &&
+          !(
+            message.includes("permission-denied") ||
+            message.includes("Missing or insufficient permissions") ||
+            message.includes("permission") ||
+            message.includes("PERMISSION_DENIED")
+          )
+        ) {
+          setError(
+            "Failed to load dashboard data. Please check your internet connection.",
+          );
+        }
+        // Ensure UI renders with cached/empty data instead of staying in loading state
+        setInitialDataReady(true);
       } finally {
         heavyRefreshInFlightRef.current = false;
         if (!options?.background) setHeavyLoading(false);
