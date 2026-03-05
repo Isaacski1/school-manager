@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -20,6 +20,15 @@ import {
   Download,
   RefreshCw,
 } from "lucide-react";
+import {
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  Timestamp,
+  where,
+} from "firebase/firestore";
+import { firestore } from "../services/firebase";
 
 export type EarningsRecord = {
   date: string;
@@ -29,21 +38,38 @@ export type EarningsRecord = {
   transactions: number;
   paymentMethod?: string;
   className?: string;
+  createdAt?: Timestamp | number | string | null;
+};
+
+type PaymentRecord = {
+  id: string;
+  amount?: number;
+  currency?: string;
+  channel?: string;
+  createdAt?: Timestamp | number | string | null;
+  paidAt?: Timestamp | number | string | null;
+  status?: string;
+  schoolId?: string;
+  schoolName?: string;
+  adminUid?: string;
+  adminEmail?: string;
+  reference?: string;
+  gatewayResponse?: string;
 };
 
 type Props = {
-  data: EarningsRecord[];
+  data?: EarningsRecord[];
   loading?: boolean;
   error?: string | null;
   currency?: string;
   onRetry?: () => void;
   onRecordPayment?: () => void;
+  useLivePayments?: boolean;
 };
 
 const RANGE_OPTIONS = [
   "This month",
   "Last month",
-  "This term",
   "This year",
   "Custom",
 ] as const;
@@ -58,6 +84,8 @@ const formatCurrency = (value: number, currency = "GHS") =>
     maximumFractionDigits: 2,
   }).format(value);
 
+const formatCurrencyGHS = (value: number) => `GHC${value.toFixed(2)}`;
+
 const formatShort = (value: number) =>
   new Intl.NumberFormat("en-GH", {
     notation: "compact",
@@ -65,6 +93,32 @@ const formatShort = (value: number) =>
   }).format(value);
 
 const toDate = (value: string) => new Date(value + "T00:00:00");
+
+const toNumber = (value: unknown) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getEntryDate = (entry: EarningsRecord) => {
+  if (entry.createdAt) {
+    return toDateValue(entry.createdAt);
+  }
+  return entry.date ? toDate(entry.date) : null;
+};
+
+const toDateValue = (value?: Timestamp | number | string | null) => {
+  if (!value) return null;
+  if (value instanceof Timestamp) return value.toDate();
+  if (typeof value === "number") return new Date(value);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isSuccessfulPayment = (payment: PaymentRecord) => {
+  const status = String(payment.status || "").toLowerCase();
+  if (status === "success") return true;
+  return Boolean(payment.paidAt);
+};
 
 const getPeriodRange = (range: (typeof RANGE_OPTIONS)[number]) => {
   const now = new Date();
@@ -77,9 +131,6 @@ const getPeriodRange = (range: (typeof RANGE_OPTIONS)[number]) => {
     case "Last month":
       start.setMonth(now.getMonth() - 1, 1);
       end.setDate(0);
-      break;
-    case "This term":
-      start.setMonth(now.getMonth() - 3, 1);
       break;
     case "This year":
       start.setMonth(0, 1);
@@ -98,7 +149,8 @@ const useFilteredData = (
 ) => {
   const { start, end } = getPeriodRange(range);
   return data.filter((entry) => {
-    const date = toDate(entry.date);
+    const date = getEntryDate(entry);
+    if (!date) return false;
     return date >= start && date <= end;
   });
 };
@@ -110,8 +162,10 @@ const aggregateSeries = (
   if (bucket === "Daily") return data;
   const grouped = new Map<string, EarningsRecord>();
   data.forEach((entry) => {
-    const date = toDate(entry.date);
-    let key = entry.date;
+    const date = getEntryDate(entry);
+    if (!date) return;
+    const baseDate = entry.date || date.toISOString().slice(0, 10);
+    let key = baseDate;
     if (bucket === "Weekly") {
       const weekStart = new Date(date);
       const day = weekStart.getDay();
@@ -130,10 +184,13 @@ const aggregateSeries = (
     }
     grouped.set(key, {
       ...existing,
-      totalCollections: existing.totalCollections + entry.totalCollections,
-      feesCollections: existing.feesCollections + entry.feesCollections,
-      outstanding: existing.outstanding + entry.outstanding,
-      transactions: existing.transactions + entry.transactions,
+      totalCollections:
+        toNumber(existing.totalCollections) + toNumber(entry.totalCollections),
+      feesCollections:
+        toNumber(existing.feesCollections) + toNumber(entry.feesCollections),
+      outstanding: toNumber(existing.outstanding) + toNumber(entry.outstanding),
+      transactions:
+        toNumber(existing.transactions) + toNumber(entry.transactions),
     });
   });
   return Array.from(grouped.values()).sort((a, b) =>
@@ -166,6 +223,72 @@ const SkeletonLine = ({ className }: { className: string }) => (
   <div className={`rounded bg-slate-100 animate-pulse ${className}`} />
 );
 
+export const mockEarningsData: EarningsRecord[] = [
+  {
+    date: "2026-02-01",
+    totalCollections: 12500,
+    feesCollections: 9800,
+    outstanding: 2200,
+    transactions: 38,
+    paymentMethod: "MoMo",
+    className: "JHS 1",
+  },
+  {
+    date: "2026-02-05",
+    totalCollections: 16800,
+    feesCollections: 14100,
+    outstanding: 2800,
+    transactions: 52,
+    paymentMethod: "Bank",
+    className: "JHS 2",
+  },
+  {
+    date: "2026-02-10",
+    totalCollections: 14350,
+    feesCollections: 11800,
+    outstanding: 1900,
+    transactions: 44,
+    paymentMethod: "Cash",
+    className: "Primary 6",
+  },
+  {
+    date: "2026-02-15",
+    totalCollections: 21200,
+    feesCollections: 18900,
+    outstanding: 3200,
+    transactions: 63,
+    paymentMethod: "MoMo",
+    className: "JHS 3",
+  },
+  {
+    date: "2026-02-20",
+    totalCollections: 18400,
+    feesCollections: 16200,
+    outstanding: 2500,
+    transactions: 58,
+    paymentMethod: "Bank",
+    className: "Primary 5",
+  },
+  {
+    date: "2026-02-25",
+    totalCollections: 19600,
+    feesCollections: 17100,
+    outstanding: 2100,
+    transactions: 61,
+    paymentMethod: "MoMo",
+    className: "Primary 4",
+  },
+  {
+    date: "2026-02-28",
+    totalCollections: 23100,
+    feesCollections: 20500,
+    outstanding: 3000,
+    transactions: 71,
+    paymentMethod: "Cash",
+    className: "KG 2",
+  },
+];
+
 const EarningsOverview: React.FC<Props> = ({
   data,
   loading,
@@ -189,6 +312,7 @@ const EarningsOverview: React.FC<Props> = ({
     total: true,
     fees: true,
   });
+  const [exportOpen, setExportOpen] = useState(false);
 
   const { start, end } = useMemo(() => {
     if (range !== "Custom") return getPeriodRange(range);
@@ -205,7 +329,8 @@ const EarningsOverview: React.FC<Props> = ({
   const filtered = useMemo(() => {
     if (start && end) {
       return safeData.filter((entry) => {
-        const date = toDate(entry.date);
+        const date = getEntryDate(entry);
+        if (!date) return false;
         return date >= start && date <= end;
       });
     }
@@ -217,18 +342,25 @@ const EarningsOverview: React.FC<Props> = ({
   );
   const comparisonSeries = useMemo(() => buildComparison(series), [series]);
 
+  const sparklineSeries = useMemo(() => {
+    return aggregateSeries(filtered, "Weekly").slice(-10);
+  }, [filtered]);
+
   const totals = useMemo(() => {
     const totalCollections = filtered.reduce(
-      (sum, row) => sum + row.totalCollections,
+      (sum, row) => sum + toNumber(row.totalCollections),
       0,
     );
     const feesCollections = filtered.reduce(
-      (sum, row) => sum + row.feesCollections,
+      (sum, row) => sum + toNumber(row.feesCollections),
       0,
     );
-    const outstanding = filtered.reduce((sum, row) => sum + row.outstanding, 0);
+    const outstanding = filtered.reduce(
+      (sum, row) => sum + toNumber(row.outstanding),
+      0,
+    );
     const transactions = filtered.reduce(
-      (sum, row) => sum + row.transactions,
+      (sum, row) => sum + toNumber(row.transactions),
       0,
     );
     return { totalCollections, feesCollections, outstanding, transactions };
@@ -252,15 +384,111 @@ const EarningsOverview: React.FC<Props> = ({
 
   const paymentMethods = useMemo(() => {
     const methods = new Map<string, number>();
+    const counts = new Map<string, number>();
     filtered.forEach((row) => {
       const key = row.paymentMethod || "Unknown";
-      methods.set(key, (methods.get(key) || 0) + row.totalCollections);
+      const amount = toNumber(row.totalCollections);
+      methods.set(key, (methods.get(key) || 0) + amount);
+      counts.set(
+        key,
+        (counts.get(key) || 0) + Math.max(1, toNumber(row.transactions)),
+      );
     });
-    return Array.from(methods.entries()).map(([name, value]) => ({
+
+    const methodEntries = Array.from(methods.entries());
+    const allZero = methodEntries.every(([, value]) => value <= 0);
+    const source = allZero ? counts : methods;
+
+    return Array.from(source.entries()).map(([name, value]) => ({
       name,
       value,
     }));
   }, [filtered]);
+
+  const paymentMethodsPie = useMemo(() => {
+    if (paymentMethods.length > 0) return paymentMethods;
+    if (hasError || isLoading) return [];
+    return [{ name: "No data", value: 1 }];
+  }, [hasError, isLoading, paymentMethods]);
+
+  const renderChart = () => {
+    const chartData = compare
+      ? series.map((entry, idx) => ({ ...entry, ...comparisonSeries[idx] }))
+      : series;
+
+    const ChartComponent =
+      chartType === "Area"
+        ? AreaChart
+        : chartType === "Line"
+          ? LineChart
+          : BarChart;
+
+    return (
+      <ResponsiveContainer width="100%" height={280}>
+        <ChartComponent
+          data={chartData}
+          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+        >
+          <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} />
+          <YAxis
+            tick={{ fill: "#94A3B8", fontSize: 11 }}
+            allowDecimals={false}
+          />
+          <Tooltip content={chartTooltip} />
+          {visibleSeries.total &&
+            (chartType === "Area" ? (
+              <Area
+                type="monotone"
+                dataKey="totalCollections"
+                fill={chartColors.total}
+                stroke={chartColors.total}
+                fillOpacity={0.3}
+              />
+            ) : chartType === "Line" ? (
+              <Line
+                type="monotone"
+                dataKey="totalCollections"
+                stroke={chartColors.total}
+                strokeWidth={2}
+                dot={false}
+              />
+            ) : (
+              <Bar
+                dataKey="totalCollections"
+                fill={chartColors.total}
+                radius={[8, 8, 0, 0]}
+                barSize={18}
+              />
+            ))}
+          {visibleSeries.fees &&
+            (chartType === "Area" ? (
+              <Area
+                type="monotone"
+                dataKey="feesCollections"
+                fill={chartColors.fees}
+                stroke={chartColors.fees}
+                fillOpacity={0.3}
+              />
+            ) : chartType === "Line" ? (
+              <Line
+                type="monotone"
+                dataKey="feesCollections"
+                stroke={chartColors.fees}
+                strokeWidth={2}
+                dot={false}
+              />
+            ) : (
+              <Bar
+                dataKey="feesCollections"
+                fill={chartColors.fees}
+                radius={[8, 8, 0, 0]}
+                barSize={18}
+              />
+            ))}
+        </ChartComponent>
+      </ResponsiveContainer>
+    );
+  };
 
   const topClasses = useMemo(() => {
     const classes = new Map<string, number>();
@@ -310,151 +538,73 @@ const EarningsOverview: React.FC<Props> = ({
     fees: "#F97316",
   };
 
-  const renderChart = () => {
-    const commonProps = {
-      data: series,
-      margin: { top: 10, right: 10, left: 0, bottom: 0 },
-    } as const;
+  const seriesMeta = [
+    {
+      key: "total" as const,
+      label: "Total Collections",
+      color: chartColors.total,
+    },
+    {
+      key: "fees" as const,
+      label: "Fees Collected",
+      color: chartColors.fees,
+    },
+  ];
 
-    const renderLines = () => (
-      <>
-        {visibleSeries.total && (
-          <Line
-            type="monotone"
-            dataKey="totalCollections"
-            stroke={chartColors.total}
-            strokeWidth={2.5}
-            dot={false}
-          />
-        )}
-        {visibleSeries.fees && (
-          <Line
-            type="monotone"
-            dataKey="feesCollections"
-            stroke={chartColors.fees}
-            strokeWidth={2.5}
-            dot={false}
-          />
-        )}
-        {compare && (
-          <Line
-            type="monotone"
-            data={comparisonSeries}
-            dataKey="totalCollections"
-            stroke="#94A3B8"
-            strokeWidth={2}
-            strokeDasharray="4 4"
-            dot={false}
-          />
-        )}
-      </>
-    );
-
-    if (chartType === "Bar") {
-      return (
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart {...commonProps}>
-            <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} />
-            <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} />
-            <Tooltip
-              contentStyle={{
-                borderRadius: 12,
-                borderColor: "#E2E8F0",
-                fontSize: 12,
-              }}
-              formatter={(value: number, name: string) => [
-                formatCurrency(value, currency),
-                name === "totalCollections" ? "Total" : "Fees",
-              ]}
-            />
-            {visibleSeries.total && (
-              <Bar dataKey="totalCollections" fill={chartColors.total} />
-            )}
-            {visibleSeries.fees && (
-              <Bar dataKey="feesCollections" fill={chartColors.fees} />
-            )}
-          </BarChart>
-        </ResponsiveContainer>
-      );
-    }
-
-    if (chartType === "Line") {
-      return (
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart {...commonProps}>
-            <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} />
-            <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} />
-            <Tooltip
-              contentStyle={{
-                borderRadius: 12,
-                borderColor: "#E2E8F0",
-                fontSize: 12,
-              }}
-              formatter={(value: number, name: string) => [
-                formatCurrency(value, currency),
-                name === "totalCollections" ? "Total" : "Fees",
-              ]}
-            />
-            {renderLines()}
-          </LineChart>
-        </ResponsiveContainer>
-      );
-    }
+  const chartTooltip = ({
+    active,
+    payload,
+    label,
+  }: {
+    active?: boolean;
+    payload?: Array<{ dataKey?: string; value?: number }>;
+    label?: string;
+  }) => {
+    if (!active || !label) return null;
+    const match = series.find((entry) => entry.date === label);
+    const total =
+      payload?.find((entry) => entry.dataKey === "totalCollections")?.value ??
+      match?.totalCollections;
+    const fees =
+      payload?.find((entry) => entry.dataKey === "feesCollections")?.value ??
+      match?.feesCollections;
+    const transactions = match?.transactions;
 
     return (
-      <ResponsiveContainer width="100%" height={280}>
-        <AreaChart {...commonProps}>
-          <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} />
-          <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} />
-          <Tooltip
-            contentStyle={{
-              borderRadius: 12,
-              borderColor: "#E2E8F0",
-              fontSize: 12,
-            }}
-            formatter={(value: number, name: string) => [
-              formatCurrency(value, currency),
-              name === "totalCollections" ? "Total" : "Fees",
-            ]}
-          />
-          {visibleSeries.total && (
-            <Area
-              type="monotone"
-              dataKey="totalCollections"
-              stroke={chartColors.total}
-              fill={chartColors.total}
-              fillOpacity={0.18}
-              strokeWidth={2.5}
-            />
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+        <div className="font-semibold text-slate-700">{label}</div>
+        <div className="mt-1 space-y-1 text-slate-500">
+          {typeof total === "number" && (
+            <div className="flex items-center justify-between gap-4">
+              <span>Total collections</span>
+              <span className="font-semibold text-slate-700">
+                {formatCurrency(total, currency)}
+              </span>
+            </div>
           )}
-          {visibleSeries.fees && (
-            <Area
-              type="monotone"
-              dataKey="feesCollections"
-              stroke={chartColors.fees}
-              fill={chartColors.fees}
-              fillOpacity={0.12}
-              strokeWidth={2.5}
-            />
+          {typeof fees === "number" && (
+            <div className="flex items-center justify-between gap-4">
+              <span>Fees collected</span>
+              <span className="font-semibold text-slate-700">
+                {formatCurrency(fees, currency)}
+              </span>
+            </div>
           )}
-          {compare && (
-            <Line
-              type="monotone"
-              data={comparisonSeries}
-              dataKey="totalCollections"
-              stroke="#94A3B8"
-              strokeWidth={2}
-              strokeDasharray="4 4"
-              dot={false}
-            />
+          {typeof transactions === "number" && (
+            <div className="flex items-center justify-between gap-4">
+              <span>Transactions</span>
+              <span className="font-semibold text-slate-700">
+                {transactions}
+              </span>
+            </div>
           )}
-        </AreaChart>
-      </ResponsiveContainer>
+        </div>
+      </div>
     );
   };
 
   return (
-    <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Earnings</h2>
@@ -468,9 +618,7 @@ const EarningsOverview: React.FC<Props> = ({
                   key={option}
                   onClick={() => {
                     setRange(option);
-                    if (option === "Custom") {
-                      setShowCustomRange(true);
-                    }
+                    setShowCustomRange(option === "Custom");
                   }}
                   className={`px-2.5 py-1 rounded-full transition ${
                     range === option
@@ -478,18 +626,48 @@ const EarningsOverview: React.FC<Props> = ({
                       : "text-slate-500 hover:text-slate-700"
                   }`}
                   aria-label={`Filter by ${option}`}
+                  aria-pressed={range === option}
                 >
                   {option}
                 </button>
               ))}
             </div>
           </div>
-          <button
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-            aria-label="Export data"
-          >
-            <Download size={14} /> Export
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              aria-label="Export data"
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+              onClick={() => setExportOpen((prev) => !prev)}
+            >
+              <Download size={14} /> Export
+            </button>
+            {exportOpen && (
+              <div
+                className="absolute right-0 z-10 mt-2 w-32 rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-lg"
+                role="menu"
+              >
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-2 py-1.5 text-left text-slate-600 hover:bg-slate-50"
+                  role="menuitem"
+                  onClick={() => setExportOpen(false)}
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-2 py-1.5 text-left text-slate-600 hover:bg-slate-50"
+                  role="menuitem"
+                  onClick={() => setExportOpen(false)}
+                >
+                  Export PDF
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             aria-label="Refresh data"
@@ -522,12 +700,15 @@ const EarningsOverview: React.FC<Props> = ({
           : kpiCards.map((card) => (
               <div
                 key={card.label}
-                className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 transition hover:-translate-y-0.5 hover:shadow-md"
+                className="rounded-2xl border border-slate-200 bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-md overflow-hidden min-w-0"
               >
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   {card.label}
                 </div>
-                <div className="mt-3 text-2xl font-bold text-slate-900">
+                <div
+                  className="mt-3 text-2xl font-bold text-slate-900 leading-tight max-w-full truncate"
+                  title={hasError ? "--" : card.value}
+                >
                   {hasError ? "--" : card.value}
                 </div>
                 <div className="mt-2 flex items-center gap-2 text-xs font-semibold">
@@ -545,10 +726,41 @@ const EarningsOverview: React.FC<Props> = ({
                   </span>
                   <span className="text-slate-400">vs previous</span>
                 </div>
-                <div className="mt-4 h-1 w-full rounded-full bg-slate-200" />
+                <div className="mt-3 h-10">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={sparklineSeries}>
+                      <Line
+                        type="monotone"
+                        dataKey="totalCollections"
+                        stroke={chartColors.total}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             ))}
       </div>
+
+      {!isLoading && !hasError && showEmpty && (
+        <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+          <div className="text-sm font-semibold text-slate-700">
+            No payments recorded yet
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Start tracking earnings by recording your first payment.
+          </p>
+          {onRecordPayment && (
+            <button
+              onClick={onRecordPayment}
+              className="mt-4 inline-flex items-center justify-center rounded-full bg-[#2563EB] px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1D4ED8]"
+            >
+              Record Payment
+            </button>
+          )}
+        </div>
+      )}
 
       {showCustomRange && (
         <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
@@ -596,7 +808,7 @@ const EarningsOverview: React.FC<Props> = ({
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
               {BUCKETS.map((option) => (
@@ -608,6 +820,7 @@ const EarningsOverview: React.FC<Props> = ({
                       ? "bg-white text-slate-900 shadow"
                       : "text-slate-500 hover:text-slate-700"
                   }`}
+                  aria-pressed={bucket === option}
                 >
                   {option}
                 </button>
@@ -623,6 +836,7 @@ const EarningsOverview: React.FC<Props> = ({
                       ? "bg-white text-slate-900 shadow"
                       : "text-slate-500 hover:text-slate-700"
                   }`}
+                  aria-pressed={chartType === option}
                 >
                   {option}
                 </button>
@@ -639,44 +853,49 @@ const EarningsOverview: React.FC<Props> = ({
             </label>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-            <button
-              onClick={() =>
-                setVisibleSeries((prev) => ({
-                  ...prev,
-                  total: !prev.total,
-                }))
-              }
-              className="inline-flex items-center gap-2"
-            >
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: chartColors.total }}
-              />
-              Total Collections
-            </button>
-            <button
-              onClick={() =>
-                setVisibleSeries((prev) => ({
-                  ...prev,
-                  fees: !prev.fees,
-                }))
-              }
-              className="inline-flex items-center gap-2"
-            >
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: chartColors.fees }}
-              />
-              Fees Collected
-            </button>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+            {seriesMeta.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() =>
+                  setVisibleSeries((prev) => ({
+                    ...prev,
+                    [item.key]: !prev[item.key],
+                  }))
+                }
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition ${
+                  visibleSeries[item.key]
+                    ? "border-slate-200 bg-white text-slate-700"
+                    : "border-slate-100 bg-slate-50 text-slate-400"
+                }`}
+                aria-pressed={visibleSeries[item.key]}
+                aria-label={`Toggle ${item.label} series`}
+              >
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                />
+                {item.label}
+              </button>
+            ))}
+            <div className="ml-auto flex items-center gap-3 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-500">
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                {totals.transactions} txns
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-indigo-400" />
+                {formatShort(totals.totalCollections)} total
+              </span>
+            </div>
           </div>
 
           <div className="mt-4">
             {isLoading ? (
-              <div className="h-[280px] rounded-2xl bg-slate-50 animate-pulse" />
+              <div className="h-[280px] rounded-2xl bg-white/60 animate-pulse" />
             ) : showEmpty || hasError ? (
-              <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
+              <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200/70 text-sm text-slate-500">
                 {hasError
                   ? "Failed to load earnings data."
                   : range === "Custom"
@@ -690,30 +909,24 @@ const EarningsOverview: React.FC<Props> = ({
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-slate-900">
               Payment Methods
             </div>
-            <div className="mt-4 h-44">
+            <div className="mt-4 h-52 rounded-xl border border-slate-200 bg-slate-50 p-3">
               {isLoading ? (
-                <div className="h-full rounded-2xl bg-slate-50 animate-pulse" />
-              ) : paymentMethods.length === 0 || hasError ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-xs text-slate-400">
-                  {hasError
-                    ? "Payment methods unavailable"
-                    : "No payment methods yet."}
-                </div>
+                <div className="h-full rounded-xl bg-white/60 animate-pulse" />
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       dataKey="value"
-                      data={paymentMethods}
-                      innerRadius={50}
-                      outerRadius={70}
-                      paddingAngle={2}
+                      data={paymentMethodsPie}
+                      innerRadius={42}
+                      outerRadius={80}
+                      paddingAngle={3}
                     >
-                      {paymentMethods.map((entry, index) => (
+                      {paymentMethodsPie.map((entry, index) => (
                         <Cell
                           key={entry.name}
                           fill={
@@ -721,6 +934,8 @@ const EarningsOverview: React.FC<Props> = ({
                               index % 4
                             ]
                           }
+                          stroke="#ffffff"
+                          strokeWidth={2}
                         />
                       ))}
                     </Pie>
@@ -741,7 +956,11 @@ const EarningsOverview: React.FC<Props> = ({
                   <SkeletonLine className="h-3 w-3/4" />
                 </>
               ) : paymentMethods.length === 0 || hasError ? (
-                <div className="text-slate-400">No payment methods yet.</div>
+                <div className="text-slate-400">
+                  {hasError
+                    ? "Payment methods unavailable"
+                    : "No payment methods yet."}
+                </div>
               ) : (
                 paymentMethods.map((method) => (
                   <div
@@ -758,48 +977,7 @@ const EarningsOverview: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-slate-900">
-              Top Classes
-            </div>
-            <div className="mt-4 space-y-3">
-              {isLoading ? (
-                <>
-                  <SkeletonLine className="h-3 w-4/5" />
-                  <SkeletonLine className="h-3 w-3/5" />
-                  <SkeletonLine className="h-3 w-2/3" />
-                </>
-              ) : topClasses.length === 0 || hasError ? (
-                <div className="text-xs text-slate-400">
-                  {hasError ? "Top classes unavailable." : "No classes yet."}
-                </div>
-              ) : (
-                topClasses.map((entry) => (
-                  <div key={entry.name}>
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>{entry.name}</span>
-                      <span className="font-semibold text-slate-700">
-                        {formatShort(entry.value)}
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 w-full rounded-full bg-slate-100">
-                      <div
-                        className="h-2 rounded-full bg-[#2563EB]"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (entry.value / (topClasses[0]?.value || 1)) * 100,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-slate-900">
               Recent Successful Payments
             </div>

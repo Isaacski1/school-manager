@@ -6,10 +6,23 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+     match /plans/{planId} {
+      allow read: if isSuperAdmin();
+      allow write: if isSuperAdmin();
+    }
+
     function isSuperAdmin() {
-      return isAuthenticated() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+      return isAuthenticated() && (
+        request.auth.token.role == 'super_admin' ||
+        request.auth.token.userRole == 'super_admin' ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin' ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userRole == 'super_admin'
+          )
+        )
+      );
     }
 
     function isSchoolAdmin() {
@@ -54,6 +67,12 @@ service cloud.firestore {
     // It is required for the super admin payments dashboard.
     match /{path=**}/payments/{paymentId} {
       allow read: if isSuperAdmin();
+    }
+
+    // Plans collection - Super admin only
+    match /plans/{planId} {
+      allow read: if isSuperAdmin();
+      allow create, update, delete: if isSuperAdmin();
     }
 
     // Users collection - STRICT security

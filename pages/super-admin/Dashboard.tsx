@@ -15,6 +15,7 @@ import { UserRole } from "../../types";
 import { Link } from "react-router-dom";
 import { School } from "../../types";
 import Modal from "../../components/Modal";
+import EarningsOverview from "../../components/EarningsOverview";
 import {
   superAdminAiChat,
   confirmSuperAdminAiAction,
@@ -45,9 +46,6 @@ import {
   SendHorizontal,
   ShieldCheck,
 } from "lucide-react";
-import EarningsOverview, {
-  EarningsRecord,
-} from "../../components/EarningsOverview";
 
 // Premium Card Component
 const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({
@@ -172,6 +170,7 @@ type PaymentRecord = {
   amount?: number;
   currency?: string;
   status?: string;
+  module?: string;
   schoolId?: string;
   schoolName?: string;
   createdAt?: Timestamp | number | string;
@@ -248,6 +247,7 @@ const Dashboard: React.FC = () => {
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [activityFilter, setActivityFilter] = useState<string>("");
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -285,6 +285,7 @@ const Dashboard: React.FC = () => {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setPaymentsError(null);
     try {
       const sCol = collection(firestore, "schools");
       const sSnap = await getDocs(sCol);
@@ -303,20 +304,14 @@ const Dashboard: React.FC = () => {
       })) as ActivityEntry[];
       setActivity(events);
 
-      const [rootPaymentsSnap, scopedPaymentsSnap] = await Promise.all([
-        getDocs(
-          query(
-            collection(firestore, "payments"),
-            orderBy("createdAt", "desc"),
-            limit(400),
-          ),
+      const rootPaymentsSnap = await getDocs(
+        query(
+          collection(firestore, "payments"),
+          orderBy("createdAt", "desc"),
+          limit(400),
         ),
-        getDocs(query(collectionGroup(firestore, "payments"), limit(400))),
-      ]);
-      const paymentRows = [
-        ...rootPaymentsSnap.docs,
-        ...scopedPaymentsSnap.docs,
-      ].map((d) => {
+      );
+      const paymentRows = rootPaymentsSnap.docs.map((d) => {
         const data = d.data() as any;
         return {
           id: d.id,
@@ -325,11 +320,20 @@ const Dashboard: React.FC = () => {
           createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
         } as PaymentRecord;
       });
+      console.log("[Dashboard] Payments loaded", {
+        total: paymentRows.length,
+        range: {
+          min: paymentRows[paymentRows.length - 1]?.createdAt ?? null,
+          max: paymentRows[0]?.createdAt ?? null,
+        },
+        sample: paymentRows.slice(0, 3),
+      });
       setPayments(paymentRows);
 
       setLastUpdated(new Date());
     } catch (err) {
       console.error(err);
+      setPaymentsError("Unable to load payment history.");
     } finally {
       setLoading(false);
     }
@@ -531,6 +535,13 @@ const Dashboard: React.FC = () => {
       maximumFractionDigits: 2,
     }).format(value);
 
+  const billingPayments = useMemo(() => {
+    return payments.filter((payment) => {
+      const moduleValue = String((payment as any).module || "").toLowerCase();
+      return moduleValue === "billing" || moduleValue.includes("billing");
+    });
+  }, [payments]);
+
   const paymentMetrics = useMemo(() => {
     const now = new Date();
     const monthBuckets: { key: string; label: string }[] = [];
@@ -563,6 +574,8 @@ const Dashboard: React.FC = () => {
         payment.createdAt instanceof Timestamp
           ? payment.createdAt.toDate()
           : new Date(payment.createdAt || 0);
+
+      if (Number.isNaN(createdAt.getTime())) return;
 
       if (status === "success") {
         paidAmount += amount;
@@ -604,6 +617,37 @@ const Dashboard: React.FC = () => {
         value: monthlyFeesTotals[bucket.key] || 0,
       })),
     };
+  }, [payments]);
+
+  const earningsData = useMemo(() => {
+    return payments
+      .filter((payment) => normalizePaymentStatus(payment.status) === "success")
+      .map((payment) => {
+        const amountRaw = payment.amount ?? 0;
+        const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
+        const createdAt =
+          payment.createdAt instanceof Timestamp
+            ? payment.createdAt.toDate()
+            : new Date(payment.createdAt || 0);
+        const date = Number.isNaN(createdAt.getTime())
+          ? new Date().toISOString().slice(0, 10)
+          : createdAt.toISOString().slice(0, 10);
+        const method =
+          (payment as any).paymentMethod ||
+          (payment as any).method ||
+          "Unknown";
+
+        return {
+          date,
+          totalCollections: amount,
+          feesCollections: amount,
+          outstanding: 0,
+          transactions: 1,
+          paymentMethod: method,
+          className: payment.schoolName || "School",
+          createdAt: payment.createdAt ?? null,
+        };
+      });
   }, [payments]);
 
   const planDist = useMemo(() => {
@@ -1052,10 +1096,10 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
-                    Earnings
+                    Earnings snapshot
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Successful payments per month
+                    Overview has moved to the premium module below
                   </p>
                 </div>
                 <div className="text-xs text-slate-400">
@@ -1066,237 +1110,9 @@ const Dashboard: React.FC = () => {
                   })}
                 </div>
               </div>
-
-              <div className="mt-4 flex items-center gap-6 text-xs text-slate-500">
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-[#3B82F6]" />
-                  Total Collections
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-rose-500" />
-                  Fees Collection
-                </span>
-              </div>
-
-              <div className="mt-4 flex items-center gap-10">
-                <div>
-                  <p className="text-xs text-slate-400">Total Collections</p>
-                  <p className="text-lg font-bold text-slate-900">
-                    {formatCurrency(paymentMetrics.paidAmount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400">Fees Collection</p>
-                  <p className="text-lg font-bold text-slate-900">
-                    {formatCurrency(paymentMetrics.last30Amount)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                {(() => {
-                  const height = 180;
-                  const width = 640;
-                  const padding = 28;
-                  const minValue = 300;
-                  const maxValue = 3600;
-                  const underflowHeight = 22;
-                  const baselineY = height - padding - underflowHeight;
-                  const chartHeight = baselineY - padding;
-
-                  const toY = (value: number) => {
-                    if (value >= minValue) {
-                      const ratio = (value - minValue) / (maxValue - minValue);
-                      return baselineY - ratio * chartHeight;
-                    }
-                    const underRatio = Math.min(
-                      1,
-                      (minValue - value) / minValue,
-                    );
-                    return baselineY + underRatio * underflowHeight;
-                  };
-
-                  const points = paymentMetrics.monthlySeries.map(
-                    (point, index) => {
-                      const x =
-                        padding +
-                        (index * (width - padding * 2)) /
-                          (paymentMetrics.monthlySeries.length - 1 || 1);
-                      const y = toY(point.value);
-                      return { x, y };
-                    },
-                  );
-                  const feePoints = paymentMetrics.monthlyFeesSeries.map(
-                    (point, index) => {
-                      const x =
-                        padding +
-                        (index * (width - padding * 2)) /
-                          (paymentMetrics.monthlyFeesSeries.length - 1 || 1);
-                      const y = toY(point.value);
-                      return { x, y };
-                    },
-                  );
-
-                  const buildPath = (pts: { x: number; y: number }[]) => {
-                    if (pts.length === 0) return "";
-                    const [first, ...rest] = pts;
-                    return rest.reduce((acc, point, idx) => {
-                      const prev = pts[idx];
-                      const midX = (prev.x + point.x) / 2;
-                      return `${acc} Q ${midX} ${prev.y} ${point.x} ${point.y}`;
-                    }, `M ${first.x} ${first.y}`);
-                  };
-
-                  const areaPath = (pts: { x: number; y: number }[]) => {
-                    const line = buildPath(pts);
-                    if (!line) return "";
-                    const last = pts[pts.length - 1];
-                    const first = pts[0];
-                    return `${line} L ${last.x} ${height - padding} L ${first.x} ${height - padding} Z`;
-                  };
-
-                  return (
-                    <div className="w-full rounded-2xl bg-gradient-to-br from-slate-50 via-white to-slate-50 border border-slate-100 p-3 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.5)]">
-                      <svg
-                        viewBox={`0 0 ${width} ${height}`}
-                        className="w-full h-44"
-                        role="img"
-                        aria-label="Monthly earnings chart"
-                      >
-                        <defs>
-                          <linearGradient
-                            id="earningsBlue"
-                            x1="0"
-                            x2="0"
-                            y1="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="#3B82F6"
-                              stopOpacity="0.65"
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="#3B82F6"
-                              stopOpacity="0.05"
-                            />
-                          </linearGradient>
-                          <linearGradient
-                            id="earningsRed"
-                            x1="0"
-                            x2="0"
-                            y1="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="#F43F5E"
-                              stopOpacity="0.7"
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="#F43F5E"
-                              stopOpacity="0.1"
-                            />
-                          </linearGradient>
-                        </defs>
-
-                        <rect
-                          x={padding}
-                          y={padding}
-                          width={width - padding * 2}
-                          height={baselineY - padding}
-                          rx={12}
-                          fill="#FFFFFF"
-                          opacity="0.6"
-                        />
-                        <rect
-                          x={padding}
-                          y={baselineY}
-                          width={width - padding * 2}
-                          height={underflowHeight}
-                          rx={10}
-                          fill="#F1F5F9"
-                        />
-
-                        {[0, 25, 50, 75, 100].map((tick) => {
-                          const y = baselineY - (tick / 100) * chartHeight;
-                          const labelValue = Math.round(
-                            minValue + (tick / 100) * (maxValue - minValue),
-                          );
-                          return (
-                            <g key={tick}>
-                              <line
-                                x1={padding}
-                                x2={width - padding}
-                                y1={y}
-                                y2={y}
-                                stroke="#E2E8F0"
-                                strokeDasharray="4 4"
-                              />
-                              <text
-                                x={6}
-                                y={y + 4}
-                                fontSize="10"
-                                fill="#94A3B8"
-                              >
-                                GHS {labelValue.toLocaleString("en-GH")}
-                              </text>
-                            </g>
-                          );
-                        })}
-
-                        <line
-                          x1={padding}
-                          x2={width - padding}
-                          y1={baselineY}
-                          y2={baselineY}
-                          stroke="#CBD5F5"
-                          strokeWidth="1.5"
-                        />
-
-                        <path d={areaPath(points)} fill="url(#earningsBlue)" />
-                        <path
-                          d={buildPath(points)}
-                          fill="none"
-                          stroke="#3B82F6"
-                          strokeWidth="2"
-                        />
-
-                        <path
-                          d={areaPath(feePoints)}
-                          fill="url(#earningsRed)"
-                        />
-                        <path
-                          d={buildPath(feePoints)}
-                          fill="none"
-                          stroke="#F43F5E"
-                          strokeWidth="2"
-                        />
-
-                        {paymentMetrics.monthlySeries.map((point, idx) => {
-                          const x =
-                            padding +
-                            (idx * (width - padding * 2)) /
-                              (paymentMetrics.monthlySeries.length - 1 || 1);
-                          return (
-                            <text
-                              key={point.label}
-                              x={x}
-                              y={height - 6}
-                              textAnchor="middle"
-                              fontSize="10"
-                              fill="#94A3B8"
-                            >
-                              {point.label}
-                            </text>
-                          );
-                        })}
-                      </svg>
-                    </div>
-                  );
-                })()}
+              <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+                Use the Earnings module for detailed analytics, filters, and
+                breakdowns.
               </div>
             </div>
           </Card>
@@ -1377,6 +1193,15 @@ const Dashboard: React.FC = () => {
               </p>
             </div>
           </Card>
+        </div>
+
+        <div className="mb-8">
+          <EarningsOverview
+            data={earningsData}
+            loading={loading}
+            error={paymentsError}
+            onRetry={loadData}
+          />
         </div>
 
         {/* Insight Cards Section */}

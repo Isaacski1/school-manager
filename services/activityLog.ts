@@ -60,8 +60,10 @@ const resolveStatus = (event: ActivityEvent) => {
 
 export const logActivity = async (event: ActivityEvent) => {
   try {
+    // If no schoolId is provided (e.g., super admin context), skip logging
     if (!event.schoolId) {
-      throw new Error("Missing schoolId for activity log");
+      console.debug("Skipping activity log: no schoolId provided");
+      return null as any;
     }
     const docRef = await addDoc(
       collection(doc(firestore, "schools", event.schoolId), "activityLogs"),

@@ -7,6 +7,7 @@ import {
   collection,
   onSnapshot,
   doc,
+  getDoc,
   updateDoc,
   deleteDoc,
   query,
@@ -56,6 +57,7 @@ const Schools = () => {
   const [templateSchoolId, setTemplateSchoolId] = useState("");
   const [plans, setPlans] = useState<PlanConfig[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
+  const [plansError, setPlansError] = useState<string | null>(null);
   const [studentCounts, setStudentCounts] = useState<Record<string, number>>(
     {},
   );
@@ -95,6 +97,7 @@ const Schools = () => {
 
   const loadPlans = async () => {
     setPlansLoading(true);
+    setPlansError(null);
     try {
       const plansSnap = await getDocs(collection(firestore, "plans"));
       const planData = plansSnap.docs.map(
@@ -104,27 +107,58 @@ const Schools = () => {
       setPlans(planData);
     } catch (error: any) {
       console.error("Failed to load plans", error);
-      showToast("Failed to load plan configurations.", { type: "error" });
+      const errorMsg = error?.message || "Failed to load plan configurations.";
+      setPlansError(errorMsg);
+      // Only show toast on initial load failure
+      if (plans.length === 0) {
+        showToast(errorMsg, { type: "error" });
+      }
     } finally {
       setPlansLoading(false);
     }
   };
 
   useEffect(() => {
+    const loadUserRole = async () => {
+      if (!user?.id) return;
+      try {
+        const userSnap = await getDoc(doc(firestore, "users", user.id));
+        console.log("[SUPER_ADMIN][Schools] auth.uid:", user.id);
+        console.log(
+          "[SUPER_ADMIN][Schools] user doc exists:",
+          userSnap.exists(),
+        );
+        console.log("[SUPER_ADMIN][Schools] user role:", userSnap.data()?.role);
+      } catch (error) {
+        console.error("[SUPER_ADMIN][Schools] Failed to load user role", error);
+      }
+    };
+
     const schoolsRef = collection(firestore, "schools");
-    const unsubscribe = onSnapshot(schoolsRef, (snapshot) => {
-      const schoolsData = snapshot.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as School,
-      );
-      setSchools(schoolsData);
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      schoolsRef,
+      (snapshot) => {
+        const schoolsData = snapshot.docs.map(
+          (doc) =>
+            ({
+              id: doc.id,
+              ...doc.data(),
+            }) as School,
+        );
+        setSchools(schoolsData);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Failed to load schools", error);
+        setLoading(false);
+        showToast(error?.message || "Missing or insufficient permissions.", {
+          type: "error",
+        });
+      },
+    );
 
     loadPlans();
+    loadUserRole();
 
     return unsubscribe;
   }, []);
@@ -1104,12 +1138,27 @@ const Schools = () => {
                 <h4 className="text-sm font-semibold text-slate-700 mb-2">
                   Existing Plans
                 </h4>
+                {plansError && (
+                  <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs text-amber-800 mb-2">{plansError}</p>
+                    <button
+                      type="button"
+                      onClick={() => loadPlans()}
+                      disabled={plansLoading}
+                      className="text-xs font-semibold text-amber-700 hover:text-amber-900 disabled:opacity-50"
+                    >
+                      {plansLoading ? "Retrying..." : "Retry"}
+                    </button>
+                  </div>
+                )}
                 <div className="space-y-2">
                   {plans.length === 0 ? (
                     <p className="text-sm text-slate-500">
                       {plansLoading
                         ? "Loading plans..."
-                        : "No plans created yet."}
+                        : plansError
+                          ? "Failed to load plans"
+                          : "No plans created yet."}
                     </p>
                   ) : (
                     plans.map((plan) => (
