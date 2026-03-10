@@ -4126,7 +4126,7 @@ const AdminDashboard = () => {
                 />
               )}
             </div>
-            <div className="h-96">
+            <div className="h-auto lg:h-96">
               {showSkeletons ? (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full flex flex-col justify-center">
                   <SkeletonBlock className="h-5 w-32" />

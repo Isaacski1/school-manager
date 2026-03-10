@@ -768,7 +768,7 @@ const runBrowserFlow = async () => {
       waitUntil: "domcontentloaded",
     });
     await schoolAdminPage
-      .getByRole("button", { name: /Create Current Term Backup/i })
+      .getByRole("button", { name: /Create (Full System|Current Term) Backup/i })
       .click();
     await waitForCondition(
       "manual backup creation",

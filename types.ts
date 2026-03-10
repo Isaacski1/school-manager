@@ -309,6 +309,7 @@ export interface Backup {
     // Make data optional
     schoolConfig?: SchoolConfig;
     schoolSettings?: SchoolConfig;
+    schoolProfile?: Partial<School> | null;
     students?: Student[];
     attendanceRecords?: AttendanceRecord[];
     teacherAttendanceRecords?: TeacherAttendanceRecord[];
@@ -323,6 +324,7 @@ export interface Backup {
     adminNotifications?: SystemNotification[];
     activityLogs?: any[];
     payments?: StudentFeePayment[];
+    billingPayments?: Array<Record<string, unknown>>;
     fees?: FeeDefinition[];
     studentLedgers?: StudentFeeLedger[];
     financeSettings?: FinanceSettings | null;

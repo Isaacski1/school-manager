@@ -337,34 +337,16 @@ const SystemSettings = () => {
     }
   };
 
-  const handleCreateTermBackup = async () => {
+  const handleCreateSystemBackup = async () => {
     setIsCreatingBackup(true);
     try {
-      // db.createTermBackup will be implemented in the next step
-      // For now, it will use currentTerm and academicYear from the config state
-      await db.createTermBackup(
-        config,
-        config.currentTerm,
-        config.academicYear,
-      );
-      showToast("Term backup created successfully!", { type: "success" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "backup_created",
-        entityId: `${config.currentTerm}-${config.academicYear}`,
-        meta: {
-          status: "success",
-          module: "System Settings",
-          term: config.currentTerm,
-          academicYear: config.academicYear,
-          actorName: user?.fullName || "",
-        },
+      await db.createSystemBackup(config);
+      showToast("Full system backup created successfully!", {
+        type: "success",
       });
     } catch (error) {
       console.error("Error creating term backup:", error);
-      showToast("Failed to create term backup. Please try again.", {
+      showToast("Failed to create full system backup. Please try again.", {
         type: "error",
       });
       await logActivity({
@@ -1348,14 +1330,16 @@ const SystemSettings = () => {
                   Recovery and Full Backup
                 </h2>
                 <p className="text-sm text-slate-300 mb-4">
-                  Create a full backup of the current term's academic records,
-                  attendance, and student data. Deleted records and risky bulk
-                  changes are captured automatically, and everything is managed
-                  from the Recovery Center.
+                  Create a full-system snapshot of your school workspace,
+                  including settings, users, finance data, notices, timetables,
+                  academic records, and activity history. Deleted records and
+                  risky bulk changes are still captured automatically from the
+                  Recovery Center.
                 </p>
                 <button
-                  onClick={handleCreateTermBackup}
+                  onClick={handleCreateSystemBackup}
                   disabled={isCreatingBackup || isTrialPlan}
+                  title="Create Full System Backup"
                   className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {isCreatingBackup ? (
@@ -1365,7 +1349,7 @@ const SystemSettings = () => {
                     </>
                   ) : (
                     <>
-                      <Save size={16} className="mr-2" /> Create Current Term
+                      <Save size={16} className="mr-2" /> Create Full System
                       Backup
                     </>
                   )}

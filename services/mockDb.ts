@@ -154,6 +154,179 @@ class FirestoreService {
     return snap.docs.map((doc) => doc.data() as T);
   }
 
+  private async getCollectionBySchoolIdWithDocId<T>(
+    collectionName: string,
+    schoolId: string,
+  ): Promise<T[]> {
+    const q = query(
+      collection(firestore, collectionName),
+      where("schoolId", "==", schoolId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((docSnap) => {
+      const data = docSnap.data() as any;
+      return {
+        ...(data as T),
+        id: (data?.id as string | undefined) || docSnap.id,
+      } as T;
+    });
+  }
+
+  private async getCollectionAtPathWithDocId<T>(
+    collectionPath: string[],
+  ): Promise<T[]> {
+    const snap = await getDocs(collection(firestore, collectionPath.join("/")));
+    return snap.docs.map((docSnap) => {
+      const data = docSnap.data() as any;
+      return {
+        ...(data as T),
+        id: (data?.id as string | undefined) || docSnap.id,
+      } as T;
+    });
+  }
+
+  private dedupeRowsByKey<T>(
+    rows: T[] = [],
+    resolveKey: (row: T, index: number) => string,
+  ): T[] {
+    const deduped = new Map<string, T>();
+    rows.filter(Boolean).forEach((row, index) => {
+      const key = String(resolveKey(row, index) || "").trim();
+      if (!key) return;
+      const rowData = row as any;
+      deduped.set(key, rowData?.id ? row : ({ ...rowData, id: key } as T));
+    });
+    return Array.from(deduped.values());
+  }
+
+  private async getSchoolFinanceSnapshot(schoolId: string): Promise<{
+    fees: FeeDefinition[];
+    studentLedgers: StudentFeeLedger[];
+    financePayments: StudentFeePayment[];
+    billingPayments: Array<Record<string, unknown>>;
+    financeSettings: FinanceSettings | null;
+  }> {
+    const [
+      legacyFees,
+      v2Fees,
+      legacyLedgers,
+      v2Ledgers,
+      legacyPayments,
+      v2Payments,
+      financeSettingsSnap,
+    ] = await Promise.all([
+      this.getCollectionBySchoolIdWithDocId<FeeDefinition>("fees", schoolId)
+        .catch(() => []),
+      this.getCollectionAtPathWithDocId<FeeDefinition>([
+        "schools",
+        schoolId,
+        "fees",
+      ]).catch(() => []),
+      this.getCollectionBySchoolIdWithDocId<StudentFeeLedger>(
+        "student_ledgers",
+        schoolId,
+      ).catch(() => []),
+      this.getCollectionAtPathWithDocId<StudentFeeLedger>([
+        "schools",
+        schoolId,
+        "feeLedgers",
+      ]).catch(() => []),
+      this.getCollectionBySchoolIdWithDocId<Record<string, unknown>>(
+        "payments",
+        schoolId,
+      ).catch(() => []),
+      this.getCollectionAtPathWithDocId<Record<string, unknown>>([
+        "schools",
+        schoolId,
+        "payments",
+      ]).catch(() => []),
+      getDoc(doc(firestore, "schools", schoolId, "financeSettings", "main"))
+        .catch(() => null),
+    ]);
+
+    const fees = this.dedupeRowsByKey<FeeDefinition>(
+      [...legacyFees, ...v2Fees],
+      (row, index) => String(row.id || `fee_${index}`),
+    );
+    const studentLedgers = this.dedupeRowsByKey<StudentFeeLedger>(
+      [...legacyLedgers, ...v2Ledgers],
+      (row, index) => String(row.id || `ledger_${index}`),
+    );
+
+    const allPayments = this.dedupeRowsByKey<Record<string, unknown>>(
+      [...legacyPayments, ...v2Payments],
+      (row, index) =>
+        String(
+          row.id ||
+            row.reference ||
+            row.receiptNumber ||
+            row.transactionId ||
+            `payment_${index}`,
+        ),
+    );
+
+    const financePayments = allPayments.filter((row) =>
+      Boolean((row as any)?.studentId),
+    ) as unknown as StudentFeePayment[];
+    const billingPayments = allPayments.filter(
+      (row) => !((row as any)?.studentId),
+    );
+
+    const financeSettings =
+      financeSettingsSnap && "exists" in financeSettingsSnap && financeSettingsSnap.exists()
+        ? ({
+            schoolId,
+            ...(financeSettingsSnap.data() as FinanceSettings),
+          } as FinanceSettings)
+        : null;
+
+    return {
+      fees,
+      studentLedgers,
+      financePayments,
+      billingPayments,
+      financeSettings,
+    };
+  }
+
+  private async getSchoolActivityLogs(schoolId: string): Promise<any[]> {
+    const snap = await getDocs(
+      collection(doc(firestore, "schools", schoolId), "activityLogs"),
+    );
+    return snap.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Record<string, unknown>),
+    }));
+  }
+
+  private async getSchoolProfileSnapshot(
+    schoolId: string,
+  ): Promise<Partial<School> | null> {
+    const snap = await getDoc(doc(firestore, "schools", schoolId));
+    if (!snap.exists()) {
+      return null;
+    }
+
+    const school = snap.data() as Partial<School>;
+    return this.stripUndefinedDeep<Partial<School>>({
+      id: schoolId,
+      name: school.name || "",
+      code: school.code || "",
+      logoUrl: school.logoUrl || "",
+      phone: school.phone || "",
+      address: school.address || "",
+      status: school.status,
+      plan: school.plan,
+      planEndsAt: school.planEndsAt,
+      featurePlan: school.featurePlan,
+      subscription: school.subscription,
+      billing: school.billing,
+      limits: school.limits,
+      studentsCount: school.studentsCount,
+      notes: school.notes,
+    });
+  }
+
   private stripUndefinedDeep<T>(value: T): T {
     if (Array.isArray(value)) {
       return value
@@ -244,6 +417,56 @@ class FirestoreService {
     });
 
     await this.commitChunkedOperations(operations);
+  }
+
+  private async replaceSchoolActivityLogs(
+    schoolId: string,
+    rows: any[] = [],
+  ): Promise<void> {
+    await this.replaceCollectionAtPath(
+      ["schools", schoolId, "activityLogs"],
+      rows
+        .filter(Boolean)
+        .map((row, index) => ({
+          ...row,
+          id:
+            row?.id ||
+            `${row?.actionType || row?.eventType || "activity"}_${row?.entityId || "entry"}_${index}`,
+          schoolId,
+        })),
+      (row: any) => row.id,
+    );
+  }
+
+  private async restoreSchoolProfileSnapshot(
+    schoolId: string,
+    schoolProfile?: Partial<School> | null,
+    schoolSettings?: SchoolConfig | null,
+  ): Promise<void> {
+    const profileUpdate = this.stripUndefinedDeep({
+      name: schoolProfile?.name || schoolSettings?.schoolName,
+      code: schoolProfile?.code,
+      logoUrl: schoolProfile?.logoUrl || schoolSettings?.logoUrl,
+      phone: schoolProfile?.phone || schoolSettings?.phone,
+      address: schoolProfile?.address || schoolSettings?.address,
+      status: schoolProfile?.status,
+      plan: schoolProfile?.plan,
+      planEndsAt: schoolProfile?.planEndsAt,
+      featurePlan: schoolProfile?.featurePlan,
+      subscription: schoolProfile?.subscription,
+      billing: schoolProfile?.billing,
+      limits: schoolProfile?.limits,
+      studentsCount: schoolProfile?.studentsCount,
+      notes: schoolProfile?.notes,
+    });
+
+    if (!Object.keys(profileUpdate).length) {
+      return;
+    }
+
+    await setDoc(doc(firestore, "schools", schoolId), profileUpdate, {
+      merge: true,
+    });
   }
 
   private generateBackupId(prefix = "backup"): string {
@@ -2013,7 +2236,7 @@ class FirestoreService {
   }
 
   /**
-   * Create a complete backup of the current term's data before resetting.
+   * Create a full-school snapshot for the current term context.
    */
   async createTermBackup(
     currentConfig: SchoolConfig,
@@ -2063,39 +2286,44 @@ class FirestoreService {
         }
       }
 
-      const feeTerm = currentTerm as FeeTerm;
       let fees: FeeDefinition[] = [];
       let studentLedgers: StudentFeeLedger[] = [];
       let financeSettings: FinanceSettings | null = null;
       let financePayments: StudentFeePayment[] = [];
+      let billingPayments: Array<Record<string, unknown>> = [];
       let activityLogs: any[] = [];
+      let schoolProfile: Partial<School> | null = null;
 
       try {
-        fees = await this.getFees({
-          schoolId,
-          academicYear,
-          term: feeTerm,
-        });
-        studentLedgers = await this.getStudentLedgers({
-          schoolId,
-          academicYear,
-          term: feeTerm,
-        });
-        financePayments = await this.getPayments({
-          schoolId,
-          academicYear,
-          term: feeTerm,
-        });
-        financeSettings = await this.getFinanceSettings(schoolId);
+        const financeSnapshot = await this.getSchoolFinanceSnapshot(schoolId);
+        fees = financeSnapshot.fees;
+        studentLedgers = financeSnapshot.studentLedgers;
+        financePayments = financeSnapshot.financePayments;
+        billingPayments = financeSnapshot.billingPayments;
+        financeSettings = financeSnapshot.financeSettings;
       } catch (financeError) {
         console.warn("Skipping finance backup payload", financeError);
       }
 
       try {
-        activityLogs = await this.getCollectionBySchoolId<any>(
-          "activity_logs",
-          schoolId,
-        );
+        const [legacyActivityLogs, schoolActivityLogs] = await Promise.all([
+          this.getCollectionBySchoolId<any>("activity_logs", schoolId).catch(
+            () => [],
+          ),
+          this.getSchoolActivityLogs(schoolId).catch(() => []),
+        ]);
+        const mergedActivityLogs = [
+          ...legacyActivityLogs,
+          ...schoolActivityLogs,
+        ];
+        const dedupedActivityLogs = new Map<string, any>();
+        mergedActivityLogs.forEach((entry, index) => {
+          const key =
+            entry?.id ||
+            `${entry?.actionType || entry?.eventType || "activity"}_${entry?.entityId || "entry"}_${entry?.timestamp || index}`;
+          dedupedActivityLogs.set(key, entry?.id ? entry : { ...entry, id: key });
+        });
+        activityLogs = Array.from(dedupedActivityLogs.values());
       } catch (activityLogError) {
         console.warn("Skipping activity log backup payload", activityLogError);
       }
@@ -2149,6 +2377,7 @@ class FirestoreService {
       const schoolSettings = settingsSnap.exists()
         ? (settingsSnap.data() as SchoolConfig)
         : undefined;
+      schoolProfile = await this.getSchoolProfileSnapshot(schoolId);
 
       const backup = this.stripUndefinedDeep<Backup>({
         id: this.generateBackupId("backup"),
@@ -2163,6 +2392,7 @@ class FirestoreService {
         data: {
           schoolConfig: currentConfig,
           schoolSettings,
+          schoolProfile,
           students,
           attendanceRecords,
           teacherAttendanceRecords,
@@ -2177,6 +2407,7 @@ class FirestoreService {
           adminNotifications,
           activityLogs,
           payments: financePayments,
+          billingPayments,
           fees,
           studentLedgers,
           financeSettings,
@@ -2203,6 +2434,23 @@ class FirestoreService {
       console.error("Error creating backup:", error);
       throw error;
     }
+  }
+
+  async createSystemBackup(currentConfig: SchoolConfig): Promise<void> {
+    const schoolId = this.requireSchoolId(
+      currentConfig.schoolId,
+      "createSystemBackup",
+    );
+    await this.createTermBackup(
+      currentConfig,
+      currentConfig.currentTerm,
+      currentConfig.academicYear,
+      {
+        backupType: "manual",
+        allowExisting: true,
+        dedupeKey: `manual_${schoolId}_${Date.now()}`,
+      },
+    );
   }
 
   /**
@@ -2561,6 +2809,11 @@ class FirestoreService {
     await setDoc(doc(firestore, "settings", scopedSchoolId), restoredSettings, {
       merge: false,
     });
+    await this.restoreSchoolProfileSnapshot(
+      scopedSchoolId,
+      backup.data.schoolProfile,
+      restoredSettings,
+    );
 
     await this.replaceSchoolScopedCollection(
       "students",
@@ -2676,6 +2929,42 @@ class FirestoreService {
       }
     }
 
+    if (Array.isArray(backup.data.billingPayments)) {
+      const billingPaymentSnap = await getDocs(
+        query(
+          collection(firestore, "payments"),
+          where("schoolId", "==", scopedSchoolId),
+        ),
+      );
+      const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+        [];
+
+      billingPaymentSnap.docs.forEach((docSnap) => {
+        if (!docSnap.data()?.studentId) {
+          operations.push((batch) => batch.delete(docSnap.ref));
+        }
+      });
+
+      backup.data.billingPayments
+        .filter((payment: any) => payment && !payment?.studentId)
+        .forEach((payment: any, index: number) => {
+          const paymentId =
+            payment.id ||
+            payment.reference ||
+            payment.transactionId ||
+            `billing_${backup.id}_${index}`;
+          operations.push((batch) =>
+            batch.set(doc(firestore, "payments", paymentId), {
+              ...payment,
+              id: paymentId,
+              schoolId: scopedSchoolId,
+            }),
+          );
+        });
+
+      await this.commitChunkedOperations(operations);
+    }
+
     if (backup.data.financeSettings) {
       await setDoc(
         doc(firestore, "schools", scopedSchoolId, "financeSettings", "main"),
@@ -2712,6 +3001,13 @@ class FirestoreService {
           schoolId: scopedSchoolId,
         })),
         (row) => row.id,
+      );
+    }
+
+    if (Array.isArray(backup.data.activityLogs)) {
+      await this.replaceSchoolActivityLogs(
+        scopedSchoolId,
+        backup.data.activityLogs,
       );
     }
 
