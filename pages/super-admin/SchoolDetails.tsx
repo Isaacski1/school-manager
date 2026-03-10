@@ -21,18 +21,23 @@ import {
 import { deleteSchool } from "../../services/functions";
 import {
   ArrowLeft,
+  CheckCircle2,
   Building2,
   Calendar,
+  CreditCard,
   Eye,
   EyeOff,
-  FileText,
   Globe,
+  GraduationCap,
   MapPin,
   Phone,
   Save,
+  Settings2,
   ShieldAlert,
+  Sparkles,
   Trash2,
   UserPlus,
+  Users,
   X,
 } from "lucide-react";
 
@@ -47,6 +52,112 @@ type SchoolFormState = {
   planEndsAt: string;
   notes: string;
 };
+
+type PaidPlan = Extract<
+  SchoolFormState["plan"],
+  "monthly" | "termly" | "yearly"
+>;
+
+const PAID_PLAN_OPTIONS: Array<{
+  value: PaidPlan;
+  label: string;
+  description: string;
+  months: number;
+}> = [
+  {
+    value: "monthly",
+    label: "Monthly",
+    description: "One month access, billed on a shorter cycle.",
+    months: 1,
+  },
+  {
+    value: "termly",
+    label: "Termly",
+    description: "Three months access for a school-term billing cycle.",
+    months: 3,
+  },
+  {
+    value: "yearly",
+    label: "Yearly",
+    description: "Twelve months access for long-term subscription coverage.",
+    months: 12,
+  },
+];
+
+const SURFACE_CLASS =
+  "relative overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/90 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.45)] backdrop-blur";
+
+const PANEL_CLASS =
+  "rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_18px_50px_-42px_rgba(15,23,42,0.45)]";
+
+const LABEL_CLASS =
+  "text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500";
+
+const INPUT_CLASS =
+  "mt-2 w-full rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100";
+
+const TEXTAREA_CLASS = `${INPUT_CLASS} min-h-[132px] resize-y`;
+
+const PLAN_META: Record<
+  SchoolFormState["plan"],
+  {
+    badgeClass: string;
+    softClass: string;
+    buttonClass: string;
+    dotClass: string;
+  }
+> = {
+  free: {
+    badgeClass: "border-slate-200 bg-slate-100/90 text-slate-700",
+    softClass:
+      "border-slate-200 bg-gradient-to-br from-slate-100 via-white to-slate-50 text-slate-700",
+    buttonClass: "border-slate-300 bg-slate-50 text-slate-700",
+    dotClass: "bg-slate-500",
+  },
+  trial: {
+    badgeClass: "border-amber-200 bg-amber-50/90 text-amber-700",
+    softClass:
+      "border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50 text-amber-700",
+    buttonClass: "border-amber-300 bg-amber-50 text-amber-700",
+    dotClass: "bg-amber-500",
+  },
+  monthly: {
+    badgeClass: "border-sky-200 bg-sky-50/90 text-sky-700",
+    softClass:
+      "border-sky-200 bg-gradient-to-br from-sky-50 via-white to-blue-50 text-sky-700",
+    buttonClass: "border-sky-300 bg-sky-50 text-sky-700",
+    dotClass: "bg-sky-500",
+  },
+  termly: {
+    badgeClass: "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+    softClass:
+      "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50 text-emerald-700",
+    buttonClass: "border-emerald-300 bg-emerald-50 text-emerald-700",
+    dotClass: "bg-emerald-500",
+  },
+  yearly: {
+    badgeClass: "border-violet-200 bg-violet-50/90 text-violet-700",
+    softClass:
+      "border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 text-violet-700",
+    buttonClass: "border-violet-300 bg-violet-50 text-violet-700",
+    dotClass: "bg-violet-500",
+  },
+};
+
+const STATUS_META = {
+  active: {
+    badgeClass: "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+    softClass:
+      "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50 text-emerald-700",
+    dotClass: "bg-emerald-500",
+  },
+  inactive: {
+    badgeClass: "border-slate-200 bg-slate-100/90 text-slate-700",
+    softClass:
+      "border-slate-200 bg-gradient-to-br from-slate-100 via-white to-slate-50 text-slate-700",
+    dotClass: "bg-slate-500",
+  },
+} as const;
 
 const SchoolDetails = () => {
   const { schoolId } = useParams<{ schoolId: string }>();
@@ -81,6 +192,7 @@ const SchoolDetails = () => {
   const [logoZoom, setLogoZoom] = useState(1);
   const [logoOffset, setLogoOffset] = useState({ x: 0, y: 0 });
   const [logoNatural, setLogoNatural] = useState({ width: 0, height: 0 });
+  const [planUpdating, setPlanUpdating] = useState<PaidPlan | null>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
   const formatPlanEndsAt = (value: any) => {
@@ -90,6 +202,27 @@ const SchoolDetails = () => {
     const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
     if (!parsed || Number.isNaN(parsed.getTime())) return "";
     return parsed.toISOString().split("T")[0];
+  };
+
+  const formatDisplayDate = (value: any) => {
+    if (!value) return "Not set";
+    const rawDate =
+      typeof value?.toDate === "function" ? value.toDate() : value;
+    const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
+    if (!parsed || Number.isNaN(parsed.getTime())) return "Not set";
+    return parsed.toLocaleDateString();
+  };
+
+  const formatPlanLabel = (plan: SchoolFormState["plan"]) =>
+    plan.charAt(0).toUpperCase() + plan.slice(1);
+
+  const calculatePlanEndDate = (plan: PaidPlan) => {
+    const monthsToAdd =
+      PAID_PLAN_OPTIONS.find((option) => option.value === plan)?.months || 1;
+    const nextDate = new Date();
+    nextDate.setHours(0, 0, 0, 0);
+    nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+    return nextDate;
   };
 
   const CROP_PREVIEW_SIZE = 180;
@@ -171,7 +304,9 @@ const SchoolDetails = () => {
         setStats({
           students: studentsSnap.size.toString(),
           teachers: teachersSnap.size.toString(),
-          lastActivity: createdAt ? createdAt.toLocaleDateString() : "â€”",
+          lastActivity: createdAt
+            ? createdAt.toLocaleDateString()
+            : "Not available",
         });
       } catch (error) {
         console.error("Error fetching school:", error);
@@ -185,17 +320,92 @@ const SchoolDetails = () => {
   }, [schoolId, navigate]);
 
   const createdAtLabel = useMemo(() => {
-    if (!school?.createdAt) return "â€”";
+    if (!school?.createdAt) return "Not available";
     const dateValue = (school.createdAt as any)?.toDate?.()
       ? (school.createdAt as any).toDate()
       : new Date(school.createdAt as any);
-    if (!dateValue || Number.isNaN(dateValue.getTime())) return "â€”";
+    if (!dateValue || Number.isNaN(dateValue.getTime())) return "Not available";
     return dateValue.toLocaleDateString();
   }, [school?.createdAt]);
+
+  const currentPlanEndsLabel = useMemo(() => {
+    const sourceValue = formState?.planEndsAt || school?.planEndsAt || null;
+    return formatDisplayDate(sourceValue);
+  }, [formState?.planEndsAt, school?.planEndsAt]);
+
+  const currentPlanMeta =
+    PLAN_META[
+      (formState?.plan || school?.plan || "trial") as SchoolFormState["plan"]
+    ];
+  const currentStatusMeta =
+    STATUS_META[
+      (formState?.status ||
+        school?.status ||
+        "inactive") as SchoolFormState["status"]
+    ];
+  const adminStatusMeta = adminUser
+    ? STATUS_META[adminUser.status === "active" ? "active" : "inactive"]
+    : null;
 
   const handleFormChange = (field: keyof SchoolFormState, value: string) => {
     if (!formState) return;
     setFormState({ ...formState, [field]: value });
+  };
+
+  const handleQuickPlanChange = async (nextPlan: PaidPlan) => {
+    if (!resolvedSchoolId) return;
+
+    const nextPlanEndsAt = calculatePlanEndDate(nextPlan);
+    setPlanUpdating(nextPlan);
+
+    try {
+      await updateDoc(doc(firestore, "schools", resolvedSchoolId), {
+        plan: nextPlan,
+        planEndsAt: nextPlanEndsAt,
+        status: "active",
+        "billing.status": "active",
+      });
+
+      setSchool((prev) =>
+        prev
+          ? ({
+              ...prev,
+              plan: nextPlan,
+              planEndsAt: nextPlanEndsAt,
+              status: "active",
+              billing: {
+                ...(prev as any).billing,
+                status: "active",
+              },
+            } as School)
+          : prev,
+      );
+
+      setFormState((prev) =>
+        prev
+          ? {
+              ...prev,
+              plan: nextPlan,
+              planEndsAt: formatPlanEndsAt(nextPlanEndsAt),
+              status: "active",
+            }
+          : prev,
+      );
+
+      showToast(
+        `${formatPlanLabel(nextPlan)} plan applied. Ends on ${formatDisplayDate(nextPlanEndsAt)}.`,
+        {
+          type: "success",
+        },
+      );
+    } catch (error: any) {
+      console.error("Failed to update school plan", error);
+      showToast(error.message || "Failed to update subscription plan.", {
+        type: "error",
+      });
+    } finally {
+      setPlanUpdating(null);
+    }
   };
 
   const handleLogoFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -441,8 +651,13 @@ const SchoolDetails = () => {
   if (loading) {
     return (
       <Layout title="School Details">
-        <div className="flex items-center justify-center h-96">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0B4A82]"></div>
+        <div className="flex min-h-[28rem] items-center justify-center p-6">
+          <div className="rounded-[28px] border border-slate-200 bg-white/90 px-8 py-10 text-center shadow-[0_28px_80px_-52px_rgba(15,23,42,0.45)]">
+            <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-[#0B4A82]" />
+            <p className="mt-4 text-sm font-medium text-slate-500">
+              Loading school workspace...
+            </p>
+          </div>
         </div>
       </Layout>
     );
@@ -451,8 +666,15 @@ const SchoolDetails = () => {
   if (!school || !formState) {
     return (
       <Layout title="School Details">
-        <div className="text-center py-12">
-          <p className="text-slate-500">School not found</p>
+        <div className="flex min-h-[28rem] items-center justify-center p-6">
+          <div className="rounded-[28px] border border-slate-200 bg-white/90 px-8 py-10 text-center shadow-[0_28px_80px_-52px_rgba(15,23,42,0.45)]">
+            <h2 className="text-xl font-semibold text-slate-900">
+              School not found
+            </h2>
+            <p className="mt-3 text-sm text-slate-500">
+              The requested school record could not be loaded.
+            </p>
+          </div>
         </div>
       </Layout>
     );
@@ -460,604 +682,1015 @@ const SchoolDetails = () => {
 
   return (
     <Layout title="School Details">
-      <div className="p-4 sm:p-6 space-y-8">
-        <div className="flex flex-col gap-4">
-          <button
-            onClick={() => navigate("/super-admin/schools")}
-            className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm"
-          >
-            <ArrowLeft size={16} />
-            Schools / {school.name}
-          </button>
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-slate-100 flex items-center justify-center overflow-hidden">
-                {school.logoUrl ? (
-                  <img
-                    src={school.logoUrl}
-                    alt={school.name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <Building2 className="text-slate-500" />
-                )}
-              </div>
-              <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-                  {school.name}
-                </h1>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm text-slate-500">
-                  <span className="flex items-center gap-1">
-                    <FileText size={14} /> Code: {school.code || "â€”"}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Calendar size={14} /> Created: {createdAtLabel}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <span
-                className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  school.status === "active"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-[#E6F0FA] text-[#0B4A82]"
-                }`}
-              >
-                {school.status === "active" ? "Active" : "Inactive"}
-              </span>
-              <span className="px-3 py-1 rounded-full text-sm font-medium bg-slate-100 text-slate-600">
-                {school.plan}
-              </span>
-            </div>
-          </div>
+      <div className="relative p-4 sm:p-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 overflow-hidden">
+          <div className="absolute -left-20 top-6 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
+          <div className="absolute right-0 top-10 h-64 w-64 rounded-full bg-violet-200/35 blur-3xl" />
+          <div className="absolute left-1/3 top-40 h-56 w-56 rounded-full bg-emerald-200/20 blur-3xl" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1.4fr] gap-6">
-          <div className="space-y-6">
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-4">
-              <h2 className="text-lg font-semibold text-slate-900">Overview</h2>
-              <div className="grid gap-3 text-sm text-slate-600">
-                <div className="flex items-center gap-3">
-                  <Phone size={16} />
-                  <span>{school.phone || "No phone"}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <MapPin size={16} />
-                  <span>{school.address || "No address"}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <FileText size={16} />
-                  <span>{school.notes || "No internal notes"}</span>
-                </div>
-              </div>
-            </div>
+        <div className="space-y-6">
+          <button
+            onClick={() => navigate("/super-admin/schools")}
+            className="group inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-4 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
+          >
+            <ArrowLeft
+              size={16}
+              className="transition group-hover:-translate-x-0.5"
+            />
+            Schools / {school.name}
+          </button>
 
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Administration
-                </h2>
-                {!adminUser && (
-                  <button
-                    onClick={() => setShowCreateAdmin(true)}
-                    className="text-sm font-medium text-emerald-600 hover:text-emerald-700"
-                  >
-                    Create Admin
-                  </button>
-                )}
-              </div>
-              {adminUser ? (
-                <div className="border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+          <section className="relative overflow-hidden rounded-[32px] border border-white/20 bg-gradient-to-br from-slate-950 via-[#0B4A82] to-cyan-500 p-6 text-white shadow-[0_35px_100px_-50px_rgba(11,74,130,0.85)] sm:p-8">
+            <div className="absolute -right-12 top-0 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
+            <div className="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
+            <div className="relative z-10 flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
+              <div className="space-y-5">
+                <span className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-sky-50/90 backdrop-blur">
+                  <Sparkles size={14} />
+                  School Control Center
+                </span>
+
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[26px] border border-white/15 bg-white/12 shadow-lg backdrop-blur">
+                    {school.logoUrl || formState.logoUrl ? (
+                      <img
+                        src={school.logoUrl || formState.logoUrl}
+                        alt={school.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <Building2 size={32} className="text-white/90" />
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
                     <div>
-                      <p className="font-semibold text-slate-900">
-                        {adminUser.fullName}
-                      </p>
-                      <p className="text-sm text-slate-500">
-                        {adminUser.email}
+                      <h1 className="text-2xl font-bold tracking-tight text-white sm:text-4xl">
+                        {school.name}
+                      </h1>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-sky-50/80 sm:text-base">
+                        Manage subscription access, branding, admin control, and
+                        operational details for this school from one refined
+                        control panel.
                       </p>
                     </div>
+
+                    <div className="flex flex-wrap gap-2 text-sm text-sky-50/90">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 backdrop-blur">
+                        <Globe size={14} />
+                        Code: {school.code || "Not set"}
+                      </span>
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 backdrop-blur">
+                        <Calendar size={14} />
+                        Created: {createdAtLabel}
+                      </span>
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 backdrop-blur">
+                        <CreditCard size={14} />
+                        Ends: {currentPlanEndsLabel}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:w-[360px]">
+                <div className="rounded-[24px] border border-white/15 bg-white/10 p-4 backdrop-blur">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-50/70">
+                    School Status
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
                     <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        adminUser.status === "active"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-[#E6F0FA] text-[#0B4A82]"
-                      }`}
-                    >
-                      {adminUser.status}
+                      className={`h-2.5 w-2.5 rounded-full ${currentStatusMeta.dotClass}`}
+                    />
+                    <span className="text-lg font-semibold text-white">
+                      {formState.status === "active" ? "Active" : "Inactive"}
                     </span>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={handleResetAdminPassword}
-                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50"
-                    >
-                      Reset Admin Password
-                    </button>
-                    <button
-                      onClick={handleToggleAdminStatus}
-                      className={`px-3 py-2 rounded-lg border text-sm ${
-                        adminUser.status === "active"
-                          ? "border-red-200 text-red-600 hover:bg-red-50"
-                          : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                      }`}
-                    >
-                      {adminUser.status === "active"
-                        ? "Disable Admin"
-                        : "Activate Admin"}
-                    </button>
+                  <div className="mt-2 text-sm text-sky-50/75">
+                    {formState.status === "active"
+                      ? "Billing and school access are currently enabled."
+                      : "School access is currently in a paused state."}
                   </div>
                 </div>
-              ) : (
-                <div className="text-sm text-slate-500">
-                  No admin assigned yet.
+
+                <div className="rounded-[24px] border border-white/15 bg-white/10 p-4 backdrop-blur">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-50/70">
+                    Current Plan
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${currentPlanMeta.dotClass}`}
+                    />
+                    <span className="text-lg font-semibold text-white">
+                      {formatPlanLabel(formState.plan)}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-sm text-sky-50/75">
+                    Managed renewal date: {currentPlanEndsLabel}
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="relative z-10 mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "Total students", value: stats.students },
-                { label: "Total teachers", value: stats.teachers },
-                { label: "Last activity", value: stats.lastActivity },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4"
-                >
-                  <p className="text-xs uppercase text-slate-400">
-                    {item.label}
-                  </p>
-                  <p className="text-lg font-semibold text-slate-900">
-                    {item.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">
-                Edit School Settings
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Name
-                  </label>
-                  <input
-                    value={formState.name}
-                    onChange={(e) => handleFormChange("name", e.target.value)}
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Code
-                  </label>
-                  <input
-                    value={formState.code}
-                    onChange={(e) => handleFormChange("code", e.target.value)}
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Phone
-                  </label>
-                  <input
-                    value={formState.phone}
-                    onChange={(e) => handleFormChange("phone", e.target.value)}
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Status
-                  </label>
-                  <select
-                    value={formState.status}
-                    onChange={(e) =>
-                      handleFormChange(
-                        "status",
-                        e.target.value as SchoolFormState["status"],
-                      )
-                    }
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                {
+                  label: "Students",
+                  value: stats.students,
+                  icon: GraduationCap,
+                },
+                {
+                  label: "Teachers",
+                  value: stats.teachers,
+                  icon: Users,
+                },
+                {
+                  label: "Last Activity",
+                  value: stats.lastActivity,
+                  icon: Calendar,
+                },
+                {
+                  label: "Admin Account",
+                  value: adminUser ? adminUser.status : "Not assigned",
+                  icon: CheckCircle2,
+                },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.label}
+                    className="rounded-[24px] border border-white/12 bg-white/10 p-4 backdrop-blur"
                   >
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium text-slate-600">
-                    Address
-                  </label>
-                  <input
-                    value={formState.address}
-                    onChange={(e) =>
-                      handleFormChange("address", e.target.value)
-                    }
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium text-slate-600">
-                    Logo Upload
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLogoFileChange}
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 bg-white"
-                  />
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-50/70">
+                        {item.label}
+                      </span>
+                      <Icon size={16} className="text-sky-100/80" />
+                    </div>
+                    <div className="mt-3 text-xl font-semibold text-white">
+                      {item.value}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
 
-                  {formState.logoUrl && !logoPreview && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      Current logo is saved. Upload a new file to replace it.
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.28fr]">
+            <div className="space-y-6">
+              <section className={`${SURFACE_CLASS} p-6`}>
+                <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-r from-sky-100/70 via-cyan-50/30 to-emerald-100/70" />
+                <div className="relative space-y-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                        <CreditCard size={14} />
+                        Subscription
+                      </div>
+                      <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                        Billing Plan Management
+                      </h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        Apply a paid plan instantly and keep the school access
+                        lifecycle aligned with its billing period.
+                      </p>
+                    </div>
+
+                    <span
+                      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold ${currentPlanMeta.badgeClass}`}
+                    >
+                      <span
+                        className={`h-2.5 w-2.5 rounded-full ${currentPlanMeta.dotClass}`}
+                      />
+                      {formatPlanLabel(formState.plan)}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`grid gap-3 rounded-[24px] border p-4 ${currentPlanMeta.softClass} sm:grid-cols-2`}
+                  >
+                    <div>
+                      <p className={LABEL_CLASS}>Renewal Date</p>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">
+                        {currentPlanEndsLabel}
+                      </p>
+                    </div>
+                    <div>
+                      <p className={LABEL_CLASS}>Operational State</p>
+                      <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                        <span
+                          className={`h-2.5 w-2.5 rounded-full ${currentStatusMeta.dotClass}`}
+                        />
+                        {formState.status === "active"
+                          ? "School active"
+                          : "School inactive"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {PAID_PLAN_OPTIONS.map((option) => {
+                      const optionMeta = PLAN_META[option.value];
+                      const isCurrent = formState.plan === option.value;
+                      const isUpdating = planUpdating === option.value;
+
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => handleQuickPlanChange(option.value)}
+                          disabled={!!planUpdating || isCurrent}
+                          className={`group relative overflow-hidden rounded-[24px] border p-0 text-left transition-all duration-200 ${
+                            isCurrent
+                              ? `${optionMeta.softClass} shadow-lg`
+                              : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                          } ${planUpdating || isCurrent ? "opacity-80" : ""}`}
+                        >
+                          <div
+                            className={`absolute inset-x-0 top-0 h-1.5 ${optionMeta.dotClass}`}
+                          />
+                          <div className="relative p-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-base font-semibold text-slate-900">
+                                {option.label}
+                              </span>
+                              <span
+                                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${optionMeta.buttonClass}`}
+                              >
+                                {option.months} month
+                                {option.months > 1 ? "s" : ""}
+                              </span>
+                            </div>
+                            <p className="mt-3 text-sm leading-6 text-slate-500">
+                              {option.description}
+                            </p>
+                            <div className="mt-5 flex items-center justify-between text-xs font-semibold">
+                              <span className="text-slate-400">
+                                {isUpdating
+                                  ? "Applying..."
+                                  : isCurrent
+                                    ? "Already active"
+                                    : "Apply instantly"}
+                              </span>
+                              {isCurrent && (
+                                <span className="rounded-full bg-white/90 px-2.5 py-1 text-[#0B4A82] shadow-sm">
+                                  Current
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-xs text-slate-400">
+                    Plan changes here update the school immediately and
+                    recalculate the next end date from today.
+                  </p>
+                </div>
+              </section>
+
+              <section className={`${SURFACE_CLASS} p-6`}>
+                <div className="relative space-y-5">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                      <Building2 size={14} />
+                      School Snapshot
+                    </div>
+                    <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                      Overview & Contact
+                    </h2>
+                  </div>
+
+                  <div className="grid gap-3">
+                    {[
+                      {
+                        label: "Phone",
+                        value: school.phone || "No phone on record",
+                        icon: Phone,
+                      },
+                      {
+                        label: "Address",
+                        value: school.address || "No address added yet",
+                        icon: MapPin,
+                      },
+                      {
+                        label: "Portal code",
+                        value: school.code || "Not assigned",
+                        icon: Globe,
+                      },
+                    ].map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div
+                          key={item.label}
+                          className="rounded-[22px] border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 p-4"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+                              <Icon size={18} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className={LABEL_CLASS}>{item.label}</p>
+                              <p className="mt-1 text-sm leading-6 text-slate-700">
+                                {item.value}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                    <p className={LABEL_CLASS}>Internal Notes</p>
+                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                      {school.notes || "No internal notes have been added yet."}
                     </p>
-                  )}
+                  </div>
+                </div>
+              </section>
 
-                  {logoPreview && (
-                    <div className="mt-4 space-y-3">
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>Crop to square</span>
-                        <span>{Math.round(logoZoom * 100)}%</span>
+              <section className={`${SURFACE_CLASS} p-6`}>
+                <div className="relative space-y-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700">
+                        <Users size={14} />
+                        Administration
                       </div>
+                      <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                        School Admin Access
+                      </h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        Create, secure, or suspend the assigned school
+                        administrator without leaving this page.
+                      </p>
+                    </div>
 
-                      <div
-                        className="rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden"
-                        style={{
-                          width: CROP_PREVIEW_SIZE,
-                          height: CROP_PREVIEW_SIZE,
-                        }}
+                    {!adminUser && (
+                      <button
+                        onClick={() => setShowCreateAdmin(true)}
+                        className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                       >
-                        <img
-                          ref={logoImgRef}
-                          src={logoPreview}
-                          alt="Logo preview"
-                          onLoad={(event) => {
-                            const img = event.currentTarget;
-                            setLogoNatural({
-                              width: img.naturalWidth,
-                              height: img.naturalHeight,
-                            });
-                          }}
-                          style={{
-                            width: logoNatural.width
-                              ? `${
-                                  Math.max(
-                                    CROP_PREVIEW_SIZE,
-                                    (CROP_PREVIEW_SIZE / logoNatural.height) *
-                                      logoNatural.width,
-                                  ) * logoZoom
-                                }px`
-                              : "auto",
-                            height: logoNatural.height
-                              ? `${
-                                  Math.max(
-                                    CROP_PREVIEW_SIZE,
-                                    (CROP_PREVIEW_SIZE / logoNatural.width) *
-                                      logoNatural.height,
-                                  ) * logoZoom
-                                }px`
-                              : "auto",
-                            transform: `translate(${logoOffset.x}px, ${logoOffset.y}px)`,
-                          }}
-                        />
+                        <UserPlus size={16} />
+                        Create Admin
+                      </button>
+                    )}
+                  </div>
+
+                  {adminUser ? (
+                    <div className="grid gap-4">
+                      <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-violet-50 p-5">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex items-start gap-4">
+                            <div className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-slate-900 text-white">
+                              <Users size={22} />
+                            </div>
+                            <div>
+                              <p className="text-lg font-semibold text-slate-900">
+                                {adminUser.fullName}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                {adminUser.email}
+                              </p>
+                            </div>
+                          </div>
+
+                          {adminStatusMeta && (
+                            <span
+                              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${adminStatusMeta.badgeClass}`}
+                            >
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full ${adminStatusMeta.dotClass}`}
+                              />
+                              {adminUser.status}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="space-y-2">
-                        <label className="text-xs font-semibold text-slate-600">
-                          Zoom
-                        </label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={3}
-                          step={0.05}
-                          value={logoZoom}
-                          onChange={(event) =>
-                            setLogoZoom(parseFloat(event.target.value))
-                          }
-                          className="w-full"
-                        />
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                          onClick={handleResetAdminPassword}
+                          className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          Reset Admin Password
+                        </button>
+                        <button
+                          onClick={handleToggleAdminStatus}
+                          className={`rounded-[20px] border px-4 py-3 text-sm font-medium transition ${
+                            adminUser.status === "active"
+                              ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                              : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                          }`}
+                        >
+                          {adminUser.status === "active"
+                            ? "Disable Admin"
+                            : "Activate Admin"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 p-6 text-sm text-slate-500">
+                      No admin account is linked to this school yet. Create one
+                      to enable delegated management.
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <div className="space-y-6">
+              <section className={`${SURFACE_CLASS} p-6 sm:p-7`}>
+                <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-r from-violet-100/60 via-cyan-50/20 to-sky-100/60" />
+                <div className="relative space-y-6">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700">
+                        <Settings2 size={14} />
+                        Settings Workspace
+                      </div>
+                      <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
+                        Edit School Settings
+                      </h2>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                        Update profile details, branding, lifecycle settings,
+                        and internal notes in a structured editor.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={handleCancel}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        <Save size={16} />
+                        {saving ? "Saving..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                    <div className={PANEL_CLASS}>
+                      <div className="mb-5">
+                        <p className={LABEL_CLASS}>Profile Details</p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          Identity & Operations
+                        </h3>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <div>
-                          <label className="text-xs font-semibold text-slate-600">
-                            Move X
-                          </label>
+                          <label className={LABEL_CLASS}>School Name</label>
                           <input
-                            type="range"
-                            min={-MAX_OFFSET}
-                            max={MAX_OFFSET}
-                            value={logoOffset.x}
-                            onChange={(event) =>
-                              setLogoOffset((prev) => ({
-                                ...prev,
-                                x: parseFloat(event.target.value),
-                              }))
+                            value={formState.name}
+                            onChange={(e) =>
+                              handleFormChange("name", e.target.value)
                             }
-                            className="w-full"
+                            className={INPUT_CLASS}
+                            placeholder="Enter school name"
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-slate-600">
-                            Move Y
-                          </label>
+                          <label className={LABEL_CLASS}>School Code</label>
                           <input
-                            type="range"
-                            min={-MAX_OFFSET}
-                            max={MAX_OFFSET}
-                            value={logoOffset.y}
-                            onChange={(event) =>
-                              setLogoOffset((prev) => ({
-                                ...prev,
-                                y: parseFloat(event.target.value),
-                              }))
+                            value={formState.code}
+                            onChange={(e) =>
+                              handleFormChange("code", e.target.value)
                             }
-                            className="w-full"
+                            className={INPUT_CLASS}
+                            placeholder="Enter short code"
+                          />
+                        </div>
+                        <div>
+                          <label className={LABEL_CLASS}>Phone Number</label>
+                          <input
+                            value={formState.phone}
+                            onChange={(e) =>
+                              handleFormChange("phone", e.target.value)
+                            }
+                            className={INPUT_CLASS}
+                            placeholder="Add contact number"
+                          />
+                        </div>
+                        <div>
+                          <label className={LABEL_CLASS}>Status</label>
+                          <select
+                            value={formState.status}
+                            onChange={(e) =>
+                              handleFormChange(
+                                "status",
+                                e.target.value as SchoolFormState["status"],
+                              )
+                            }
+                            className={INPUT_CLASS}
+                          >
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                          </select>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className={LABEL_CLASS}>Address</label>
+                          <input
+                            value={formState.address}
+                            onChange={(e) =>
+                              handleFormChange("address", e.target.value)
+                            }
+                            className={INPUT_CLASS}
+                            placeholder="Add school location or address"
                           />
                         </div>
                       </div>
                     </div>
-                  )}
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Plan
-                  </label>
-                  <select
-                    value={formState.plan}
-                    onChange={(e) =>
-                      handleFormChange(
-                        "plan",
-                        e.target.value as SchoolFormState["plan"],
-                      )
-                    }
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 bg-white"
-                  >
-                    <option value="free">Free (No Billing)</option>
-                    <option value="trial">Trial</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="termly">Termly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-600">
-                    Plan Ends At
-                  </label>
-                  <input
-                    type="date"
-                    value={formState.planEndsAt}
-                    onChange={(e) =>
-                      handleFormChange("planEndsAt", e.target.value)
-                    }
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium text-slate-600">
-                    Internal Notes
-                  </label>
-                  <textarea
-                    value={formState.notes}
-                    onChange={(e) => handleFormChange("notes", e.target.value)}
-                    rows={4}
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-3 mt-6">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white flex items-center gap-2 disabled:opacity-60"
-                >
-                  <Save size={16} /> {saving ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
-            </div>
 
-            <div className="bg-white rounded-2xl border border-red-100 shadow-sm p-6">
-              <div className="flex items-center gap-2 text-red-600 mb-4">
-                <ShieldAlert size={18} />
-                <h2 className="text-lg font-semibold">Danger Zone</h2>
-              </div>
-              <div className="space-y-3">
-                <button
-                  onClick={() =>
-                    handleFormChange(
-                      "status",
-                      formState.status === "active" ? "inactive" : "active",
-                    )
-                  }
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-red-200 text-red-600 hover:bg-red-50"
-                >
-                  <span>
-                    {formState.status === "active"
-                      ? "Deactivate School"
-                      : "Activate School"}
-                  </span>
-                  <Trash2 size={16} />
-                </button>
-                <button
-                  onClick={() => setShowDeleteModal(true)}
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-red-200 text-red-600 hover:bg-red-50"
-                >
-                  <span>Delete School</span>
-                  <Trash2 size={16} />
-                </button>
-              </div>
+                    <div className={PANEL_CLASS}>
+                      <div className="mb-5">
+                        <p className={LABEL_CLASS}>Branding Studio</p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          Logo & Visual Identity
+                        </h3>
+                      </div>
+
+                      <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>Preview</span>
+                          <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-500 shadow-sm">
+                            512 x 512 export
+                          </span>
+                        </div>
+
+                        <div className="mt-4 flex flex-col items-center gap-4">
+                          <div className="flex h-40 w-40 items-center justify-center overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-inner">
+                            {logoPreview ? (
+                              <img
+                                ref={logoImgRef}
+                                src={logoPreview}
+                                alt="Logo preview"
+                                onLoad={(event) => {
+                                  const img = event.currentTarget;
+                                  setLogoNatural({
+                                    width: img.naturalWidth,
+                                    height: img.naturalHeight,
+                                  });
+                                }}
+                                style={{
+                                  width: logoNatural.width
+                                    ? `${
+                                        Math.max(
+                                          CROP_PREVIEW_SIZE,
+                                          (CROP_PREVIEW_SIZE /
+                                            logoNatural.height) *
+                                            logoNatural.width,
+                                        ) * logoZoom
+                                      }px`
+                                    : "auto",
+                                  height: logoNatural.height
+                                    ? `${
+                                        Math.max(
+                                          CROP_PREVIEW_SIZE,
+                                          (CROP_PREVIEW_SIZE /
+                                            logoNatural.width) *
+                                            logoNatural.height,
+                                        ) * logoZoom
+                                      }px`
+                                    : "auto",
+                                  transform: `translate(${logoOffset.x}px, ${logoOffset.y}px)`,
+                                }}
+                              />
+                            ) : school.logoUrl || formState.logoUrl ? (
+                              <img
+                                src={school.logoUrl || formState.logoUrl}
+                                alt={school.name}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <Building2 size={40} className="text-slate-400" />
+                            )}
+                          </div>
+
+                          <div className="text-center text-xs leading-6 text-slate-500">
+                            Upload a square-friendly logo for a cleaner profile
+                            presentation across the admin workspace.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <label className={LABEL_CLASS}>Logo Upload</label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleLogoFileChange}
+                          className={INPUT_CLASS}
+                        />
+                        {formState.logoUrl && !logoPreview && (
+                          <p className="mt-2 text-xs text-slate-500">
+                            Current logo is already saved. Upload a new image to
+                            replace it.
+                          </p>
+                        )}
+                      </div>
+
+                      {logoPreview && (
+                        <div className="mt-5 space-y-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                          <div className="flex items-center justify-between text-xs text-slate-500">
+                            <span>Crop Controls</span>
+                            <span>{Math.round(logoZoom * 100)}%</span>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className={LABEL_CLASS}>Zoom</label>
+                            <input
+                              type="range"
+                              min={1}
+                              max={3}
+                              step={0.05}
+                              value={logoZoom}
+                              onChange={(event) =>
+                                setLogoZoom(parseFloat(event.target.value))
+                              }
+                              className="w-full accent-cyan-600"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className={LABEL_CLASS}>Move X</label>
+                              <input
+                                type="range"
+                                min={-MAX_OFFSET}
+                                max={MAX_OFFSET}
+                                value={logoOffset.x}
+                                onChange={(event) =>
+                                  setLogoOffset((prev) => ({
+                                    ...prev,
+                                    x: parseFloat(event.target.value),
+                                  }))
+                                }
+                                className="w-full accent-cyan-600"
+                              />
+                            </div>
+                            <div>
+                              <label className={LABEL_CLASS}>Move Y</label>
+                              <input
+                                type="range"
+                                min={-MAX_OFFSET}
+                                max={MAX_OFFSET}
+                                value={logoOffset.y}
+                                onChange={(event) =>
+                                  setLogoOffset((prev) => ({
+                                    ...prev,
+                                    y: parseFloat(event.target.value),
+                                  }))
+                                }
+                                className="w-full accent-cyan-600"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
+                    <div className={PANEL_CLASS}>
+                      <div className="mb-5">
+                        <p className={LABEL_CLASS}>Access Lifecycle</p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          Billing & Access Settings
+                        </h3>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <label className={LABEL_CLASS}>
+                            Subscription Plan
+                          </label>
+                          <select
+                            value={formState.plan}
+                            onChange={(e) =>
+                              handleFormChange(
+                                "plan",
+                                e.target.value as SchoolFormState["plan"],
+                              )
+                            }
+                            className={INPUT_CLASS}
+                          >
+                            <option value="free">Free (No Billing)</option>
+                            <option value="trial">Trial</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="termly">Termly</option>
+                            <option value="yearly">Yearly</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className={LABEL_CLASS}>Plan Ends At</label>
+                          <input
+                            type="date"
+                            value={formState.planEndsAt}
+                            onChange={(e) =>
+                              handleFormChange("planEndsAt", e.target.value)
+                            }
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+
+                        <div
+                          className={`rounded-[22px] border p-4 ${currentPlanMeta.softClass}`}
+                        >
+                          <p className={LABEL_CLASS}>Current Selection</p>
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-base font-semibold text-slate-900">
+                                {formatPlanLabel(formState.plan)}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                Ends on {currentPlanEndsLabel}
+                              </p>
+                            </div>
+                            <span
+                              className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl ${currentPlanMeta.buttonClass}`}
+                            >
+                              <CreditCard size={18} />
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={PANEL_CLASS}>
+                      <div className="mb-5">
+                        <p className={LABEL_CLASS}>Internal Notes</p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          Team Context & Record Keeping
+                        </h3>
+                      </div>
+
+                      <textarea
+                        value={formState.notes}
+                        onChange={(e) =>
+                          handleFormChange("notes", e.target.value)
+                        }
+                        rows={6}
+                        className={TEXTAREA_CLASS}
+                        placeholder="Add onboarding notes, billing context, special instructions, or school-specific operational details."
+                      />
+
+                      <div className="mt-4 rounded-[22px] border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 p-4 text-sm leading-6 text-slate-500">
+                        Keep notes concise and action-focused so other admins
+                        can understand the school history quickly.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="relative overflow-hidden rounded-[28px] border border-red-200/70 bg-gradient-to-br from-red-50 via-white to-rose-50 p-6 shadow-[0_28px_80px_-52px_rgba(220,38,38,0.3)]">
+                <div className="space-y-5">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-600">
+                      <ShieldAlert size={14} />
+                      Danger Zone
+                    </div>
+                    <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                      Critical Actions
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Use these actions carefully. They affect school access or
+                      permanently remove the account.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <button
+                      onClick={() =>
+                        handleFormChange(
+                          "status",
+                          formState.status === "active" ? "inactive" : "active",
+                        )
+                      }
+                      className="flex items-center justify-between rounded-[20px] border border-red-200 bg-white px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                    >
+                      <span>
+                        {formState.status === "active"
+                          ? "Deactivate School"
+                          : "Activate School"}
+                      </span>
+                      <Trash2 size={16} />
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="flex items-center justify-between rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-100"
+                    >
+                      <span>Delete School Permanently</span>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </div>
       </div>
 
       {showCreateAdmin && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900">
-                Create School Admin
-              </h3>
-              <button
-                onClick={() => setShowCreateAdmin(false)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleCreateAdmin} className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-slate-600">
-                  Full Name
-                </label>
-                <input
-                  value={adminForm.fullName}
-                  onChange={(e) =>
-                    setAdminForm({ ...adminForm, fullName: e.target.value })
-                  }
-                  className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-600">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={adminForm.email}
-                  onChange={(e) =>
-                    setAdminForm({ ...adminForm, email: e.target.value })
-                  }
-                  className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-600">
-                  Password (optional)
-                </label>
-                <div className="relative">
-                  <input
-                    type={showAdminPassword ? "text" : "password"}
-                    value={adminForm.password}
-                    onChange={(e) =>
-                      setAdminForm({ ...adminForm, password: e.target.value })
-                    }
-                    className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAdminPassword(!showAdminPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                  >
-                    {showAdminPassword ? (
-                      <EyeOff size={16} />
-                    ) : (
-                      <Eye size={16} />
-                    )}
-                  </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_35px_100px_-45px_rgba(15,23,42,0.55)]">
+            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-violet-100/70 via-cyan-50/20 to-sky-100/70" />
+            <div className="relative p-6">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700">
+                    <UserPlus size={14} />
+                    Admin Setup
+                  </div>
+                  <h3 className="mt-4 text-xl font-semibold text-slate-900">
+                    Create School Admin
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    Assign a dedicated administrator to manage this school.
+                  </p>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Leave blank to send a reset link.
-                </p>
+                <button
+                  onClick={() => setShowCreateAdmin(false)}
+                  className="rounded-full border border-slate-200 bg-white p-2 text-slate-400 transition hover:text-slate-700"
+                >
+                  <X size={18} />
+                </button>
               </div>
-              <button
-                type="submit"
-                disabled={isCreatingAdmin}
-                className="w-full py-2 rounded-xl bg-emerald-600 text-white flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                <UserPlus size={16} />
-                {isCreatingAdmin ? "Creating..." : "Create Admin"}
-              </button>
-            </form>
+
+              <form onSubmit={handleCreateAdmin} className="space-y-4">
+                <div>
+                  <label className={LABEL_CLASS}>Full Name</label>
+                  <input
+                    value={adminForm.fullName}
+                    onChange={(e) =>
+                      setAdminForm({ ...adminForm, fullName: e.target.value })
+                    }
+                    className={INPUT_CLASS}
+                    placeholder="Enter admin full name"
+                  />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Email Address</label>
+                  <input
+                    type="email"
+                    value={adminForm.email}
+                    onChange={(e) =>
+                      setAdminForm({ ...adminForm, email: e.target.value })
+                    }
+                    className={INPUT_CLASS}
+                    placeholder="Enter admin email"
+                  />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Password (Optional)</label>
+                  <div className="relative">
+                    <input
+                      type={showAdminPassword ? "text" : "password"}
+                      value={adminForm.password}
+                      onChange={(e) =>
+                        setAdminForm({ ...adminForm, password: e.target.value })
+                      }
+                      className={`${INPUT_CLASS} pr-12`}
+                      placeholder="Leave blank to send reset link"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminPassword(!showAdminPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
+                    >
+                      {showAdminPassword ? (
+                        <EyeOff size={16} />
+                      ) : (
+                        <Eye size={16} />
+                      )}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Leave blank if you prefer to send a reset link instead.
+                  </p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={isCreatingAdmin}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  <UserPlus size={16} />
+                  {isCreatingAdmin ? "Creating..." : "Create Admin"}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       )}
 
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl space-y-4">
-            <div className="flex items-center gap-2 text-red-600">
-              <ShieldAlert size={18} />
-              <h3 className="text-lg font-semibold">Delete School</h3>
-            </div>
-            <p className="text-sm text-slate-500">
-              Type <span className="font-semibold">{school.name}</span> to
-              confirm deletion.
-            </p>
-            <input
-              value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2"
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteSchool}
-                disabled={
-                  deleteConfirmText.trim() !== school.name || isDeleting
-                }
-                className="flex-1 py-2 rounded-xl bg-red-600 text-white disabled:opacity-60"
-              >
-                {isDeleting ? "Deleting..." : "Delete"}
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_35px_100px_-45px_rgba(220,38,38,0.35)]">
+            <div className="bg-gradient-to-r from-red-50 via-white to-rose-50 p-6">
+              <div className="flex items-start gap-3 text-red-600">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-100">
+                  <ShieldAlert size={18} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-900">
+                    Delete School
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    Type <span className="font-semibold">{school.name}</span> to
+                    confirm permanent deletion.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <label className={LABEL_CLASS}>Confirmation Text</label>
+                <input
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  className={INPUT_CLASS}
+                  placeholder={`Type ${school.name}`}
+                />
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteSchool}
+                  disabled={
+                    deleteConfirmText.trim() !== school.name || isDeleting
+                  }
+                  className="flex-1 rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {showResetModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-slate-700">
-                <ShieldAlert size={18} />
-                <h3 className="text-lg font-semibold">Reset Admin Password</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_35px_100px_-45px_rgba(15,23,42,0.55)]">
+            <div className="bg-gradient-to-r from-slate-50 via-white to-sky-50 p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                    <ShieldAlert size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-slate-900">
+                      Reset Admin Password
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Open the secure reset link to complete the password reset
+                      flow for this school admin.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowResetModal(false)}
+                  className="rounded-full border border-slate-200 bg-white p-2 text-slate-400 transition hover:text-slate-600"
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </button>
               </div>
-              <button
-                onClick={() => setShowResetModal(false)}
-                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50"
-                aria-label="Close"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <p className="text-sm text-slate-600">
-              Click the link button to be redirected to the reset password page.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowResetModal(false)}
-                className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600"
-              >
-                Close
-              </button>
-              <a
-                href={resetLink || "#"}
-                target="_blank"
-                rel="noreferrer"
-                className={`flex-1 py-2 rounded-xl text-center text-white ${resetLink ? "bg-[#0B4A82] hover:bg-[#1160A8]" : "bg-slate-300 pointer-events-none"}`}
-              >
-                Open Reset Link
-              </a>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  onClick={() => setShowResetModal(false)}
+                  className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600"
+                >
+                  Close
+                </button>
+                <a
+                  href={resetLink || "#"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`flex-1 rounded-full px-4 py-3 text-center text-sm font-semibold text-white ${resetLink ? "bg-[#0B4A82] hover:bg-[#1160A8]" : "pointer-events-none bg-slate-300"}`}
+                >
+                  Open Reset Link
+                </a>
+              </div>
             </div>
           </div>
         </div>

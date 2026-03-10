@@ -1,1 +1,10 @@
 /* Placeholder stylesheet to satisfy index.html link and avoid build warnings. */
+
+@keyframes dash {
+  from {
+    stroke-dashoffset: 240;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}

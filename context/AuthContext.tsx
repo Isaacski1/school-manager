@@ -19,6 +19,30 @@ import { loadUserProfile } from "../services/authProfile";
 import { safeLogAnalyticsEvent } from "../services/analytics";
 import { logActivity } from "../services/activityLog";
 
+const SENSITIVE_STORAGE_PREFIXES = [
+  "school_",
+  "finance_page_",
+  "financeFilters",
+  "admin_dashboard_",
+  "activity_monitor_cache_",
+];
+
+const clearSensitiveBrowserState = () => {
+  if (typeof window === "undefined") return;
+
+  [window.localStorage, window.sessionStorage].forEach((storage) => {
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (!key) continue;
+      if (SENSITIVE_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => storage.removeItem(key));
+  });
+};
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -37,9 +61,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // The UID provided by the user to be the Super Admin
-  const ADMIN_UID = "JHaUOR3vlYQiaPKLTGlGtav1uYa2";
 
   useEffect(() => {
     // Listen for Firebase Auth changes
@@ -85,6 +106,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           } else {
             localStorage.removeItem("lastSchoolId");
             localStorage.removeItem("activeSchoolId");
+            sessionStorage.removeItem("lastSchoolId");
+            sessionStorage.removeItem("activeSchoolId");
           }
 
           try {
@@ -155,7 +178,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             errorMessage.includes("Missing or insufficient permissions")
           ) {
             setError(
-              "PERMISSION DENIED: Database access blocked. Go to Firebase Console > Firestore Database > Rules and change 'allow read, write: if false;' to 'allow read, write: if true;' (for testing).",
+              "Permission denied: database access is blocked by the current security rules. Contact your administrator to review the assigned permissions.",
             );
           } else if (
             errorMessage.includes("client is offline") ||
@@ -175,6 +198,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         setUser(null);
         setError(null);
         localStorage.removeItem("activeSchoolId");
+        sessionStorage.removeItem("activeSchoolId");
+        clearSensitiveBrowserState();
       }
 
       setAuthLoading(false);
@@ -189,6 +214,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       await signOut(auth);
       setUser(null);
       setError(null);
+      clearSensitiveBrowserState();
     } catch (error) {
       console.error("Logout failed", error);
     }

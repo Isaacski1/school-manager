@@ -1345,12 +1345,13 @@ const SystemSettings = () => {
               <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-6">
                 <h2 className="text-xl font-bold mb-6 text-white flex items-center">
                   <Save className="mr-2 text-amber-200" size={24} />
-                  Term Data Backup
+                  Recovery and Full Backup
                 </h2>
                 <p className="text-sm text-slate-300 mb-4">
                   Create a full backup of the current term's academic records,
-                  attendance, and student data. Backups can be viewed and
-                  restored from the "Manage Backups" section.
+                  attendance, and student data. Deleted records and risky bulk
+                  changes are captured automatically, and everything is managed
+                  from the Recovery Center.
                 </p>
                 <button
                   onClick={handleCreateTermBackup}
@@ -1377,11 +1378,12 @@ const SystemSettings = () => {
                       : "text-[#ffffff] hover:text-[#dedede]"
                   }`}
                 >
-                  <History size={16} className="mr-1" /> View Previous Backups
+                  <History size={16} className="mr-1" /> Open Recovery Center
                 </Link>
                 {isTrialPlan && (
                   <p className="text-xs text-slate-300 mt-2">
-                    Backups are disabled during the trial period.
+                    Recovery and backup actions are disabled during the trial
+                    period.
                   </p>
                 )}
               </div>

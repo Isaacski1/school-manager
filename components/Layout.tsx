@@ -544,6 +544,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                       label="Billing"
                     />
                   )}
+                  {hasFeature("backups") && (
+                    <NavItem
+                      href="/admin/backups"
+                      icon={Shield}
+                      label="Recovery Center"
+                    />
+                  )}
                   {hasFeature("academic_year") && (
                     <NavItem
                       href="/admin/settings"
@@ -814,7 +821,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           </div>
         )}
 
-        <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-8">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-8">
           <div className="mx-auto w-full max-w-[1500px] 2xl:max-w-[1800px]">
             {children}
           </div>

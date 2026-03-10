@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
@@ -83,6 +83,7 @@ const feeTemplates = [
 ];
 
 const financeFiltersStorageKey = "financeFilters";
+const financePageCacheVersion = 1;
 
 const readStoredFilters = (): {
   academicYear?: string;
@@ -91,7 +92,9 @@ const readStoredFilters = (): {
 } => {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(financeFiltersStorageKey);
+    const raw =
+      window.sessionStorage.getItem(financeFiltersStorageKey) ||
+      window.localStorage.getItem(financeFiltersStorageKey);
     if (!raw) return {};
     return JSON.parse(raw);
   } catch {
@@ -106,11 +109,89 @@ const buildLedgerId = (
   term: FeeTerm,
 ) => `${schoolId}_${studentId}_${academicYear.replace(/\s+/g, "")}_${term}`;
 
+const buildFinanceCacheKey = (
+  schoolId: string,
+  academicYear: string,
+  term: FeeTerm,
+  selectedClassId: string,
+) =>
+  `finance_page_${financePageCacheVersion}_${schoolId}_${academicYear.replace(
+    /\s+/g,
+    "",
+  )}_${term}_${selectedClassId}`;
+
+type FinancePrimarySnapshot = {
+  students: Student[];
+  fees: FeeDefinition[];
+  ledgers: StudentFeeLedger[];
+  payments: StudentFeePayment[];
+  financeSettings: FinanceSettings | null;
+  schoolConfig: SchoolConfig | null;
+  onboardingMode: OnboardingMode;
+  onboardingDate: string;
+};
+
+type FinanceAuxiliarySnapshot = {
+  allFees: FeeDefinition[];
+  lastTermLedgers: StudentFeeLedger[];
+  lastTermPayments: StudentFeePayment[];
+};
+
+type FinancePageCache = {
+  primary?: FinancePrimarySnapshot;
+  auxiliary?: FinanceAuxiliarySnapshot;
+  updatedAt: number;
+};
+
 const SkeletonBlock: React.FC<{ className?: string }> = ({ className }) => (
   <div className={`animate-pulse rounded-xl bg-slate-100 ${className || ""}`} />
 );
 
 const formatMoney = (value: number) => `GHS ${value.toFixed(2)}`;
+
+const DASH_PANEL =
+  "rounded-[30px] border border-white/55 bg-white/80 shadow-[0_28px_80px_-45px_rgba(15,23,42,0.38)] backdrop-blur-xl";
+
+const DASH_PANEL_SOFT =
+  "rounded-[24px] border border-white/65 bg-white/72 shadow-[0_20px_45px_-36px_rgba(15,23,42,0.35)] backdrop-blur";
+
+const DASH_INPUT =
+  "mt-2 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-3.5 py-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100";
+
+const DASH_FILTER_WRAPPER =
+  "rounded-[22px] border border-slate-200/80 bg-white/85 px-3.5 py-3 shadow-sm";
+
+const PAYMENT_METHOD_THEMES: Record<
+  PaymentMethod,
+  {
+    surface: string;
+    icon: string;
+    chip: string;
+    dot: string;
+  }
+> = {
+  Cash: {
+    surface:
+      "border-amber-200/80 bg-gradient-to-r from-amber-50 via-white to-orange-50",
+    icon: "bg-amber-100 text-amber-700",
+    chip: "border-amber-200 bg-amber-50 text-amber-700",
+    dot: "bg-amber-500",
+  },
+  MoMo: {
+    surface:
+      "border-emerald-200/80 bg-gradient-to-r from-emerald-50 via-white to-cyan-50",
+    icon: "bg-emerald-100 text-emerald-700",
+    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  Bank: {
+    surface:
+      "border-indigo-200/80 bg-gradient-to-r from-indigo-50 via-white to-sky-50",
+    icon: "bg-indigo-100 text-indigo-700",
+    chip: "border-indigo-200 bg-indigo-50 text-indigo-700",
+    dot: "bg-indigo-500",
+  },
+};
 
 const FeesPayments: React.FC = () => {
   const { school } = useSchool();
@@ -120,6 +201,8 @@ const FeesPayments: React.FC = () => {
 
   const feeSetupRef = useRef<HTMLDivElement | null>(null);
   const recordPaymentRef = useRef<HTMLDivElement | null>(null);
+  const ledgerAutoSyncSignatureRef = useRef("");
+  const ledgerAutoSyncInFlightRef = useRef(false);
 
   const [academicYear, setAcademicYear] = useState(() => {
     const stored = readStoredFilters();
@@ -139,6 +222,7 @@ const FeesPayments: React.FC = () => {
   const [dateRange, setDateRange] = useState("This term");
 
   const [fees, setFees] = useState<FeeDefinition[]>([]);
+  const [allFees, setAllFees] = useState<FeeDefinition[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [ledgers, setLedgers] = useState<StudentFeeLedger[]>([]);
   const [payments, setPayments] = useState<StudentFeePayment[]>([]);
@@ -221,10 +305,73 @@ const FeesPayments: React.FC = () => {
   const [onboardingMode, setOnboardingMode] =
     useState<OnboardingMode>("fresh_start");
   const [onboardingDate, setOnboardingDate] = useState("");
+  const financeRequestIdRef = useRef(0);
+
+  const financeCacheKey = useMemo(() => {
+    if (!schoolId) return "";
+    return buildFinanceCacheKey(schoolId, academicYear, term, selectedClassId);
+  }, [schoolId, academicYear, term, selectedClassId]);
 
   const scrollToSection = (ref: React.RefObject<HTMLDivElement>) => {
     ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  const applyPrimarySnapshot = useCallback((snapshot: FinancePrimarySnapshot) => {
+    setStudents(snapshot.students);
+    setFees(snapshot.fees);
+    setLedgers(snapshot.ledgers);
+    setPayments(snapshot.payments);
+    setFinanceSettings(snapshot.financeSettings);
+    setSchoolConfig(snapshot.schoolConfig);
+    setOnboardingMode(snapshot.onboardingMode || "fresh_start");
+    setOnboardingDate(snapshot.onboardingDate || "");
+  }, []);
+
+  const applyAuxiliarySnapshot = useCallback(
+    (snapshot: FinanceAuxiliarySnapshot) => {
+      setAllFees(snapshot.allFees);
+      setLastTermLedgers(snapshot.lastTermLedgers);
+      setLastTermPayments(snapshot.lastTermPayments);
+    },
+    [],
+  );
+
+  const readFinanceCache = useCallback((): FinancePageCache | null => {
+    if (typeof window === "undefined" || !financeCacheKey) return null;
+    try {
+      const raw =
+        window.sessionStorage.getItem(financeCacheKey) ||
+        window.localStorage.getItem(financeCacheKey);
+      if (!raw) return null;
+      return JSON.parse(raw) as FinancePageCache;
+    } catch {
+      window.sessionStorage.removeItem(financeCacheKey);
+      window.localStorage.removeItem(financeCacheKey);
+      return null;
+    }
+  }, [financeCacheKey]);
+
+  const writeFinanceCache = useCallback(
+    (partial: Partial<FinancePageCache>) => {
+      if (typeof window === "undefined" || !financeCacheKey) return;
+      try {
+        const existing = readFinanceCache() || { updatedAt: 0 };
+        const nextValue: FinancePageCache = {
+          ...existing,
+          ...partial,
+          updatedAt: Date.now(),
+        };
+        window.sessionStorage.setItem(
+          financeCacheKey,
+          JSON.stringify(nextValue),
+        );
+        window.localStorage.removeItem(financeCacheKey);
+      } catch (error) {
+        console.warn("Failed to cache finance page data", error);
+      }
+    },
+    [financeCacheKey, readFinanceCache],
+  );
 
   const csvEscape = (value: string | number | null | undefined) => {
     if (value === null || value === undefined) return "";
@@ -328,12 +475,16 @@ const FeesPayments: React.FC = () => {
     setTimeout(() => setActiveQuickExport(null), 600);
   };
 
-  const fetchData = async () => {
+  const fetchPrimaryData = useCallback(async (options?: {
+    background?: boolean;
+    requestId?: number;
+  }) => {
     if (!schoolId) return;
-    setLoading(true);
+    const requestId = options?.requestId ?? ++financeRequestIdRef.current;
+    if (!options?.background) {
+      setLoading(true);
+    }
     try {
-      const termIndex = termOptions.indexOf(term);
-      const previousTerm = termIndex > 0 ? termOptions[termIndex - 1] : null;
       const [
         studentsData,
         feesData,
@@ -341,8 +492,6 @@ const FeesPayments: React.FC = () => {
         paymentsData,
         settings,
         config,
-        previousLedgers,
-        previousPayments,
       ] = await Promise.all([
         db.getStudents(
           schoolId,
@@ -367,63 +516,204 @@ const FeesPayments: React.FC = () => {
         }),
         db.getFinanceSettings(schoolId),
         db.getSchoolConfig(schoolId),
-        previousTerm
-          ? db.getStudentLedgers({
-              schoolId,
-              academicYear,
-              term: previousTerm,
-              classId: selectedClassId === "all" ? undefined : selectedClassId,
-            })
-          : Promise.resolve([] as StudentFeeLedger[]),
-        previousTerm
-          ? db.getPayments({
-              schoolId,
-              academicYear,
-              term: previousTerm,
-              classId: selectedClassId === "all" ? undefined : selectedClassId,
-            })
-          : Promise.resolve([] as StudentFeePayment[]),
       ]);
-      setStudents(studentsData);
-      setFees(feesData);
-      setLedgers(ledgersData);
-      setPayments(paymentsData);
-      setLastTermLedgers(previousLedgers);
-      setLastTermPayments(previousPayments);
-      setFinanceSettings(settings);
-      setSchoolConfig(config);
-      setOnboardingMode(settings.onboardingMode || "fresh_start");
-      setOnboardingDate(settings.onboardingDate || "");
+      if (requestId !== financeRequestIdRef.current) return;
+      const snapshot: FinancePrimarySnapshot = {
+        students: studentsData,
+        fees: feesData,
+        ledgers: ledgersData,
+        payments: paymentsData,
+        financeSettings: settings,
+        schoolConfig: config,
+        onboardingMode: settings.onboardingMode || "fresh_start",
+        onboardingDate: settings.onboardingDate || "",
+      };
+      applyPrimarySnapshot(snapshot);
+      writeFinanceCache({ primary: snapshot });
     } catch (error) {
       console.error("Failed to load finance data", error);
-      showToast("Failed to load finance data.", { type: "error" });
+      if (!options?.background) {
+        showToast("Failed to load finance data.", { type: "error" });
+      }
     } finally {
-      setLoading(false);
+      if (!options?.background && requestId === financeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [
+    schoolId,
+    selectedClassId,
+    academicYear,
+    term,
+    applyPrimarySnapshot,
+    writeFinanceCache,
+  ]);
+
+  const fetchAuxiliaryData = useCallback(async (options?: {
+    requestId?: number;
+  }) => {
+    if (!schoolId) return;
+    const requestId = options?.requestId ?? financeRequestIdRef.current;
+    try {
+      const termIndex = termOptions.indexOf(term);
+      const previousTerm = termIndex > 0 ? termOptions[termIndex - 1] : null;
+      const [allFeesData, previousLedgers, previousPayments] =
+        await Promise.all([
+          db.getFees({
+            schoolId,
+          }),
+          previousTerm
+            ? db.getStudentLedgers({
+                schoolId,
+                academicYear,
+                term: previousTerm,
+                classId: selectedClassId === "all" ? undefined : selectedClassId,
+              })
+            : Promise.resolve([] as StudentFeeLedger[]),
+          previousTerm
+            ? db.getPayments({
+                schoolId,
+                academicYear,
+                term: previousTerm,
+                classId: selectedClassId === "all" ? undefined : selectedClassId,
+              })
+            : Promise.resolve([] as StudentFeePayment[]),
+        ]);
+      if (requestId !== financeRequestIdRef.current) return;
+      const snapshot: FinanceAuxiliarySnapshot = {
+        allFees: allFeesData,
+        lastTermLedgers: previousLedgers,
+        lastTermPayments: previousPayments,
+      };
+      applyAuxiliarySnapshot(snapshot);
+      writeFinanceCache({ auxiliary: snapshot });
+    } catch (error) {
+      console.error("Failed to load finance auxiliary data", error);
+    }
+  }, [
+    schoolId,
+    academicYear,
+    term,
+    selectedClassId,
+    applyAuxiliarySnapshot,
+    writeFinanceCache,
+  ]);
+
+  const fetchData = useCallback(async (options?: {
+    background?: boolean;
+    includeAuxiliary?: boolean;
+  }) => {
+    const requestId = ++financeRequestIdRef.current;
+    await fetchPrimaryData({
+      background: options?.background,
+      requestId,
+    });
+    if (options?.includeAuxiliary !== false) {
+      void fetchAuxiliaryData({ requestId });
+    }
+  }, [fetchPrimaryData, fetchAuxiliaryData]);
 
   useEffect(() => {
-    fetchData();
-  }, [schoolId, academicYear, term, selectedClassId]);
+    if (!schoolId) return;
+    const cached = readFinanceCache();
+    if (cached?.primary) {
+      applyPrimarySnapshot(cached.primary);
+    } else {
+      setStudents([]);
+      setFees([]);
+      setLedgers([]);
+      setPayments([]);
+    }
+
+    if (cached?.auxiliary) {
+      applyAuxiliarySnapshot(cached.auxiliary);
+    } else {
+      setAllFees([]);
+      setLastTermLedgers([]);
+      setLastTermPayments([]);
+    }
+
+    void fetchData({
+      background: Boolean(cached?.primary),
+    });
+  }, [
+    schoolId,
+    financeCacheKey,
+    readFinanceCache,
+    applyPrimarySnapshot,
+    applyAuxiliarySnapshot,
+    fetchData,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       financeFiltersStorageKey,
       JSON.stringify({ academicYear, term, selectedClassId }),
     );
+    window.localStorage.removeItem(financeFiltersStorageKey);
   }, [academicYear, term, selectedClassId]);
 
-  const isStudentNewSinceOnboarding = (student: Student) => {
-    if (!onboardingDate) return true;
-    const createdAt = student.createdAt
-      ? new Date(student.createdAt).getTime()
-      : 0;
-    const onboardingAt = new Date(onboardingDate).getTime();
-    if (!Number.isNaN(onboardingAt) && onboardingAt > 0) {
-      return createdAt >= onboardingAt;
+  const getStudentCreatedAtMs = (student: Student) => {
+    if (!student.createdAt) return null;
+    const createdAt =
+      student.createdAt instanceof Date
+        ? student.createdAt.getTime()
+        : new Date(student.createdAt).getTime();
+    return Number.isNaN(createdAt) ? null : createdAt;
+  };
+
+  const formatExactDate = (value?: string | number | Date | null) => {
+    if (!value) return "an unknown date";
+    const normalizedValue =
+      typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T00:00:00`
+        : value;
+    const parsed = normalizedValue instanceof Date
+      ? normalizedValue
+      : new Date(normalizedValue);
+    if (Number.isNaN(parsed.getTime())) {
+      return String(value);
     }
-    return true;
+    return parsed.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  };
+
+  const getClassLabel = (classId?: string | null) =>
+    CLASSES_LIST.find((cls) => cls.id === classId)?.name || classId || "this class";
+
+  const getNewStudentFeeCutoff = () => {
+    const reopenDate = schoolConfig?.schoolReopenDate?.trim() || "";
+    const onboardingCutoff = onboardingDate.trim();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
+
+    const parseActiveCutoff = (value: string) => {
+      if (!value) return null;
+      const normalizedValue = /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T00:00:00`
+        : value;
+      const parsedMs = new Date(normalizedValue).getTime();
+      if (Number.isNaN(parsedMs) || parsedMs > todayMs) return null;
+      return parsedMs;
+    };
+
+    const reopenMs = parseActiveCutoff(reopenDate);
+    const onboardingMs = parseActiveCutoff(onboardingCutoff);
+
+    const cutoffDate = reopenMs !== null ? reopenDate : onboardingMs !== null ? onboardingCutoff : "";
+    const cutoffMs = reopenMs ?? onboardingMs;
+
+    if (!cutoffDate || cutoffMs === null) return null;
+    return {
+      cutoffMs,
+      cutoffDate,
+      sourceLabel: reopenMs !== null ? "school reopen date" : "onboarding date",
+    };
   };
 
   const parseAcademicYearRange = (value?: string | null) => {
@@ -433,49 +723,96 @@ const FeesPayments: React.FC = () => {
     return { start: Number(match[1]), end: Number(match[2]) };
   };
 
+  const getFeeIneligibilityReason = (
+    student: Student,
+    fee: FeeDefinition,
+    options?: {
+      includeScope?: boolean;
+    },
+  ) => {
+    const includeScope = options?.includeScope ?? true;
+    if (includeScope) {
+      if (fee.academicYear !== academicYear && fee.term !== term) {
+        return `Fee is set for ${fee.academicYear}, ${fee.term}.`;
+      }
+      if (fee.academicYear !== academicYear) {
+        return `Fee is set for academic year ${fee.academicYear}.`;
+      }
+      if (fee.term !== term) {
+        return `Fee is set for ${fee.term}.`;
+      }
+    }
+
+    if (fee.effectiveFromDate) {
+      const effectiveAt = new Date(fee.effectiveFromDate).getTime();
+      if (!Number.isNaN(effectiveAt) && Date.now() < effectiveAt) {
+        return `Fee becomes active on ${formatExactDate(fee.effectiveFromDate)}.`;
+      }
+    }
+
+    if (fee.feeFrequency === "per_year") {
+      if (
+        fee.applyToAcademicYear &&
+        fee.applyToAcademicYear !== academicYear
+      ) {
+        return `Fee is limited to academic year ${fee.applyToAcademicYear}.`;
+      }
+    }
+
+    if (fee.feeFrequency === "one_time" && fee.applyToAcademicYear) {
+      const range = parseAcademicYearRange(fee.applyToAcademicYear);
+      if (range) {
+        const createdAtMs = getStudentCreatedAtMs(student);
+        if (createdAtMs === null) {
+          return "Student created date is missing.";
+        }
+        const studentYear = new Date(createdAtMs).getFullYear();
+        if (studentYear < range.start || studentYear > range.end) {
+          return `Student joined outside the fee year range ${fee.applyToAcademicYear}.`;
+        }
+      }
+    }
+
+    if (fee.feeFrequency === "per_term") {
+      if (fee.applyToTerm && fee.applyToTerm !== term) {
+        return `Fee is limited to ${fee.applyToTerm}.`;
+      }
+    }
+
+    switch (fee.appliesTo) {
+      case "class":
+        return fee.classId && fee.classId !== student.classId
+          ? `Fee is assigned to ${getClassLabel(fee.classId)} only.`
+          : null;
+      case "selected_students":
+        return fee.selectedStudentIds?.includes(student.id)
+          ? null
+          : "Fee is assigned to selected students only.";
+      case "new_students_only": {
+        const cutoff = getNewStudentFeeCutoff();
+        if (!cutoff) return null;
+        const createdAtMs = getStudentCreatedAtMs(student);
+        if (createdAtMs === null) {
+          return "Student created date is missing.";
+        }
+        if (createdAtMs < cutoff.cutoffMs) {
+          return `Student was added before the ${cutoff.sourceLabel} of ${formatExactDate(cutoff.cutoffDate)}.`;
+        }
+        return null;
+      }
+      case "all_students":
+      default:
+        return null;
+    }
+  };
+
   const resolveFeeAssignments = (
     student: Student,
     feeSnapshot: FeeDefinition[],
   ) => {
-    return feeSnapshot.filter((fee) => {
-      if (fee.effectiveFromDate) {
-        const effectiveAt = new Date(fee.effectiveFromDate).getTime();
-        if (!Number.isNaN(effectiveAt) && Date.now() < effectiveAt) {
-          return false;
-        }
-      }
-      if (fee.feeFrequency === "per_year") {
-        if (
-          fee.applyToAcademicYear &&
-          fee.applyToAcademicYear !== academicYear
-        ) {
-          return false;
-        }
-      }
-      if (fee.feeFrequency === "one_time" && fee.applyToAcademicYear) {
-        const range = parseAcademicYearRange(fee.applyToAcademicYear);
-        if (range && student.createdAt) {
-          const year = new Date(student.createdAt).getFullYear();
-          if (year < range.start || year > range.end) return false;
-        }
-      }
-      if (fee.feeFrequency === "per_term") {
-        if (fee.applyToTerm && fee.applyToTerm !== term) {
-          return false;
-        }
-      }
-      switch (fee.appliesTo) {
-        case "class":
-          return fee.classId ? fee.classId === student.classId : false;
-        case "selected_students":
-          return fee.selectedStudentIds?.includes(student.id) ?? false;
-        case "new_students_only":
-          return isStudentNewSinceOnboarding(student);
-        case "all_students":
-        default:
-          return true;
-      }
-    });
+    return feeSnapshot.filter(
+      (fee) => getFeeIneligibilityReason(student, fee) === null,
+    );
   };
 
   const ensureLedger = async (
@@ -533,6 +870,91 @@ const FeesPayments: React.FC = () => {
     await db.upsertStudentLedger(payload);
     return payload;
   };
+
+  useEffect(() => {
+    if (!schoolId || loading || ledgerAutoSyncInFlightRef.current) return;
+
+    const syncTargets = students
+      .map((student) => {
+        const assignedFees = resolveFeeAssignments(student, fees);
+        const ledgerId = buildLedgerId(schoolId, student.id, academicYear, term);
+        const existing = ledgers.find((ledger) => ledger.id === ledgerId);
+        const assignedSignature = assignedFees
+          .map((fee) => `${fee.id}:${fee.amount}`)
+          .sort()
+          .join("|");
+        const existingSignature = (existing?.fees || [])
+          .map((fee) => `${fee.feeId}:${fee.amount}`)
+          .sort()
+          .join("|");
+
+        return {
+          student,
+          assignedFees,
+          assignedSignature,
+          existingSignature,
+        };
+      })
+      .filter(
+        ({ assignedFees, assignedSignature, existingSignature }) =>
+          assignedFees.length > 0
+            ? assignedSignature !== existingSignature
+            : existingSignature.length > 0,
+      );
+
+    const syncSignature = syncTargets
+      .map(
+        ({ student, assignedSignature, existingSignature }) =>
+          `${student.id}:${assignedSignature}:${existingSignature}`,
+      )
+      .sort()
+      .join(";");
+
+    if (syncSignature === ledgerAutoSyncSignatureRef.current) return;
+    if (syncTargets.length === 0) {
+      ledgerAutoSyncSignatureRef.current = syncSignature;
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncLedgers = async () => {
+      ledgerAutoSyncInFlightRef.current = true;
+      try {
+        for (const { student } of syncTargets) {
+          await ensureLedger(student, fees);
+        }
+        ledgerAutoSyncSignatureRef.current = syncSignature;
+        if (!cancelled) {
+          await fetchPrimaryData({
+            background: true,
+            requestId: financeRequestIdRef.current,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to sync student ledgers", error);
+      } finally {
+        ledgerAutoSyncInFlightRef.current = false;
+      }
+    };
+
+    void syncLedgers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    schoolId,
+    loading,
+    students,
+    fees,
+    ledgers,
+    academicYear,
+    term,
+    schoolConfig?.schoolReopenDate,
+    onboardingDate,
+    fetchPrimaryData,
+  ]);
 
   const handleCreateFee = async () => {
     if (!schoolId || !user?.id) return;
@@ -1011,8 +1433,13 @@ const FeesPayments: React.FC = () => {
     }
   };
 
+  const visibleLedgers = useMemo(
+    () => ledgers.filter((ledger) => (ledger.fees?.length || 0) > 0),
+    [ledgers],
+  );
+
   const ledgerRows = useMemo(() => {
-    return ledgers.map((ledger) => {
+    return visibleLedgers.map((ledger) => {
       const student = students.find((s) => s.id === ledger.studentId);
       const ledgerPayments = payments.filter(
         (p) =>
@@ -1045,7 +1472,7 @@ const FeesPayments: React.FC = () => {
         status,
       };
     });
-  }, [ledgers, students, payments, academicYear, term]);
+  }, [visibleLedgers, students, payments, academicYear, term]);
 
   const filteredLedgerRows = useMemo(() => {
     const queryText = search.trim().toLowerCase();
@@ -1100,7 +1527,7 @@ const FeesPayments: React.FC = () => {
   }, [academicYear, term, selectedClassId]);
 
   const onboardingSummary = useMemo(() => {
-    return ledgers.reduce(
+    return visibleLedgers.reduce(
       (acc, ledger) => {
         acc.openingPaid += ledger.openingPaidAmount || 0;
         acc.openingBalance += ledger.openingBalance || 0;
@@ -1108,7 +1535,7 @@ const FeesPayments: React.FC = () => {
       },
       { openingPaid: 0, openingBalance: 0 },
     );
-  }, [ledgers]);
+  }, [visibleLedgers]);
 
   const reconciliationStats = useMemo(() => {
     const today = new Date();
@@ -1239,14 +1666,14 @@ const FeesPayments: React.FC = () => {
   const onboardingLedgers = useMemo(() => {
     const scopedLedgers =
       selectedClassId === "all"
-        ? ledgers
-        : ledgers.filter((ledger) => ledger.classId === selectedClassId);
+        ? visibleLedgers
+        : visibleLedgers.filter((ledger) => ledger.classId === selectedClassId);
     return scopedLedgers.map((ledger) => {
       const student = students.find((s) => s.id === ledger.studentId);
       const row = ledgerRows.find((r) => r.ledger.id === ledger.id);
       return { ledger, student, row };
     });
-  }, [ledgers, students, ledgerRows, selectedClassId]);
+  }, [visibleLedgers, students, ledgerRows, selectedClassId]);
 
   const resolveOpeningForm = (ledgerId: string, feeId?: string) => {
     const existing = ledgers.find((ledger) => ledger.id === ledgerId);
@@ -1532,6 +1959,46 @@ const FeesPayments: React.FC = () => {
     });
   }, [collectionTrend, weeklyTotal]);
 
+  const handleWeeklyChartHover = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (weeklySegments.length === 0 || weeklyTotal <= 0) {
+        setHoveredWeekIndex(null);
+        return;
+      }
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const dx = event.clientX - centerX;
+      const dy = event.clientY - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      const outerRadius = Math.min(rect.width, rect.height) / 2 - 12;
+      const innerRadius = Math.max(outerRadius - 32, 0);
+
+      if (distance < innerRadius || distance > outerRadius) {
+        setHoveredWeekIndex(null);
+        return;
+      }
+
+      let angle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+      if (angle < 0) angle += 360;
+      const progress = (angle / 360) * 100;
+
+      const nextIndex = weeklySegments.findIndex((segment, index) => {
+        const segmentEnd = segment.start + segment.percentage;
+        const isLastSegment = index === weeklySegments.length - 1;
+        return (
+          progress >= segment.start &&
+          (progress < segmentEnd || (isLastSegment && progress <= segmentEnd))
+        );
+      });
+
+      setHoveredWeekIndex(nextIndex >= 0 ? nextIndex : null);
+    },
+    [weeklySegments, weeklyTotal],
+  );
+
   const paymentsSorted = useMemo(() => {
     return [...payments].sort(
       (a, b) => Number(b.createdAt) - Number(a.createdAt),
@@ -1547,6 +2014,91 @@ const FeesPayments: React.FC = () => {
         payment.term === term,
     );
   }, [paymentsSorted, ledgerPaymentModal, academicYear, term]);
+
+  const selectedPaymentStudent = useMemo(() => {
+    return (
+      students.find((student) => student.id === paymentForm.studentId) || null
+    );
+  }, [students, paymentForm.studentId]);
+
+  const availablePaymentFees = useMemo(() => {
+    if (!selectedPaymentStudent) return [] as FeeDefinition[];
+    return resolveFeeAssignments(selectedPaymentStudent, fees);
+  }, [
+    selectedPaymentStudent,
+    fees,
+    academicYear,
+    term,
+    schoolConfig?.schoolReopenDate,
+    onboardingDate,
+  ]);
+
+  const unavailableCurrentScopeFees = useMemo(() => {
+    if (!selectedPaymentStudent || availablePaymentFees.length > 0) {
+      return [] as Array<{ id: string; feeName: string; reason: string }>;
+    }
+    return fees
+      .map((fee) => {
+        const reason = getFeeIneligibilityReason(selectedPaymentStudent, fee, {
+          includeScope: false,
+        });
+        return reason
+          ? {
+              id: fee.id,
+              feeName: fee.feeName,
+              reason,
+            }
+          : null;
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          id: string;
+          feeName: string;
+          reason: string;
+        } => item !== null,
+      )
+      .slice(0, 4);
+  }, [
+    selectedPaymentStudent,
+    availablePaymentFees.length,
+    fees,
+    academicYear,
+    term,
+    schoolConfig?.schoolReopenDate,
+    onboardingDate,
+  ]);
+
+  const matchingOtherScopeFees = useMemo(() => {
+    if (!selectedPaymentStudent || availablePaymentFees.length > 0) {
+      return [] as Array<{ id: string; feeName: string; scope: string }>;
+    }
+    return allFees
+      .filter(
+        (fee) => !(fee.academicYear === academicYear && fee.term === term),
+      )
+      .filter(
+        (fee) =>
+          getFeeIneligibilityReason(selectedPaymentStudent, fee, {
+            includeScope: false,
+          }) === null,
+      )
+      .map((fee) => ({
+        id: fee.id,
+        feeName: fee.feeName,
+        scope: `${fee.academicYear}, ${fee.term}`,
+      }))
+      .slice(0, 4);
+  }, [
+    selectedPaymentStudent,
+    availablePaymentFees.length,
+    allFees,
+    academicYear,
+    term,
+    schoolConfig?.schoolReopenDate,
+    onboardingDate,
+  ]);
 
   const recordPaymentSummary = useMemo(() => {
     if (!paymentForm.studentId || !paymentForm.feeId) return null;
@@ -1631,215 +2183,342 @@ const FeesPayments: React.FC = () => {
       .slice(0, 5);
   }, [payments]);
 
+  const strongestWeek =
+    weeklySegments.length > 0
+      ? weeklySegments.reduce((best, segment) =>
+          segment.value > best.value ? segment : best,
+        )
+      : null;
+
+  const activeWeeklySegments = weeklySegments.filter(
+    (segment) => segment.value > 0,
+  ).length;
+
+  const classCollectionPeak = classCollection[0]?.value || 0;
+
   return (
     <Layout title="Finance & Payments">
       <div className="relative rounded-[32px] bg-gradient-to-br from-amber-50 via-rose-50 to-violet-100 p-4 sm:p-6 lg:p-8">
         <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.25),_transparent_40%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.25),_transparent_35%),radial-gradient(circle_at_20%_80%,_rgba(139,92,246,0.2),_transparent_40%)]" />
         <div className="relative space-y-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Finance Overview
-              </p>
-              <h1 className="text-2xl font-semibold text-slate-900">
-                Finance & Payments Dashboard
-              </h1>
-              <p className="text-sm text-slate-500">
-                Advanced visibility into fee setup, collections, and defaulters.
-              </p>
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-[11px] text-slate-600">
-                <Filter size={12} /> {termScopeLabel}
+          <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
+            <div className="relative overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_38%,#0ea5e9_100%)] p-6 text-white shadow-[0_35px_90px_-45px_rgba(11,74,130,0.88)] sm:p-7">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.2),_transparent_35%),radial-gradient(circle_at_85%_20%,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_30%_90%,_rgba(244,114,182,0.18),_transparent_30%)]" />
+              <div className="relative">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-3xl">
+                    <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/80">
+                      Finance Command Center
+                    </p>
+                    <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-4xl">
+                      {school?.name
+                        ? `${school.name} Finance & Payments`
+                        : "Finance & Payments Dashboard"}
+                    </h1>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-sky-50/80 sm:text-base">
+                      Monitor collections, track outstanding balances, configure
+                      onboarding, and move from fee setup to payment capture in
+                      one polished workspace.
+                    </p>
+                  </div>
+
+                  <div className="rounded-[24px] border border-white/15 bg-white/10 px-4 py-3 text-right backdrop-blur">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-100/70">
+                      Current scope
+                    </div>
+                    <div className="mt-2 text-base font-semibold text-white">
+                      {termScopeLabel}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-wrap gap-2">
+                  {[
+                    `${fees.length} fee definitions`,
+                    `${paymentsSorted.length} recorded payments`,
+                    `${financeMetrics.defaulters} defaulters`,
+                  ].map((pill) => (
+                    <span
+                      key={pill}
+                      className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-sky-50/90 backdrop-blur"
+                    >
+                      {pill}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => {
+                      void fetchData();
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-lg shadow-slate-950/10 transition hover:-translate-y-0.5"
+                  >
+                    <RefreshCw size={16} />
+                    Refresh workspace
+                  </button>
+                  <button
+                    onClick={() => scrollToSection(recordPaymentRef)}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white/95 backdrop-blur transition hover:bg-white/15"
+                  >
+                    <Banknote size={16} />
+                    Record payment
+                  </button>
+                  <button
+                    onClick={() => setShowOnboardingWizard(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white/95 backdrop-blur transition hover:bg-white/15"
+                  >
+                    <Users size={16} />
+                    Open onboarding
+                  </button>
+                </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={fetchData}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
-              >
-                <RefreshCw size={14} /> Refresh
-              </button>
-              <button
-                onClick={handleExportReport}
-                disabled={isExporting}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isExporting ? (
-                  <span className="flex items-center gap-2">
-                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-                    Exporting...
-                  </span>
-                ) : (
-                  <>
-                    <Download size={14} /> Export
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
 
-          <div className="rounded-3xl border border-white/60 bg-white/75 p-4 shadow-lg shadow-rose-100/40 backdrop-blur">
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
-                Start here
-              </span>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
               {[
-                "1. Set onboarding mode",
-                "2. Create fees",
-                "3. Assign to classes",
-                "4. Record payments",
-              ].map((step) => (
-                <span
-                  key={step}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-600"
-                >
-                  {step}
-                </span>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
-              <div className="xl:col-span-1">
-                <label className="text-xs text-slate-500">Academic Year</label>
-                <input
-                  value={academicYear}
-                  onChange={(e) => setAcademicYear(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  placeholder="2024/2025"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Term</label>
-                <select
-                  value={term}
-                  onChange={(e) => setTerm(e.target.value as FeeTerm)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                >
-                  {termOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Class</label>
-                <select
-                  value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                >
-                  <option value="all">All Classes</option>
-                  {CLASSES_LIST.map((cls) => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Status</label>
-                <select
-                  value={statusFilter}
-                  onChange={(e) =>
-                    setStatusFilter(e.target.value as typeof statusFilter)
-                  }
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                >
-                  {statusFilters.map((status) => (
-                    <option key={status} value={status}>
-                      {status === "all" ? "All Status" : status}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Date range</label>
-                <div className="mt-1 flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  <CalendarRange size={16} className="text-slate-400" />
-                  <input
-                    value={dateRange}
-                    onChange={(e) => setDateRange(e.target.value)}
-                    className="w-full bg-transparent text-sm text-slate-700 outline-none"
-                    placeholder="This term"
-                  />
-                </div>
-              </div>
-              <div className="flex items-end">
-                <div className="relative w-full">
-                  <Search
-                    className="absolute left-3 top-2.5 text-slate-400"
-                    size={16}
-                  />
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-9 py-2 text-sm"
-                    placeholder="Search student"
-                  />
-                </div>
-              </div>
+                {
+                  label: "Collection Rate",
+                  value: `${financeMetrics.collectionRate.toFixed(0)}%`,
+                  helper: "Overall progress",
+                  icon: PieChart,
+                  tone: "from-emerald-500/18 via-white to-emerald-50",
+                  iconTone: "bg-emerald-500 text-white",
+                },
+                {
+                  label: "Payments Today",
+                  value: reconciliationStats.todayCount,
+                  helper: "Daily receipts",
+                  icon: Banknote,
+                  tone: "from-sky-500/16 via-white to-sky-50",
+                  iconTone: "bg-sky-500 text-white",
+                },
+                {
+                  label: "Expected Fees",
+                  value: formatMoney(financeMetrics.totalDue),
+                  helper: "Selected scope",
+                  icon: Wallet,
+                  tone: "from-violet-500/16 via-white to-violet-50",
+                  iconTone: "bg-violet-500 text-white",
+                },
+                {
+                  label: "Outstanding",
+                  value: formatMoney(financeMetrics.totalOutstanding),
+                  helper: "Needs follow-up",
+                  icon: TrendingDown,
+                  tone: "from-rose-500/16 via-white to-rose-50",
+                  iconTone: "bg-rose-500 text-white",
+                },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.label}
+                    className={`rounded-[28px] border border-white/60 bg-gradient-to-br ${item.tone} p-5 shadow-[0_24px_70px_-50px_rgba(15,23,42,0.5)] backdrop-blur`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                          {item.label}
+                        </p>
+                        <p className="mt-3 text-xl font-semibold text-slate-900 sm:text-2xl">
+                          {item.value}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {item.helper}
+                        </p>
+                      </div>
+                      <span
+                        className={`flex h-11 w-11 items-center justify-center rounded-2xl shadow-sm ${item.iconTone}`}
+                      >
+                        <Icon size={18} />
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="block lg:hidden">
-            <div className="rounded-3xl border border-white/60 bg-white/80 p-4 shadow-lg shadow-rose-100/40 backdrop-blur">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    Mobile snapshot
-                  </p>
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Quick view
-                  </h3>
+          <div className={`${DASH_PANEL} p-4 sm:p-5`}>
+            <div className="grid gap-5 xl:grid-cols-[1.28fr_0.72fr]">
+              <div>
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
+                    Workspace Filters
+                  </span>
+                  {[
+                    "1. Set onboarding mode",
+                    "2. Create fees",
+                    "3. Assign to classes",
+                    "4. Record payments",
+                  ].map((step) => (
+                    <span
+                      key={step}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-600"
+                    >
+                      {step}
+                    </span>
+                  ))}
                 </div>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
-                  {termScopeLabel}
-                </span>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Academic Year
+                    </label>
+                    <input
+                      value={academicYear}
+                      onChange={(e) => setAcademicYear(e.target.value)}
+                      className={DASH_INPUT}
+                      placeholder="2024/2025"
+                    />
+                  </div>
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Term
+                    </label>
+                    <select
+                      value={term}
+                      onChange={(e) => setTerm(e.target.value as FeeTerm)}
+                      className={DASH_INPUT}
+                    >
+                      {termOptions.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Class
+                    </label>
+                    <select
+                      value={selectedClassId}
+                      onChange={(e) => setSelectedClassId(e.target.value)}
+                      className={DASH_INPUT}
+                    >
+                      <option value="all">All Classes</option>
+                      {CLASSES_LIST.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Status
+                    </label>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) =>
+                        setStatusFilter(e.target.value as typeof statusFilter)
+                      }
+                      className={DASH_INPUT}
+                    >
+                      {statusFilters.map((status) => (
+                        <option key={status} value={status}>
+                          {status === "all" ? "All Status" : status}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Date Range
+                    </label>
+                    <div className="relative">
+                      <CalendarRange
+                        size={16}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                      />
+                      <input
+                        value={dateRange}
+                        onChange={(e) => setDateRange(e.target.value)}
+                        className={`${DASH_INPUT} pl-10`}
+                        placeholder="This term"
+                      />
+                    </div>
+                  </div>
+                  <div className={DASH_FILTER_WRAPPER}>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Student Search
+                    </label>
+                    <div className="relative">
+                      <Search
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                        size={16}
+                      />
+                      <input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className={`${DASH_INPUT} pl-10`}
+                        placeholder="Search student"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-                  <p className="text-[11px] text-slate-400">Expected</p>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {formatMoney(financeMetrics.totalDue)}
-                  </p>
+
+              <div className="rounded-[28px] border border-slate-200/80 bg-gradient-to-br from-slate-950 via-[#0B4A82] to-sky-500 p-5 text-white shadow-[0_28px_80px_-50px_rgba(15,23,42,0.9)]">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-sky-100/75">
+                  Active Scope
+                </p>
+                <h3 className="mt-3 text-lg font-semibold">
+                  Filtered finance summary
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-sky-50/75">
+                  Review the exact workspace context before exporting reports or
+                  following up on balances.
+                </p>
+
+                <div className="mt-5 space-y-3">
+                  {[
+                    ["Academic year", academicYear || "Not set"],
+                    ["Term", term],
+                    [
+                      "Class",
+                      selectedClassId === "all"
+                        ? "All classes"
+                        : CLASSES_LIST.find((cls) => cls.id === selectedClassId)
+                            ?.name || selectedClassId,
+                    ],
+                    ["Search", search.trim() || "No search filter"],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/10 px-3 py-2 text-sm backdrop-blur"
+                    >
+                      <span className="text-sky-100/75">{label}</span>
+                      <span className="font-semibold text-white">{value}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-                  <p className="text-[11px] text-slate-400">Collected</p>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {formatMoney(financeMetrics.totalPaidIncludingOpening)}
-                  </p>
+
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                  {[
+                    ["Expected", formatMoney(financeMetrics.totalDue)],
+                    [
+                      "Collected",
+                      formatMoney(financeMetrics.totalPaidIncludingOpening),
+                    ],
+                    ["Outstanding", formatMoney(financeMetrics.totalOutstanding)],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur"
+                    >
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-sky-100/70">
+                        {label}
+                      </p>
+                      <p className="mt-2 text-base font-semibold text-white">
+                        {value}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-                  <p className="text-[11px] text-slate-400">Outstanding</p>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {formatMoney(financeMetrics.totalOutstanding)}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-                  <p className="text-[11px] text-slate-400">Defaulters</p>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {financeMetrics.defaulters}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  onClick={() => scrollToSection(feeSetupRef)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600"
-                >
-                  <Plus size={14} /> Add Fee
-                </button>
-                <button
-                  onClick={() => scrollToSection(recordPaymentRef)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600"
-                >
-                  <Banknote size={14} /> Record Payment
-                </button>
-                <button
-                  onClick={() => setShowOnboardingWizard(true)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600"
-                >
-                  <Users size={14} /> Onboarding
-                </button>
               </div>
             </div>
           </div>
@@ -1855,6 +2534,9 @@ const FeesPayments: React.FC = () => {
                 accent: "text-indigo-600",
                 tooltip:
                   "Total amount the school expects to collect for the selected term and class.",
+                tone:
+                  "from-indigo-500/18 via-white to-indigo-50 border-indigo-100/80",
+                iconTone: "bg-indigo-500 text-white",
               },
               {
                 label: "Collected (Since Onboarding)",
@@ -1865,6 +2547,9 @@ const FeesPayments: React.FC = () => {
                 accent: "text-emerald-600",
                 tooltip:
                   "Payments recorded after the onboarding date. Use this to see current-term performance.",
+                tone:
+                  "from-emerald-500/18 via-white to-emerald-50 border-emerald-100/80",
+                iconTone: "bg-emerald-500 text-white",
               },
               {
                 label: "Collected (All-time)",
@@ -1875,6 +2560,9 @@ const FeesPayments: React.FC = () => {
                 accent: "text-emerald-600",
                 tooltip:
                   "All collections including opening balances imported at onboarding.",
+                tone:
+                  "from-cyan-500/18 via-white to-sky-50 border-cyan-100/80",
+                iconTone: "bg-cyan-500 text-white",
               },
               {
                 label: "Outstanding",
@@ -1885,6 +2573,9 @@ const FeesPayments: React.FC = () => {
                 accent: "text-rose-600",
                 tooltip:
                   "What is still owed after all payments and opening balances are applied.",
+                tone:
+                  "from-rose-500/18 via-white to-rose-50 border-rose-100/80",
+                iconTone: "bg-rose-500 text-white",
               },
               {
                 label: "Defaulters",
@@ -1895,49 +2586,54 @@ const FeesPayments: React.FC = () => {
                 accent: "text-amber-600",
                 tooltip:
                   "Number of students who still have a balance greater than zero.",
+                tone:
+                  "from-amber-500/20 via-white to-amber-50 border-amber-100/80",
+                iconTone: "bg-amber-500 text-white",
               },
             ].map((card) => (
               <div
                 key={card.label}
-                className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur"
+                className={`rounded-[28px] border bg-gradient-to-br p-5 shadow-[0_26px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur ${card.tone}`}
               >
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
                       {card.label}
                     </p>
-                    <p className="mt-2 text-2xl font-semibold text-slate-900">
+                    <p className="mt-3 text-2xl font-semibold text-slate-900">
                       {card.label === "Defaulters"
                         ? card.value
                         : formatMoney(card.value)}
                     </p>
                   </div>
-                  <div
-                    className={`rounded-full bg-slate-50 p-2 ${card.accent}`}
-                  >
+                  <div className={`rounded-2xl p-3 shadow-sm ${card.iconTone}`}>
                     <card.icon size={18} />
                   </div>
                 </div>
                 <div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
                   {card.subtitle}
                 </div>
-                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                  {card.trend.startsWith("-") ? (
-                    <ArrowDownRight size={14} className="text-rose-500" />
-                  ) : (
-                    <ArrowUpRight size={14} className="text-emerald-500" />
-                  )}
-                  <span>{card.trend}</span>
-                  <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
+                <div className="mt-4 rounded-[22px] border border-white/80 bg-white/75 px-3.5 py-3">
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    {card.trend.startsWith("-") ? (
+                      <ArrowDownRight size={14} className="text-rose-500" />
+                    ) : (
+                      <ArrowUpRight size={14} className="text-emerald-500" />
+                    )}
+                    <span className="font-medium">{card.trend}</span>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">
                     {card.tooltip}
-                  </span>
+                  </p>
                 </div>
               </div>
             ))}
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur xl:col-span-2">
+            <div
+              className={`relative overflow-hidden ${DASH_PANEL} p-6 xl:col-span-2`}
+            >
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.25),_transparent_45%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.2),_transparent_45%)]" />
               <div className="relative">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1948,33 +2644,45 @@ const FeesPayments: React.FC = () => {
                     <h2 className="text-lg font-semibold text-slate-900">
                       Weekly Collections
                     </h2>
-                    <p className="text-xs text-slate-500">
-                      Total collected over the last six weeks.
+                    <p className="text-sm text-slate-500">
+                      A cleaner view of how collections are flowing over the
+                      last six weeks.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 rounded-full border border-white/60 bg-white/70 px-3 py-1 text-xs text-slate-500">
-                    <Filter size={14} /> Auto
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-full border border-white/60 bg-white/80 px-3 py-1 text-xs font-medium text-slate-500 shadow-sm">
+                      <Filter size={14} /> Auto mix
+                    </div>
+                    <div className="rounded-full border border-cyan-100 bg-cyan-50/80 px-3 py-1 text-xs font-medium text-cyan-700 shadow-sm">
+                      Active weeks: {activeWeeklySegments}
+                    </div>
                   </div>
                 </div>
 
                 <div className="mt-6">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-xs text-slate-500">
-                      Total last 7 weeks: {formatMoney(weeklyTotal)}
+                    <div className="rounded-full border border-slate-200/80 bg-white/85 px-3 py-1 text-xs font-medium text-slate-500 shadow-sm">
+                      Total: {formatMoney(weeklyTotal)}
                     </div>
-                    <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
+                    <div className="rounded-full border border-slate-200/80 bg-gradient-to-r from-slate-50 to-cyan-50 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
                       Average:{" "}
                       {formatMoney(weeklyTotal / (collectionTrend.length || 1))}
                     </div>
                   </div>
 
                   {loading ? (
-                    <div className="flex h-[260px] items-center justify-center rounded-3xl border border-white/60 bg-white/70">
+                    <div
+                      className={`flex h-[320px] items-center justify-center ${DASH_PANEL_SOFT}`}
+                    >
                       <SkeletonBlock className="h-40 w-40 rounded-full" />
                     </div>
                   ) : weeklyTotal <= 0 ? (
-                    <div className="flex h-[260px] flex-col items-center justify-center gap-3 rounded-3xl border border-white/60 bg-white/70 text-center">
-                      <div className="h-12 w-12 rounded-full bg-slate-100" />
+                    <div
+                      className={`flex h-[320px] flex-col items-center justify-center gap-3 text-center ${DASH_PANEL_SOFT}`}
+                    >
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                        <Wallet size={18} />
+                      </div>
                       <div>
                         <p className="text-sm font-semibold text-slate-700">
                           No collections yet
@@ -1986,10 +2694,15 @@ const FeesPayments: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 items-center gap-6 lg:grid-cols-[260px_1fr]">
-                      <div className="relative mx-auto flex h-[220px] w-[220px] items-center justify-center">
+                    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_1fr]">
+                      <div className="space-y-4">
                         <div
-                          className="absolute inset-0 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)]"
+                          className="relative mx-auto flex h-[250px] w-[250px] max-w-full items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-4 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur"
+                          onMouseMove={handleWeeklyChartHover}
+                          onMouseLeave={() => setHoveredWeekIndex(null)}
+                        >
+                        <div
+                          className="absolute inset-4 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)]"
                           style={{
                             background: `conic-gradient(${weeklySegments
                               .map(
@@ -1999,75 +2712,123 @@ const FeesPayments: React.FC = () => {
                               .join(", ")})`,
                           }}
                         />
-                        <div className="absolute inset-[16px] rounded-full bg-white/90 shadow-inner" />
-                        <div className="relative flex flex-col items-center justify-center text-center">
-                          <span className="text-xs uppercase tracking-[0.25em] text-slate-400">
-                            Total
+                        {hoveredWeekIndex !== null &&
+                          weeklySegments[hoveredWeekIndex] && (
+                            <div
+                              className="pointer-events-none absolute inset-4 rounded-full transition-all duration-300"
+                              style={{
+                                background: `conic-gradient(transparent 0% ${weeklySegments[hoveredWeekIndex].start}%, rgba(255,255,255,0.5) ${weeklySegments[hoveredWeekIndex].start}% ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}%, transparent ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}% 100%)`,
+                                transform: "scale(1.025)",
+                              }}
+                            />
+                          )}
+                        <div className="absolute inset-[34px] rounded-full border border-white/80 bg-white/90 shadow-inner" />
+                        <div className="relative flex max-w-[150px] flex-col items-center justify-center text-center">
+                          <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                            Weekly total
                           </span>
-                          <span className="mt-1 text-lg font-semibold text-slate-900">
+                          <span className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
                             {formatMoney(weeklyTotal)}
+                          </span>
+                          <span className="mt-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-500">
+                            Avg{" "}
+                            {formatMoney(
+                              weeklyTotal / (collectionTrend.length || 1),
+                            )}
                           </span>
                         </div>
 
                         {hoveredWeekIndex !== null &&
                           weeklySegments[hoveredWeekIndex] && (
-                            <div className="absolute -top-10 rounded-full bg-slate-900 px-3 py-1 text-[11px] text-white shadow-lg">
-                              {weeklySegments[hoveredWeekIndex].label} •{" "}
+                            <div className="absolute -top-4 left-1/2 z-10 w-[min(100%,220px)] -translate-x-1/2 rounded-2xl bg-slate-950 px-3 py-2 text-center text-[11px] text-white shadow-xl">
+                              {weeklySegments[hoveredWeekIndex].label} /{" "}
                               {formatMoney(
                                 weeklySegments[hoveredWeekIndex].value,
                               )}{" "}
-                              •{" "}
+                              /{" "}
                               {weeklySegments[
                                 hoveredWeekIndex
                               ].percentage.toFixed(1)}
                               %
                             </div>
                           )}
+                      </div>
 
-                        <div className="absolute inset-0">
-                          {weeklySegments.map((segment, index) => (
-                            <button
-                              key={segment.label}
-                              type="button"
-                              onMouseEnter={() => setHoveredWeekIndex(index)}
-                              onMouseLeave={() => setHoveredWeekIndex(null)}
-                              className="absolute inset-0 rounded-full transition-all duration-300"
-                              style={{
-                                background: `conic-gradient(transparent 0% ${segment.start}%, rgba(255,255,255,0.5) ${segment.start}% ${segment.start + segment.percentage}%, transparent ${segment.start + segment.percentage}% 100%)`,
-                                transform:
-                                  hoveredWeekIndex === index
-                                    ? "scale(1.02)"
-                                    : "scale(1)",
-                              }}
-                              aria-label={`${segment.label} ${segment.value}`}
-                            />
-                          ))}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-[20px] border border-white/80 bg-white/80 px-4 py-3 shadow-sm">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                            Peak week
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            {strongestWeek?.label || "None"}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {strongestWeek
+                              ? formatMoney(strongestWeek.value)
+                              : "No activity"}
+                          </p>
+                        </div>
+                        <div className="rounded-[20px] border border-white/80 bg-gradient-to-br from-slate-50 via-white to-cyan-50 px-4 py-3 shadow-sm">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                            Focus
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            Distribution mix
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Hover any segment to inspect week share.
+                          </p>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {weeklySegments.map((segment, index) => (
                           <div
                             key={segment.label}
                             onMouseEnter={() => setHoveredWeekIndex(index)}
                             onMouseLeave={() => setHoveredWeekIndex(null)}
-                            className="flex items-center gap-2 rounded-2xl border border-slate-100 bg-white/80 px-3 py-2 text-xs text-slate-600 shadow-sm transition hover:shadow-md"
+                            className="rounded-[22px] border border-white/80 bg-white/86 p-4 text-xs text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                           >
-                            <span
-                              className="h-2.5 w-2.5 rounded-full"
-                              style={{ backgroundColor: segment.color }}
-                            />
-                            <div className="min-w-0">
-                              <p className="font-semibold text-slate-800">
-                                {segment.label}
-                              </p>
-                              <p className="text-[11px] text-slate-500">
-                                {formatMoney(segment.value)}
-                              </p>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                  {segment.label}
+                                </p>
+                                <p className="mt-2 text-base font-semibold text-slate-900">
+                                  {formatMoney(segment.value)}
+                                </p>
+                              </div>
+                              <span
+                                className="mt-1 h-3 w-3 shrink-0 rounded-full"
+                                style={{ backgroundColor: segment.color }}
+                              />
+                            </div>
+                            <div className="mt-4">
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Share</span>
+                                <span>{segment.percentage.toFixed(1)}%</span>
+                              </div>
+                              <div className="mt-2 h-2 rounded-full bg-slate-100">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${Math.max(
+                                      segment.percentage,
+                                      segment.value > 0 ? 6 : 0,
+                                    )}%`,
+                                    backgroundColor: segment.color,
+                                  }}
+                                />
+                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
+                      <div className="rounded-[24px] border border-dashed border-slate-200/80 bg-white/65 px-4 py-4 text-xs text-slate-500">
+                        The chart stays readable on smaller screens while
+                        keeping every week visible.
+                      </div>
+                    </div>
                     </div>
                   )}
                 </div>
@@ -2075,7 +2836,9 @@ const FeesPayments: React.FC = () => {
             </div>
 
             <div className="space-y-4">
-              <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+              <div
+                className={`bg-gradient-to-br from-emerald-50 via-white to-cyan-50 ${DASH_PANEL} p-6`}
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">
@@ -2108,7 +2871,9 @@ const FeesPayments: React.FC = () => {
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur">
+                <div
+                  className={`bg-gradient-to-br from-indigo-50 via-white to-sky-50 ${DASH_PANEL_SOFT} p-5`}
+                >
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Term comparison
                   </p>
@@ -2149,12 +2914,14 @@ const FeesPayments: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur">
+                <div
+                  className={`bg-gradient-to-br from-amber-50 via-white to-orange-50 ${DASH_PANEL_SOFT} p-5`}
+                >
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Reconciliation
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    Today’s activity
+                    Today's activity
                   </h3>
                   <div className="mt-4 space-y-3">
                     <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-sm">
@@ -2174,7 +2941,9 @@ const FeesPayments: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur">
+                <div
+                  className={`bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 ${DASH_PANEL_SOFT} p-5`}
+                >
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Onboarding summary
                   </p>
@@ -2204,24 +2973,27 @@ const FeesPayments: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur xl:col-span-2">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.18fr)_390px]">
+            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.12),_transparent_35%),radial-gradient(circle_at_10%_100%,_rgba(14,165,233,0.12),_transparent_30%)]" />
+              <div className="relative">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Collections
                   </p>
-                  <h2 className="text-lg font-semibold text-slate-900">
+                  <h2 className="mt-1 text-xl font-semibold text-slate-900">
                     Recent Payments
                   </h2>
-                  <p className="text-xs text-slate-500">
-                    Track latest receipts and verify transactions.
+                  <p className="mt-1 text-sm text-slate-500">
+                    Follow live receipts with clearer method tags, amount
+                    emphasis, and cleaner spacing.
                   </p>
                 </div>
                 <button
                   onClick={handleExportReport}
                   disabled={isExporting}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isExporting ? (
                     <span className="flex items-center gap-2">
@@ -2248,25 +3020,28 @@ const FeesPayments: React.FC = () => {
                   paginatedPayments.map((payment) => (
                     <div
                       key={payment.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/50 px-4 py-3"
+                      className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/80 bg-gradient-to-r from-white/90 via-white to-slate-50/90 px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-5"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
                           <Wallet size={18} />
                         </div>
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
                             {students.find((s) => s.id === payment.studentId)
                               ?.name || payment.studentId}
                           </p>
-                          <p className="text-xs text-slate-500">
-                            {payment.feeName} • {payment.paymentMethod}
+                          <p className="mt-1 text-xs text-slate-500">
+                            {payment.feeName} / {payment.paymentMethod}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <p className="text-sm font-semibold text-slate-900">
+                      <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+                        <div className="min-w-[120px] text-left lg:text-right">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                            Amount paid
+                          </p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">
                             {formatMoney(payment.amountPaid)}
                           </p>
                           <p className="text-xs text-slate-500">
@@ -2275,7 +3050,7 @@ const FeesPayments: React.FC = () => {
                         </div>
                         <button
                           onClick={() => setSelectedPayment(payment)}
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm"
                         >
                           <Eye size={14} /> Details
                         </button>
@@ -2284,14 +3059,14 @@ const FeesPayments: React.FC = () => {
                   ))
                 )}
               </div>
-              <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+              <div className="mt-4 flex flex-col gap-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
                 <span>
-                  Showing {(paymentPage - 1) * paymentPageSize + 1} -{" "}
-                  {Math.min(
-                    paymentPage * paymentPageSize,
-                    paymentsSorted.length,
-                  )}{" "}
-                  of {paymentsSorted.length}
+                  {paymentsSorted.length === 0
+                    ? "Showing 0 of 0"
+                    : `Showing ${(paymentPage - 1) * paymentPageSize + 1} - ${Math.min(
+                        paymentPage * paymentPageSize,
+                        paymentsSorted.length,
+                      )} of ${paymentsSorted.length}`}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -2299,7 +3074,7 @@ const FeesPayments: React.FC = () => {
                       setPaymentPage((prev) => Math.max(1, prev - 1))
                     }
                     disabled={paymentPage === 1}
-                    className="rounded-full border border-slate-200 px-3 py-1 disabled:opacity-50"
+                    className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 font-semibold text-slate-600 shadow-sm disabled:opacity-50"
                   >
                     Prev
                   </button>
@@ -2308,83 +3083,146 @@ const FeesPayments: React.FC = () => {
                       setPaymentPage((prev) => Math.min(paymentPages, prev + 1))
                     }
                     disabled={paymentPage === paymentPages}
-                    className="rounded-full border border-slate-200 px-3 py-1 disabled:opacity-50"
+                    className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 font-semibold text-slate-600 shadow-sm disabled:opacity-50"
                   >
                     Next
                   </button>
                 </div>
               </div>
+              </div>
             </div>
 
             <div className="space-y-6">
-              <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+              <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.14),_transparent_35%),radial-gradient(circle_at_80%_20%,_rgba(14,165,233,0.12),_transparent_32%)]" />
+                <div className="relative">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-slate-900">
-                    Quick Actions
-                  </h3>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      Workspace
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                      Quick Actions
+                    </h3>
+                  </div>
                   <BarChart3 size={18} className="text-slate-400" />
                 </div>
-                <div className="mt-4 grid gap-3">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <button
                     onClick={() => setShowOnboardingWizard(true)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700"
+                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-indigo-200/80 bg-gradient-to-br from-indigo-50 via-white to-sky-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <Users size={16} /> Onboarding Setup
+                    <Users size={18} className="text-indigo-600" />
+                    <span className="font-semibold text-slate-900">
+                      Onboarding Setup
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Configure migration mode and opening balances.
+                    </span>
                   </button>
                   <button
                     onClick={() => scrollToSection(feeSetupRef)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700"
+                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-amber-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <Plus size={16} /> Add Fee
+                    <Plus size={18} className="text-rose-600" />
+                    <span className="font-semibold text-slate-900">
+                      Add Fee
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Create a fee structure and assign it into ledgers.
+                    </span>
                   </button>
                   <button
                     onClick={() => scrollToSection(recordPaymentRef)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700"
+                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <Banknote size={16} /> Record Payment
+                    <Banknote size={18} className="text-emerald-600" />
+                    <span className="font-semibold text-slate-900">
+                      Record Payment
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Capture a receipt and update balances instantly.
+                    </span>
                   </button>
                   <button
                     onClick={handleExportReport}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700"
+                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-orange-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <Download size={16} /> Export Report
+                    <Download size={18} className="text-amber-600" />
+                    <span className="font-semibold text-slate-900">
+                      Export Report
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Download the latest finance snapshot for review.
+                    </span>
                   </button>
+                </div>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+              <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,197,94,0.12),_transparent_32%),radial-gradient(circle_at_80%_20%,_rgba(59,130,246,0.1),_transparent_30%)]" />
+                <div className="relative">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-slate-900">
-                    Top Class Collections
-                  </h3>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      Class leaderboard
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                      Top Class Collections
+                    </h3>
+                  </div>
                   <PieChart size={18} className="text-slate-400" />
                 </div>
                 <div className="mt-4 space-y-3">
                   {loading ? (
                     Array.from({ length: 4 }).map((_, index) => (
-                      <SkeletonBlock key={index} className="h-10" />
+                      <SkeletonBlock key={index} className="h-16" />
                     ))
                   ) : classCollection.length === 0 ? (
-                    <p className="text-sm text-slate-400">
+                    <p className="rounded-[20px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-sm text-slate-400">
                       No collections recorded yet.
                     </p>
                   ) : (
-                    classCollection.map((item) => (
+                    classCollection.map((item, index) => (
                       <div
                         key={item.label}
-                        className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2 text-sm"
+                        className="rounded-[22px] border border-white/80 bg-white/86 px-4 py-3 shadow-sm"
                       >
-                        <span className="text-slate-600">{item.label}</span>
-                        <span className="font-semibold text-slate-800">
-                          {formatMoney(item.value)}
-                        </span>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                              {index + 1}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">
+                                {item.label}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                Share of best class
+                              </p>
+                            </div>
+                          </div>
+                          <span className="font-semibold text-slate-800">
+                            {formatMoney(item.value)}
+                          </span>
+                        </div>
+                        <div className="mt-3 h-2.5 rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-cyan-500 to-blue-500"
+                            style={{
+                              width: `${classCollectionPeak ? Math.max((item.value / classCollectionPeak) * 100, 8) : 0}%`,
+                            }}
+                          />
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
+                </div>
               </div>
 
-              <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur">
+              <div className={`${DASH_PANEL} p-5`}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -2394,14 +3232,14 @@ const FeesPayments: React.FC = () => {
                       One-click reports
                     </h3>
                   </div>
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500 shadow-sm">
                     Ready to download
                   </span>
                 </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="mt-4 grid grid-cols-1 gap-3">
                   <button
                     onClick={handleExportDefaulters}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600"
+                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-rose-200/80 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
                     disabled={activeQuickExport === "defaulters"}
                   >
                     {activeQuickExport === "defaulters" ? (
@@ -2411,13 +3249,21 @@ const FeesPayments: React.FC = () => {
                       </span>
                     ) : (
                       <>
-                        <Download size={14} /> Defaulters list
+                        <span>
+                          <span className="block text-sm font-semibold text-slate-900">
+                            Defaulters list
+                          </span>
+                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                            Students with unpaid or partially paid balances.
+                          </span>
+                        </span>
+                        <Download size={16} />
                       </>
                     )}
                   </button>
                   <button
                     onClick={handleExportWeeklyPayments}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600"
+                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-sky-200/80 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
                     disabled={activeQuickExport === "weekly"}
                   >
                     {activeQuickExport === "weekly" ? (
@@ -2427,13 +3273,21 @@ const FeesPayments: React.FC = () => {
                       </span>
                     ) : (
                       <>
-                        <Download size={14} /> Weekly collections
+                        <span>
+                          <span className="block text-sm font-semibold text-slate-900">
+                            Weekly collections
+                          </span>
+                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                            Recent collection activity grouped by week.
+                          </span>
+                        </span>
+                        <Download size={16} />
                       </>
                     )}
                   </button>
                   <button
                     onClick={handleExportClassCollections}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 sm:col-span-2"
+                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
                     disabled={activeQuickExport === "class"}
                   >
                     {activeQuickExport === "class" ? (
@@ -2443,14 +3297,24 @@ const FeesPayments: React.FC = () => {
                       </span>
                     ) : (
                       <>
-                        <Download size={14} /> By class
+                        <span>
+                          <span className="block text-sm font-semibold text-slate-900">
+                            By class
+                          </span>
+                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                            Collection performance broken down by class.
+                          </span>
+                        </span>
+                        <Download size={16} />
                       </>
                     )}
                   </button>
                 </div>
               </div>
 
-              <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-5 shadow-lg shadow-rose-100/40 backdrop-blur">
+              <div
+                className={`relative overflow-hidden ${DASH_PANEL} p-5`}
+              >
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.12),_transparent_45%),radial-gradient(circle_at_80%_20%,_rgba(14,165,233,0.12),_transparent_45%)]" />
                 <div className="relative">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2462,7 +3326,7 @@ const FeesPayments: React.FC = () => {
                         Helpful tips
                       </h3>
                     </div>
-                    <span className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500">
+                    <span className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500 shadow-sm">
                       Quick guide
                     </span>
                   </div>
@@ -2482,19 +3346,29 @@ const FeesPayments: React.FC = () => {
                       {
                         title: "New students only",
                         description:
-                          "Avoid charging legacy balances when importing existing students.",
+                          "Uses the school reopen date so admission fees apply only to students added for the new term.",
                       },
                       {
                         title: "Export quickly",
                         description:
                           "Use one-click reports for defaulters, weekly, or class totals.",
                       },
-                    ].map((tip) => (
+                    ].map((tip, index) => (
                       <div
                         key={tip.title}
-                        className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 px-4 py-3"
+                        className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm"
                       >
-                        <span className="mt-1 flex h-2 w-2 shrink-0 rounded-full bg-indigo-400" />
+                        <span
+                          className={`mt-1 flex h-2.5 w-2.5 shrink-0 rounded-full ${
+                            index === 0
+                              ? "bg-indigo-500"
+                              : index === 1
+                                ? "bg-amber-500"
+                                : index === 2
+                                  ? "bg-emerald-500"
+                                  : "bg-fuchsia-500"
+                          }`}
+                        />
                         <div>
                           <p className="text-sm font-semibold text-slate-800">
                             {tip.title}
@@ -2514,14 +3388,17 @@ const FeesPayments: React.FC = () => {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div
               ref={feeSetupRef}
-              className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur"
+              className={`relative overflow-hidden ${DASH_PANEL} p-6`}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Billing setup
+                  </p>
+                  <h2 className="mt-1 text-xl font-semibold text-slate-900">
                     Fee Setup
                   </h2>
-                  <p className="text-xs text-slate-500">
+                  <p className="mt-1 text-sm text-slate-500">
                     Define fee types and automatically create ledgers.
                   </p>
                 </div>
@@ -2542,7 +3419,7 @@ const FeesPayments: React.FC = () => {
                         appliesTo: template.value.appliesTo,
                       }));
                     }}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                    className={DASH_INPUT}
                     defaultValue=""
                   >
                     <option value="">Choose a template</option>
@@ -2554,7 +3431,7 @@ const FeesPayments: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3 text-xs text-slate-500">
+              <div className="mt-4 rounded-[24px] border border-slate-200/80 bg-gradient-to-r from-slate-50 via-white to-cyan-50 px-4 py-3 text-xs text-slate-500 shadow-sm">
                 {feeImpactPreview.eligibleCount > 0 ? (
                   <span>
                     This fee will apply to {feeImpactPreview.eligibleCount}{" "}
@@ -2570,11 +3447,11 @@ const FeesPayments: React.FC = () => {
                 )}
               </div>
               {feeHealthChecks.length > 0 && (
-                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-700">
+                <div className="mt-3 rounded-[24px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50 px-4 py-3 text-xs text-amber-700 shadow-sm">
                   <p className="font-semibold">Fee setup warnings</p>
                   <ul className="mt-2 space-y-1">
                     {feeHealthChecks.map((warning) => (
-                      <li key={warning}>• {warning}</li>
+                      <li key={warning}>- {warning}</li>
                     ))}
                   </ul>
                 </div>
@@ -2587,7 +3464,7 @@ const FeesPayments: React.FC = () => {
                     onChange={(e) =>
                       setFeeForm({ ...feeForm, feeName: e.target.value })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                     placeholder="Tuition"
                   />
                 </div>
@@ -2598,7 +3475,7 @@ const FeesPayments: React.FC = () => {
                     onChange={(e) =>
                       setFeeForm({ ...feeForm, amount: e.target.value })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                     placeholder="300"
                   />
                 </div>
@@ -2614,7 +3491,7 @@ const FeesPayments: React.FC = () => {
                         feeFrequency: e.target.value as FeeFrequency,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     {feeFrequencyOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -2633,7 +3510,7 @@ const FeesPayments: React.FC = () => {
                         appliesTo: e.target.value as FeeAppliesTo,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     {feeAppliesToOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -2663,7 +3540,7 @@ const FeesPayments: React.FC = () => {
                         };
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     <option value="">All Classes</option>
                     {CLASSES_LIST.map((cls) => (
@@ -2689,7 +3566,7 @@ const FeesPayments: React.FC = () => {
                           ).map((option) => option.value),
                         })
                       }
-                      className="mt-1 h-32 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      className={`${DASH_INPUT} h-32 py-2`}
                     >
                       {students.map((student) => (
                         <option key={student.id} value={student.id}>
@@ -2715,7 +3592,7 @@ const FeesPayments: React.FC = () => {
                         effectiveFromDate: e.target.value,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   />
                 </div>
                 <div>
@@ -2726,7 +3603,7 @@ const FeesPayments: React.FC = () => {
                     onChange={(e) =>
                       setFeeForm({ ...feeForm, dueDate: e.target.value })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   />
                 </div>
                 {feeForm.feeFrequency === "per_year" && (
@@ -2742,7 +3619,7 @@ const FeesPayments: React.FC = () => {
                           applyToAcademicYear: e.target.value,
                         })
                       }
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      className={DASH_INPUT}
                       placeholder={academicYear}
                     />
                   </div>
@@ -2760,7 +3637,7 @@ const FeesPayments: React.FC = () => {
                           applyToTerm: e.target.value as FeeTerm,
                         })
                       }
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      className={DASH_INPUT}
                     >
                       <option value="">Use current term</option>
                       {termOptions.map((opt) => (
@@ -2777,7 +3654,7 @@ const FeesPayments: React.FC = () => {
                       <button
                         onClick={handleUpdateFee}
                         disabled={isUpdatingFee}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#4f46e5_0%,#2563eb_100%)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {isUpdatingFee ? (
                           <span className="flex items-center gap-2">
@@ -2805,7 +3682,7 @@ const FeesPayments: React.FC = () => {
                             applyToTerm: "",
                           });
                         }}
-                        className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"
+                        className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm"
                       >
                         Cancel
                       </button>
@@ -2814,7 +3691,7 @@ const FeesPayments: React.FC = () => {
                     <button
                       onClick={handleCreateFee}
                       disabled={isCreatingFee}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#059669_0%,#10b981_100%)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
                     >
                       {isCreatingFee ? (
                         <span className="flex items-center gap-2">
@@ -2932,12 +3809,15 @@ const FeesPayments: React.FC = () => {
 
             <div
               ref={recordPaymentRef}
-              className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur"
+              className={`relative overflow-hidden ${DASH_PANEL} p-6`}
             >
-              <h2 className="text-lg font-semibold text-slate-900">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                Cash capture
+              </p>
+              <h2 className="mt-1 text-xl font-semibold text-slate-900">
                 Record Payment
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="mt-1 text-sm text-slate-500">
                 Capture receipts and update balances instantly.
               </p>
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -2950,9 +3830,10 @@ const FeesPayments: React.FC = () => {
                         ...paymentForm,
                         classId: e.target.value,
                         studentId: "",
+                        feeId: "",
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     <option value="">All Classes</option>
                     {CLASSES_LIST.map((cls) => (
@@ -2970,9 +3851,10 @@ const FeesPayments: React.FC = () => {
                       setPaymentForm({
                         ...paymentForm,
                         studentId: e.target.value,
+                        feeId: "",
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     <option value="">Select student</option>
                     {students
@@ -2995,18 +3877,56 @@ const FeesPayments: React.FC = () => {
                     onChange={(e) =>
                       setPaymentForm({ ...paymentForm, feeId: e.target.value })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
+                    disabled={!paymentForm.studentId}
                   >
-                    <option value="">Select fee</option>
-                    {fees.map((fee) => (
+                    <option value="">
+                      {paymentForm.studentId ? "Select fee" : "Select student first"}
+                    </option>
+                    {availablePaymentFees.map((fee) => (
                       <option key={fee.id} value={fee.id}>
                         {fee.feeName}
                       </option>
                     ))}
                   </select>
+                  {paymentForm.studentId && availablePaymentFees.length === 0 && (
+                    <div className="mt-2 rounded-[20px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50 px-3.5 py-3 text-[11px] text-amber-800 shadow-sm">
+                      <p className="font-semibold text-amber-900">
+                        No fee is available for this student yet.
+                      </p>
+                      {unavailableCurrentScopeFees.length > 0 ? (
+                        <ul className="mt-2 space-y-1">
+                          {unavailableCurrentScopeFees.map((item) => (
+                            <li key={item.id}>
+                              - {item.feeName}: {item.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-2">
+                          No fee in the current finance view matches this
+                          student.
+                        </p>
+                      )}
+                      {matchingOtherScopeFees.length > 0 && (
+                        <div className="mt-2 border-t border-amber-200/80 pt-2">
+                          <p className="font-semibold text-amber-900">
+                            Available in another scope
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {matchingOtherScopeFees.map((item) => (
+                              <li key={item.id}>
+                                - {item.feeName} is set for {item.scope}.
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {recordPaymentSummary && (
-                  <div className="sm:col-span-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs text-slate-600">
+                  <div className="sm:col-span-2 rounded-[24px] border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-xs text-slate-600 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-[10px] uppercase tracking-[0.2em] text-indigo-500">
@@ -3015,7 +3935,7 @@ const FeesPayments: React.FC = () => {
                         <p className="mt-1 text-sm font-semibold text-slate-900">
                           Paid so far:{" "}
                           {formatMoney(recordPaymentSummary.totalPaid)}
-                          <span className="mx-2 text-slate-400">•</span>
+                          <span className="mx-2 text-slate-400">/</span>
                           Remaining:{" "}
                           {formatMoney(recordPaymentSummary.remaining)}
                         </p>
@@ -3036,7 +3956,7 @@ const FeesPayments: React.FC = () => {
                         amountPaid: e.target.value,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                     placeholder="150"
                   />
                 </div>
@@ -3052,7 +3972,7 @@ const FeesPayments: React.FC = () => {
                         paymentMethod: e.target.value as PaymentMethod,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                   >
                     {paymentMethods.map((method) => (
                       <option key={method} value={method}>
@@ -3073,7 +3993,7 @@ const FeesPayments: React.FC = () => {
                         receiptNumber: e.target.value,
                       })
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    className={DASH_INPUT}
                     placeholder="Optional"
                   />
                 </div>
@@ -3081,7 +4001,7 @@ const FeesPayments: React.FC = () => {
                   <button
                     onClick={handleRecordPayment}
                     disabled={isRecordingPayment}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_45%,#0ea5e9_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_20px_40px_-28px_rgba(11,74,130,0.85)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_44px_-26px_rgba(11,74,130,0.78)] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {isRecordingPayment ? (
                       <span className="flex items-center gap-2">
@@ -3099,21 +4019,24 @@ const FeesPayments: React.FC = () => {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+          <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  Ledger intelligence
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-slate-900">
                   Student Ledgers
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="mt-1 text-sm text-slate-500">
                   Balances are computed from payments in real time.
                 </p>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-500">
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-xs text-slate-500 shadow-sm">
                 <Filter size={14} /> {filteredLedgerRows.length} records
               </div>
             </div>
-            <div className="mt-4 overflow-x-auto">
+            <div className="mt-4 overflow-x-auto rounded-[24px] border border-white/80 bg-white/70 p-2 shadow-sm">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="text-xs uppercase text-slate-400">
@@ -3208,7 +4131,7 @@ const FeesPayments: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
               <h2 className="text-lg font-semibold text-slate-900">
                 Defaulters
               </h2>
@@ -3248,20 +4171,20 @@ const FeesPayments: React.FC = () => {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Finance onboarding
                   </p>
-                  <h2 className="text-lg font-semibold text-slate-900">
+                  <h2 className="mt-1 text-xl font-semibold text-slate-900">
                     Onboarding Setup
                   </h2>
-                  <p className="text-xs text-slate-500">
+                  <p className="mt-1 text-sm text-slate-500">
                     Configure onboarding mode, date, and opening balances.
                   </p>
                 </div>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500">
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500 shadow-sm">
                   {onboardingMode === "fresh_start"
                     ? "Fresh start"
                     : "Full history"}
@@ -3293,13 +4216,13 @@ const FeesPayments: React.FC = () => {
 
               <button
                 onClick={() => setShowOnboardingWizard(true)}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
               >
                 <Users size={16} /> Open Onboarding Wizard
               </button>
             </div>
 
-            <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-6 shadow-lg shadow-rose-100/40 backdrop-blur">
+            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(244,114,182,0.18),_transparent_45%),radial-gradient(circle_at_80%_20%,_rgba(251,191,36,0.18),_transparent_45%)]" />
               <div className="relative">
                 <div className="flex items-start justify-between gap-4">
@@ -3307,10 +4230,10 @@ const FeesPayments: React.FC = () => {
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                       Insights
                     </p>
-                    <h2 className="text-lg font-semibold text-slate-900">
+                    <h2 className="mt-1 text-xl font-semibold text-slate-900">
                       Finance Signals
                     </h2>
-                    <p className="text-xs text-slate-500">
+                    <p className="mt-1 text-sm text-slate-500">
                       Quick narrative insights for leadership.
                     </p>
                   </div>
@@ -3323,21 +4246,12 @@ const FeesPayments: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3 text-xs text-slate-500">
+                <div className="mt-4 rounded-[24px] border border-slate-100 bg-white/75 px-4 py-3 text-xs text-slate-500 shadow-sm">
                   <p className="font-semibold text-slate-600">Quick guide</p>
                   <ul className="mt-2 space-y-1">
-                    <li>
-                      • Fresh start uses opening balances to represent past
-                      payments.
-                    </li>
-                    <li>
-                      • Full history is for schools importing all old
-                      transactions.
-                    </li>
-                    <li>
-                      • The onboarding date separates “since onboarding” from
-                      “all-time” totals.
-                    </li>
+                    <li>- Fresh start uses opening balances to represent past payments.</li>
+                    <li>- Full history is for schools importing all old transactions.</li>
+                    <li>- The onboarding date separates since onboarding totals from all-time totals.</li>
                   </ul>
                 </div>
 
@@ -3759,7 +4673,7 @@ const FeesPayments: React.FC = () => {
                         new students to avoid inflating expected balances.
                       </p>
                       <div className="mt-4 rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-400">
-                        Tip: Set Admission fee as One-time + New students only.
+                        Tip: Set Admission fee as One-time + New students only to charge only students added on or after the school reopen date.
                       </div>
                     </div>
                   )}

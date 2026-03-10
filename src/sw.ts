@@ -1,7 +1,16 @@
 import { cleanupOutdatedCaches, precacheAndRoute } from "workbox-precaching";
 import { clientsClaim } from "workbox-core";
 
-declare let self: ServiceWorkerGlobalScope;
+interface SchoolManagerServiceWorkerGlobalScope
+  extends ServiceWorkerGlobalScope {
+  skipWaiting(): void;
+  __WB_MANIFEST: Array<{
+    revision: string | null;
+    url: string;
+  }>;
+}
+
+declare let self: SchoolManagerServiceWorkerGlobalScope;
 
 self.skipWaiting();
 clientsClaim();

@@ -41,6 +41,9 @@ import {
   PaymentMethod,
   FinanceSettings,
   School,
+  BackupType,
+  RecoveryCollectionName,
+  RecoveryCollectionScope,
 } from "../types";
 import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
 import { logActivity } from "./activityLog";
@@ -55,6 +58,8 @@ import {
 } from "../constants";
 
 class FirestoreService {
+  private actorRoleCache: { uid: string; role: UserRole | null } | null = null;
+
   // Helper to get array from collection
   private async getCollection<T>(collectionName: string): Promise<T[]> {
     const querySnapshot = await getDocs(collection(firestore, collectionName));
@@ -68,11 +73,36 @@ class FirestoreService {
     return schoolId;
   }
 
+  private async getCurrentActorRole(): Promise<UserRole | null> {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return null;
+    if (this.actorRoleCache?.uid === uid) {
+      return this.actorRoleCache.role;
+    }
+
+    try {
+      const userSnap = await getDoc(doc(firestore, "users", uid));
+      const role = userSnap.exists()
+        ? (((userSnap.data() as User).role as UserRole | undefined) ?? null)
+        : null;
+      this.actorRoleCache = { uid, role };
+      return role;
+    } catch (error) {
+      console.warn("Failed to resolve actor role for feature access", error);
+      return null;
+    }
+  }
+
+  private async isSuperAdminActor(): Promise<boolean> {
+    return (await this.getCurrentActorRole()) === UserRole.SUPER_ADMIN;
+  }
+
   private async requireFeature(
     schoolId?: string,
     feature?: FeatureKey,
   ): Promise<void> {
     if (!feature) return;
+    if (await this.isSuperAdminActor()) return;
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       `requireFeature(${feature})`,
@@ -92,6 +122,7 @@ class FirestoreService {
     features: FeatureKey[] = [],
   ): Promise<void> {
     if (!features.length) return;
+    if (await this.isSuperAdminActor()) return;
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       `requireFeatures(${features.join(",")})`,
@@ -121,6 +152,483 @@ class FirestoreService {
     );
     const snap = await getDocs(q);
     return snap.docs.map((doc) => doc.data() as T);
+  }
+
+  private stripUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => this.stripUndefinedDeep(item))
+        .filter((item) => item !== undefined) as T;
+    }
+
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return value;
+    }
+
+    const cleaned = Object.entries(value as Record<string, unknown>).reduce(
+      (acc, [key, entryValue]) => {
+        if (entryValue === undefined) {
+          return acc;
+        }
+        acc[key] = this.stripUndefinedDeep(entryValue);
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
+
+    return cleaned as T;
+  }
+
+  private async commitChunkedOperations(
+    operations: Array<(batch: ReturnType<typeof writeBatch>) => void>,
+    chunkSize = 350,
+  ): Promise<void> {
+    if (!operations.length) return;
+
+    for (let index = 0; index < operations.length; index += chunkSize) {
+      const batch = writeBatch(firestore);
+      operations.slice(index, index + chunkSize).forEach((operation) => {
+        operation(batch);
+      });
+      await batch.commit();
+    }
+  }
+
+  private async replaceSchoolScopedCollection<T extends { schoolId?: string }>(
+    collectionName: string,
+    schoolId: string,
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const scopedRows = rows.filter(Boolean);
+    const existing = await getDocs(
+      query(collection(firestore, collectionName), where("schoolId", "==", schoolId)),
+    );
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+    existing.docs.forEach((docSnap) => {
+      operations.push((batch) => batch.delete(docSnap.ref));
+    });
+
+    scopedRows.forEach((row) => {
+      const normalizedRow = { ...row, schoolId } as T;
+      operations.push((batch) =>
+        batch.set(doc(firestore, collectionName, resolveId(normalizedRow)), normalizedRow),
+      );
+    });
+
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async replaceCollectionAtPath<T>(
+    collectionPath: string[],
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const collectionRef = collection(firestore, collectionPath.join("/"));
+    const existing = await getDocs(collectionRef);
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+    existing.docs.forEach((docSnap) => {
+      operations.push((batch) => batch.delete(docSnap.ref));
+    });
+
+    rows.filter(Boolean).forEach((row) => {
+      operations.push((batch) =>
+        batch.set(doc(collectionRef, resolveId(row)), row as any),
+      );
+    });
+
+    await this.commitChunkedOperations(operations);
+  }
+
+  private generateBackupId(prefix = "backup"): string {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private isFullBackupType(backupType?: BackupType | null): boolean {
+    return (
+      !backupType ||
+      backupType === "manual" ||
+      backupType === "term-reset" ||
+      backupType === "safety-restore"
+    );
+  }
+
+  private async getRecordsByIds<T>(
+    collectionName: string,
+    ids: string[] = [],
+  ): Promise<T[]> {
+    if (!ids.length) return [];
+    const records = await Promise.all(
+      ids.map(async (id) => {
+        const snap = await getDoc(doc(firestore, collectionName, id));
+        return snap.exists() ? (snap.data() as T) : null;
+      }),
+    );
+    return records.filter(Boolean) as T[];
+  }
+
+  private async upsertSchoolScopedCollection<T extends { schoolId?: string }>(
+    collectionName: string,
+    schoolId: string,
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const operations = rows.filter(Boolean).map(
+      (row) => (batch: ReturnType<typeof writeBatch>) =>
+        batch.set(
+          doc(firestore, collectionName, resolveId(row)),
+          { ...row, schoolId } as T,
+        ),
+    );
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async upsertCollectionAtPath<T>(
+    collectionPath: string[],
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const collectionRef = collection(firestore, collectionPath.join("/"));
+    const operations = rows.filter(Boolean).map(
+      (row) => (batch: ReturnType<typeof writeBatch>) =>
+        batch.set(doc(collectionRef, resolveId(row)), row as any),
+    );
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async getSchoolRecoveryContext(schoolId: string): Promise<{
+    schoolName: string;
+    term: string;
+    academicYear: string;
+  }> {
+    try {
+      const config = await this.getSchoolConfig(schoolId);
+      return {
+        schoolName: config.schoolName || "",
+        term: config.currentTerm || "Recovery Snapshot",
+        academicYear: config.academicYear || "Unknown",
+      };
+    } catch {
+      return {
+        schoolName: "",
+        term: "Recovery Snapshot",
+        academicYear: "Unknown",
+      };
+    }
+  }
+
+  private async createSnapshotRecord(params: {
+    schoolId: string;
+    backupType: BackupType;
+    title?: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections?: RecoveryCollectionScope[];
+    data?: Backup["data"];
+    dedupeKey?: string;
+    expiresAt?: number | null;
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    const context =
+      params.term && params.academicYear && params.schoolName !== undefined
+        ? {
+            term: params.term,
+            academicYear: params.academicYear,
+            schoolName: params.schoolName,
+          }
+        : await this.getSchoolRecoveryContext(params.schoolId);
+
+    const backup = this.stripUndefinedDeep<Backup>({
+      id: this.generateBackupId("backup"),
+      schoolId: params.schoolId,
+      schoolName: params.schoolName ?? context.schoolName,
+      timestamp: Date.now(),
+      term: params.term ?? context.term,
+      academicYear: params.academicYear ?? context.academicYear,
+      backupType: params.backupType,
+      dedupeKey: params.dedupeKey,
+      recoveryMeta: this.isFullBackupType(params.backupType)
+        ? undefined
+        : {
+            title: params.title || "Recovery snapshot",
+            description: params.description,
+            sourceAction: params.sourceAction,
+            sourceModule: params.sourceModule,
+            entityType: params.entityType,
+            entityId: params.entityId,
+            entityLabel: params.entityLabel,
+            recordCount: params.recordCount,
+            collections: params.collections,
+            expiresAt: params.expiresAt ?? null,
+          },
+      data: params.data,
+    });
+
+    await setDoc(doc(firestore, "backups", backup.id), backup);
+    return backup;
+  }
+
+  private async createRecoveryPoint(params: {
+    schoolId: string;
+    title: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections: RecoveryCollectionScope[];
+    data: Backup["data"];
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    return this.createSnapshotRecord({
+      ...params,
+      backupType: "recovery-point",
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private async createRecycleBinEntry(params: {
+    schoolId: string;
+    title: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections: RecoveryCollectionScope[];
+    data: Backup["data"];
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    return this.createSnapshotRecord({
+      ...params,
+      backupType: "recycle-bin",
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private async buildCurrentSnapshotForScopes(
+    schoolId: string,
+    scopes: RecoveryCollectionScope[] = [],
+  ): Promise<NonNullable<Backup["data"]>> {
+    const snapshot: NonNullable<Backup["data"]> = {};
+
+    for (const scope of scopes) {
+      switch (scope.collection) {
+        case "settings":
+          snapshot.schoolSettings = await this.getSchoolConfig(schoolId);
+          break;
+        case "students":
+          snapshot.students = await this.getRecordsByIds<Student>(
+            "students",
+            scope.recordIds,
+          );
+          break;
+        case "teacher_attendance":
+          snapshot.teacherAttendanceRecords =
+            await this.getRecordsByIds<TeacherAttendanceRecord>(
+              "teacher_attendance",
+              scope.recordIds,
+            );
+          break;
+        case "users":
+          snapshot.users = await this.getRecordsByIds<User>(
+            "users",
+            scope.recordIds,
+          );
+          break;
+        case "class_subjects":
+          snapshot.classSubjects = await this.getRecordsByIds<ClassSubjectConfig>(
+            "class_subjects",
+            scope.recordIds,
+          );
+          break;
+        case "notices":
+          snapshot.notices = await this.getRecordsByIds<Notice>(
+            "notices",
+            scope.recordIds,
+          );
+          break;
+        case "admin_notifications":
+          snapshot.adminNotifications =
+            await this.getRecordsByIds<SystemNotification>(
+              "admin_notifications",
+              scope.recordIds,
+            );
+          break;
+        default:
+          break;
+      }
+    }
+
+    return snapshot;
+  }
+
+  private async restoreSnapshotScopes(
+    schoolId: string,
+    snapshot: Backup,
+  ): Promise<void> {
+    const scopes = snapshot.recoveryMeta?.collections || [];
+    const data = snapshot.data || {};
+
+    for (const scope of scopes) {
+      switch (scope.collection) {
+        case "settings": {
+          const settings = data.schoolSettings || data.schoolConfig;
+          if (settings) {
+            await setDoc(
+              doc(firestore, "settings", schoolId),
+              { ...settings, schoolId },
+              { merge: false },
+            );
+          }
+          break;
+        }
+        case "students":
+          await this.upsertSchoolScopedCollection(
+            "students",
+            schoolId,
+            data.students || [],
+            (row) => row.id,
+          );
+          break;
+        case "teacher_attendance":
+          await this.upsertSchoolScopedCollection(
+            "teacher_attendance",
+            schoolId,
+            data.teacherAttendanceRecords || [],
+            (row) => row.id,
+          );
+          break;
+        case "users":
+          await this.upsertSchoolScopedCollection(
+            "users",
+            schoolId,
+            data.users || [],
+            (row) => row.id,
+          );
+          break;
+        case "class_subjects":
+          await this.upsertSchoolScopedCollection(
+            "class_subjects",
+            schoolId,
+            data.classSubjects || [],
+            (row) => `${schoolId}_${row.classId}`,
+          );
+          break;
+        case "notices":
+          await this.upsertSchoolScopedCollection(
+            "notices",
+            schoolId,
+            data.notices || [],
+            (row) => row.id,
+          );
+          break;
+        case "admin_notifications":
+          await this.upsertSchoolScopedCollection(
+            "admin_notifications",
+            schoolId,
+            data.adminNotifications || [],
+            (row) => row.id,
+          );
+          break;
+        case "fees": {
+          const rows = data.fees || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const feePath = useV2 ? ["schools", schoolId, "fees"] : ["fees"];
+          await this.upsertCollectionAtPath(
+            feePath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "student_ledgers": {
+          const rows = data.studentLedgers || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const ledgerPath = useV2
+            ? ["schools", schoolId, "feeLedgers"]
+            : ["student_ledgers"];
+          await this.upsertCollectionAtPath(
+            ledgerPath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "payments": {
+          const rows = data.payments || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const paymentPath = useV2
+            ? ["schools", schoolId, "payments"]
+            : ["payments"];
+          await this.upsertCollectionAtPath(
+            paymentPath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "finance_settings":
+          if (data.financeSettings) {
+            await setDoc(
+              doc(firestore, "schools", schoolId, "financeSettings", "main"),
+              { ...data.financeSettings, schoolId },
+              { merge: true },
+            );
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  private shouldRunAutomaticTermTransition(config: SchoolConfig): boolean {
+    if (
+      !config.vacationDate ||
+      !config.nextTermBegins ||
+      config.termTransitionProcessed
+    ) {
+      return false;
+    }
+
+    const vacationDate = new Date(`${config.vacationDate}T00:00:00`);
+    const nextTermDate = new Date(`${config.nextTermBegins}T00:00:00`);
+    if (
+      Number.isNaN(vacationDate.getTime()) ||
+      Number.isNaN(nextTermDate.getTime())
+    ) {
+      return false;
+    }
+
+    vacationDate.setHours(0, 0, 0, 0);
+    nextTermDate.setHours(0, 0, 0, 0);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return today >= vacationDate && today >= nextTermDate;
   }
 
   async getFinanceSettings(schoolId?: string): Promise<FinanceSettings> {
@@ -156,24 +664,19 @@ class FirestoreService {
       const data = snap.data() as SchoolConfig;
       const config = { ...data, schoolId: scopedSchoolId };
 
-      if (config.nextTermBegins && !config.termTransitionProcessed) {
-        const nextTermDate = new Date(config.nextTermBegins + "T00:00:00");
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        if (!Number.isNaN(nextTermDate.getTime()) && today >= nextTermDate) {
-          const resetConfig = {
-            ...config,
-            schoolReopenDate:
-              config.nextTermBegins || config.schoolReopenDate || "",
+      if (this.shouldRunAutomaticTermTransition(config)) {
+        const resetConfig = {
+          ...config,
+          schoolReopenDate:
+            config.nextTermBegins || config.schoolReopenDate || "",
+        };
+        await this.resetForNewTerm(resetConfig);
+        const refreshed = await getDoc(docRef);
+        if (refreshed.exists()) {
+          return {
+            ...(refreshed.data() as SchoolConfig),
+            schoolId: scopedSchoolId,
           };
-          await this.resetForNewTerm(resetConfig);
-          const refreshed = await getDoc(docRef);
-          if (refreshed.exists()) {
-            return {
-              ...(refreshed.data() as SchoolConfig),
-              schoolId: scopedSchoolId,
-            };
-          }
         }
       }
 
@@ -304,6 +807,51 @@ class FirestoreService {
         data.schoolId || undefined,
         "teacher_management",
       );
+      if (data.schoolId) {
+        let relatedAttendance: TeacherAttendanceRecord[] = [];
+        try {
+          const teacherAttendanceRecords =
+            await this.getAllTeacherAttendanceRecords(data.schoolId);
+          relatedAttendance = teacherAttendanceRecords.filter(
+            (record) => record.teacherId === id,
+          );
+        } catch (attendanceError) {
+          console.warn(
+            "Skipping teacher attendance snapshot for recycle bin entry",
+            attendanceError,
+          );
+        }
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted teacher: ${data.fullName || data.email || id}`,
+          description:
+            "Restores the deleted teacher profile and linked attendance records.",
+          sourceAction: "teacher_deleted",
+          sourceModule: "Teachers",
+          entityType: "teacher",
+          entityId: id,
+          entityLabel: data.fullName || data.email || id,
+          recordCount: 1 + relatedAttendance.length,
+          collections: [
+            {
+              collection: "users",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Teacher profile",
+            },
+            {
+              collection: "teacher_attendance",
+              restoreMode: "merge",
+              recordIds: relatedAttendance.map((record) => record.id),
+              label: "Teacher attendance",
+            },
+          ],
+          data: {
+            users: [data],
+            teacherAttendanceRecords: relatedAttendance,
+          },
+        });
+      }
     }
     await deleteDoc(doc(firestore, "users", id));
   }
@@ -340,7 +888,10 @@ class FirestoreService {
   async addStudent(student: Student): Promise<void> {
     await this.requireFeature(student.schoolId, "student_management");
     this.requireSchoolId(student.schoolId, "addStudent");
-    await setDoc(doc(firestore, "students", student.id), student);
+    await setDoc(doc(firestore, "students", student.id), {
+      ...student,
+      createdAt: student.createdAt ?? Date.now(),
+    });
   }
 
   async updateStudent(student: Student): Promise<void> {
@@ -362,6 +913,35 @@ class FirestoreService {
       "updateStudentsClassBulk",
     );
     if (!updates.length) return;
+    const studentIds = updates.map((update) => update.id);
+    const currentStudents = await this.getRecordsByIds<Student>(
+      "students",
+      studentIds,
+    );
+
+    if (currentStudents.length > 0) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Before bulk class update (${currentStudents.length} students)`,
+        description:
+          "Restores student class assignments before a bulk class change.",
+        sourceAction: "students_class_bulk_update",
+        sourceModule: "Students",
+        entityType: "students",
+        recordCount: currentStudents.length,
+        collections: [
+          {
+            collection: "students",
+            restoreMode: "merge",
+            recordIds: currentStudents.map((student) => student.id),
+            label: "Students",
+          },
+        ],
+        data: {
+          students: currentStudents,
+        },
+      });
+    }
 
     const batch = writeBatch(firestore);
     updates.forEach((update) => {
@@ -382,6 +962,30 @@ class FirestoreService {
         data.schoolId || undefined,
         "student_management",
       );
+      if (data.schoolId) {
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted student: ${data.name}`,
+          description: "Restores a deleted student record.",
+          sourceAction: "student_deleted",
+          sourceModule: "Students",
+          entityType: "student",
+          entityId: id,
+          entityLabel: data.name,
+          recordCount: 1,
+          collections: [
+            {
+              collection: "students",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Student",
+            },
+          ],
+          data: {
+            students: [data],
+          },
+        });
+      }
     }
     await deleteDoc(doc(firestore, "students", id));
   }
@@ -454,6 +1058,37 @@ class FirestoreService {
     await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "deleteSubject");
     const current = await this.getSubjects(scopedSchoolId, classId);
+    if (current.includes(name)) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Before removing subject: ${name}`,
+        description:
+          "Restores the subject list for this class before a subject was removed.",
+        sourceAction: "subject_deleted",
+        sourceModule: "System Settings",
+        entityType: "subject",
+        entityId: `${classId}:${name}`,
+        entityLabel: name,
+        recordCount: 1,
+        collections: [
+          {
+            collection: "class_subjects",
+            restoreMode: "merge",
+            recordIds: [`${scopedSchoolId}_${classId}`],
+            label: "Class subjects",
+          },
+        ],
+        data: {
+          classSubjects: [
+            {
+              schoolId: scopedSchoolId,
+              classId,
+              subjects: current,
+            },
+          ],
+        },
+      });
+    }
     const updated = current.filter((s) => s !== name);
     await setDoc(
       doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
@@ -696,6 +1331,30 @@ class FirestoreService {
     if (existing.exists()) {
       const data = existing.data() as Notice;
       await this.requireFeature(data.schoolId || undefined, "admin_dashboard");
+      if (data.schoolId) {
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted notice: ${data.date}`,
+          description: "Restores a deleted school notice.",
+          sourceAction: "notice_deleted",
+          sourceModule: "System Settings",
+          entityType: "notice",
+          entityId: id,
+          entityLabel: data.message,
+          recordCount: 1,
+          collections: [
+            {
+              collection: "notices",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Notice",
+            },
+          ],
+          data: {
+            notices: [data],
+          },
+        });
+      }
     }
     await deleteDoc(doc(firestore, "notices", id));
   }
@@ -1360,7 +2019,11 @@ class FirestoreService {
     currentConfig: SchoolConfig,
     currentTerm: string,
     academicYear: string,
-    options?: { dedupeKey?: string },
+    options?: {
+      dedupeKey?: string;
+      backupType?: "term-reset" | "manual" | "safety-restore";
+      allowExisting?: boolean;
+    },
   ): Promise<void> {
     await this.requireFeature(currentConfig.schoolId, "backups");
     console.log(`Creating backup for ${currentTerm}, ${academicYear}...`);
@@ -1370,23 +2033,73 @@ class FirestoreService {
         currentConfig.schoolId,
         "createTermBackup",
       );
+      const backupType = options?.backupType || "term-reset";
       const dedupeKey =
-        options?.dedupeKey || `${schoolId}_${currentTerm}_${academicYear}`;
-      const existingSnap = await getDocs(
-        query(
-          collection(firestore, "backups"),
-          where("schoolId", "==", schoolId),
-          where("term", "==", currentTerm),
-          where("academicYear", "==", academicYear),
-          where("backupType", "==", "term-reset"),
-        ),
-      );
-      if (!existingSnap.empty) {
-        console.log(
-          `Backup already exists for ${currentTerm}, ${academicYear}. Skipping.`,
-        );
-        return;
+        options?.dedupeKey ||
+        `${backupType}_${schoolId}_${currentTerm}_${academicYear}`;
+      if (backupType === "term-reset" && !options?.allowExisting) {
+        try {
+          const existingSnap = await getDocs(
+            query(
+              collection(firestore, "backups"),
+              where("schoolId", "==", schoolId),
+              where("term", "==", currentTerm),
+              where("academicYear", "==", academicYear),
+              where("backupType", "==", "term-reset"),
+              limit(1),
+            ),
+          );
+          if (!existingSnap.empty) {
+            console.log(
+              `Backup already exists for ${currentTerm}, ${academicYear}. Skipping.`,
+            );
+            return;
+          }
+        } catch (existingBackupError) {
+          console.warn(
+            "Skipping backup dedupe preflight and continuing with create",
+            existingBackupError,
+          );
+        }
       }
+
+      const feeTerm = currentTerm as FeeTerm;
+      let fees: FeeDefinition[] = [];
+      let studentLedgers: StudentFeeLedger[] = [];
+      let financeSettings: FinanceSettings | null = null;
+      let financePayments: StudentFeePayment[] = [];
+      let activityLogs: any[] = [];
+
+      try {
+        fees = await this.getFees({
+          schoolId,
+          academicYear,
+          term: feeTerm,
+        });
+        studentLedgers = await this.getStudentLedgers({
+          schoolId,
+          academicYear,
+          term: feeTerm,
+        });
+        financePayments = await this.getPayments({
+          schoolId,
+          academicYear,
+          term: feeTerm,
+        });
+        financeSettings = await this.getFinanceSettings(schoolId);
+      } catch (financeError) {
+        console.warn("Skipping finance backup payload", financeError);
+      }
+
+      try {
+        activityLogs = await this.getCollectionBySchoolId<any>(
+          "activity_logs",
+          schoolId,
+        );
+      } catch (activityLogError) {
+        console.warn("Skipping activity log backup payload", activityLogError);
+      }
+
       const [
         students,
         users,
@@ -1399,8 +2112,6 @@ class FirestoreService {
         timetables,
         notices,
         adminNotifications,
-        activityLogs,
-        payments,
       ] = await Promise.all([
         this.getCollectionBySchoolId<Student>("students", schoolId),
         this.getCollectionBySchoolId<User>("users", schoolId),
@@ -1422,8 +2133,6 @@ class FirestoreService {
           "admin_notifications",
           schoolId,
         ),
-        this.getCollectionBySchoolId<any>("activity_logs", schoolId),
-        this.getCollectionBySchoolId<any>("payments", schoolId),
       ]);
 
       const classSubjectsSnap = await getDocs(
@@ -1441,15 +2150,15 @@ class FirestoreService {
         ? (settingsSnap.data() as SchoolConfig)
         : undefined;
 
-      const backup: Backup = {
-        id: `backup_${Date.now()}`,
+      const backup = this.stripUndefinedDeep<Backup>({
+        id: this.generateBackupId("backup"),
         schoolId,
         schoolName:
           currentConfig.schoolName || schoolSettings?.schoolName || "",
         timestamp: Date.now(),
         term: currentTerm,
         academicYear: academicYear,
-        backupType: "term-reset",
+        backupType,
         dedupeKey,
         data: {
           schoolConfig: currentConfig,
@@ -1467,9 +2176,12 @@ class FirestoreService {
           notices,
           adminNotifications,
           activityLogs,
-          payments,
+          payments: financePayments,
+          fees,
+          studentLedgers,
+          financeSettings,
         },
-      };
+      });
 
       await setDoc(doc(firestore, "backups", backup.id), backup);
       console.log(`Backup created successfully: ${backup.id}`);
@@ -1477,13 +2189,14 @@ class FirestoreService {
       await logActivity({
         schoolId,
         actorUid: auth.currentUser?.uid || null,
-        actorRole: "school_admin",
+        actorRole:
+          (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
         eventType: "backup_created",
         entityId: backup.id,
         meta: {
           term: currentTerm,
           academicYear,
-          backupType: "term-reset",
+          backupType,
         },
       });
     } catch (error) {
@@ -1722,6 +2435,48 @@ class FirestoreService {
     return analytics;
   }
   // --- Backups ---
+  private async listBackupRecordsForSchool(
+    schoolId: string,
+  ): Promise<Partial<Backup>[]> {
+    const snap = await getDocs(
+      query(collection(firestore, "backups"), where("schoolId", "==", schoolId)),
+    );
+    return snap.docs
+      .map((docSnap) => docSnap.data() as Partial<Backup>)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }
+
+  private filterBackupRows(
+    rows: Partial<Backup>[],
+    filters: {
+      term?: string;
+      academicYear?: string;
+      date?: string;
+      backupTypes?: BackupType[];
+    } = {},
+  ): Partial<Backup>[] {
+    return rows.filter((row) => {
+      if (filters.term && row.term !== filters.term) return false;
+      if (filters.academicYear && row.academicYear !== filters.academicYear) {
+        return false;
+      }
+      if (
+        filters.backupTypes?.length &&
+        !filters.backupTypes.includes((row.backupType || "manual") as BackupType)
+      ) {
+        return false;
+      }
+      if (filters.date) {
+        const start = new Date(filters.date).getTime();
+        const end = start + 24 * 60 * 60 * 1000 - 1;
+        if ((row.timestamp || 0) < start || (row.timestamp || 0) > end) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
   async getBackups(filters?: {
     schoolId?: string;
     term?: string;
@@ -1733,25 +2488,32 @@ class FirestoreService {
       filters?.schoolId,
       "getBackups",
     );
-    let q: any = query(
-      collection(firestore, "backups"),
-      where("schoolId", "==", scopedSchoolId),
+    const rows = await this.listBackupRecordsForSchool(scopedSchoolId);
+    return this.filterBackupRows(rows, {
+      term: filters?.term,
+      academicYear: filters?.academicYear,
+      date: filters?.date,
+      backupTypes: ["term-reset", "manual", "safety-restore"],
+    });
+  }
+
+  async getRecoveryRecords(filters?: {
+    schoolId?: string;
+    date?: string;
+    backupType?: "recovery-point" | "recycle-bin";
+  }): Promise<Partial<Backup>[]> {
+    await this.requireFeature(filters?.schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(
+      filters?.schoolId,
+      "getRecoveryRecords",
     );
-    const conditions: any[] = [];
-    if (filters?.term) conditions.push(where("term", "==", filters.term));
-    if (filters?.academicYear)
-      conditions.push(where("academicYear", "==", filters.academicYear));
-    if (filters?.date) {
-      const start = new Date(filters.date).getTime();
-      const end = start + 24 * 60 * 60 * 1000 - 1;
-      conditions.push(
-        where("timestamp", ">=", start),
-        where("timestamp", "<=", end),
-      );
-    }
-    if (conditions.length > 0) q = query(q, ...conditions);
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as Partial<Backup>);
+    const rows = await this.listBackupRecordsForSchool(scopedSchoolId);
+    return this.filterBackupRows(rows, {
+      date: filters?.date,
+      backupTypes: filters?.backupType
+        ? [filters.backupType]
+        : ["recovery-point", "recycle-bin"],
+    });
   }
 
   async getBackupDetails(
@@ -1765,6 +2527,295 @@ class FirestoreService {
     if (!snap.exists()) return undefined;
     const data = snap.data() as Backup;
     return data.schoolId === scopedSchoolId ? data : undefined;
+  }
+
+  async restoreBackup(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "restoreBackup");
+    if (!id) {
+      throw new Error("BACKUP_ID_REQUIRED");
+    }
+
+    const backup = await this.getBackupDetails(scopedSchoolId, id);
+    if (!backup?.data) {
+      throw new Error("BACKUP_NOT_FOUND");
+    }
+
+    const currentConfig = await this.getSchoolConfig(scopedSchoolId);
+    await this.createTermBackup(
+      currentConfig,
+      currentConfig.currentTerm,
+      currentConfig.academicYear,
+      {
+        backupType: "safety-restore",
+        allowExisting: true,
+        dedupeKey: `manual_restore_${scopedSchoolId}_${Date.now()}`,
+      },
+    );
+
+    const restoredSettings = {
+      ...(backup.data.schoolSettings || backup.data.schoolConfig || currentConfig),
+      schoolId: scopedSchoolId,
+    } as SchoolConfig;
+
+    await setDoc(doc(firestore, "settings", scopedSchoolId), restoredSettings, {
+      merge: false,
+    });
+
+    await this.replaceSchoolScopedCollection(
+      "students",
+      scopedSchoolId,
+      backup.data.students || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "attendance",
+      scopedSchoolId,
+      backup.data.attendanceRecords || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "teacher_attendance",
+      scopedSchoolId,
+      backup.data.teacherAttendanceRecords || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "assessments",
+      scopedSchoolId,
+      backup.data.assessments || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "student_remarks",
+      scopedSchoolId,
+      backup.data.studentRemarks || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "student_skills",
+      scopedSchoolId,
+      backup.data.studentSkills || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "admin_remarks",
+      scopedSchoolId,
+      backup.data.adminRemarks || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "notices",
+      scopedSchoolId,
+      backup.data.notices || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "admin_notifications",
+      scopedSchoolId,
+      backup.data.adminNotifications || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "timetables",
+      scopedSchoolId,
+      backup.data.timetables || [],
+      (row) => `${scopedSchoolId}_${row.classId}`,
+    );
+    await this.replaceSchoolScopedCollection(
+      "class_subjects",
+      scopedSchoolId,
+      backup.data.classSubjects || [],
+      (row) => `${scopedSchoolId}_${row.classId}`,
+    );
+
+    const useFinanceV2 = await this.useFinanceV2(scopedSchoolId);
+    const financePayments = (backup.data.payments || []).filter(
+      (payment: any) => payment?.studentId,
+    );
+    if (Array.isArray(backup.data.payments)) {
+      if (useFinanceV2) {
+        await this.replaceCollectionAtPath(
+          ["schools", scopedSchoolId, "payments"],
+          financePayments.map((payment: any) => ({
+            ...payment,
+            schoolId: scopedSchoolId,
+          })),
+          (row: any) => row.id || row.reference,
+        );
+      } else {
+        const paymentSnap = await getDocs(
+          query(collection(firestore, "payments"), where("schoolId", "==", scopedSchoolId)),
+        );
+        const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+        paymentSnap.docs.forEach((docSnap) => {
+          if (docSnap.data()?.studentId) {
+            operations.push((batch) => batch.delete(docSnap.ref));
+          }
+        });
+
+        financePayments.forEach((payment: any) => {
+          const normalizedPayment = {
+            ...payment,
+            schoolId: scopedSchoolId,
+          };
+          operations.push((batch) =>
+            batch.set(
+              doc(
+                firestore,
+                "payments",
+                normalizedPayment.id || normalizedPayment.reference,
+              ),
+              normalizedPayment,
+            ),
+          );
+        });
+
+        await this.commitChunkedOperations(operations);
+      }
+    }
+
+    if (backup.data.financeSettings) {
+      await setDoc(
+        doc(firestore, "schools", scopedSchoolId, "financeSettings", "main"),
+        {
+          ...backup.data.financeSettings,
+          schoolId: scopedSchoolId,
+        },
+        { merge: true },
+      );
+    }
+
+    if (backup.data.fees) {
+      const feePath = useFinanceV2
+        ? ["schools", scopedSchoolId, "fees"]
+        : ["fees"];
+      await this.replaceCollectionAtPath(
+        feePath,
+        backup.data.fees.map((fee) => ({
+          ...fee,
+          schoolId: scopedSchoolId,
+        })),
+        (row) => row.id,
+      );
+    }
+
+    if (backup.data.studentLedgers) {
+      const ledgerPath = useFinanceV2
+        ? ["schools", scopedSchoolId, "feeLedgers"]
+        : ["student_ledgers"];
+      await this.replaceCollectionAtPath(
+        ledgerPath,
+        backup.data.studentLedgers.map((ledger) => ({
+          ...ledger,
+          schoolId: scopedSchoolId,
+        })),
+        (row) => row.id,
+      );
+    }
+
+    await logActivity({
+      schoolId: scopedSchoolId,
+      actorUid: auth.currentUser?.uid || null,
+      actorRole:
+        (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      eventType: "backup_restored",
+      entityId: id,
+      meta: {
+        term: backup.term,
+        academicYear: backup.academicYear,
+        backupType: backup.backupType || "manual",
+        module: "Backups",
+      },
+    });
+  }
+
+  async restoreRecoveryRecord(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "restoreRecoveryRecord",
+    );
+    if (!id) {
+      throw new Error("BACKUP_ID_REQUIRED");
+    }
+
+    const snapshot = await this.getBackupDetails(scopedSchoolId, id);
+    if (!snapshot) {
+      throw new Error("BACKUP_NOT_FOUND");
+    }
+    if (
+      snapshot.backupType !== "recovery-point" &&
+      snapshot.backupType !== "recycle-bin"
+    ) {
+      throw new Error("RECOVERY_RECORD_REQUIRED");
+    }
+
+    const scopes = snapshot.recoveryMeta?.collections || [];
+    if (!scopes.length) {
+      throw new Error("RECOVERY_SCOPE_MISSING");
+    }
+
+    const currentSnapshot = await this.buildCurrentSnapshotForScopes(
+      scopedSchoolId,
+      scopes,
+    );
+
+    if (Object.keys(currentSnapshot).length > 0) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Safety snapshot before restoring ${snapshot.recoveryMeta?.title || "recovery record"}`,
+        description:
+          "Automatically captured before replaying a recovery record.",
+        sourceAction: "restore_recovery_record",
+        sourceModule: "Recovery Center",
+        entityType: snapshot.recoveryMeta?.entityType,
+        entityId: snapshot.recoveryMeta?.entityId,
+        entityLabel: snapshot.recoveryMeta?.entityLabel,
+        recordCount:
+          snapshot.recoveryMeta?.recordCount ||
+          scopes.reduce(
+            (count, scope) => count + (scope.recordIds?.length || 0),
+            0,
+          ),
+        collections: scopes,
+        data: currentSnapshot,
+      });
+    }
+
+    await this.restoreSnapshotScopes(scopedSchoolId, snapshot);
+
+    await logActivity({
+      schoolId: scopedSchoolId,
+      actorUid: auth.currentUser?.uid || null,
+      actorRole:
+        (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      eventType:
+        snapshot.backupType === "recycle-bin"
+          ? "recycle_bin_restored"
+          : "recovery_point_restored",
+      entityId: id,
+      meta: {
+        status: "success",
+        module: "Recovery Center",
+        title: snapshot.recoveryMeta?.title || "",
+        entityType: snapshot.recoveryMeta?.entityType || "",
+        entityLabel: snapshot.recoveryMeta?.entityLabel || "",
+      },
+    });
+
+    if (snapshot.backupType === "recycle-bin") {
+      await deleteDoc(doc(firestore, "backups", id));
+    } else {
+      await updateDoc(doc(firestore, "backups", id), {
+        recoveryMeta: {
+          ...(snapshot.recoveryMeta || { title: "Recovery snapshot" }),
+          restoredAt: Date.now(),
+          restoredBy: auth.currentUser?.uid || null,
+        },
+      });
+    }
   }
 
   async deleteBackup(schoolId?: string, id?: string): Promise<void> {

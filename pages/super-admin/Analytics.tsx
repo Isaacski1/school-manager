@@ -181,13 +181,14 @@ const Analytics = () => {
     }).length;
   }, [schools]);
 
-  const growthRate =
-    newSchoolsLastMonth === 0
-      ? 100
-      : Math.round(
-          ((newSchoolsThisMonth - newSchoolsLastMonth) / newSchoolsLastMonth) *
-            100,
-        );
+  const growthRate = (() => {
+    if (newSchoolsLastMonth === 0) {
+      return newSchoolsThisMonth === 0 ? 0 : 100;
+    }
+    return Math.round(
+      ((newSchoolsThisMonth - newSchoolsLastMonth) / newSchoolsLastMonth) * 100,
+    );
+  })();
 
   const revenueSeries = useMemo(() => {
     const totals: Record<string, number> = Object.fromEntries(
@@ -405,18 +406,26 @@ const Analytics = () => {
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-12 gap-2 items-end h-40">
+              <div className="grid grid-cols-12 gap-2">
                 {revenueSeries.map((point) => (
                   <div
                     key={point.label}
                     className="col-span-1 flex flex-col items-center"
                   >
-                    <div
-                      className="w-4 rounded-full bg-gradient-to-t from-emerald-700 to-emerald-400"
-                      style={{ height: `${Math.max(6, point.value * 2)}px` }}
-                    ></div>
-                    <span className="text-[10px] text-slate-400 mt-2">
+                    <div className="flex items-end justify-center h-32 overflow-hidden">
+                      <div
+                        className="w-4 rounded-full bg-gradient-to-t from-emerald-700 to-emerald-400"
+                        style={{
+                          height: `${Math.min(128, Math.max(6, point.value * 2))}px`,
+                        }}
+                        title={`${point.label}: GHS ${point.value.toFixed(2)}`}
+                      ></div>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-2">
                       {point.label}
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {point.value.toFixed(0)}
                     </span>
                   </div>
                 ))}

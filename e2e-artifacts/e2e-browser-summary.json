@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "schoolName": "E2E 1773089626555 Academy",
+  "superAdminEmail": "e2e.superadmin.1773089626555@schoolmanagergh.test",
+  "schoolAdminEmail": "e2e.schooladmin.1773089626555@schoolmanagergh.test",
+  "schoolId": "eI0KXGDwYwXbhEL0YdAL",
+  "consoleErrors": [],
+  "pageErrors": [],
+  "requestFailures": [
+    "[super-admin] POST https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=58562&CVER=22&X-HTTP-Session-Id=gsessionid&zx=80s7yc46v9p8&t=1 :: net::ERR_ABORTED",
+    "[super-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?gsessionid=OI4NWjmDhEjEAti-tm83oQ8uGE2-F1phVWDcRaivf9CEtbPIaZtxvw&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=BrHlGF35nrmrMGQNSXLTqQ&AID=0&CI=0&TYPE=xmlhttp&zx=nrfogzgw8scb&t=1 :: net::ERR_ABORTED",
+    "[super-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Write/channel?gsessionid=fdZYkDuH1u29E1AzMyM-YEDpHBf7cRluWeo1hkUSc-1grUJS6Ph_lA&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=w498RGSeA7-meBcXEnjJKg&AID=0&CI=0&TYPE=xmlhttp&zx=d66f7qs1mcna&t=1 :: net::ERR_ABORTED",
+    "[super-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?gsessionid=NF1GRiS1DtVfT5hZa7h9auRRnEV9F9oZF3_IXvBZDzIiTPqDWBMEww&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=I3l5keILa_2v-IpjLxfNUw&AID=0&CI=0&TYPE=xmlhttp&zx=e603zngbjw65&t=1 :: net::ERR_ABORTED",
+    "[school-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?gsessionid=jSNwORyGRcMCWMGa3cejwh8SkREJnu8KYAaGAQKGxJoTeHuWnTkoBw&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=opKAlYYVYl9aJa-gMmkkgg&AID=0&CI=0&TYPE=xmlhttp&zx=9a9whtyyw5ze&t=1 :: net::ERR_ABORTED",
+    "[school-admin] POST https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&gsessionid=jSNwORyGRcMCWMGa3cejwh8SkREJnu8KYAaGAQKGxJoTeHuWnTkoBw&SID=opKAlYYVYl9aJa-gMmkkgg&RID=53441&AID=5&zx=fcv8ybw9r533&t=1 :: net::ERR_ABORTED",
+    "[super-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?gsessionid=bOWhprYSKR58phxd7BcQmdr966a2KYu88gU5TOVym96UUmEXl2Uwog&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=C62XI9c_M3Vvk_lORZO59w&AID=0&CI=0&TYPE=xmlhttp&zx=c1czwqvamkwv&t=1 :: net::ERR_ABORTED",
+    "[school-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?gsessionid=2q80wUD1dlUYC58p2gg3NpuouWlKbwl7S7QElrnw_dJ9az860xx0Rw&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=E1kok9zf37SGgg-YzJcUug&AID=0&CI=0&TYPE=xmlhttp&zx=w2suazbjewqk&t=1 :: net::ERR_ABORTED",
+    "[school-admin] GET https://firestore.googleapis.com/google.firestore.v1.Firestore/Write/channel?gsessionid=sjwHURFhYM6jZSDCCJZ6GKazvvJGdiwmyzx4Rr6Ce91C9aKXEPinSw&VER=8&database=projects%2Fnoble-care-management-system%2Fdatabases%2F(default)&RID=rpc&SID=flNCk2WwnSutT20hL6lwag&AID=0&CI=0&TYPE=xmlhttp&zx=ih0scoqie4f8&t=1 :: net::ERR_ABORTED"
+  ]
+}

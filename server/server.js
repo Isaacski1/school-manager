@@ -15,7 +15,87 @@ dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
-app.use(cors());
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+
+const LOCAL_DEV_ORIGINS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+const collectOrigins = (...values) =>
+  values
+    .flatMap((value) =>
+      typeof value === "string" ? value.split(",") : [],
+    )
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const allowedOrigins = new Set([
+  ...LOCAL_DEV_ORIGINS,
+  ...collectOrigins(
+    process.env.CORS_ALLOWED_ORIGINS,
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    process.env.APP_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.SITE_URL,
+    process.env.VITE_FRONTEND_URL,
+    process.env.VITE_SITE_URL,
+  ),
+]);
+
+const isAllowedOrigin = (origin) => !origin || allowedOrigins.has(origin);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!isAllowedOrigin(origin)) {
+    return res.status(403).json({
+      error:
+        "Forbidden: Request origin is not allowed. Configure CORS_ALLOWED_ORIGINS for this deployment.",
+    });
+  }
+  next();
+});
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      callback(null, isAllowedOrigin(origin));
+    },
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Authorization",
+      "Content-Type",
+      "X-Requested-With",
+      "X-Paystack-Signature",
+    ],
+    optionsSuccessStatus: 204,
+  }),
+);
+
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+
+  const forwardedProto = (req.headers["x-forwarded-proto"] || "")
+    .toString()
+    .split(",")[0]
+    .trim();
+  if (req.secure || forwardedProto === "https") {
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
+  }
+
+  next();
+});
 
 const REQUEST_LIMIT = process.env.REQUEST_BODY_LIMIT || "1mb";
 app.use(
@@ -114,6 +194,7 @@ try {
       "   Credential Type: Unknown or Application Default Credentials",
     );
   }
+  console.log("   Allowed browser origins:", Array.from(allowedOrigins));
 } catch (error) {
   console.error("CRITICAL: Firebase Admin SDK initialization failed.");
   console.error("Original Error:", error.message);
@@ -1476,6 +1557,9 @@ app.post(
             schoolName: schoolDoc.data()?.name || "",
             adminUid: uid,
             adminEmail: email || userData.email || "",
+            module: "billing",
+            type: "subscription",
+            category: "subscription",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
@@ -1566,6 +1650,9 @@ app.post(
             reference,
             schoolId,
             verifiedAt: Date.now(),
+            module: "billing",
+            type: "subscription",
+            category: "subscription",
           },
           { merge: true },
         );
@@ -1680,6 +1767,9 @@ app.post("/api/billing/webhook", async (req, res) => {
               event: event.event,
               reference: paymentReference,
               schoolId,
+              module: "billing",
+              type: "subscription",
+              category: "subscription",
             },
             { merge: true },
           );
@@ -1725,6 +1815,9 @@ app.post("/api/billing/webhook", async (req, res) => {
             event: event.event,
             reference: paymentReference,
             schoolId,
+            module: "billing",
+            type: "subscription",
+            category: "subscription",
           },
           { merge: true },
         );

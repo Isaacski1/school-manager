@@ -1,7 +1,7 @@
-﻿import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
-import { Backup } from "../../types";
+import { Backup, BackupType, RecoveryCollectionScope } from "../../types";
 import {
   RefreshCcw,
   Eye,
@@ -9,308 +9,440 @@ import {
   Trash2,
   Filter,
   X,
-  Users,
-  GraduationCap,
-  BookOpen,
-  Calendar,
-  FileText,
-  Clock,
-  BarChart2,
-  Bell,
-  AlertCircle,
+  Shield,
+  History,
 } from "lucide-react";
 import { showToast } from "../../services/toast";
-import { CLASSES_LIST, calculateTotalScore } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
-import { useAuth } from "../../context/AuthContext";
-import { logActivity } from "../../services/activityLog";
 
-const getClassType = (classId: string): string => {
-  if (!classId) return "CLASS";
-  const classInfo = CLASSES_LIST.find((c) => c.id === classId);
-  if (classInfo && classInfo.level) return classInfo.level;
-  if (classId.startsWith("c_n")) return "NURSERY";
-  if (classId.startsWith("c_kg")) return "KG";
-  if (classId.startsWith("c_p")) return "PRIMARY";
-  if (classId.startsWith("c_jhs")) return "JHS";
-  return "CLASS";
+const FULL_BACKUP_TYPES = new Set<BackupType>([
+  "term-reset",
+  "manual",
+  "safety-restore",
+]);
+
+const COLLECTION_LABELS: Record<string, string> = {
+  settings: "Settings",
+  students: "Students",
+  attendance: "Attendance",
+  teacher_attendance: "Teacher Attendance",
+  assessments: "Assessments",
+  student_remarks: "Student Remarks",
+  admin_remarks: "Admin Remarks",
+  student_skills: "Student Skills",
+  timetables: "Timetables",
+  users: "Users",
+  class_subjects: "Class Subjects",
+  notices: "Notices",
+  admin_notifications: "Notifications",
+  fees: "Fees",
+  student_ledgers: "Ledgers",
+  payments: "Payments",
+  finance_settings: "Finance Settings",
 };
+
+const isFullBackup = (entry?: Partial<Backup> | Backup | null) =>
+  FULL_BACKUP_TYPES.has((entry?.backupType || "manual") as BackupType);
+
+const formatTimestamp = (value?: number) =>
+  value ? new Date(value).toLocaleString() : "-";
+
+const getEntryTitle = (entry: Partial<Backup>) =>
+  entry.recoveryMeta?.title || `${entry.term || "Backup"} - ${entry.academicYear || ""}`;
+
+const getEntryTypeLabel = (entry: Partial<Backup>) => {
+  switch (entry.backupType) {
+    case "recycle-bin":
+      return "Recycle Bin";
+    case "recovery-point":
+      return "Recovery Point";
+    case "safety-restore":
+      return "Safety Backup";
+    case "term-reset":
+      return "Term Reset Backup";
+    case "manual":
+    default:
+      return "Manual Backup";
+  }
+};
+
+const getEntryDescription = (entry: Partial<Backup>) =>
+  entry.recoveryMeta?.description ||
+  (entry.backupType === "safety-restore"
+    ? "Automatic safety backup created before a restore."
+    : "Full school snapshot.");
+
+const getRecordCount = (entry: Partial<Backup>) => {
+  if (typeof entry.recoveryMeta?.recordCount === "number") {
+    return entry.recoveryMeta.recordCount;
+  }
+  const data = entry.data;
+  if (!data) return 0;
+  return [
+    data.students?.length || 0,
+    data.teacherAttendanceRecords?.length || 0,
+    data.users?.length || 0,
+    data.notices?.length || 0,
+    data.classSubjects?.length || 0,
+    data.payments?.length || 0,
+    data.fees?.length || 0,
+    data.studentLedgers?.length || 0,
+  ].reduce((sum, value) => sum + value, 0);
+};
+
+const applyFilters = (
+  rows: Partial<Backup>[],
+  filters: { term: string; academicYear: string; date: string },
+) =>
+  rows.filter((row) => {
+    if (filters.term && row.term !== filters.term) return false;
+    if (
+      filters.academicYear &&
+      row.academicYear !== filters.academicYear.trim()
+    ) {
+      return false;
+    }
+    if (filters.date) {
+      const start = new Date(filters.date).getTime();
+      const end = start + 24 * 60 * 60 * 1000 - 1;
+      if ((row.timestamp || 0) < start || (row.timestamp || 0) > end) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+const getCollectionBadges = (collections: RecoveryCollectionScope[] = []) =>
+  collections.map(
+    (scope) => scope.label || COLLECTION_LABELS[scope.collection] || scope.collection,
+  );
 
 const ManageBackups = () => {
   const { school } = useSchool();
-  const { user } = useAuth();
   const schoolId = school?.id || null;
   const isTrialPlan = (school as any)?.plan === "trial";
-  const [backups, setBackups] = useState<Partial<Backup>[]>([]);
+
+  const [fullBackups, setFullBackups] = useState<Partial<Backup>[]>([]);
+  const [recoveryPoints, setRecoveryPoints] = useState<Partial<Backup>[]>([]);
+  const [recycleBin, setRecycleBin] = useState<Partial<Backup>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter states
   const [filterTerm, setFilterTerm] = useState("");
   const [filterAcademicYear, setFilterAcademicYear] = useState("");
   const [filterDate, setFilterDate] = useState("");
 
-  // Modals and selection states
-  const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [backupToDeleteId, setBackupToDeleteId] = useState<string | null>(null);
-  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<Backup | null>(null);
+  const [entryToDelete, setEntryToDelete] = useState<Partial<Backup> | null>(
+    null,
+  );
+  const [entryToRestoreBackup, setEntryToRestoreBackup] =
+    useState<Partial<Backup> | null>(null);
+  const [entryToRestoreRecovery, setEntryToRestoreRecovery] =
+    useState<Partial<Backup> | null>(null);
+  const [busyAction, setBusyAction] = useState<
+    "delete" | "restore-backup" | "restore-recovery" | null
+  >(null);
 
-  const studentSnapshots = useMemo(() => {
-    if (!selectedBackup?.data?.students) return [];
-
-    const students = selectedBackup.data.students || [];
-    const attendanceRecords = selectedBackup.data.attendanceRecords || [];
-    const assessments = selectedBackup.data.assessments || [];
-    const studentRemarks = selectedBackup.data.studentRemarks || [];
-
-    const recordsByClass = attendanceRecords.reduce(
-      (acc: Record<string, typeof attendanceRecords>, record: any) => {
-        if (!acc[record.classId]) acc[record.classId] = [];
-        acc[record.classId].push(record);
-        return acc;
-      },
-      {},
-    );
-
-    const assessmentTotals = assessments.reduce(
-      (
-        acc: Record<string, { total: number; count: number }>,
-        assessment: any,
-      ) => {
-        const total =
-          typeof assessment.total === "number"
-            ? assessment.total
-            : calculateTotalScore(assessment);
-        if (!acc[assessment.studentId]) {
-          acc[assessment.studentId] = { total: 0, count: 0 };
-        }
-        acc[assessment.studentId].total += total;
-        acc[assessment.studentId].count += 1;
-        return acc;
-      },
-      {},
-    );
-
-    const remarksByStudent = studentRemarks.reduce(
-      (acc: Record<string, any>, remark: any) => {
-        const existing = acc[remark.studentId];
-        if (!existing) {
-          acc[remark.studentId] = remark;
-          return acc;
-        }
-        const existingDate = new Date(existing.dateCreated).getTime();
-        const nextDate = new Date(remark.dateCreated).getTime();
-        if (nextDate >= existingDate) {
-          acc[remark.studentId] = remark;
-        }
-        return acc;
-      },
-      {},
-    );
-
-    return students.map((student: any) => {
-      const classRecords = recordsByClass[student.classId] || [];
-      const presentDays = classRecords.filter((record: any) =>
-        record.presentStudentIds?.includes(student.id),
-      ).length;
-      const totalDays = classRecords.length;
-      const attendanceRate = totalDays
-        ? `${Math.round((presentDays / totalDays) * 100)}%`
-        : "-";
-
-      const assessmentInfo = assessmentTotals[student.id];
-      const avgScore = assessmentInfo?.count
-        ? (assessmentInfo.total / assessmentInfo.count).toFixed(1)
-        : "-";
-
-      const remark = remarksByStudent[student.id]?.remark || "N/A";
-
-      return {
-        student,
-        presentDays,
-        totalDays,
-        attendanceRate,
-        avgScore,
-        remark,
-      };
-    });
-  }, [selectedBackup]);
-
-  const fetchBackups = async (filters?: {
-    term?: string;
-    academicYear?: string;
-    date?: string;
-  }) => {
+  const refreshEntries = async () => {
     setLoading(true);
     setError(null);
     try {
       if (!schoolId) {
-        setBackups([]);
+        setFullBackups([]);
+        setRecoveryPoints([]);
+        setRecycleBin([]);
         return;
       }
-      const actualFilters = {
-        schoolId,
-        term: filters?.term || undefined,
-        academicYear: filters?.academicYear || undefined,
-        date: filters?.date || undefined,
-      };
-      const fetchedBackups = await db.getBackups(actualFilters);
-      setBackups(fetchedBackups);
-    } catch (err: any) {
-      console.error("Error fetching backups:", err);
-      setError("Failed to fetch backups.");
-      showToast("Failed to fetch backups.", { type: "error" });
+      const [backups, recovery, recycle] = await Promise.all([
+        db.getBackups({ schoolId }),
+        db.getRecoveryRecords({ schoolId, backupType: "recovery-point" }),
+        db.getRecoveryRecords({ schoolId, backupType: "recycle-bin" }),
+      ]);
+      setFullBackups(backups);
+      setRecoveryPoints(recovery);
+      setRecycleBin(recycle);
+    } catch (err) {
+      console.error("Failed to load recovery center", err);
+      setError("Failed to load recovery center.");
+      showToast("Failed to load recovery center.", { type: "error" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleViewDetails = async (id: string) => {
+  useEffect(() => {
+    refreshEntries();
+  }, [schoolId]);
+
+  const filters = useMemo(
+    () => ({
+      term: filterTerm,
+      academicYear: filterAcademicYear,
+      date: filterDate,
+    }),
+    [filterTerm, filterAcademicYear, filterDate],
+  );
+
+  const filteredBackups = useMemo(
+    () => applyFilters(fullBackups, filters),
+    [fullBackups, filters],
+  );
+  const filteredRecoveryPoints = useMemo(
+    () => applyFilters(recoveryPoints, filters),
+    [recoveryPoints, filters],
+  );
+  const filteredRecycleBin = useMemo(
+    () => applyFilters(recycleBin, filters),
+    [recycleBin, filters],
+  );
+
+  const latestProtection = useMemo(() => {
+    const rows = [...fullBackups, ...recoveryPoints, ...recycleBin].sort(
+      (a, b) => (b.timestamp || 0) - (a.timestamp || 0),
+    );
+    return rows[0] || null;
+  }, [fullBackups, recoveryPoints, recycleBin]);
+
+  const handleView = async (id: string) => {
     try {
       if (!schoolId) return;
       const details = await db.getBackupDetails(schoolId, id);
-      if (details) {
-        setSelectedBackup(details);
-        setShowDetailsModal(true);
-      } else {
-        showToast("Backup details not found.", { type: "error" });
+      if (!details) {
+        showToast("Record not found.", { type: "error" });
+        return;
       }
+      setSelectedEntry(details);
     } catch (err) {
-      console.error("Error fetching backup details:", err);
-      showToast("Failed to fetch backup details.", { type: "error" });
+      console.error("Failed to load details", err);
+      showToast("Failed to load details.", { type: "error" });
     }
   };
 
-  const handleDeleteRequest = (id: string) => {
-    setBackupToDeleteId(id);
-    setShowDeleteConfirmModal(true);
-  };
-
-  const handleDownloadBackup = async (id: string) => {
+  const handleDownload = async (id: string) => {
     try {
       if (!schoolId) return;
       const details = await db.getBackupDetails(schoolId, id);
-      if (details && details.data) {
-        const filename = `backup_${details.academicYear.replace("-", "")}_${details.term.replace(" ", "")}_${details.timestamp}.json`;
-        const jsonStr = JSON.stringify(details.data, null, 2);
-        const blob = new Blob([jsonStr], { type: "application/json" });
-        const href = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = href;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(href);
-        showToast("Backup downloaded successfully!", { type: "success" });
-        await logActivity({
-          schoolId,
-          actorUid: user?.id || null,
-          actorRole: user?.role || null,
-          eventType: "backup_downloaded",
-          entityId: id,
-          meta: {
-            status: "success",
-            module: "Backups",
-            academicYear: details.academicYear,
-            term: details.term,
-            actorName: user?.fullName || "",
-          },
-        });
-      } else {
-        showToast("No data available to download for this backup.", {
-          type: "error",
-        });
-        await logActivity({
-          schoolId,
-          actorUid: user?.id || null,
-          actorRole: user?.role || null,
-          eventType: "backup_download_failed",
-          entityId: id,
-          meta: {
-            status: "failed",
-            module: "Backups",
-            error: "No data available",
-            actorName: user?.fullName || "",
-          },
-        });
+      if (!details?.data || !isFullBackup(details)) {
+        showToast("Only full backups can be downloaded.", { type: "error" });
+        return;
       }
-    } catch (err) {
-      console.error("Error downloading backup:", err);
-      showToast("Failed to download backup.", { type: "error" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "backup_download_failed",
-        entityId: id,
-        meta: {
-          status: "failed",
-          module: "Backups",
-          error: (err as any)?.message || "Unknown error",
-          actorName: user?.fullName || "",
-        },
+      const blob = new Blob([JSON.stringify(details.data, null, 2)], {
+        type: "application/json",
       });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `backup_${details.academicYear.replace("-", "")}_${details.term.replace(" ", "")}_${details.timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(href);
+      showToast("Backup downloaded successfully.", { type: "success" });
+    } catch (err) {
+      console.error("Failed to download backup", err);
+      showToast("Failed to download backup.", { type: "error" });
     }
   };
 
   const confirmDelete = async () => {
-    if (!backupToDeleteId) return;
-    console.log("Attempting to delete backup:", backupToDeleteId);
+    if (!entryToDelete?.id || !schoolId) return;
+    setBusyAction("delete");
     try {
-      if (!schoolId) return;
-      await db.deleteBackup(schoolId, backupToDeleteId);
-      console.log("Backup deleted successfully in DB.");
-      showToast("Backup deleted successfully!", { type: "success" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "backup_deleted",
-        entityId: backupToDeleteId,
-        meta: {
-          status: "success",
-          module: "Backups",
-          actorName: user?.fullName || "",
-        },
-      });
-      setShowDeleteConfirmModal(false);
-      setBackupToDeleteId(null);
-      setFilterTerm("");
-      setFilterAcademicYear("");
-      setFilterDate("");
-      await fetchBackups();
-      console.log("Backup list refreshed after deletion.");
-    } catch (err: any) {
-      console.error("Error during backup deletion or refresh:", err);
-      showToast("Failed to delete backup or refresh list.", { type: "error" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "backup_delete_failed",
-        entityId: backupToDeleteId,
-        meta: {
-          status: "failed",
-          module: "Backups",
-          error: err?.message || "Unknown error",
-          actorName: user?.fullName || "",
-        },
-      });
+      const deletedId = entryToDelete.id;
+      const deletedType = entryToDelete.backupType;
+      await db.deleteBackup(schoolId, deletedId);
+      if (selectedEntry?.id === deletedId) {
+        setSelectedEntry(null);
+      }
+      setEntryToDelete(null);
+      showToast(
+        deletedType === "recycle-bin"
+          ? "Recycle-bin item purged."
+          : deletedType === "recovery-point"
+            ? "Recovery point deleted."
+            : "Backup deleted.",
+        { type: "success" },
+      );
+      await refreshEntries();
+    } catch (err) {
+      console.error("Delete failed", err);
+      showToast("Failed to delete record.", { type: "error" });
+    } finally {
+      setBusyAction(null);
     }
   };
 
-  useEffect(() => {
-    fetchBackups();
-  }, [schoolId]);
+  const confirmRestoreBackup = async () => {
+    if (!entryToRestoreBackup?.id || !schoolId) return;
+    setBusyAction("restore-backup");
+    try {
+      const restoredId = entryToRestoreBackup.id;
+      await db.restoreBackup(schoolId, restoredId);
+      if (selectedEntry?.id === restoredId) {
+        setSelectedEntry(null);
+      }
+      setEntryToRestoreBackup(null);
+      showToast("Backup restored. A safety backup was created first.", {
+        type: "success",
+      });
+      await refreshEntries();
+    } catch (err: any) {
+      console.error("Backup restore failed", err);
+      showToast(err?.message || "Failed to restore backup.", {
+        type: "error",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const confirmRestoreRecovery = async () => {
+    if (!entryToRestoreRecovery?.id || !schoolId) return;
+    setBusyAction("restore-recovery");
+    try {
+      const restoredId = entryToRestoreRecovery.id;
+      const restoredType = entryToRestoreRecovery.backupType;
+      await db.restoreRecoveryRecord(schoolId, restoredId);
+      if (selectedEntry?.id === restoredId) {
+        setSelectedEntry(null);
+      }
+      setEntryToRestoreRecovery(null);
+      showToast(
+        restoredType === "recycle-bin"
+          ? "Recycle-bin item restored."
+          : "Recovery point restored.",
+        { type: "success" },
+      );
+      await refreshEntries();
+    } catch (err: any) {
+      console.error("Recovery restore failed", err);
+      showToast(err?.message || "Failed to restore record.", {
+        type: "error",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const renderList = (
+    title: string,
+    subtitle: string,
+    rows: Partial<Backup>[],
+    icon: React.ReactNode,
+    listClassName = "",
+  ) => (
+    <section className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="rounded-xl bg-slate-100 p-3">{icon}</div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">{title}</h2>
+          <p className="text-sm text-slate-500">{subtitle}</p>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+          No records found for the current filters.
+        </div>
+      ) : (
+        <div className={`space-y-4 ${listClassName}`.trim()}>
+          {rows.map((entry) => (
+            <div
+              key={entry.id}
+              className="rounded-2xl border border-slate-200 bg-white p-4"
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-[#E6F0FA] px-3 py-1 text-xs font-semibold text-[#0B4A82]">
+                      {getEntryTypeLabel(entry)}
+                    </span>
+                    {entry.recoveryMeta?.restoredAt && (
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        Restored
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-900">
+                      {getEntryTitle(entry)}
+                    </p>
+                    <p className="text-sm text-slate-500">
+                      {getEntryDescription(entry)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+                    <span>Created: {formatTimestamp(entry.timestamp)}</span>
+                    <span>Records: {getRecordCount(entry)}</span>
+                    <span>Term: {entry.term || "-"}</span>
+                  </div>
+                  {entry.recoveryMeta?.collections?.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {getCollectionBadges(entry.recoveryMeta.collections).map(
+                        (badge) => (
+                          <span
+                            key={`${entry.id}_${badge}`}
+                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600"
+                          >
+                            {badge}
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handleView(entry.id || "")}
+                    className="inline-flex items-center rounded-lg bg-[#E6F0FA] px-3 py-2 text-sm font-medium text-[#0B4A82] hover:bg-[#d7e7f7]"
+                  >
+                    <Eye size={16} className="mr-1" /> View
+                  </button>
+                  {isFullBackup(entry) && (
+                    <button
+                      onClick={() => handleDownload(entry.id || "")}
+                      disabled={isTrialPlan}
+                      className="inline-flex items-center rounded-lg bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-200 disabled:opacity-60"
+                    >
+                      <Download size={16} className="mr-1" /> Download
+                    </button>
+                  )}
+                  <button
+                    onClick={() =>
+                      isFullBackup(entry)
+                        ? setEntryToRestoreBackup(entry)
+                        : setEntryToRestoreRecovery(entry)
+                    }
+                    disabled={isTrialPlan || busyAction !== null}
+                    className="inline-flex items-center rounded-lg bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-200 disabled:opacity-60"
+                  >
+                    <RefreshCcw size={16} className="mr-1" /> Restore
+                  </button>
+                  <button
+                    onClick={() => setEntryToDelete(entry)}
+                    disabled={isTrialPlan || busyAction !== null}
+                    className="inline-flex items-center rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+                  >
+                    <Trash2 size={16} className="mr-1" />
+                    {entry.backupType === "recycle-bin" ? "Purge" : "Delete"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 
   if (loading) {
     return (
-      <Layout title="Manage Backups">
-        <div className="flex justify-center items-center h-48">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-slate-300 border-t-[#0B4A82]"></div>
-          <p className="ml-4 text-slate-500">Loading backups...</p>
+      <Layout title="Recovery Center">
+        <div className="flex h-48 items-center justify-center">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-slate-300 border-t-[#0B4A82]"></div>
+          <p className="ml-4 text-slate-500">Loading recovery center...</p>
         </div>
       </Layout>
     );
@@ -318,14 +450,14 @@ const ManageBackups = () => {
 
   if (error) {
     return (
-      <Layout title="Manage Backups">
-        <div className="text-center p-8 bg-[#E6F0FA] border border-[#E6F0FA] rounded-lg">
+      <Layout title="Recovery Center">
+        <div className="rounded-xl border border-[#E6F0FA] bg-[#E6F0FA] p-8 text-center">
           <p className="text-[#0B4A82]">{error}</p>
           <button
-            onClick={() => fetchBackups()}
-            className="mt-4 px-4 py-2 bg-[#0B4A82] text-white rounded hover:bg-[#0B4A82]"
+            onClick={refreshEntries}
+            className="mt-4 inline-flex items-center rounded-lg bg-[#0B4A82] px-4 py-2 text-white hover:bg-[#083862]"
           >
-            <RefreshCcw className="inline-block mr-2" size={16} /> Retry
+            <RefreshCcw size={16} className="mr-2" /> Retry
           </button>
         </div>
       </Layout>
@@ -333,659 +465,424 @@ const ManageBackups = () => {
   }
 
   return (
-    <Layout title="Manage Backups">
-      <h1 className="text-2xl font-bold text-slate-800 mb-6">
-        Manage Term Backups
-      </h1>
+    <Layout title="Recovery Center">
+      <div className="space-y-6">
+        <section className="rounded-3xl bg-gradient-to-br from-[#0B4A82] via-[#0f2745] to-[#1f2937] p-6 text-white shadow-xl">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="mb-3 inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
+                <Shield size={14} className="mr-2" /> Automatic protection
+              </div>
+              <h1 className="text-3xl font-bold">Recovery Center</h1>
+              <p className="mt-3 max-w-2xl text-sm text-slate-200">
+                Use recycle-bin restore for deleted records, recovery points for
+                risky bulk changes, and full backups for major restore cases.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm">
+              <p className="font-semibold">Latest protection</p>
+              <p className="mt-1">
+                {latestProtection
+                  ? `${getEntryTypeLabel(latestProtection)} at ${formatTimestamp(latestProtection.timestamp)}`
+                  : "No recovery data yet."}
+              </p>
+            </div>
+          </div>
+        </section>
 
-      {/* Filter and Actions Section */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 mb-6">
-        <h2 className="text-xl font-bold text-slate-800 mb-4">
-          Backup Filters
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div>
-            <label
-              htmlFor="filterTerm"
-              className="block text-sm font-medium text-slate-700 mb-1"
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Full Backups
+            </p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">
+              {fullBackups.length}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Recovery Points
+            </p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">
+              {recoveryPoints.length}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Recycle Bin
+            </p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">
+              {recycleBin.length}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Last Protected
+            </p>
+            <p className="mt-2 text-sm font-bold text-slate-900">
+              {latestProtection
+                ? new Date(latestProtection.timestamp || 0).toLocaleString()
+                : "No records"}
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">Filters</h2>
+              <p className="text-sm text-slate-500">
+                Apply the same filters across all recovery layers.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setFilterTerm("");
+                setFilterAcademicYear("");
+                setFilterDate("");
+              }}
+              className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
             >
-              Term
-            </label>
+              Clear Filters
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <select
-              id="filterTerm"
               value={filterTerm}
               onChange={(e) => setFilterTerm(e.target.value)}
-              className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-[#1160A8] outline-none"
+              className="w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-800 outline-none focus:ring-2 focus:ring-[#1160A8]"
             >
               <option value="">All Terms</option>
               <option value="Term 1">Term 1</option>
               <option value="Term 2">Term 2</option>
               <option value="Term 3">Term 3</option>
             </select>
-          </div>
-          <div>
-            <label
-              htmlFor="filterAcademicYear"
-              className="block text-sm font-medium text-slate-700 mb-1"
-            >
-              Academic Year
-            </label>
             <input
-              id="filterAcademicYear"
               type="text"
               value={filterAcademicYear}
               onChange={(e) => setFilterAcademicYear(e.target.value)}
-              placeholder="e.g., 2023-2024"
-              className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-[#1160A8] outline-none"
+              placeholder="Academic year"
+              className="w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-800 outline-none focus:ring-2 focus:ring-[#1160A8]"
             />
-          </div>
-          <div>
-            <label
-              htmlFor="filterDate"
-              className="block text-sm font-medium text-slate-700 mb-1"
-            >
-              Date Created (YYYY-MM-DD)
-            </label>
             <input
-              id="filterDate"
               type="date"
               value={filterDate}
               onChange={(e) => setFilterDate(e.target.value)}
-              className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 focus:ring-2 focus:ring-[#1160A8] outline-none"
+              className="w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-800 outline-none focus:ring-2 focus:ring-[#1160A8]"
             />
           </div>
-        </div>
-        <button
-          onClick={() =>
-            fetchBackups({
-              term: filterTerm,
-              academicYear: filterAcademicYear,
-              date: filterDate,
-            })
-          }
-          className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] transition-colors flex items-center"
-        >
-          <Filter size={16} className="mr-2" /> Apply Filters
-        </button>
-        <button
-          onClick={() => {
-            setFilterTerm("");
-            setFilterAcademicYear("");
-            setFilterDate("");
-            fetchBackups();
-          }}
-          className="ml-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
-        >
-          Clear Filters
-        </button>
-      </div>
+          <div className="mt-4 inline-flex items-center rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
+            <Filter size={16} className="mr-2" />
+            Showing {filteredRecycleBin.length} recycle items,{" "}
+            {filteredRecoveryPoints.length} recovery points, and{" "}
+            {filteredBackups.length} full backups.
+          </div>
+        </section>
 
-      {/* Backups List */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-        <h2 className="text-xl font-bold text-slate-800 mb-4">
-          Available Backups
-        </h2>
-        {backups.length === 0 ? (
-          <div className="text-center p-8 text-slate-500">
-            <p>No backups found. Create one from System Settings.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {backups.map((backup, index) => (
-              <div
-                key={backup.id || `backup-${index}`}
-                className="flex items-center justify-between p-4 border border-slate-200 rounded-lg"
-              >
-                <div>
-                  <p className="font-semibold text-slate-800">
-                    {backup.term} - {backup.academicYear}
-                  </p>
-                  <p className="text-sm text-slate-500">
-                    Created: {new Date(backup.timestamp).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleViewDetails(backup.id || "")}
-                    className="px-3 py-1 bg-[#E6F0FA] text-[#0B4A82] rounded-md text-sm hover:bg-[#E6F0FA] flex items-center"
-                    title="View Backup Details"
-                  >
-                    <Eye size={16} className="mr-1" /> View
-                  </button>
-                  <button
-                    onClick={() => handleDownloadBackup(backup.id || "")}
-                    disabled={isTrialPlan}
-                    className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-md text-sm hover:bg-emerald-200 flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
-                    title="Download Backup"
-                  >
-                    <Download size={16} className="mr-1" /> Download
-                  </button>
-                  <button
-                    onClick={() => handleDeleteRequest(backup.id || "")}
-                    disabled={isTrialPlan}
-                    className="px-3 py-1 bg-[#E6F0FA] text-[#0B4A82] rounded-md text-sm hover:bg-[#E6F0FA] flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
-                    title="Delete Backup"
-                  >
-                    <Trash2 size={16} className="mr-1" /> Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+        {renderList(
+          "Recycle Bin",
+          "Restore deleted records without rolling back the whole workspace.",
+          filteredRecycleBin,
+          <Trash2 className="text-rose-700" size={20} />,
         )}
+        {renderList(
+          "Recovery Points",
+          "These are created automatically before risky bulk changes.",
+          filteredRecoveryPoints,
+          <History className="text-amber-700" size={20} />,
+          "max-h-[38rem] overflow-y-auto pr-2",
+        )}
+        {renderList(
+          "Full Backups",
+          "Use these when the entire school workspace needs to be restored.",
+          filteredBackups,
+          <Shield className="text-[#0B4A82]" size={20} />,
+        )}
+
         {isTrialPlan && (
-          <p className="mt-3 text-xs text-slate-500">
-            Backups are disabled during the trial period.
+          <p className="text-xs text-slate-500">
+            Recovery center actions are disabled during the trial period.
           </p>
         )}
       </div>
 
-      {/* View Details Modal */}
-      {showDetailsModal && selectedBackup && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-slate-900">
-                Backup Details: {selectedBackup.term} -{" "}
-                {selectedBackup.academicYear}
-              </h3>
+      {selectedEntry && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 p-4">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {getEntryTypeLabel(selectedEntry)}
+                </p>
+                <h3 className="text-xl font-bold text-slate-900">
+                  {getEntryTitle(selectedEntry)}
+                </h3>
+              </div>
               <button
-                onClick={() => setShowDetailsModal(false)}
+                onClick={() => setSelectedEntry(null)}
                 className="text-slate-400 hover:text-slate-700"
               >
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
-              {/* Backup Metadata */}
-              <div className="bg-gradient-to-r from-[#E6F0FA] to-amber-50 rounded-xl p-4 mb-6 border border-[#E6F0FA]">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3 bg-[#E6F0FA] rounded-full">
-                      <Clock className="text-[#0B4A82]" size={24} />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase font-semibold">
-                        Backup Created
-                      </p>
-                      <p className="text-lg font-bold text-slate-800">
-                        {new Date(selectedBackup.timestamp).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-500 uppercase font-semibold">
-                      Backup ID
-                    </p>
-                    <p className="text-sm font-mono text-slate-700">
-                      {selectedBackup.id?.slice(0, 8)}...
-                    </p>
-                  </div>
+            <div className="space-y-6 p-6">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Created
+                  </p>
+                  <p className="mt-2 font-semibold text-slate-900">
+                    {formatTimestamp(selectedEntry.timestamp)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Records
+                  </p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {getRecordCount(selectedEntry)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Term
+                  </p>
+                  <p className="mt-2 font-semibold text-slate-900">
+                    {selectedEntry.term || "-"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Academic Year
+                  </p>
+                  <p className="mt-2 font-semibold text-slate-900">
+                    {selectedEntry.academicYear || "-"}
+                  </p>
                 </div>
               </div>
 
-              {/* Data Summary Cards */}
-              {selectedBackup.data ? (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-amber-100 rounded-lg">
-                          <GraduationCap className="text-amber-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Students
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.students?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-[#E6F0FA] rounded-lg">
-                          <Users className="text-[#0B4A82]" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Users
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.users?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-emerald-100 rounded-lg">
-                          <BookOpen className="text-emerald-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Assessments
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.assessments?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-purple-100 rounded-lg">
-                          <Calendar className="text-purple-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Attendance
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.attendanceRecords?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-slate-100 rounded-lg">
-                          <FileText className="text-slate-500" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Teacher Attendance
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.teacherAttendanceRecords?.length ||
-                          0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-amber-50 rounded-lg">
-                          <BarChart2 className="text-amber-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Remarks
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.studentRemarks?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-indigo-50 rounded-lg">
-                          <BookOpen className="text-indigo-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Timetables
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.timetables?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-emerald-50 rounded-lg">
-                          <Bell className="text-emerald-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Notices
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.notices?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-rose-50 rounded-lg">
-                          <AlertCircle className="text-rose-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Notifications
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.adminNotifications?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-sky-50 rounded-lg">
-                          <Clock className="text-sky-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Activity Logs
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.activityLogs?.length || 0}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-purple-50 rounded-lg">
-                          <Calendar className="text-purple-600" size={20} />
-                        </div>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          Payments
-                        </span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-800">
-                        {selectedBackup.data.payments?.length || 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-                      <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-3">
-                        School Settings Snapshot
-                      </h4>
-                      <div className="grid grid-cols-2 gap-3 text-sm text-slate-600">
-                        <div>
-                          <p className="text-xs text-slate-400">
-                            Academic Year
-                          </p>
-                          <p className="font-semibold text-slate-800">
-                            {selectedBackup.data.schoolSettings?.academicYear ||
-                              selectedBackup.data.schoolConfig?.academicYear ||
-                              "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Current Term</p>
-                          <p className="font-semibold text-slate-800">
-                            {selectedBackup.data.schoolSettings?.currentTerm ||
-                              selectedBackup.data.schoolConfig?.currentTerm ||
-                              "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Reopen Date</p>
-                          <p className="font-semibold text-slate-800">
-                            {selectedBackup.data.schoolSettings
-                              ?.schoolReopenDate ||
-                              selectedBackup.data.schoolConfig
-                                ?.schoolReopenDate ||
-                              "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">
-                            Vacation Date
-                          </p>
-                          <p className="font-semibold text-slate-800">
-                            {selectedBackup.data.schoolSettings?.vacationDate ||
-                              selectedBackup.data.schoolConfig?.vacationDate ||
-                              "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">
-                            Next Term Begins
-                          </p>
-                          <p className="font-semibold text-slate-800">
-                            {selectedBackup.data.schoolSettings
-                              ?.nextTermBegins ||
-                              selectedBackup.data.schoolConfig
-                                ?.nextTermBegins ||
-                              "-"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-                      <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-3">
-                        Data Coverage
-                      </h4>
-                      <div className="space-y-2 text-sm text-slate-600">
-                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                          <span>Class Subjects</span>
-                          <span className="font-semibold text-slate-800">
-                            {selectedBackup.data.classSubjects?.length || 0}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                          <span>Student Skills</span>
-                          <span className="font-semibold text-slate-800">
-                            {selectedBackup.data.studentSkills?.length || 0}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                          <span>Admin Remarks</span>
-                          <span className="font-semibold text-slate-800">
-                            {selectedBackup.data.adminRemarks?.length || 0}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                          <span>Payments</span>
-                          <span className="font-semibold text-slate-800">
-                            {selectedBackup.data.payments?.length || 0}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Data Preview Section */}
-                  <div className="border-t border-slate-100 pt-6">
-                    <h4 className="font-bold text-slate-800 mb-4 flex items-center">
-                      <Users size={18} className="mr-2 text-[#0B4A82]" />
-                      Students List
-                    </h4>
-
-                    {/* Students Performance Table */}
-                    {studentSnapshots.length > 0 ? (
-                      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-slate-600 font-semibold">
-                              <tr>
-                                <th className="px-4 py-3">Student</th>
-                                <th className="px-4 py-3">Class</th>
-                                <th className="px-4 py-3 text-center">
-                                  Attendance
-                                </th>
-                                <th className="px-4 py-3 text-center">
-                                  Avg Score
-                                </th>
-                                <th className="px-4 py-3">Remark</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {studentSnapshots.map((row) => (
-                                <tr
-                                  key={row.student.id}
-                                  className="hover:bg-slate-50 transition-colors"
-                                >
-                                  <td className="px-4 py-3 font-medium text-slate-800">
-                                    <div className="flex items-center">
-                                      <div
-                                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs text-white mr-3 shadow-sm ${row.student.gender === "Male" ? "bg-amber-400" : "bg-[#0B4A82]"}`}
-                                      >
-                                        {row.student.name.charAt(0)}
-                                      </div>
-                                      <div>
-                                        <p>{row.student.name}</p>
-                                        <p className="text-xs text-slate-400">
-                                          {row.student.gender}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold border border-slate-200">
-                                      {CLASSES_LIST.find(
-                                        (c) => c.id === row.student.classId,
-                                      )?.name || row.student.classId}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    <div className="text-sm font-semibold text-slate-700">
-                                      {row.attendanceRate}
-                                    </div>
-                                    <div className="text-xs text-slate-400">
-                                      {row.presentDays}/{row.totalDays} days
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center font-semibold text-slate-700">
-                                    {row.avgScore}
-                                  </td>
-                                  <td className="px-4 py-3 text-slate-600">
-                                    {row.remark}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
-                          Total: {studentSnapshots.length} student
-                          {studentSnapshots.length !== 1 ? "s" : ""}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-slate-500 bg-slate-50 rounded-xl border border-slate-100">
-                        <Users
-                          size={32}
-                          className="mx-auto mb-2 text-slate-300"
-                        />
-                        <p>No students in this backup.</p>
-                      </div>
-                    )}
-
-                    {/* Classes & Subjects Overview */}
-                    {selectedBackup.data.classSubjects &&
-                      selectedBackup.data.classSubjects.length > 0 && (
-                        <div className="mt-6">
-                          <h5 className="font-bold text-slate-800 mb-3 flex items-center">
-                            <GraduationCap
-                              size={18}
-                              className="mr-2 text-amber-600"
-                            />
-                            Classes & Subjects
-                          </h5>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {selectedBackup.data.classSubjects.map(
-                              (cs: any, idx: number) => {
-                                const classInfo = CLASSES_LIST.find(
-                                  (c) => c.id === cs.classId,
-                                );
-                                const classType = getClassType(cs.classId);
-                                return (
-                                  <div
-                                    key={idx}
-                                    className="bg-gradient-to-br from-amber-50 to-white rounded-xl p-4 border border-amber-200 hover:shadow-lg transition-shadow"
-                                  >
-                                    <div className="text-center mb-3 pb-3 border-b border-amber-200">
-                                      <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1">
-                                        {classType}
-                                      </p>
-                                      <p className="text-2xl font-extrabold text-slate-800">
-                                        {classInfo?.name || cs.classId}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                                        Subjects
-                                      </p>
-                                      <div className="flex flex-wrap gap-1">
-                                        {cs.subjects &&
-                                        cs.subjects.length > 0 ? (
-                                          cs.subjects.map(
-                                            (subject: string, sIdx: number) => (
-                                              <span
-                                                key={sIdx}
-                                                className="px-2 py-1 bg-white border border-slate-200 text-slate-700 text-xs rounded-md shadow-sm"
-                                              >
-                                                {subject}
-                                              </span>
-                                            ),
-                                          )
-                                        ) : (
-                                          <span className="text-xs text-slate-400 italic">
-                                            No subjects
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-xs text-slate-500 mt-2 font-medium">
-                                        {cs.subjects?.length || 0} subject
-                                        {cs.subjects?.length !== 1 ? "s" : ""}
-                                      </p>
-                                    </div>
-                                  </div>
-                                );
-                              },
-                            )}
-                          </div>
-                        </div>
-                      )}
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-12 text-slate-500">
-                  <FileText size={48} className="mx-auto mb-4 text-slate-300" />
-                  <p>No data available for this backup.</p>
+              {selectedEntry.recoveryMeta?.collections?.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {getCollectionBadges(selectedEntry.recoveryMeta.collections).map(
+                    (badge) => (
+                      <span
+                        key={`detail_${badge}`}
+                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600"
+                      >
+                        {badge}
+                      </span>
+                    ),
+                  )}
                 </div>
-              )}
+              ) : null}
+
+              {selectedEntry.data?.students?.length ? (
+                <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                  <h4 className="font-bold text-slate-900">Students</h4>
+                  <div className="mt-3 space-y-2">
+                    {selectedEntry.data.students.map((student) => (
+                      <div
+                        key={student.id}
+                        className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-900"
+                      >
+                        {student.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedEntry.data?.users?.length ? (
+                <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                  <h4 className="font-bold text-slate-900">Users</h4>
+                  <div className="mt-3 space-y-2">
+                    {selectedEntry.data.users.map((record) => (
+                      <div
+                        key={record.id}
+                        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm"
+                      >
+                        <div>
+                          <p className="font-medium text-slate-900">
+                            {record.fullName}
+                          </p>
+                          <p className="text-slate-500">{record.email}</p>
+                        </div>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase text-slate-600">
+                          {record.role}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedEntry.data?.notices?.length ? (
+                <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                  <h4 className="font-bold text-slate-900">Notices</h4>
+                  <div className="mt-3 space-y-2">
+                    {selectedEntry.data.notices.map((notice) => (
+                      <div
+                        key={notice.id}
+                        className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
+                      >
+                        <p className="text-sm font-medium text-slate-900">
+                          {notice.message}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {notice.date} | {notice.type}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedEntry.data?.classSubjects?.length ? (
+                <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                  <h4 className="font-bold text-slate-900">Class Subjects</h4>
+                  <div className="mt-3 space-y-3">
+                    {selectedEntry.data.classSubjects.map((config) => (
+                      <div
+                        key={`${config.schoolId}_${config.classId}`}
+                        className="rounded-xl border border-slate-100 bg-slate-50 p-4"
+                      >
+                        <p className="font-semibold text-slate-900">
+                          {config.classId}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(config.subjects || []).map((subject) => (
+                            <span
+                              key={subject}
+                              className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600"
+                            >
+                              {subject}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
-            <div className="p-6 border-t border-slate-100 text-right">
+          </div>
+        </div>
+      )}
+
+      {entryToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6">
+              <h3 className="text-lg font-bold text-slate-900">
+                Confirm Delete
+              </h3>
               <button
-                onClick={() => setShowDetailsModal(false)}
-                className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82]"
+                onClick={() => setEntryToDelete(null)}
+                className="text-slate-400 hover:text-slate-700"
               >
-                Close
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-3 p-6 text-sm text-slate-600">
+              <p>
+                Delete <strong>{getEntryTitle(entryToDelete)}</strong> from the
+                recovery center?
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 p-6">
+              <button
+                onClick={() => setEntryToDelete(null)}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-slate-700 hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={busyAction === "delete"}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-white hover:bg-rose-700 disabled:opacity-60"
+              >
+                {busyAction === "delete" ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirmModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-[#0B4A82]">
-                Confirm Deletion
+      {entryToRestoreBackup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6">
+              <h3 className="text-lg font-bold text-amber-800">
+                Confirm Full Restore
               </h3>
               <button
-                onClick={() => setShowDeleteConfirmModal(false)}
+                onClick={() => setEntryToRestoreBackup(null)}
                 className="text-slate-400 hover:text-slate-700"
               >
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
-              <p className="text-slate-700 mb-4">
-                Are you sure you want to delete this backup? This action cannot
-                be undone.
-              </p>
-              <p className="text-sm text-slate-500">
-                Backup ID: {backupToDeleteId}
+            <div className="space-y-3 p-6 text-sm text-slate-600">
+              <p>
+                Restore <strong>{getEntryTitle(entryToRestoreBackup)}</strong>{" "}
+                into the current workspace.
               </p>
             </div>
-            <div className="p-6 border-t border-slate-100 text-right space-x-2">
+            <div className="flex justify-end gap-2 border-t border-slate-100 p-6">
               <button
-                onClick={() => setShowDeleteConfirmModal(false)}
-                className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                onClick={() => setEntryToRestoreBackup(null)}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-slate-700 hover:bg-slate-200"
               >
                 Cancel
               </button>
               <button
-                onClick={confirmDelete}
-                className="px-4 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82]"
+                onClick={confirmRestoreBackup}
+                disabled={busyAction === "restore-backup"}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-white hover:bg-amber-700 disabled:opacity-60"
               >
-                Delete
+                {busyAction === "restore-backup" ? "Restoring..." : "Restore"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {entryToRestoreRecovery && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6">
+              <h3 className="text-lg font-bold text-emerald-800">
+                Confirm Recovery Restore
+              </h3>
+              <button
+                onClick={() => setEntryToRestoreRecovery(null)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-3 p-6 text-sm text-slate-600">
+              <p>
+                Restore <strong>{getEntryTitle(entryToRestoreRecovery)}</strong>
+                ?
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 p-6">
+              <button
+                onClick={() => setEntryToRestoreRecovery(null)}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-slate-700 hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRestoreRecovery}
+                disabled={busyAction === "restore-recovery"}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {busyAction === "restore-recovery"
+                  ? "Restoring..."
+                  : "Restore"}
               </button>
             </div>
           </div>

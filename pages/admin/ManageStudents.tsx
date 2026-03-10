@@ -415,6 +415,7 @@ const ManageStudents = () => {
           schoolId: schoolId || "",
           guardianName: formData.guardianName || "",
           guardianPhone: formData.guardianPhone || "",
+          createdAt: Date.now(),
         };
         await db.addStudent(newStudent);
         showToast("Student added successfully.", { type: "success" });

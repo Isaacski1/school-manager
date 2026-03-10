@@ -386,7 +386,7 @@ const BillingAnalytics: React.FC<BillingAnalyticsProps> = ({
               </div>
             </div>
             {analyticsData.timeSeriesData.length > 0 ? (
-              <div className="h-64">
+              <div className="h-64 overflow-hidden">
                 <RevenueChart
                   data={analyticsData.timeSeriesData}
                   mode={chartMode}
@@ -501,15 +501,19 @@ const RevenueChart: React.FC<{
   );
 
   return (
-    <div className="flex items-end justify-between h-full gap-1 px-2">
+    <div className="flex items-end justify-between h-full gap-1 px-2 overflow-hidden">
       {data.map((item, index) => {
         const value = mode === "revenue" ? item.revenue : item.count;
         return (
-          <div key={index} className="flex-1 flex flex-col items-center gap-2">
+          <div
+            key={index}
+            className="flex-1 flex flex-col items-center gap-2 h-full"
+          >
             <div
               className="w-full bg-gradient-to-t from-blue-500 to-blue-600 rounded-t-sm transition-all hover:from-blue-600 hover:to-blue-700 cursor-pointer"
               style={{
-                height: `${(value / maxValue) * 100}%`,
+                height: `${Math.min(100, (value / maxValue) * 100)}%`,
+                maxHeight: "100%",
                 minHeight: value > 0 ? "4px" : "0px",
               }}
               title={`${item.date}: ${mode === "revenue" ? `GHS ${item.revenue.toFixed(2)}` : `${item.count} payments`} (${item.count} payments)`}

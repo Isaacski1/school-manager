@@ -191,6 +191,15 @@ const Attendance = () => {
     setPresentIds(newSet);
   };
 
+  const handleMarkAllPresent = () => {
+    if (isHoliday || adminHoliday || students.length === 0 || isDateBlocked()) {
+      return;
+    }
+
+    setHasMarkedAttendance(true);
+    setPresentIds(new Set(students.map((student) => student.id)));
+  };
+
   const handleSave = async () => {
     if (!selectedClassId || !schoolId) return;
 
@@ -323,6 +332,12 @@ const Attendance = () => {
     CLASSES_LIST.find((c) => c.id === selectedClassId)?.name || selectedClassId;
   const absentCount =
     isHoliday || !hasMarkedAttendance ? 0 : students.length - presentIds.size;
+  const allStudentsPresent =
+    students.length > 0 &&
+    hasMarkedAttendance &&
+    presentIds.size === students.length;
+  const bulkActionBlocked =
+    loading || saving || !selectedClassId || isDateBlocked() || !!adminHoliday;
 
   return (
     <Layout title="Mark Attendance">
@@ -455,26 +470,35 @@ const Attendance = () => {
                   {absentCount} Absent
                 </span>
               </div>
-              <button
-                onClick={handleSave}
-                disabled={
-                  loading ||
-                  saving ||
-                  !selectedClassId ||
-                  isDateBlocked() ||
-                  !!adminHoliday
-                }
-                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.01] hover:bg-emerald-700 disabled:opacity-50 sm:w-auto"
-              >
-                <Save size={18} />
-                {loading
-                  ? "Loading..."
-                  : saving
-                    ? "Saving..."
-                    : isHoliday
-                      ? "Save Holiday"
-                      : "Save Register"}
-              </button>
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+                <button
+                  onClick={handleMarkAllPresent}
+                  disabled={
+                    bulkActionBlocked ||
+                    isHoliday ||
+                    students.length === 0 ||
+                    allStudentsPresent
+                  }
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-6 py-2.5 text-sm font-semibold text-emerald-700 shadow-sm transition hover:scale-[1.01] hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                >
+                  <Users size={18} />
+                  {allStudentsPresent ? "All Present Selected" : "Mark All Present"}
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={bulkActionBlocked}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.01] hover:bg-emerald-700 disabled:opacity-50 sm:w-auto"
+                >
+                  <Save size={18} />
+                  {loading
+                    ? "Loading..."
+                    : saving
+                      ? "Saving..."
+                      : isHoliday
+                        ? "Save Holiday"
+                        : "Save Register"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

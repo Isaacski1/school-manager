@@ -243,7 +243,8 @@ const ActivityMonitor: React.FC = () => {
 
   useEffect(() => {
     if (!cacheKey) return;
-    const cached = localStorage.getItem(cacheKey);
+    const cached =
+      sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as {
@@ -291,7 +292,8 @@ const ActivityMonitor: React.FC = () => {
       realtime,
       savedAt: Date.now(),
     };
-    localStorage.setItem(cacheKey, JSON.stringify(payload));
+    sessionStorage.setItem(cacheKey, JSON.stringify(payload));
+    localStorage.removeItem(cacheKey);
   }, [cacheKey, extraLogs, firstLogs, realtime, serializeLogs, sortDir]);
 
   useEffect(() => {

@@ -15,7 +15,6 @@ import { UserRole } from "../../types";
 import { Link } from "react-router-dom";
 import { School } from "../../types";
 import Modal from "../../components/Modal";
-import EarningsOverview from "../../components/EarningsOverview";
 import {
   superAdminAiChat,
   confirmSuperAdminAiAction,
@@ -46,6 +45,16 @@ import {
   SendHorizontal,
   ShieldCheck,
 } from "lucide-react";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  BarChart,
+  Bar,
+} from "recharts";
 
 // Premium Card Component
 const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({
@@ -165,6 +174,208 @@ const EmptyState: React.FC<{
   </div>
 );
 
+const ChartSurface: React.FC<{
+  height: number;
+  className?: string;
+  children:
+    | React.ReactNode
+    | ((size: { width: number; height: number }) => React.ReactNode);
+}> = ({ height, className = "", children }) => {
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const updateSize = () => {
+      const nextWidth = Math.floor(node.getBoundingClientRect().width);
+      setWidth((previousWidth) =>
+        previousWidth === nextWidth ? previousWidth : nextWidth,
+      );
+    };
+
+    updateSize();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateSize);
+      return () => window.removeEventListener("resize", updateSize);
+    }
+
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      style={{ width: "100%", height: `${height}px` }}
+    >
+      {typeof children === "function"
+        ? width > 0
+          ? children({ width, height })
+          : null
+        : children}
+    </div>
+  );
+};
+
+const normalizePaymentStatus = (status?: string) => {
+  const normalized = String(status || "pending").toLowerCase();
+  if (["success", "paid", "active"].includes(normalized)) return "success";
+  if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
+  if (["abandoned", "cancelled", "canceled"].includes(normalized))
+    return "failed";
+  return "pending";
+};
+
+const formatCurrency = (value: number, currency = "GHS") =>
+  new Intl.NumberFormat("en-GH", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(value);
+
+const formatCompactCurrency = (value: number, currency = "GHS") =>
+  new Intl.NumberFormat("en-GH", {
+    style: "currency",
+    currency,
+    notation: Math.abs(value) >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 0,
+  }).format(value);
+
+const toSafeDate = (value?: Timestamp | number | string | Date | null) => {
+  if (!value) return null;
+  if (value instanceof Timestamp) return value.toDate();
+  if (value instanceof Date)
+    return Number.isNaN(value.getTime()) ? null : value;
+  const d = new Date(value as any);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const normalizeAmount = (amount?: number) => {
+  if (!amount) return 0;
+  return amount >= 100 ? amount / 100 : amount;
+};
+
+const normalizeMethodLabel = (value?: string) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "Unknown";
+  const cleaned = raw.replace(/_/g, " ").toLowerCase();
+  return cleaned.replace(/\b\w/g, (m) => m.toUpperCase());
+};
+
+const PLAN_ORDER = ["free", "trial", "monthly", "termly", "yearly"] as const;
+type PlanType = (typeof PLAN_ORDER)[number];
+
+const PLAN_COLORS: Record<PlanType, string> = {
+  free: "#10b981",
+  trial: "#f59e0b",
+  monthly: "#2563eb",
+  termly: "#22c55e",
+  yearly: "#8b5cf6",
+};
+
+const PLAN_GRADIENTS: Record<PlanType, { from: string; to: string }> = {
+  free: { from: "#6ee7b7", to: "#10b981" },
+  trial: { from: "#fdba74", to: "#f59e0b" },
+  monthly: { from: "#60a5fa", to: "#2563eb" },
+  termly: { from: "#4ade80", to: "#22c55e" },
+  yearly: { from: "#c4b5fd", to: "#8b5cf6" },
+};
+
+const PAYMENT_CHANNEL_COLORS = [
+  "#0B4A82",
+  "#14b8a6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#ef4444",
+  "#06b6d4",
+];
+
+const REVENUE_RANGE_OPTIONS = [
+  { label: "3M", value: 3 },
+  { label: "6M", value: 6 },
+  { label: "12M", value: 12 },
+] as const;
+type RevenueRangeValue = (typeof REVENUE_RANGE_OPTIONS)[number]["value"];
+
+const buildRollingMonths = (count: number) => {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const offset = count - 1 - index;
+    const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = d.toLocaleString("en-US", { month: "short" });
+    const shortLabel = d.toLocaleString("en-US", {
+      month: "short",
+      year: "2-digit",
+    });
+    const fullLabel = d.toLocaleString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+    return { key, label, shortLabel, fullLabel, date: d };
+  });
+};
+
+const getMonthKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+const RiskBadge: React.FC<{ level: "low" | "medium" | "high" }> = ({
+  level,
+}) => {
+  const styles =
+    level === "high"
+      ? "bg-rose-50 text-rose-600"
+      : level === "medium"
+        ? "bg-amber-50 text-amber-600"
+        : "bg-emerald-50 text-emerald-600";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${styles}`}
+    >
+      {level === "high"
+        ? "High risk"
+        : level === "medium"
+          ? "Watch"
+          : "Healthy"}
+    </span>
+  );
+};
+
+const ChartTooltip: React.FC<{
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+  currency?: string;
+}> = ({ active, payload, label, currency = "GHS" }) => {
+  if (!active || !payload?.length) return null;
+  const resolvedLabel = payload[0]?.payload?.tooltipLabel ?? label;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
+      <div className="font-semibold text-slate-800 mb-1">{resolvedLabel}</div>
+      {payload.map((entry, idx) => (
+        <div key={`${entry.name}-${idx}`} className="flex items-center gap-2">
+          <span
+            className="inline-block h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: entry.color }}
+          />
+          <span className="text-slate-500">{entry.name}:</span>
+          <span className="font-semibold text-slate-800">
+            {entry.name?.toLowerCase().includes("revenue")
+              ? formatCurrency(entry.value || 0, currency)
+              : entry.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 type PaymentRecord = {
   id: string;
   amount?: number;
@@ -174,6 +385,11 @@ type PaymentRecord = {
   schoolId?: string;
   schoolName?: string;
   createdAt?: Timestamp | number | string;
+  paymentMethod?: string;
+  method?: string;
+  channel?: string;
+  provider?: string;
+  paymentType?: string;
 };
 
 type ActivityEntry = {
@@ -223,6 +439,1376 @@ const formatActivityLabel = (entry: ActivityEntry) => {
     default:
       return type.replace(/_/g, " ");
   }
+};
+
+const EarningsOverview: React.FC<{
+  loading: boolean;
+  schools: School[];
+  payments: PaymentRecord[];
+  billingPayments: PaymentRecord[];
+  paymentMetrics: {
+    paidAmount: number;
+    paidCount: number;
+    pendingCount: number;
+    failedCount: number;
+    last30Amount: number;
+    successRate: number;
+    monthlySeries: { label: string; value: number }[];
+    monthlyFeesSeries: { label: string; value: number }[];
+  };
+  planDist: Record<string, number>;
+  expiredSubscriptions: Array<School & { planEndsAt: Date; graceEndsAt: Date }>;
+  kpis: {
+    total: number;
+    active: number;
+    inactive: number;
+    trial: number;
+    free: number;
+    paid: number;
+    newSchools: number;
+    activeLast7: number;
+  };
+}> = ({
+  loading,
+  schools,
+  payments,
+  billingPayments,
+  paymentMetrics,
+  planDist,
+  expiredSubscriptions,
+  kpis,
+}) => {
+  const [revenueRange, setRevenueRange] = useState<RevenueRangeValue>(12);
+
+  const normalizedBillingPayments = useMemo(() => {
+    return billingPayments.map((payment) => {
+      const createdAt = toSafeDate(payment.createdAt);
+      return {
+        ...payment,
+        createdAt,
+        normalizedStatus: normalizePaymentStatus(payment.status),
+        normalizedAmount: normalizeAmount(payment.amount),
+        normalizedMethod: normalizeMethodLabel(
+          payment.paymentMethod ||
+            payment.method ||
+            payment.channel ||
+            payment.provider ||
+            payment.paymentType,
+        ),
+      };
+    });
+  }, [billingPayments]);
+
+  const normalizedPayments = useMemo(() => {
+    return payments.map((payment) => {
+      const createdAt = toSafeDate(payment.createdAt);
+      return {
+        ...payment,
+        createdAt,
+        normalizedStatus: normalizePaymentStatus(payment.status),
+        normalizedAmount: normalizeAmount(payment.amount),
+        normalizedMethod: normalizeMethodLabel(
+          payment.paymentMethod ||
+            payment.method ||
+            payment.channel ||
+            payment.provider ||
+            payment.paymentType,
+        ),
+      };
+    });
+  }, [payments]);
+
+  const latestBillingBySchool = useMemo(() => {
+    const map = new Map<string, { amount: number; date: Date }>();
+    normalizedBillingPayments.forEach((payment) => {
+      if (payment.normalizedStatus !== "success") return;
+      if (!payment.schoolId || !payment.createdAt) return;
+      const current = map.get(payment.schoolId);
+      if (!current || current.date < payment.createdAt) {
+        map.set(payment.schoolId, {
+          amount: payment.normalizedAmount,
+          date: payment.createdAt,
+        });
+      }
+    });
+    return map;
+  }, [normalizedBillingPayments]);
+
+  const revenueTrend = useMemo(() => {
+    const buckets = buildRollingMonths(12);
+    const totals = Object.fromEntries(buckets.map((b) => [b.key, 0]));
+    const counts = Object.fromEntries(buckets.map((b) => [b.key, 0]));
+    normalizedBillingPayments.forEach((payment) => {
+      if (payment.normalizedStatus !== "success") return;
+      if (!payment.createdAt) return;
+      const key = getMonthKey(payment.createdAt);
+      if (totals[key] === undefined) return;
+      totals[key] += payment.normalizedAmount;
+      counts[key] += 1;
+    });
+    return buckets.map((bucket) => ({
+      label: bucket.fullLabel,
+      axisLabel: bucket.shortLabel,
+      tooltipLabel: bucket.fullLabel,
+      date: bucket.date,
+      revenue: totals[bucket.key] || 0,
+      count: counts[bucket.key] || 0,
+    }));
+  }, [normalizedBillingPayments]);
+
+  const filteredRevenueTrend = useMemo(() => {
+    return revenueTrend.slice(-revenueRange);
+  }, [revenueRange, revenueTrend]);
+
+  const revenueDateSpan = useMemo(() => {
+    const start = filteredRevenueTrend[0]?.date;
+    const end = filteredRevenueTrend[filteredRevenueTrend.length - 1]?.date;
+    if (!start || !end) return null;
+    const formatMonth = (value: Date) =>
+      value.toLocaleString("en-US", {
+        month: "short",
+        year: "numeric",
+      });
+    return `${formatMonth(start)} - ${formatMonth(end)}`;
+  }, [filteredRevenueTrend]);
+
+  const paymentStatusTrend = useMemo(() => {
+    const buckets = buildRollingMonths(6);
+    const totals = Object.fromEntries(
+      buckets.map((b) => [b.key, { success: 0, pending: 0, failed: 0 }]),
+    ) as Record<string, { success: number; pending: number; failed: number }>;
+    normalizedPayments.forEach((payment) => {
+      if (!payment.createdAt) return;
+      const key = getMonthKey(payment.createdAt);
+      if (!totals[key]) return;
+      totals[key][payment.normalizedStatus] += 1;
+    });
+    return buckets.map((bucket) => ({
+      label: bucket.label,
+      success: totals[bucket.key]?.success || 0,
+      pending: totals[bucket.key]?.pending || 0,
+      failed: totals[bucket.key]?.failed || 0,
+    }));
+  }, [normalizedPayments]);
+
+  const planRevenue = useMemo(() => {
+    const totals: Record<PlanType, number> = {
+      free: 0,
+      trial: 0,
+      monthly: 0,
+      termly: 0,
+      yearly: 0,
+    };
+    const planBySchool = new Map<string, PlanType>();
+    schools.forEach((school) => {
+      const plan = (school.plan || "trial").toLowerCase() as PlanType;
+      planBySchool.set(school.id, plan);
+    });
+    normalizedBillingPayments.forEach((payment) => {
+      if (payment.normalizedStatus !== "success") return;
+      if (!payment.schoolId) return;
+      const plan = planBySchool.get(payment.schoolId) || "trial";
+      totals[plan] += payment.normalizedAmount;
+    });
+    return totals;
+  }, [normalizedBillingPayments, schools]);
+
+  const planRevenueSeries = useMemo(() => {
+    return PLAN_ORDER.map((plan) => ({
+      plan,
+      label: plan.charAt(0).toUpperCase() + plan.slice(1),
+      revenue: planRevenue[plan] || 0,
+    }));
+  }, [planRevenue]);
+
+  const maxPlanRevenue = useMemo(() => {
+    return Math.max(0, ...planRevenueSeries.map((plan) => plan.revenue));
+  }, [planRevenueSeries]);
+
+  const planDistributionSeries = useMemo(() => {
+    const total = PLAN_ORDER.reduce(
+      (sum, plan) => sum + Number(planDist[plan] || 0),
+      0,
+    );
+    let offset = 0;
+
+    const segments = PLAN_ORDER.map((plan) => {
+      const value = Number(planDist[plan] || 0);
+      const percentage = total > 0 ? (value / total) * 100 : 0;
+      const segment = {
+        plan,
+        value,
+        percentage,
+        offset,
+      };
+
+      offset += percentage;
+      return segment;
+    }).filter((segment) => segment.value > 0);
+
+    return { total, segments };
+  }, [planDist]);
+
+  const paymentChannelSeries = useMemo(() => {
+    const totals = new Map<string, { count: number; amount: number }>();
+    normalizedBillingPayments.forEach((payment) => {
+      if (payment.normalizedStatus !== "success") return;
+      const key = payment.normalizedMethod;
+      const current = totals.get(key) || { count: 0, amount: 0 };
+      totals.set(key, {
+        count: current.count + 1,
+        amount: current.amount + payment.normalizedAmount,
+      });
+    });
+    return Array.from(totals.entries())
+      .map(([label, data]) => ({ label, ...data }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 6);
+  }, [normalizedBillingPayments]);
+
+  const lifecycleMetrics = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const newSubscriptions = schools.filter((school) => {
+      const createdAt = toSafeDate(school.createdAt);
+      if (!createdAt) return false;
+      return createdAt >= monthStart;
+    }).length;
+    const renewals = normalizedBillingPayments.filter((payment) => {
+      if (payment.normalizedStatus !== "success") return false;
+      if (!payment.createdAt) return false;
+      if (!payment.schoolId) return false;
+      const school = schools.find((s) => s.id === payment.schoolId);
+      if (!school) return false;
+      const createdAt = toSafeDate(school.createdAt);
+      return (
+        !!createdAt && createdAt < monthStart && payment.createdAt >= monthStart
+      );
+    }).length;
+    const trialsEndingSoon = schools.filter((school) => {
+      if (school.plan !== "trial") return false;
+      const ends = toSafeDate(school.planEndsAt);
+      if (!ends) return false;
+      const diffDays = (ends.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+      return diffDays >= 0 && diffDays <= 14;
+    }).length;
+    const expiredCount = expiredSubscriptions.length;
+    const overdueCount = expiredSubscriptions.length;
+    const churnRisk = schools.filter((school) => {
+      const paid = school.plan && !["free", "trial"].includes(school.plan);
+      return (
+        paid &&
+        (school.status === "inactive" ||
+          !!expiredSubscriptions.find((e) => e.id === school.id))
+      );
+    }).length;
+
+    return {
+      newSubscriptions,
+      renewals,
+      trialsEndingSoon,
+      expiredCount,
+      overdueCount,
+      churnRisk,
+    };
+  }, [schools, normalizedBillingPayments, expiredSubscriptions]);
+
+  const mrrMetrics = useMemo(() => {
+    let mrr = 0;
+    const byPlan: Record<PlanType, number> = {
+      free: 0,
+      trial: 0,
+      monthly: 0,
+      termly: 0,
+      yearly: 0,
+    };
+    schools.forEach((school) => {
+      const plan = (school.plan || "trial").toLowerCase() as PlanType;
+      if (["free", "trial"].includes(plan)) return;
+      const latestPayment = latestBillingBySchool.get(school.id);
+      if (!latestPayment) return;
+      let monthlyValue = 0;
+      if (plan === "monthly") monthlyValue = latestPayment.amount;
+      if (plan === "termly") monthlyValue = latestPayment.amount / 3;
+      if (plan === "yearly") monthlyValue = latestPayment.amount / 12;
+      byPlan[plan] += monthlyValue;
+      mrr += monthlyValue;
+    });
+    const arr = mrr * 12;
+    return { mrr, arr, byPlan };
+  }, [schools, latestBillingBySchool]);
+
+  const planPerformance = useMemo(() => {
+    return PLAN_ORDER.map((plan) => {
+      const schoolsOnPlan = schools.filter(
+        (school) => (school.plan || "trial").toLowerCase() === plan,
+      );
+      const activeCount = schoolsOnPlan.filter(
+        (school) => school.status === "active",
+      ).length;
+      const revenue = planRevenue[plan] || 0;
+      const avgRevenue = schoolsOnPlan.length
+        ? revenue / schoolsOnPlan.length
+        : 0;
+      const monthlyValue = mrrMetrics.byPlan[plan] || 0;
+      const expiredCount = expiredSubscriptions.filter(
+        (school) => (school.plan || "trial").toLowerCase() === plan,
+      ).length;
+      const expiredRate = schoolsOnPlan.length
+        ? expiredCount / schoolsOnPlan.length
+        : 0;
+      const level: "low" | "medium" | "high" =
+        expiredRate > 0.2 ? "high" : expiredRate > 0.1 ? "medium" : "low";
+      return {
+        plan,
+        schoolsCount: schoolsOnPlan.length,
+        activeCount,
+        revenue,
+        avgRevenue,
+        monthlyValue,
+        level,
+      };
+    });
+  }, [schools, planRevenue, mrrMetrics.byPlan, expiredSubscriptions]);
+
+  const revenueGrowth = useMemo(() => {
+    const current = revenueTrend[revenueTrend.length - 1]?.revenue || 0;
+    const previous = revenueTrend[revenueTrend.length - 2]?.revenue || 0;
+    const change = previous ? ((current - previous) / previous) * 100 : 0;
+    return { current, previous, change };
+  }, [revenueTrend]);
+
+  const insightPanel = useMemo(() => {
+    const currentMonthStart = new Date(
+      new Date().getFullYear(),
+      new Date().getMonth(),
+      1,
+    );
+    const revenueByPlanCurrent: Record<PlanType, number> = {
+      free: 0,
+      trial: 0,
+      monthly: 0,
+      termly: 0,
+      yearly: 0,
+    };
+    const planBySchool = new Map<string, PlanType>();
+    schools.forEach((school) => {
+      planBySchool.set(
+        school.id,
+        (school.plan || "trial").toLowerCase() as PlanType,
+      );
+    });
+    normalizedBillingPayments.forEach((payment) => {
+      if (payment.normalizedStatus !== "success") return;
+      if (!payment.createdAt || payment.createdAt < currentMonthStart) return;
+      if (!payment.schoolId) return;
+      const plan = planBySchool.get(payment.schoolId) || "trial";
+      revenueByPlanCurrent[plan] += payment.normalizedAmount;
+    });
+    const bestPlan = Object.entries(revenueByPlanCurrent).reduce(
+      (acc, [plan, value]) => (value > acc.value ? { plan, value } : acc),
+      { plan: "trial", value: 0 },
+    );
+    const trialRate = kpis.total ? (planDist.trial / kpis.total) * 100 : 0;
+    const failureRate =
+      paymentMetrics.paidCount + paymentMetrics.failedCount
+        ? (paymentMetrics.failedCount /
+            (paymentMetrics.paidCount + paymentMetrics.failedCount)) *
+          100
+        : 0;
+    const renewalRisk = kpis.total
+      ? (expiredSubscriptions.length / kpis.total) * 100
+      : 0;
+
+    return [
+      {
+        title: "Top revenue plan (month)",
+        detail: `${bestPlan.plan.charAt(0).toUpperCase() + bestPlan.plan.slice(1)} • ${formatCurrency(bestPlan.value)}`,
+        tone: "success",
+      },
+      {
+        title: "Trial pipeline",
+        detail: `${trialRate.toFixed(1)}% of schools on trial`,
+        tone: "warning",
+      },
+      {
+        title: "Payment failure signal",
+        detail:
+          failureRate > 18
+            ? `${failureRate.toFixed(1)}% failed payments — review`
+            : `${failureRate.toFixed(1)}% failed payments`,
+        tone: failureRate > 18 ? "danger" : "neutral",
+      },
+      {
+        title: "Renewal risk",
+        detail:
+          renewalRisk > 8
+            ? `${renewalRisk.toFixed(1)}% overdue subscriptions`
+            : `${renewalRisk.toFixed(1)}% overdue subscriptions`,
+        tone: renewalRisk > 8 ? "danger" : "neutral",
+      },
+      {
+        title: "Revenue momentum",
+        detail:
+          revenueGrowth.change >= 0
+            ? `Up ${revenueGrowth.change.toFixed(1)}% vs last month`
+            : `Down ${Math.abs(revenueGrowth.change).toFixed(1)}% vs last month`,
+        tone: revenueGrowth.change >= 0 ? "success" : "danger",
+      },
+    ];
+  }, [
+    normalizedBillingPayments,
+    planDist.trial,
+    kpis.total,
+    paymentMetrics.paidCount,
+    paymentMetrics.failedCount,
+    expiredSubscriptions.length,
+    revenueGrowth.change,
+    schools,
+  ]);
+
+  const hasRevenue = normalizedBillingPayments.some(
+    (payment) => payment.normalizedStatus === "success",
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 8 }).map((_, idx) => (
+            <Skeleton key={idx} className="h-28" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <Skeleton className="h-80" />
+          <Skeleton className="h-80" />
+          <Skeleton className="h-80" />
+        </div>
+        <Skeleton className="h-72" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="rounded-3xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-white p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+              Earnings Overview
+            </p>
+            <h3 className="text-2xl font-bold text-slate-900 mt-2">
+              Subscription revenue intelligence
+            </h3>
+            <p className="text-sm text-slate-600 mt-1">
+              Track revenue flow, plan performance, and renewal risk signals in
+              one unified view.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+              {kpis.paid} paid schools
+            </span>
+            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+              {paymentMetrics.paidCount} successful payments
+            </span>
+            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+              {paymentMetrics.successRate}% success rate
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {[
+          {
+            label: "Total Revenue",
+            value: formatCurrency(paymentMetrics.paidAmount),
+            hint: "All time",
+            icon: <BadgeDollarSign size={18} />,
+            gradient: "from-emerald-500/20 via-emerald-200/30 to-white",
+            ring: "bg-emerald-600",
+            glow: "shadow-emerald-100/70",
+          },
+          {
+            label: "Revenue (30d)",
+            value: formatCurrency(paymentMetrics.last30Amount),
+            hint: "Last 30 days",
+            icon: <TrendingUp size={18} />,
+            gradient: "from-[#0B4A82]/20 via-blue-200/30 to-white",
+            ring: "bg-[#0B4A82]",
+            glow: "shadow-blue-100/70",
+          },
+          {
+            label: "Successful Payments",
+            value: paymentMetrics.paidCount,
+            hint: "Verified transactions",
+            icon: <CheckCircle size={18} />,
+            gradient: "from-emerald-400/20 via-emerald-200/30 to-white",
+            ring: "bg-emerald-500",
+            glow: "shadow-emerald-100/70",
+          },
+          {
+            label: "Success Rate",
+            value: `${paymentMetrics.successRate}%`,
+            hint: "Across all payments",
+            icon: <Activity size={18} />,
+            gradient: "from-cyan-400/20 via-sky-200/30 to-white",
+            ring: "bg-cyan-500",
+            glow: "shadow-cyan-100/70",
+          },
+          {
+            label: "Active Paid Schools",
+            value: schools.filter(
+              (s) =>
+                s.status === "active" &&
+                !["free", "trial"].includes(s.plan || ""),
+            ).length,
+            hint: "Currently billable",
+            icon: <Users size={18} />,
+            gradient: "from-indigo-400/20 via-indigo-200/30 to-white",
+            ring: "bg-indigo-500",
+            glow: "shadow-indigo-100/70",
+          },
+          {
+            label: "Expired Subscriptions",
+            value: expiredSubscriptions.length,
+            hint: "Grace ended",
+            icon: <AlertTriangle size={18} />,
+            gradient: "from-rose-400/20 via-rose-200/30 to-white",
+            ring: "bg-rose-500",
+            glow: "shadow-rose-100/70",
+          },
+          {
+            label: "Estimated MRR",
+            value: formatCurrency(mrrMetrics.mrr),
+            hint: "Monthly recurring",
+            icon: <Wallet size={18} />,
+            gradient: "from-amber-400/20 via-amber-200/30 to-white",
+            ring: "bg-amber-500",
+            glow: "shadow-amber-100/70",
+          },
+          {
+            label: "Estimated ARR",
+            value: formatCurrency(mrrMetrics.arr),
+            hint: "Annualized",
+            icon: <BadgeDollarSign size={18} />,
+            gradient: "from-violet-400/20 via-violet-200/30 to-white",
+            ring: "bg-violet-500",
+            glow: "shadow-violet-100/70",
+          },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className={`min-w-0 rounded-2xl border border-slate-100 bg-gradient-to-br ${item.gradient} p-4 shadow-sm hover:shadow-lg transition-all ${item.glow}`}
+          >
+            <div className="flex items-start justify-between">
+              <div className="min-w-0 flex-1 pr-3">
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                  {item.label}
+                </p>
+                <div className="mt-3 break-words text-[clamp(1.35rem,4vw,1.95rem)] font-bold leading-tight text-slate-900">
+                  {item.value}
+                </div>
+                <p className="text-xs text-slate-500 mt-2">{item.hint}</p>
+              </div>
+              <span
+                className={`h-10 w-10 flex-shrink-0 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow-md`}
+              >
+                {item.icon}
+              </span>
+            </div>
+            <div className="mt-4 h-1.5 rounded-full bg-white/70 border border-white/60 overflow-hidden">
+              <div className={`h-full ${item.ring}`} style={{ width: "62%" }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card className="xl:col-span-2">
+          <div className="flex flex-col gap-3 mb-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <h4 className="text-lg font-semibold text-slate-900">
+                Revenue Flow ({revenueRange} months)
+              </h4>
+              <p className="text-xs text-slate-500">
+                Successful billing collections with monthly momentum
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                <span>
+                  {revenueDateSpan || "Building date range"}
+                </span>
+                <span className="h-1 w-1 rounded-full bg-slate-300" />
+                <span>
+                  {filteredRevenueTrend.length > 0
+                    ? `${filteredRevenueTrend.length} months tracked`
+                    : "Building chart data"}
+                </span>
+              </div>
+            </div>
+            <div className="inline-flex w-fit rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+              {REVENUE_RANGE_OPTIONS.map((option) => {
+                const isActive = revenueRange === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setRevenueRange(option.value)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      isActive
+                        ? "bg-[#0B4A82] text-white"
+                        : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <ChartSurface
+            height={288}
+            className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-white overflow-hidden"
+          >
+            {filteredRevenueTrend && filteredRevenueTrend.length > 0 ? (
+              ({ width, height }) => (
+                <AreaChart
+                  width={width}
+                  height={height}
+                  data={filteredRevenueTrend}
+                  margin={{ left: 40, right: 20, top: 10, bottom: 10 }}
+                >
+                  <defs>
+                    <linearGradient
+                      id="revGradient"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop
+                        offset="0%"
+                        stopColor="#0B4A82"
+                        stopOpacity={0.35}
+                      />
+                      <stop
+                        offset="100%"
+                        stopColor="#0B4A82"
+                        stopOpacity={0.05}
+                      />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="axisLabel"
+                    tick={{ fontSize: 11 }}
+                    minTickGap={16}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value) => `${Math.round(value / 1000)}k`}
+                  />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke="#0B4A82"
+                    strokeWidth={2}
+                    fill="url(#revGradient)"
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              )
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <EmptyState
+                  icon={
+                    <BadgeDollarSign className="text-slate-300" size={40} />
+                  }
+                  title="No revenue recorded"
+                  description="Successful billing transactions will appear here once schools start paying."
+                />
+              </div>
+            )}
+          </ChartSurface>
+        </Card>
+
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Payment Status Mix
+              </h4>
+              <p className="text-xs text-slate-500">
+                Success vs pending vs failed trends
+              </p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center">
+              <Wallet size={18} />
+            </div>
+          </div>
+          <ChartSurface
+            height={240}
+            className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-white overflow-hidden"
+          >
+            {paymentStatusTrend && paymentStatusTrend.length > 0 ? (
+              ({ width, height }) => (
+                <BarChart
+                  width={width}
+                  height={height}
+                  data={paymentStatusTrend}
+                  margin={{ top: 10, right: 20, bottom: 10, left: 40 }}
+                  barSize={12}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Bar
+                    dataKey="success"
+                    stackId="a"
+                    name="Success"
+                    minPointSize={0}
+                    fill="#10b981"
+                    isAnimationActive={false}
+                  />
+                  <Bar
+                    dataKey="pending"
+                    stackId="a"
+                    name="Pending"
+                    minPointSize={0}
+                    fill="#f59e0b"
+                    isAnimationActive={false}
+                  />
+                  <Bar
+                    dataKey="failed"
+                    stackId="a"
+                    name="Failed"
+                    minPointSize={0}
+                    fill="#f43f5e"
+                    isAnimationActive={false}
+                  />
+                </BarChart>
+              )
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-slate-500 text-sm">No payment data yet</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Payment transactions will appear as they are processed
+                  </p>
+                </div>
+              </div>
+            )}
+          </ChartSurface>
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+            {[
+              { label: "Success", color: "#10b981" },
+              { label: "Pending", color: "#f59e0b" },
+              { label: "Failed", color: "#f43f5e" },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600"
+              >
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className="font-medium">{item.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 space-y-2 text-xs text-slate-600">
+            <div className="flex items-center justify-between">
+              <span>Successful payments</span>
+              <span className="font-semibold text-slate-900">
+                {paymentMetrics.paidCount}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Pending payments</span>
+              <span className="font-semibold text-slate-900">
+                {paymentMetrics.pendingCount}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Failed payments</span>
+              <span className="font-semibold text-slate-900">
+                {paymentMetrics.failedCount}
+              </span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Plan Distribution
+              </h4>
+              <p className="text-xs text-slate-500">School split by plan</p>
+            </div>
+            <PieChart size={18} className="text-slate-400" />
+          </div>
+          <ChartSurface
+            height={224}
+            className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-white overflow-hidden"
+          >
+            {planDistributionSeries.total > 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="relative h-40 w-40">
+                  <svg
+                    viewBox="0 0 36 36"
+                    className="h-full w-full"
+                    style={{ transform: "rotate(-90deg)" }}
+                  >
+                    <circle
+                      cx="18"
+                      cy="18"
+                      r="15.915"
+                      fill="none"
+                      stroke="#e2e8f0"
+                      strokeWidth="6"
+                    />
+                    {planDistributionSeries.segments.map((segment) => (
+                      <circle
+                        key={segment.plan}
+                        cx="18"
+                        cy="18"
+                        r="15.915"
+                        fill="none"
+                        stroke={PLAN_COLORS[segment.plan]}
+                        strokeWidth="6"
+                        strokeLinecap="round"
+                        strokeDasharray={`${segment.percentage} ${100 - segment.percentage}`}
+                        strokeDashoffset={-segment.offset}
+                      />
+                    ))}
+                  </svg>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                    <div className="text-[11px] font-medium uppercase tracking-widest text-slate-400">
+                      Schools
+                    </div>
+                    <div className="mt-1 text-2xl font-bold text-slate-900">
+                      {planDistributionSeries.total}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-slate-500 text-sm">Building plan data</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    School plan distribution will appear soon
+                  </p>
+                </div>
+              </div>
+            )}
+          </ChartSurface>
+          <div className="mt-4 space-y-2 text-xs">
+            {PLAN_ORDER.map((plan) => (
+              <div key={plan} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: PLAN_COLORS[plan] }}
+                  />
+                  <span className="capitalize text-slate-600">{plan}</span>
+                </div>
+                <span className="font-semibold text-slate-900">
+                  {planDist[plan] || 0}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="xl:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Plan Revenue Contribution
+              </h4>
+              <p className="text-xs text-slate-500">
+                Revenue mix by plan tier (successful billing)
+              </p>
+            </div>
+            <BadgeDollarSign size={18} className="text-slate-400" />
+          </div>
+          <ChartSurface
+            height={344}
+            className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 overflow-hidden"
+          >
+            {() => {
+              const guideRatios = [1, 0.5, 0];
+
+              return (
+                <div className="grid h-full grid-rows-[1fr_auto] gap-3 px-3 py-4 sm:px-5 sm:py-5">
+                  <div className="relative min-h-0">
+                    <div className="pointer-events-none absolute inset-0">
+                      {guideRatios.map((ratio) => (
+                        <div
+                          key={ratio}
+                          className="absolute inset-x-0 border-t border-dashed border-slate-200/90"
+                          style={{ bottom: `${ratio * 100}%` }}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="relative z-10 grid h-full grid-cols-5 items-end gap-2 sm:gap-4">
+                      {planRevenueSeries.map((plan) => {
+                        const ratio =
+                          maxPlanRevenue > 0 ? plan.revenue / maxPlanRevenue : 0;
+                        const fillHeight =
+                          plan.revenue > 0
+                            ? `${Math.max(18, ratio * 100)}%`
+                            : "10px";
+
+                        return (
+                          <div
+                            key={plan.plan}
+                            className="flex h-full min-w-0 flex-col items-center justify-end gap-2"
+                          >
+                            <div className="w-full px-1">
+                              <div
+                                className="inline-flex w-full items-center justify-center rounded-full border bg-white/95 px-1.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm sm:px-2.5"
+                                style={{
+                                  borderColor: `${PLAN_COLORS[plan.plan]}28`,
+                                }}
+                              >
+                                <span className="truncate">
+                                  {formatCompactCurrency(plan.revenue)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex h-full w-full items-end justify-center px-0.5">
+                              <div className="relative flex h-full w-full max-w-[78px] items-end overflow-hidden rounded-[24px] border border-slate-200/80 bg-white/80 p-2 shadow-inner shadow-slate-200/70">
+                                <div className="absolute inset-2 rounded-[18px] bg-slate-100/90" />
+                                <div
+                                  className="absolute inset-x-3 bottom-2 h-6 rounded-[14px] bg-white/55"
+                                  aria-hidden="true"
+                                />
+                                <div
+                                  className="relative z-10 w-full rounded-[16px] shadow-[0_18px_32px_-24px_rgba(15,23,42,0.95)] transition-[height] duration-300"
+                                  style={{
+                                    height: fillHeight,
+                                    opacity: plan.revenue > 0 ? 1 : 0.35,
+                                    background: `linear-gradient(180deg, ${PLAN_GRADIENTS[plan.plan].from} 0%, ${PLAN_GRADIENTS[plan.plan].to} 100%)`,
+                                    border: `1px solid ${PLAN_COLORS[plan.plan]}33`,
+                                  }}
+                                >
+                                  <div
+                                    className="absolute inset-x-0 top-0 h-8 bg-white/10"
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-2 sm:gap-4">
+                    {planRevenueSeries.map((plan) => (
+                      <div key={plan.plan} className="min-w-0">
+                        <div
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border bg-white/92 px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm sm:text-[11px]"
+                          style={{
+                            borderColor: `${PLAN_COLORS[plan.plan]}26`,
+                          }}
+                        >
+                          <span
+                            className="h-2 w-2 flex-none rounded-full"
+                            style={{ backgroundColor: PLAN_COLORS[plan.plan] }}
+                          />
+                          <span className="truncate capitalize">
+                            {plan.label}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }}
+          </ChartSurface>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 text-xs">
+            {planRevenueSeries.map((plan) => (
+              <div
+                key={plan.plan}
+                className="min-w-0 rounded-2xl border bg-white p-3.5 shadow-sm transition-transform duration-200 hover:-translate-y-0.5"
+                style={{
+                  borderColor: `${PLAN_COLORS[plan.plan]}22`,
+                  background: `linear-gradient(135deg, ${PLAN_GRADIENTS[plan.plan].from}16 0%, #ffffff 72%)`,
+                }}
+              >
+                <div className="flex items-center gap-2 text-slate-500">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: PLAN_COLORS[plan.plan] }}
+                  />
+                  <span className="capitalize">{plan.label}</span>
+                </div>
+                <div className="mt-1 break-words text-[clamp(0.95rem,2.6vw,1.125rem)] font-semibold leading-tight text-slate-900">
+                  {formatCurrency(plan.revenue)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Renewal Intelligence
+              </h4>
+              <p className="text-xs text-slate-500">
+                Lifecycle signals this month
+              </p>
+            </div>
+            <Clock size={18} className="text-slate-400" />
+          </div>
+          <div className="space-y-3 text-xs">
+            {[
+              {
+                label: "New subscriptions",
+                value: lifecycleMetrics.newSubscriptions,
+                color: "text-emerald-600",
+              },
+              {
+                label: "Renewals",
+                value: lifecycleMetrics.renewals,
+                color: "text-blue-600",
+              },
+              {
+                label: "Trials ending soon",
+                value: lifecycleMetrics.trialsEndingSoon,
+                color: "text-amber-600",
+              },
+              {
+                label: "Expired",
+                value: lifecycleMetrics.expiredCount,
+                color: "text-rose-600",
+              },
+              {
+                label: "Overdue after grace",
+                value: lifecycleMetrics.overdueCount,
+                color: "text-rose-600",
+              },
+              {
+                label: "Churn risk",
+                value: lifecycleMetrics.churnRisk,
+                color: "text-slate-700",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2"
+              >
+                <span className="text-slate-600">{item.label}</span>
+                <span className={`font-semibold ${item.color}`}>
+                  {item.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Payment Channels
+              </h4>
+              <p className="text-xs text-slate-500">Collections by method</p>
+            </div>
+            <Wallet size={18} className="text-slate-400" />
+          </div>
+          <ChartSurface
+            height={Math.max(224, paymentChannelSeries.length * 62 + 30)}
+            className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 overflow-hidden"
+          >
+            {paymentChannelSeries.length > 0 ? (
+              (() => {
+                const maxAmount = Math.max(
+                  ...paymentChannelSeries.map((entry) => entry.amount),
+                  1,
+                );
+
+                return (
+                  <div className="grid h-full content-center gap-4 px-4 py-5 sm:px-5">
+                    {paymentChannelSeries.map((item, index) => {
+                      const accent =
+                        PAYMENT_CHANNEL_COLORS[
+                          index % PAYMENT_CHANNEL_COLORS.length
+                        ];
+                      const widthPercent =
+                        item.amount > 0
+                          ? Math.max(14, (item.amount / maxAmount) * 100)
+                          : 0;
+
+                      return (
+                        <div key={item.label} className="space-y-2">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full"
+                                style={{ backgroundColor: accent }}
+                              />
+                              <span className="truncate font-medium text-slate-600">
+                                {item.label}
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                                {item.count} payment
+                                {item.count === 1 ? "" : "s"}
+                              </span>
+                            </div>
+                            <span className="shrink-0 font-semibold text-slate-900">
+                              {formatCurrency(item.amount)}
+                            </span>
+                          </div>
+
+                          <div className="h-4 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80">
+                            <div
+                              className="h-full rounded-full shadow-[0_10px_20px_-12px_rgba(15,23,42,0.9)]"
+                              style={{
+                                width: `${widthPercent}%`,
+                                background: `linear-gradient(90deg, ${accent}cc 0%, ${accent} 100%)`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <EmptyState
+                  icon={<Wallet className="text-slate-300" size={40} />}
+                  title="No channel data"
+                  description="Payment methods will appear once billing transactions are completed."
+                />
+              </div>
+            )}
+          </ChartSurface>
+          <div className="mt-4 space-y-2 text-xs">
+            {paymentChannelSeries.map((item, index) => (
+              <div
+                key={item.label}
+                className="flex items-center justify-between"
+              >
+                <span className="flex items-center gap-2 text-slate-600">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{
+                      backgroundColor:
+                        PAYMENT_CHANNEL_COLORS[
+                          index % PAYMENT_CHANNEL_COLORS.length
+                        ],
+                    }}
+                  />
+                  {item.label}
+                </span>
+                <span className="font-semibold text-slate-900">
+                  {formatCurrency(item.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-slate-50 via-white to-slate-50">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-lg font-semibold text-slate-900">
+                Revenue Insights
+              </h4>
+              <p className="text-xs text-slate-500">
+                Auto-generated from live data
+              </p>
+            </div>
+            <TrendingUp size={18} className="text-slate-400" />
+          </div>
+          <div className="space-y-3">
+            {insightPanel.map((insight) => (
+              <div
+                key={insight.title}
+                className="rounded-xl border border-slate-100 bg-white p-3"
+              >
+                <div className="text-xs font-semibold text-slate-500">
+                  {insight.title}
+                </div>
+                <div
+                  className={`text-sm font-semibold mt-1 ${
+                    insight.tone === "success"
+                      ? "text-emerald-600"
+                      : insight.tone === "danger"
+                        ? "text-rose-600"
+                        : insight.tone === "warning"
+                          ? "text-amber-600"
+                          : "text-slate-700"
+                  }`}
+                >
+                  {insight.detail}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h4 className="text-lg font-semibold text-slate-900">
+              Plan Performance Table
+            </h4>
+            <p className="text-xs text-slate-500">
+              Revenue and risk benchmarks across subscription tiers
+            </p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                <th className="py-2 pr-4">Plan</th>
+                <th className="py-2 pr-4">Schools</th>
+                <th className="py-2 pr-4">Active</th>
+                <th className="py-2 pr-4">Revenue</th>
+                <th className="py-2 pr-4">Avg / School</th>
+                <th className="py-2 pr-4">Est. Monthly</th>
+                <th className="py-2">Risk</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {planPerformance.map((row) => (
+                <tr key={row.plan} className="text-slate-600">
+                  <td className="py-3 pr-4 capitalize font-semibold text-slate-800">
+                    {row.plan}
+                  </td>
+                  <td className="py-3 pr-4">{row.schoolsCount}</td>
+                  <td className="py-3 pr-4">{row.activeCount}</td>
+                  <td className="py-3 pr-4">{formatCurrency(row.revenue)}</td>
+                  <td className="py-3 pr-4">
+                    {formatCurrency(row.avgRevenue)}
+                  </td>
+                  <td className="py-3 pr-4">
+                    {formatCurrency(row.monthlyValue)}
+                  </td>
+                  <td className="py-3">
+                    <RiskBadge level={row.level} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h4 className="text-lg font-semibold text-slate-900">
+              Recent Payment Records
+            </h4>
+            <p className="text-xs text-slate-500">
+              Latest billing transactions from super admin payment history
+            </p>
+          </div>
+          <Wallet size={18} className="text-slate-400" />
+        </div>
+
+        {normalizedBillingPayments.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                  <th className="py-2 pr-4">Date</th>
+                  <th className="py-2 pr-4">School</th>
+                  <th className="py-2 pr-4">Amount</th>
+                  <th className="py-2 pr-4">Method</th>
+                  <th className="py-2 pr-4">Status</th>
+                  <th className="py-2">Reference</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {normalizedBillingPayments.slice(0, 10).map((payment) => (
+                  <tr
+                    key={payment.id}
+                    className="text-slate-600 hover:bg-slate-50"
+                  >
+                    <td className="py-3 pr-4 text-xs">
+                      {payment.createdAt
+                        ? payment.createdAt.toLocaleDateString()
+                        : "—"}
+                    </td>
+                    <td className="py-3 pr-4 font-medium text-slate-800">
+                      {payment.schoolName || "Unknown"}
+                    </td>
+                    <td className="py-3 pr-4 font-semibold text-emerald-600">
+                      {formatCurrency(payment.normalizedAmount)}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                        {payment.normalizedMethod}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          payment.normalizedStatus === "success"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : payment.normalizedStatus === "pending"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        {payment.normalizedStatus}
+                      </span>
+                    </td>
+                    <td className="py-3 text-xs text-slate-400 font-mono">
+                      {payment.id}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            icon={<BadgeDollarSign className="text-slate-300" size={40} />}
+            title="No payment records"
+            description="Payment transactions will appear here as schools complete billing."
+          />
+        )}
+
+        {normalizedBillingPayments.length > 10 && (
+          <div className="mt-4 text-center">
+            <p className="text-xs text-slate-500">
+              Showing 10 of {normalizedBillingPayments.length} total payment
+              records
+            </p>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 };
 
 const Dashboard: React.FC = () => {
@@ -308,25 +1894,102 @@ const Dashboard: React.FC = () => {
         query(
           collection(firestore, "payments"),
           orderBy("createdAt", "desc"),
-          limit(400),
+          limit(1000),
         ),
       );
-      const paymentRows = rootPaymentsSnap.docs.map((d) => {
+      const rootPaymentRows = rootPaymentsSnap.docs.map((d) => {
         const data = d.data() as any;
         return {
           id: d.id,
           ...data,
           amount: data.amount ?? data.amountPaid,
           createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
+          paymentMethod: data.paymentMethod ?? data.method ?? data.channel,
+          method: data.method ?? data.paymentMethod,
+          channel: data.channel ?? data.paymentMethod ?? data.method,
+          provider: data.provider ?? data.gateway ?? data.processor,
+          paymentType: data.paymentType ?? data.payment_method ?? data.type,
+          module: data.module ?? "billing",
+          type: data.type ?? "subscription",
+          category: data.category ?? "subscription",
         } as PaymentRecord;
       });
+
+      // Pull school-level payments for finance v2 setups
+      let schoolPaymentRows: PaymentRecord[] = [];
+      try {
+        const schoolPaymentPromises = rows.map(async (school) => {
+          if (!school.id) return [] as PaymentRecord[];
+          try {
+            const schoolPaymentsSnap = await getDocs(
+              query(
+                collection(firestore, "schools", school.id, "payments"),
+                orderBy("createdAt", "desc"),
+                limit(500),
+              ),
+            );
+            return schoolPaymentsSnap.docs.map((docSnap) => {
+              const data = docSnap.data() as any;
+              return {
+                id: `${school.id}_${docSnap.id}`,
+                ...data,
+                schoolId: data.schoolId ?? school.id,
+                schoolName: data.schoolName ?? school.name,
+                amount: data.amount ?? data.amountPaid,
+                createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
+                paymentMethod:
+                  data.paymentMethod ?? data.method ?? data.channel,
+                method: data.method ?? data.paymentMethod,
+                channel: data.channel ?? data.paymentMethod ?? data.method,
+                provider: data.provider ?? data.gateway ?? data.processor,
+                paymentType:
+                  data.paymentType ?? data.payment_method ?? data.type,
+                module: data.module ?? "billing",
+                type: data.type ?? "subscription",
+                category: data.category ?? "subscription",
+              } as PaymentRecord;
+            });
+          } catch (err) {
+            return [] as PaymentRecord[];
+          }
+        });
+
+        const schoolPaymentsNested = await Promise.all(schoolPaymentPromises);
+        schoolPaymentRows = schoolPaymentsNested.flat();
+      } catch (err) {
+        console.warn(
+          "[Dashboard] Failed to load school payment subcollections",
+          err,
+        );
+      }
+
+      const combinedPayments = [...rootPaymentRows, ...schoolPaymentRows];
+      const paymentRows = combinedPayments.filter(
+        (payment, index, self) =>
+          index ===
+          self.findIndex(
+            (p) => p.id === payment.id && p.schoolId === payment.schoolId,
+          ),
+      );
       console.log("[Dashboard] Payments loaded", {
         total: paymentRows.length,
+        billingPayments: paymentRows.filter(
+          (p) =>
+            (p as any).module === "billing" ||
+            (p as any).type === "subscription",
+        ).length,
         range: {
           min: paymentRows[paymentRows.length - 1]?.createdAt ?? null,
           max: paymentRows[0]?.createdAt ?? null,
         },
-        sample: paymentRows.slice(0, 3),
+        sample: paymentRows.slice(0, 3).map((p) => ({
+          id: p.id,
+          schoolId: p.schoolId,
+          amount: p.amount,
+          status: p.status,
+          module: (p as any).module,
+          type: (p as any).type,
+        })),
       });
       setPayments(paymentRows);
 
@@ -519,26 +2182,42 @@ const Dashboard: React.FC = () => {
     return activity.filter((entry) => entry.eventType === activityFilter);
   }, [activity, activityFilter]);
 
-  const normalizePaymentStatus = (status?: string) => {
-    const normalized = String(status || "pending").toLowerCase();
-    if (["success", "paid", "active"].includes(normalized)) return "success";
-    if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
-    if (["abandoned", "cancelled", "canceled"].includes(normalized))
-      return "failed";
-    return "pending";
-  };
-
-  const formatCurrency = (value: number, currency = "GHS") =>
-    new Intl.NumberFormat("en-GH", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2,
-    }).format(value);
-
   const billingPayments = useMemo(() => {
     return payments.filter((payment) => {
+      // Check multiple field names for billing/subscription indicator
       const moduleValue = String((payment as any).module || "").toLowerCase();
-      return moduleValue === "billing" || moduleValue.includes("billing");
+      const typeValue = String((payment as any).type || "").toLowerCase();
+      const categoryValue = String(
+        (payment as any).category || "",
+      ).toLowerCase();
+      const paymentTypeValue = String(
+        (payment as any).paymentType || "",
+      ).toLowerCase();
+
+      // Identify billing/subscription payments by checking various fields
+      const isBillingModule =
+        moduleValue === "billing" || moduleValue.includes("billing");
+      const isBillingType =
+        typeValue === "subscription" ||
+        typeValue === "billing" ||
+        typeValue === "school_billing";
+      const isBillingCategory =
+        categoryValue === "subscription" || categoryValue === "billing";
+      const isBillingPaymentType =
+        paymentTypeValue.includes("billing") ||
+        paymentTypeValue.includes("subscription");
+
+      // Also include payments that have schoolId and amount (indicating school subscription payment)
+      const isSchoolSubscription =
+        (payment as any).schoolId && (payment as any).amount;
+
+      return (
+        isBillingModule ||
+        isBillingType ||
+        isBillingCategory ||
+        isBillingPaymentType ||
+        isSchoolSubscription
+      );
     });
   }, [payments]);
 
@@ -566,7 +2245,8 @@ const Dashboard: React.FC = () => {
     let failedCount = 0;
     let last30Amount = 0;
 
-    payments.forEach((payment) => {
+    // Use billingPayments for accurate earnings metrics
+    billingPayments.forEach((payment) => {
       const status = normalizePaymentStatus(payment.status);
       const amountRaw = payment.amount ?? 0;
       const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
@@ -601,6 +2281,17 @@ const Dashboard: React.FC = () => {
       ? Math.round((paidCount / totalTracked) * 100)
       : 0;
 
+    console.log("[Dashboard] Payment metrics calculated", {
+      paidAmount,
+      paidCount,
+      pendingCount,
+      failedCount,
+      last30Amount,
+      successRate,
+      billingPaymentCount: billingPayments.length,
+      totalPaymentCount: payments.length,
+    });
+
     return {
       paidAmount,
       paidCount,
@@ -617,7 +2308,7 @@ const Dashboard: React.FC = () => {
         value: monthlyFeesTotals[bucket.key] || 0,
       })),
     };
-  }, [payments]);
+  }, [billingPayments, payments]);
 
   const earningsData = useMemo(() => {
     return payments
@@ -633,8 +2324,11 @@ const Dashboard: React.FC = () => {
           ? new Date().toISOString().slice(0, 10)
           : createdAt.toISOString().slice(0, 10);
         const method =
-          (payment as any).paymentMethod ||
-          (payment as any).method ||
+          payment.paymentMethod ||
+          payment.method ||
+          payment.channel ||
+          payment.provider ||
+          payment.paymentType ||
           "Unknown";
 
         return {
@@ -1023,9 +2717,108 @@ const Dashboard: React.FC = () => {
           )}
         </div>
 
+        <Card className="mb-8">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">
+                Billing Health
+              </h3>
+              <p className="text-sm text-slate-600">
+                Premium payment status overview
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center shadow-sm">
+                <Wallet size={18} />
+              </div>
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-2">
+                <p className="text-[11px] text-emerald-600 uppercase font-semibold tracking-widest">
+                  Success rate
+                </p>
+                <p className="text-lg font-bold text-emerald-700">
+                  {paymentMetrics.successRate}%
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                label: "Successful",
+                value: paymentMetrics.paidCount,
+                accent: "from-emerald-400/20 via-emerald-200/30 to-white",
+                ring: "bg-emerald-500",
+                text: "text-emerald-700",
+                icon: <CheckCircle size={18} />,
+              },
+              {
+                label: "Pending",
+                value: paymentMetrics.pendingCount,
+                accent: "from-amber-400/20 via-amber-200/30 to-white",
+                ring: "bg-amber-500",
+                text: "text-amber-700",
+                icon: <Clock size={18} />,
+              },
+              {
+                label: "Failed",
+                value: paymentMetrics.failedCount,
+                accent: "from-rose-400/20 via-rose-200/30 to-white",
+                ring: "bg-rose-500",
+                text: "text-rose-700",
+                icon: <AlertTriangle size={18} />,
+              },
+            ].map((item) => {
+              const total =
+                paymentMetrics.paidCount +
+                paymentMetrics.pendingCount +
+                paymentMetrics.failedCount;
+              const percentage = total
+                ? Math.round((item.value / total) * 100)
+                : 0;
+              return (
+                <div
+                  key={item.label}
+                  className={`rounded-2xl border border-slate-100 bg-gradient-to-br ${item.accent} p-5 shadow-sm hover:shadow-md transition-all`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
+                        {item.label}
+                      </p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">
+                        {item.value}
+                      </p>
+                    </div>
+                    <div
+                      className={`w-11 h-11 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow`}
+                    >
+                      {item.icon}
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Share of total</span>
+                      <span className={`font-semibold ${item.text}`}>
+                        {percentage}%
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-white/70 border border-white/60 overflow-hidden">
+                      <div
+                        className={`h-full ${item.ring} rounded-full`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
         {/* Billing Analytics */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <Card className="lg:col-span-2">
+        <div className="mb-8">
+          <Card>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
@@ -1093,116 +2886,21 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="rounded-2xl border border-slate-100 bg-white p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    Earnings snapshot
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Overview has moved to the premium module below
-                  </p>
-                </div>
-                <div className="text-xs text-slate-400">
-                  {new Date().toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
-                </div>
-              </div>
-              <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-                Use the Earnings module for detailed analytics, filters, and
-                breakdowns.
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">
-                  Billing Health
-                </h3>
-                <p className="text-sm text-slate-600">
-                  Current payment status mix
-                </p>
-              </div>
-              <div className="w-11 h-11 rounded-xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center">
-                <Wallet size={18} />
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {[
-                {
-                  label: "Successful",
-                  value: paymentMetrics.paidCount,
-                  color: "bg-emerald-500",
-                },
-                {
-                  label: "Pending",
-                  value: paymentMetrics.pendingCount,
-                  color: "bg-amber-500",
-                },
-                {
-                  label: "Failed",
-                  value: paymentMetrics.failedCount,
-                  color: "bg-rose-500",
-                },
-              ].map((item) => {
-                const total =
-                  paymentMetrics.paidCount +
-                  paymentMetrics.pendingCount +
-                  paymentMetrics.failedCount;
-                const percentage = total
-                  ? Math.round((item.value / total) * 100)
-                  : 0;
-                return (
-                  <div key={item.label} className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-slate-700">
-                        {item.label}
-                      </span>
-                      <span className="text-slate-500">{percentage}%</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-                      <div
-                        className={`h-full ${item.color} rounded-full`}
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500">Success rate</p>
-                  <p className="text-2xl font-bold text-slate-900">
-                    {paymentMetrics.successRate}%
-                  </p>
-                </div>
-                <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                  <TrendingUp size={18} />
-                </div>
-              </div>
-              <p className="text-xs text-slate-500 mt-3">
-                Track billed revenue and follow up on pending payments.
-              </p>
+              <EarningsOverview
+                loading={loading}
+                schools={schools}
+                payments={payments}
+                billingPayments={billingPayments}
+                paymentMetrics={paymentMetrics}
+                planDist={planDist}
+                expiredSubscriptions={expiredSubscriptions}
+                kpis={kpis}
+              />
             </div>
           </Card>
         </div>
 
-        <div className="mb-8">
-          <EarningsOverview
-            data={earningsData}
-            loading={loading}
-            error={paymentsError}
-            onRetry={loadData}
-          />
-        </div>
+        <div className="mb-8" />
 
         {/* Insight Cards Section */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">

@@ -109,6 +109,9 @@ service cloud.firestore {
       // School admin can read their own school
       allow read: if isSchoolAdmin() && userSchoolId() == schoolId;
 
+      // Teachers can read their own school (needed for dashboard/profile loading)
+      allow read: if isTeacher() && userSchoolId() == schoolId;
+
       // No write for school admins on schools
       allow write: if false;
     }
@@ -345,6 +348,20 @@ service cloud.firestore {
         );
     }
 
+    function schoolScopedDelete(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
+    function schoolAdminScopedAccess(schoolId) {
+      return isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() ||
+         (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
+    }
+
     function schoolScopedUpdate(schoolId) {
       return isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
@@ -384,7 +401,7 @@ service cloud.firestore {
           "guardianPhone"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Attendance collection
@@ -413,7 +430,7 @@ service cloud.firestore {
           "holidayReason"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Assessments collection
@@ -452,7 +469,7 @@ service cloud.firestore {
           "total"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Teacher attendance collection
@@ -491,7 +508,7 @@ service cloud.firestore {
           "holidayReason"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Notices collection
@@ -518,7 +535,7 @@ service cloud.firestore {
           "createdAt"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Student remarks collection
@@ -553,7 +570,7 @@ service cloud.firestore {
           "dateCreated"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Student skills collection
@@ -592,7 +609,7 @@ service cloud.firestore {
           "homeworkCompletion"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Admin remarks collection
@@ -711,7 +728,7 @@ service cloud.firestore {
           "updatedAt"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Fees collection
@@ -857,7 +874,7 @@ service cloud.firestore {
           "subjects"
         ]);
 
-      allow delete: if schoolScopedRead(resource.data.schoolId);
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
     // Analytics events (super admin + school scoped)
@@ -870,8 +887,13 @@ service cloud.firestore {
 
     // Backups collection
     match /backups/{backupId} {
-      // Only super admin can access backups
-      allow read, write: if isSuperAdmin();
+      allow get: if isSuperAdmin() || schoolAdminScopedAccess(resource.data.schoolId);
+      allow list: if isSuperAdmin() ||
+        (isAuthenticated() && isSchoolAdmin() &&
+          request.query.where('schoolId', '==', userSchoolId()));
+      allow create: if schoolAdminScopedAccess(request.resource.data.schoolId);
+      allow update, delete: if isSuperAdmin() ||
+        schoolAdminScopedAccess(resource.data.schoolId);
     }
 
     // Activity logs for analytics and auditing

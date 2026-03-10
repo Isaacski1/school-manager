@@ -211,6 +211,8 @@ export interface AuditLog {
 
 export interface PlatformSecuritySettings {
   enabledForSuperAdmins: boolean;
+  enabledForSchoolAdmins: boolean;
+  enforcementMode: "off" | "optional" | "required";
   updatedAt: number;
   updatedBy: string;
 }
@@ -243,6 +245,56 @@ export interface SchoolConfig {
   positionRule?: "total" | "average" | "subject";
 }
 
+export type BackupType =
+  | "term-reset"
+  | "manual"
+  | "safety-restore"
+  | "recovery-point"
+  | "recycle-bin";
+
+export type RecoveryCollectionName =
+  | "settings"
+  | "students"
+  | "attendance"
+  | "teacher_attendance"
+  | "assessments"
+  | "student_remarks"
+  | "admin_remarks"
+  | "student_skills"
+  | "timetables"
+  | "users"
+  | "class_subjects"
+  | "notices"
+  | "admin_notifications"
+  | "fees"
+  | "student_ledgers"
+  | "payments"
+  | "finance_settings";
+
+export type RecoveryRestoreMode = "replace" | "merge";
+
+export interface RecoveryCollectionScope {
+  collection: RecoveryCollectionName;
+  restoreMode: RecoveryRestoreMode;
+  recordIds?: string[];
+  label?: string;
+}
+
+export interface RecoveryMeta {
+  title: string;
+  description?: string;
+  sourceAction?: string;
+  sourceModule?: string;
+  entityType?: string;
+  entityId?: string;
+  entityLabel?: string;
+  recordCount?: number;
+  collections?: RecoveryCollectionScope[];
+  expiresAt?: number | null;
+  restoredAt?: number | null;
+  restoredBy?: string | null;
+}
+
 export interface Backup {
   id: string;
   schoolId: string;
@@ -250,26 +302,30 @@ export interface Backup {
   timestamp: number; // Unix timestamp
   term: string;
   academicYear: string;
-  backupType?: "term-reset" | "manual";
+  backupType?: BackupType;
   dedupeKey?: string;
+  recoveryMeta?: RecoveryMeta;
   data?: {
     // Make data optional
     schoolConfig?: SchoolConfig;
     schoolSettings?: SchoolConfig;
-    students: Student[];
-    attendanceRecords: AttendanceRecord[];
-    teacherAttendanceRecords: TeacherAttendanceRecord[];
-    assessments: Assessment[];
-    studentRemarks: StudentRemark[];
+    students?: Student[];
+    attendanceRecords?: AttendanceRecord[];
+    teacherAttendanceRecords?: TeacherAttendanceRecord[];
+    assessments?: Assessment[];
+    studentRemarks?: StudentRemark[];
     adminRemarks?: AdminRemark[];
-    studentSkills: StudentSkills[];
-    timetables: ClassTimetable[];
-    users: User[];
-    classSubjects: ClassSubjectConfig[];
+    studentSkills?: StudentSkills[];
+    timetables?: ClassTimetable[];
+    users?: User[];
+    classSubjects?: ClassSubjectConfig[];
     notices?: Notice[];
     adminNotifications?: SystemNotification[];
     activityLogs?: any[];
-    payments?: any[];
+    payments?: StudentFeePayment[];
+    fees?: FeeDefinition[];
+    studentLedgers?: StudentFeeLedger[];
+    financeSettings?: FinanceSettings | null;
   };
   dataCollectionRef?: string; // New field to store reference to subcollection
 }

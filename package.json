@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "start": "node server/server.js",
     "server:dev": "nodemon server/server.js",
     "predeploy": "npm run build",
@@ -26,6 +27,7 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.8",
     "@vitejs/plugin-react": "^5.0.0",

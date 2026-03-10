@@ -49,7 +49,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       setSchoolLoading(true);
 
       const cacheKey = `school_${user.schoolId}`;
-      const cached = localStorage.getItem(cacheKey);
+      const cached =
+        sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
 
       if (cached) {
         try {
@@ -59,6 +60,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
             if (!cancelled) setCachedSchool(parsedSchool);
           }
         } catch {
+          sessionStorage.removeItem(cacheKey);
           localStorage.removeItem(cacheKey);
         }
       }
@@ -91,7 +93,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
               return;
             }
 
-            localStorage.setItem(cacheKey, JSON.stringify(schoolData));
+            sessionStorage.setItem(cacheKey, JSON.stringify(schoolData));
+            localStorage.removeItem(cacheKey);
             if (!cancelled) setSchool(schoolData);
             if (!cancelled) setCachedSchool(schoolData);
             window.dispatchEvent(new Event("school-branding-updated"));

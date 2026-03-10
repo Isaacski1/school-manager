@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { auth } from "../services/firebase";
 import { logSecurityLogin } from "../services/backendApi";
 import {
+  getMultiFactorResolver,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
 } from "firebase/auth";
@@ -56,6 +57,17 @@ const Login = () => {
         err.code === "auth/wrong-password"
       ) {
         msg = "Invalid email or password.";
+      } else if (err.code === "auth/multi-factor-auth-required") {
+        const resolver = getMultiFactorResolver(auth, err);
+        const factorLabel =
+          resolver.hints.length === 1
+            ? "one enrolled factor"
+            : `${resolver.hints.length} enrolled factors`;
+        msg =
+          "This account requires multi-factor authentication. The second-factor verification screen is not complete yet, so complete the sign-in from Firebase-supported admin tooling before enforcing MFA here.";
+        if (resolver.hints.length > 0) {
+          msg += ` Firebase detected ${factorLabel} on this account.`;
+        }
       } else if (err.code === "auth/too-many-requests") {
         msg = "Too many failed attempts. Please try again later.";
       }
