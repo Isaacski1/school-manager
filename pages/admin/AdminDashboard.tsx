@@ -110,19 +110,19 @@ const SectionLoadingBadge: React.FC<{ label?: string }> = ({
 );
 
 const DASHBOARD_SHELL =
-  "relative overflow-hidden rounded-[36px] bg-[linear-gradient(180deg,#f8fafc_0%,#f5f9ff_34%,#ffffff_100%)] p-4 sm:p-6 lg:p-8";
+  "relative min-w-0 overflow-hidden rounded-[36px] bg-[linear-gradient(180deg,#f8fafc_0%,#f5f9ff_34%,#ffffff_100%)] p-4 sm:p-6 lg:p-8";
 
 const DASHBOARD_PANEL =
-  "rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_18px_45px_-34px_rgba(15,23,42,0.22)]";
+  "min-w-0 rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_18px_45px_-34px_rgba(15,23,42,0.22)]";
 
 const DASHBOARD_PANEL_SOFT =
-  "rounded-[24px] border border-slate-200/80 bg-white/94 shadow-[0_14px_34px_-26px_rgba(15,23,42,0.18)]";
+  "min-w-0 rounded-[24px] border border-slate-200/80 bg-white/94 shadow-[0_14px_34px_-26px_rgba(15,23,42,0.18)]";
 
 const DASHBOARD_PANEL_TINT =
-  "rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] shadow-[0_18px_42px_-32px_rgba(15,23,42,0.2)]";
+  "min-w-0 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] shadow-[0_18px_42px_-32px_rgba(15,23,42,0.2)]";
 
 const DASHBOARD_HERO =
-  "relative overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0b4a82_48%,#0284c7_100%)] p-6 text-white shadow-[0_24px_56px_-38px_rgba(11,74,130,0.56)] sm:p-7";
+  "relative min-w-0 overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0b4a82_48%,#0284c7_100%)] p-6 text-white shadow-[0_24px_56px_-38px_rgba(11,74,130,0.56)] sm:p-7";
 
 const DASHBOARD_SECTION_LABEL =
   "text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400";
@@ -2449,14 +2449,14 @@ const AdminDashboard = () => {
 
   const KPICard = ({ title, value, suffix, delta, deltaPositive }: any) => (
     <div
-      className={`rounded-[24px] border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+      className={`min-w-0 overflow-hidden rounded-[24px] border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
         deltaPositive
           ? "border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-cyan-50"
           : "border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-orange-50"
       }`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <p className={DASHBOARD_SECTION_LABEL}>{title}</p>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold tracking-tight text-slate-900">
@@ -2466,7 +2466,7 @@ const AdminDashboard = () => {
           </div>
         </div>
         <div
-          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+          className={`ml-auto inline-flex max-w-full shrink break-words rounded-full px-3 py-1 text-right text-[10px] font-semibold uppercase leading-tight tracking-[0.14em] whitespace-normal sm:text-[11px] ${
             deltaPositive
               ? "bg-emerald-100 text-emerald-700"
               : "bg-rose-100 text-rose-700"
@@ -2981,12 +2981,12 @@ const AdminDashboard = () => {
         <div
           className={`lg:col-span-2 ${DASHBOARD_PANEL} overflow-x-auto p-4 sm:p-6`}
         >
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
-            <div className="flex items-center gap-4">
+          <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:mb-6 sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex min-w-0 flex-wrap items-center gap-4">
               <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3 shadow-sm">
                 <BarChart2 className="w-6 h-6 text-[#0B4A82]" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="font-bold text-slate-800">
                   Academic Performance Rate
                 </h3>
@@ -3440,7 +3440,7 @@ const AdminDashboard = () => {
     <Layout title="Dashboard">
       <div className={DASHBOARD_SHELL}>
         <div className={DASHBOARD_ROOT_OVERLAY} />
-        <div className="relative space-y-8">
+        <div className="relative min-w-0 space-y-8">
           <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
             <div className={DASHBOARD_HERO}>
               <div className={DASHBOARD_HERO_OVERLAY} />
@@ -3881,14 +3881,14 @@ const AdminDashboard = () => {
                       key={alert.teacherId}
                       className="bg-white p-4 rounded-lg border border-red-100 shadow-sm"
                     >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
                           <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
                             <span className="text-sm font-bold text-red-600">
                               {alert.teacherName.charAt(0)}
                             </span>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className="font-semibold text-slate-800">
                               {alert.teacherName}
                             </p>
@@ -3913,7 +3913,7 @@ const AdminDashboard = () => {
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="w-full border-t border-slate-100 pt-2 text-left sm:w-auto sm:border-t-0 sm:pt-0 sm:pl-2 sm:text-right shrink-0">
                           <p className="text-sm font-medium text-red-700">
                             Missed: {alert.dates.length} day
                             {alert.dates.length !== 1 ? "s" : ""}
@@ -3965,14 +3965,14 @@ const AdminDashboard = () => {
                       key={alert.teacherId}
                       className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm"
                     >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
                           <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                             <span className="text-sm font-bold text-blue-700">
                               {alert.teacherName.charAt(0)}
                             </span>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className="font-semibold text-slate-800">
                               {alert.teacherName}
                             </p>
@@ -3997,7 +3997,7 @@ const AdminDashboard = () => {
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="w-full border-t border-slate-100 pt-2 text-left sm:w-auto sm:border-t-0 sm:pt-0 sm:pl-2 sm:text-right shrink-0">
                           <p className="text-sm font-medium text-blue-700">
                             Missed: {alert.dates.length} day
                             {alert.dates.length !== 1 ? "s" : ""}
@@ -4126,7 +4126,7 @@ const AdminDashboard = () => {
                 />
               )}
             </div>
-            <div className="h-auto lg:h-96">
+            <div className="h-auto">
               {showSkeletons ? (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full flex flex-col justify-center">
                   <SkeletonBlock className="h-5 w-32" />

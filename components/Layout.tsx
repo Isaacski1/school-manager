@@ -335,11 +335,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   };
 
   return (
-    <div className="h-screen bg-[#fafafa] flex">
+    <div className="h-screen bg-[#fafafa] flex overflow-hidden">
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-20 md:hidden"
+          className="fixed inset-0 bg-black bg-opacity-50 z-20 xl:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -347,15 +347,15 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       {/* Sidebar */}
       <aside
         className={`
-        fixed inset-y-0 left-0 z-30 w-72 sm:w-64 bg-[#0B4A82] text-white transform transition-transform duration-200 ease-in-out overflow-y-auto
+        fixed inset-y-0 left-0 z-30 w-72 max-w-[85vw] sm:w-64 bg-[#0B4A82] text-white transform transition-transform duration-200 ease-in-out overflow-y-auto shrink-0
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
-        md:relative md:translate-x-0 flex flex-col shadow-xl border-r border-[#0B4A82]
+        xl:relative xl:translate-x-0 flex flex-col shadow-xl border-r border-[#0B4A82]
       `}
       >
         <div className="p-5 sm:p-6 border-b border-[#0B4A82] bg-[#0B4A82] flex flex-col items-center justify-center relative">
           <button
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden absolute top-4 right-4 text-[#E6F0FA] hover:text-white"
+            className="xl:hidden absolute top-4 right-4 text-[#E6F0FA] hover:text-white"
           >
             <X size={24} />
           </button>
@@ -634,17 +634,17 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen overflow-hidden">
         <header className="bg-white shadow-sm h-14 sm:h-16 flex items-center z-10 border-b border-[#E6F0FA]">
-          <div className="mx-auto w-full max-w-[1200px] 2xl:max-w-[1400px] px-3 sm:px-4 md:px-8 flex items-center justify-between gap-3">
+          <div className="mx-auto w-full max-w-[1200px] 2xl:max-w-[1400px] px-3 sm:px-4 md:px-5 lg:px-6 xl:px-8 flex items-center justify-between gap-3">
             <div className="flex items-center min-w-0">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="md:hidden p-2 -ml-2 text-[#0B4A82] hover:text-[#1160A8]"
+                className="xl:hidden p-2 -ml-2 text-[#0B4A82] hover:text-[#1160A8]"
               >
                 <Menu size={24} />
               </button>
-              <h2 className="text-base sm:text-xl font-bold text-[#0B4A82] ml-2 md:ml-0 truncate">
+              <h2 className="text-base sm:text-xl font-bold text-[#0B4A82] ml-2 xl:ml-0 truncate">
                 {title}
               </h2>
             </div>
@@ -821,8 +821,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-8">
-          <div className="mx-auto w-full max-w-[1500px] 2xl:max-w-[1800px]">
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-5 lg:p-6 xl:p-8">
+          <div className="mx-auto w-full min-w-0 max-w-[1500px] 2xl:max-w-[1800px]">
             {children}
           </div>
         </main>
