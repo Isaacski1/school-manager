@@ -265,9 +265,17 @@ const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const SUPER_ADMIN_ASSISTANT_NAME = "Isaacski AI";
+const SUPERADMIN_AI_MODE = (
+  process.env.SUPERADMIN_AI_MODE || "local_first"
+).toLowerCase();
+const AI_CONTEXT_CACHE_TTL_MS = Number(
+  process.env.SUPERADMIN_AI_CACHE_TTL_MS || 45000,
+);
+const AI_CONTEXT_CACHE = new Map();
 
 const buildAiSystemPrompt = (dataContext) => {
-  const base = `You are the Super Admin AI assistant for School Manager GH.
+  const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
 You can propose admin actions, but you must NEVER execute them yourself.
 When you want an action, return JSON with {"reply": "...", "action": {"type": "...", "description": "...", "payload": {...}}}.
 If no action, return JSON with {"reply": "..."}.
@@ -284,38 +292,245 @@ Always respond in JSON only.`;
   return `${base}\n\nDATA_CONTEXT:\n${JSON.stringify(dataContext)}`;
 };
 
-const buildAiDataContext = async () => {
-  const schoolsSnap = await admin
-    .firestore()
-    .collection("schools")
-    .orderBy("createdAt", "desc")
-    .limit(200)
-    .get();
-  const schools = schoolsSnap.docs.map((doc) => ({
-    id: doc.id,
-    ...(doc.data() || {}),
-  }));
+const buildAiDataContext = async (options = {}) => {
+  const {
+    includeActivity = false,
+    includeSchoolAdmins = true,
+    includePayments = false,
+    schoolsLimit = 140,
+    activityLimit = 30,
+    schoolAdminsLimit = 260,
+    paymentsLimit = 1000,
+    forceRefresh = false,
+  } = options || {};
 
-  const activitySnap = await admin
-    .firestore()
-    .collection("activity_logs")
-    .orderBy("createdAt", "desc")
-    .limit(50)
-    .get();
-  const activity = activitySnap.docs.map((doc) => ({
-    id: doc.id,
-    ...(doc.data() || {}),
-  }));
+  const cacheKey = JSON.stringify({
+    includeActivity,
+    includeSchoolAdmins,
+    includePayments,
+    schoolsLimit,
+    activityLimit,
+    schoolAdminsLimit,
+    paymentsLimit,
+  });
 
-  return {
+  if (!forceRefresh) {
+    const cached = AI_CONTEXT_CACHE.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+  }
+
+  const tasks = [
+    admin
+      .firestore()
+      .collection("schools")
+      .orderBy("createdAt", "desc")
+      .limit(schoolsLimit)
+      .get()
+      .then((schoolsSnap) =>
+        schoolsSnap.docs.map((doc) => ({
+          id: doc.id,
+          ...(doc.data() || {}),
+        })),
+      )
+      .catch(() => []),
+  ];
+
+  if (includeActivity) {
+    tasks.push(
+      admin
+        .firestore()
+        .collection("activity_logs")
+        .orderBy("createdAt", "desc")
+        .limit(activityLimit)
+        .get()
+        .then((activitySnap) =>
+          activitySnap.docs.map((doc) => ({
+            id: doc.id,
+            ...(doc.data() || {}),
+          })),
+        )
+        .catch(() => []),
+    );
+  }
+
+  if (includeSchoolAdmins) {
+    tasks.push(
+      admin
+        .firestore()
+        .collection("users")
+        .where("role", "==", "school_admin")
+        .limit(schoolAdminsLimit)
+        .get()
+        .then((schoolAdminSnap) =>
+          schoolAdminSnap.docs.map((doc) => ({
+            id: doc.id,
+            ...(doc.data() || {}),
+          })),
+        )
+        .catch(() => []),
+    );
+  }
+
+  if (includePayments) {
+    tasks.push(
+      admin
+        .firestore()
+        .collection("payments")
+        .orderBy("createdAt", "desc")
+        .limit(paymentsLimit)
+        .get()
+        .then((paymentsSnap) =>
+          paymentsSnap.docs.map((doc) => ({
+            id: doc.id,
+            ...(doc.data() || {}),
+          })),
+        )
+        .catch(async () => {
+          try {
+            const fallbackSnap = await admin
+              .firestore()
+              .collection("payments")
+              .limit(Math.min(500, paymentsLimit))
+              .get();
+            return fallbackSnap.docs.map((doc) => ({
+              id: doc.id,
+              ...(doc.data() || {}),
+            }));
+          } catch {
+            return [];
+          }
+        }),
+    );
+  }
+
+  const results = await Promise.all(tasks);
+  const schools = Array.isArray(results[0]) ? results[0] : [];
+  let index = 1;
+  const recentActivity = includeActivity
+    ? Array.isArray(results[index])
+      ? results[index++]
+      : []
+    : [];
+  const schoolAdmins = includeSchoolAdmins
+    ? Array.isArray(results[index])
+      ? results[index++]
+      : []
+    : [];
+  const payments = includePayments
+    ? Array.isArray(results[index])
+      ? results[index++]
+      : []
+    : [];
+
+  const context = {
+    generatedAt: Date.now(),
     totals: {
       schools: schools.length,
       activeSchools: schools.filter((s) => s.status === "active").length,
       inactiveSchools: schools.filter((s) => s.status === "inactive").length,
     },
     schools,
-    recentActivity: activity,
+    schoolAdmins,
+    recentActivity,
+    payments,
   };
+
+  AI_CONTEXT_CACHE.set(cacheKey, {
+    value: context,
+    expiresAt: Date.now() + Math.max(5000, AI_CONTEXT_CACHE_TTL_MS),
+  });
+
+  return context;
+};
+
+const parseFlexibleDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value?.toDate === "function") {
+    const dt = value.toDate();
+    return Number.isNaN(dt?.getTime?.()) ? null : dt;
+  }
+  if (typeof value === "number") {
+    const ms = value > 1_000_000_000_000 ? value : value * 1000;
+    const dt = new Date(ms);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const dt = new Date(value);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+};
+
+const normalizeAmount = (amount) => {
+  const n = Number(amount || 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n >= 100 ? n / 100 : n;
+};
+
+const normalizePaymentStatus = (status = "") => {
+  const raw = String(status || "").toLowerCase();
+  if (
+    raw === "success" ||
+    raw === "paid" ||
+    raw === "active" ||
+    raw.includes("success")
+  ) {
+    return "success";
+  }
+  if (
+    raw === "pending" ||
+    raw === "processing" ||
+    raw === "initiated" ||
+    raw.includes("pending")
+  ) {
+    return "pending";
+  }
+  if (raw.includes("fail") || raw.includes("abandon") || raw === "past_due") {
+    return "failed";
+  }
+  return "pending";
+};
+
+const formatGhsCurrency = (value) => {
+  const amount = Number.isFinite(value) ? value : 0;
+  try {
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency: "GHS",
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `GHS ${amount.toFixed(2)}`;
+  }
+};
+
+const resolvePeriodRange = (prompt = "") => {
+  const lower = String(prompt).toLowerCase();
+  const now = new Date();
+  const start = new Date(now);
+
+  if (/\btoday\b/.test(lower)) {
+    start.setHours(0, 0, 0, 0);
+    return { label: "today", start };
+  }
+  if (/\b(this week|weekly|week)\b/.test(lower)) {
+    const day = start.getDay();
+    const delta = day === 0 ? 6 : day - 1;
+    start.setDate(start.getDate() - delta);
+    start.setHours(0, 0, 0, 0);
+    return { label: "this week", start };
+  }
+  if (/\b(this month|monthly|month)\b/.test(lower)) {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    return { label: "this month", start };
+  }
+  if (/\b(this year|yearly|year)\b/.test(lower)) {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+    return { label: "this year", start };
+  }
+  return { label: "all time", start: null };
 };
 
 const parseAiResponse = (rawText) => {
@@ -329,6 +544,375 @@ const parseAiResponse = (rawText) => {
   } catch (error) {
     return { reply: rawText };
   }
+};
+
+const extractEmailFromText = (text = "") => {
+  const match = String(text)
+    .toLowerCase()
+    .match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+  return match ? match[0] : "";
+};
+
+const extractQuotedText = (text = "") => {
+  const quoteMatch = String(text).match(/["']([^"']{2,80})["']/);
+  return quoteMatch ? quoteMatch[1].trim() : "";
+};
+
+const extractAdminNameFromText = (text = "", email = "") => {
+  const normalized = String(text).replace(/\s+/g, " ").trim();
+  const namePattern =
+    /\b(?:named|name is|admin is|for)\s+([A-Za-z][A-Za-z\s'.-]{1,60})/i;
+  const namedMatch = normalized.match(namePattern);
+  if (namedMatch?.[1]) {
+    return namedMatch[1]
+      .replace(/\b(with|email|at|for school|in school)\b.*$/i, "")
+      .trim();
+  }
+
+  if (email) {
+    const beforeEmail = normalized
+      .replace(email, " ")
+      .replace(
+        /\b(create|add|new|school|admin|administrator|for|please|an|a)\b/gi,
+        " ",
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+    if (beforeEmail.split(" ").length >= 2) {
+      return beforeEmail;
+    }
+  }
+
+  return "";
+};
+
+const extractPlanFromText = (text = "") => {
+  const lower = String(text).toLowerCase();
+  if (lower.includes(" yearly")) return "yearly";
+  if (lower.includes(" termly")) return "termly";
+  if (lower.includes(" monthly")) return "monthly";
+  if (lower.includes(" trial")) return "trial";
+  if (lower.includes(" free")) return "free";
+  return "trial";
+};
+
+const normalizeText = (value = "") =>
+  String(value).toLowerCase().replace(/\s+/g, " ").trim();
+
+const findSchoolFromText = (text = "", schools = []) => {
+  if (!Array.isArray(schools) || schools.length === 0) return null;
+  const lowerText = normalizeText(text);
+
+  const byId = schools.find((school) => lowerText.includes(String(school.id)));
+  if (byId) return byId;
+
+  const quoted = extractQuotedText(text);
+  if (quoted) {
+    const quotedLower = normalizeText(quoted);
+    const exactQuoted = schools.find(
+      (school) => normalizeText(school.name) === quotedLower,
+    );
+    if (exactQuoted) return exactQuoted;
+  }
+
+  const byName = schools.find((school) =>
+    lowerText.includes(normalizeText(school.name)),
+  );
+  if (byName) return byName;
+
+  const byCode = schools.find(
+    (school) =>
+      school.code && lowerText.includes(normalizeText(String(school.code))),
+  );
+  if (byCode) return byCode;
+
+  if (quoted) {
+    const partial = schools.find((school) =>
+      normalizeText(school.name).includes(normalizeText(quoted)),
+    );
+    if (partial) return partial;
+  }
+
+  return null;
+};
+
+const findSchoolAdminFromText = (text = "", schoolAdmins = []) => {
+  if (!Array.isArray(schoolAdmins) || schoolAdmins.length === 0) return null;
+  const lowerText = normalizeText(text);
+  const email = extractEmailFromText(text);
+  if (email) {
+    const byEmail = schoolAdmins.find(
+      (adminUser) => normalizeText(adminUser.email) === normalizeText(email),
+    );
+    if (byEmail) return byEmail;
+  }
+
+  const byUid = schoolAdmins.find((adminUser) =>
+    lowerText.includes(normalizeText(adminUser.id)),
+  );
+  if (byUid) return byUid;
+
+  const byName = schoolAdmins.find((adminUser) =>
+    lowerText.includes(normalizeText(adminUser.fullName)),
+  );
+  if (byName) return byName;
+
+  return null;
+};
+
+const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
+  const userMessage = [...messages]
+    .reverse()
+    .find((message) => message?.role === "user")?.content;
+
+  const prompt = String(userMessage || "").trim();
+  const plainPrompt = prompt
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const schools = Array.isArray(dataContext?.schools) ? dataContext.schools : [];
+  const schoolAdmins = Array.isArray(dataContext?.schoolAdmins)
+    ? dataContext.schoolAdmins
+    : [];
+  const asOfLabel = dataContext?.generatedAt
+    ? new Date(dataContext.generatedAt).toLocaleString()
+    : null;
+  const totals = dataContext?.totals || {
+    schools: schools.length,
+    activeSchools: schools.filter((school) => school.status === "active").length,
+    inactiveSchools: schools.filter((school) => school.status === "inactive")
+      .length,
+  };
+
+  if (!prompt) {
+    return {
+      reply:
+        "Ask for a dashboard summary or ask me to prepare actions like creating a school admin.",
+      action: null,
+    };
+  }
+
+  const isGreeting =
+    /^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(
+      plainPrompt,
+    ) ||
+    (/\b(hi|hello|hey)\b/.test(plainPrompt) &&
+      plainPrompt.split(" ").length <= 4);
+  if (isGreeting) {
+    return {
+      reply:
+        "Hi. How can I help you today? You can ask for a revenue summary, school status, or admin management tasks.",
+      action: null,
+    };
+  }
+
+  if (/\b(how are you|how are u|how r u)\b/.test(plainPrompt)) {
+      return {
+        reply:
+        "I'm ready to help. What would you like to check right now?",
+        action: null,
+      };
+  }
+
+  if (/\b(thanks|thank you|thank u)\b/.test(plainPrompt)) {
+    return {
+      reply: "You're welcome. If you want, I can continue with the next task.",
+      action: null,
+    };
+  }
+
+  if (/\b(bye|goodbye|see you)\b/.test(plainPrompt)) {
+    return {
+      reply: "Alright. I'll be here whenever you need help again.",
+      action: null,
+    };
+  }
+
+  const asksCapabilities =
+    /\b(what can you do|help me|help|capabilities|options|what do you do)\b/.test(
+      plainPrompt,
+    );
+  if (asksCapabilities) {
+    return {
+      reply:
+        "I can summarize dashboard metrics, calculate recorded billing revenue, and prepare actions like creating schools, creating school admins, and resetting admin passwords.",
+      action: null,
+    };
+  }
+
+  const wantsSummary =
+    /\b(summary|overview|status|kpi|report|dashboard)\b/i.test(prompt) ||
+    /\bhow many|count|total schools\b/i.test(prompt);
+  if (wantsSummary) {
+    const activeAdmins = schoolAdmins.filter(
+      (adminUser) => adminUser.status === "active",
+    ).length;
+    return {
+      reply: `Current snapshot: ${totals.schools} schools (${totals.activeSchools} active, ${totals.inactiveSchools} inactive) and ${schoolAdmins.length} school admin accounts (${activeAdmins} active).${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksFinance =
+    /\b(profit|gain|revenue|income|earnings|earned|money made|cash flow|cashflow|payment|paid|amount collected|sales)\b/i.test(
+      prompt,
+    );
+  if (asksFinance) {
+    const payments = Array.isArray(dataContext?.payments)
+      ? dataContext.payments
+      : [];
+    const { label: periodLabel, start: periodStart } = resolvePeriodRange(prompt);
+    const filteredPayments = payments.filter((payment) => {
+      const rawDate =
+        payment?.createdAt ||
+        payment?.paidAt ||
+        payment?.verifiedAt ||
+        payment?.timestamp;
+      const paymentDate = parseFlexibleDate(rawDate);
+      if (!paymentDate) return true;
+      return periodStart ? paymentDate >= periodStart : true;
+    });
+
+    const successful = filteredPayments.filter(
+      (payment) =>
+        normalizePaymentStatus(
+          payment?.status || payment?.billingStatus || payment?.paymentStatus,
+        ) === "success",
+    );
+    const pending = filteredPayments.filter(
+      (payment) =>
+        normalizePaymentStatus(
+          payment?.status || payment?.billingStatus || payment?.paymentStatus,
+        ) === "pending",
+    );
+    const failed = filteredPayments.filter(
+      (payment) =>
+        normalizePaymentStatus(
+          payment?.status || payment?.billingStatus || payment?.paymentStatus,
+        ) === "failed",
+    );
+
+    const grossRevenue = successful.reduce(
+      (sum, payment) =>
+        sum + normalizeAmount(payment?.amount ?? payment?.amountPaid),
+      0,
+    );
+
+    if (!payments.length) {
+      return {
+        reply:
+          "I could not find payment records to compute revenue yet. Please confirm billing transactions are being saved in the payments collection.",
+        action: null,
+      };
+    }
+
+    return {
+      reply: `For ${periodLabel}, recorded successful billing revenue is ${formatGhsCurrency(grossRevenue)} from ${successful.length} successful payments. Pending: ${pending.length}, failed: ${failed.length}. True profit (net profit) cannot be computed yet because operating expenses are not tracked in this dashboard.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const wantsCreateAdmin =
+    /\b(create|add|new)\b/i.test(prompt) &&
+    /\b(admin|administrator|school admin)\b/i.test(prompt);
+  if (wantsCreateAdmin) {
+    const targetSchool = findSchoolFromText(prompt, schools);
+    const email = extractEmailFromText(prompt);
+    const fullName = extractAdminNameFromText(prompt, email);
+    const missingFields = [];
+    if (!targetSchool) missingFields.push("school name (or school ID)");
+    if (!fullName) missingFields.push("admin full name");
+    if (!email) missingFields.push("admin email");
+
+    if (missingFields.length) {
+      const sampleSchools = schools
+        .slice(0, 4)
+        .map((school) => school.name)
+        .join(", ");
+      return {
+        reply: `I can prepare that admin-creation action, but I still need: ${missingFields.join(", ")}.${sampleSchools ? ` Example schools: ${sampleSchools}.` : ""}`,
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared an action to create admin ${fullName} for ${targetSchool.name}. Confirm to apply it.`,
+      action: {
+        type: "create_school_admin",
+        description: `Create school admin ${fullName} (${email}) for ${targetSchool.name}`,
+        payload: {
+          schoolId: targetSchool.id,
+          fullName,
+          email,
+        },
+      },
+    };
+  }
+
+  const wantsResetPassword =
+    /\b(reset|change)\b/i.test(prompt) &&
+    /\b(password|passcode)\b/i.test(prompt);
+  if (wantsResetPassword) {
+    const adminUser = findSchoolAdminFromText(prompt, schoolAdmins);
+    if (!adminUser) {
+      return {
+        reply:
+          "I can prepare a password reset action, but I need the admin email, full name, or UID.",
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared a password reset action for ${adminUser.fullName} (${adminUser.email}). Confirm to generate a reset link.`,
+      action: {
+        type: "reset_school_admin_password",
+        description: `Reset school admin password for ${adminUser.fullName}`,
+        payload: {
+          adminUid: adminUser.id,
+        },
+      },
+    };
+  }
+
+  const wantsCreateSchool =
+    /\b(create|add|new)\b/i.test(prompt) && /\bschool\b/i.test(prompt);
+  if (wantsCreateSchool) {
+    const schoolNameFromQuote = extractQuotedText(prompt);
+    const schoolNameMatch = prompt.match(
+      /\b(?:called|named|name is)\s+([A-Za-z0-9][A-Za-z0-9\s'.&-]{1,80})/i,
+    );
+    const name =
+      schoolNameFromQuote ||
+      (schoolNameMatch ? schoolNameMatch[1].trim() : "").replace(
+        /\b(plan|with|phone|address)\b.*$/i,
+        "",
+      );
+    if (!name) {
+      return {
+        reply:
+          "I can prepare school creation. Please provide at least the school name, for example: create school \"Star Academy\" on trial plan.",
+        action: null,
+      };
+    }
+    const plan = extractPlanFromText(prompt);
+    return {
+      reply: `I prepared an action to create school ${name} on the ${plan} plan. Confirm to proceed.`,
+      action: {
+        type: "create_school",
+        description: `Create school ${name} (${plan} plan)`,
+        payload: {
+          name,
+          plan,
+        },
+      },
+    };
+  }
+
+  return {
+    reply: `I didn't fully catch that request. Please rephrase with one clear goal, for example: "show billing revenue this month" or "create school admin for Star Academy".`,
+    action: null,
+  };
 };
 
 const paystackRequest = async (endpoint, method, body) => {
@@ -396,6 +980,195 @@ const logActivity = async ({
   } catch (error) {
     console.warn("Failed to log activity", error?.message || error);
   }
+};
+
+const recordAiTelemetry = async (data = {}) => {
+  try {
+    await admin.firestore().collection("ai_telemetry").add({
+      ...data,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      timestampMs: Date.now(),
+    });
+  } catch (error) {
+    console.warn("Failed to record AI telemetry", error?.message || error);
+  }
+};
+
+const trimToString = (value, maxLength = 200) =>
+  String(value || "")
+    .trim()
+    .slice(0, maxLength);
+
+const validateAiActionPayload = (action = {}) => {
+  const type = String(action?.type || "").trim();
+  const payload = action?.payload || {};
+  const missingFields = [];
+  const warnings = [];
+  let normalizedPayload = {};
+  let description = trimToString(action?.description, 220);
+  let canUndo = false;
+
+  switch (type) {
+    case "create_school": {
+      const name = trimToString(payload?.name, 120);
+      const plan = trimToString(payload?.plan || "trial", 20).toLowerCase();
+      const phone = trimToString(payload?.phone, 40);
+      const address = trimToString(payload?.address, 200);
+      const logoUrl = trimToString(payload?.logoUrl, 1000);
+      const featurePlan = trimToString(payload?.featurePlan || "starter", 20);
+      const billingStartType = trimToString(
+        payload?.billingStartType || "term_start",
+        20,
+      );
+      const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
+      const validFeaturePlans = ["starter", "standard"];
+      const validBillingStartTypes = ["term_start", "mid_term"];
+      if (!name) missingFields.push("name");
+      if (!validPlans.includes(plan)) missingFields.push("plan");
+      if (!validFeaturePlans.includes(featurePlan)) {
+        warnings.push("featurePlan normalized to starter");
+      }
+      if (!validBillingStartTypes.includes(billingStartType)) {
+        warnings.push("billingStartType normalized to term_start");
+      }
+
+      normalizedPayload = {
+        name,
+        plan: validPlans.includes(plan) ? plan : "trial",
+        ...(phone ? { phone } : {}),
+        ...(address ? { address } : {}),
+        ...(logoUrl ? { logoUrl } : {}),
+        featurePlan: validFeaturePlans.includes(featurePlan)
+          ? featurePlan
+          : "starter",
+        billingStartType: validBillingStartTypes.includes(billingStartType)
+          ? billingStartType
+          : "term_start",
+      };
+      if (!description) {
+        description = `Create school ${name || "New School"} (${normalizedPayload.plan} plan)`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "create_school_admin": {
+      const schoolId = trimToString(payload?.schoolId, 80);
+      const fullName = trimToString(payload?.fullName, 120);
+      const email = trimToString(payload?.email, 120).toLowerCase();
+      const password = trimToString(payload?.password, 120);
+      if (!schoolId) missingFields.push("schoolId");
+      if (!fullName) missingFields.push("fullName");
+      if (!email) missingFields.push("email");
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        missingFields.push("valid email");
+      }
+      if (password && password.length < 6) {
+        missingFields.push("password(min 6 chars)");
+      }
+      normalizedPayload = {
+        schoolId,
+        fullName,
+        email,
+        ...(password ? { password } : {}),
+      };
+      if (!description) {
+        description = `Create school admin ${fullName || "Admin"} (${email || "email"})`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "reset_school_admin_password": {
+      const adminUid = trimToString(payload?.adminUid, 80);
+      if (!adminUid) missingFields.push("adminUid");
+      normalizedPayload = { adminUid };
+      if (!description) {
+        description = `Reset password for admin ${adminUid || "unknown"}`;
+      }
+      canUndo = false;
+      break;
+    }
+    case "provision_user": {
+      const uid = trimToString(payload?.uid, 120);
+      const role = trimToString(payload?.role, 60).toLowerCase();
+      const schoolId = trimToString(payload?.schoolId, 80);
+      const fullName = trimToString(payload?.fullName, 120);
+      const email = trimToString(payload?.email, 120).toLowerCase();
+      const validRoles = ["super_admin", "school_admin", "teacher"];
+      if (!uid) missingFields.push("uid");
+      if (!fullName) missingFields.push("fullName");
+      if (!email) missingFields.push("email");
+      if (!validRoles.includes(role)) missingFields.push("role");
+      if (
+        (role === "school_admin" || role === "teacher") &&
+        !schoolId
+      ) {
+        missingFields.push("schoolId");
+      }
+      normalizedPayload = {
+        uid,
+        role: validRoles.includes(role) ? role : "teacher",
+        ...(schoolId ? { schoolId } : {}),
+        fullName,
+        email,
+      };
+      if (!description) {
+        description = `Provision ${role || "user"} profile for ${fullName || uid || "user"}`;
+      }
+      canUndo = true;
+      break;
+    }
+    default: {
+      missingFields.push("valid action type");
+      break;
+    }
+  }
+
+  return {
+    valid: missingFields.length === 0,
+    type,
+    description,
+    payload: normalizedPayload,
+    missingFields,
+    warnings,
+    canUndo,
+  };
+};
+
+const createAiActionAudit = async ({
+  actorUid,
+  actionType,
+  description,
+  payload,
+  result = null,
+  entityId = null,
+  schoolId = null,
+  canUndo = false,
+}) => {
+  const now = Date.now();
+  const undoToken = canUndo
+    ? `undo_${crypto.randomUUID?.() || crypto.randomBytes(16).toString("hex")}`
+    : null;
+  const undoBefore = canUndo ? now + 15 * 60 * 1000 : null;
+  const docRef = admin.firestore().collection("ai_action_history").doc();
+  await docRef.set({
+    actorUid: actorUid || null,
+    actionType,
+    description,
+    payload: payload || {},
+    result: result || {},
+    entityId: entityId || null,
+    schoolId: schoolId || null,
+    canUndo: Boolean(canUndo),
+    undoToken,
+    undoBefore,
+    undoneAt: null,
+    undoneBy: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    timestampMs: now,
+  });
+  return canUndo && undoToken
+    ? { undoToken, actionType, undoBefore }
+    : null;
 };
 
 const DEFAULT_CLASS_SUBJECTS = {
@@ -1090,50 +1863,100 @@ app.post(
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
+    const responseStart = Date.now();
     try {
-      if (!OPENAI_API_KEY) {
-        return res
-          .status(500)
-          .json({ error: "OPENAI_API_KEY is not set in the environment." });
-      }
-
       const { messages } = req.body;
       if (!Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const dataContext = await buildAiDataContext();
-      const systemPrompt = buildAiSystemPrompt(dataContext);
+      const latestUserMessage = [...messages]
+        .reverse()
+        .find((message) => message?.role === "user")?.content;
+      const latestPrompt = String(latestUserMessage || "");
+      const requiresPaymentContext =
+        /\b(profit|gain|revenue|income|earnings|earned|payment|paid|money|cash flow|cashflow)\b/i.test(
+          latestPrompt,
+        );
+      const isActionCriticalIntent =
+        /\b(create|add|new|reset|provision|activate|deactivate|disable|enable|undo)\b/i.test(
+          latestPrompt,
+        );
+      const openAiFirstMode =
+        Boolean(OPENAI_API_KEY) && SUPERADMIN_AI_MODE === "openai_first";
 
-      const payload = {
-        model: OPENAI_MODEL,
-        temperature: 0.2,
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
-      };
+      const dataContext = await buildAiDataContext({
+        includeActivity: openAiFirstMode,
+        includeSchoolAdmins: true,
+        includePayments: requiresPaymentContext,
+        schoolsLimit: openAiFirstMode ? 180 : 120,
+        activityLimit: openAiFirstMode ? 40 : 20,
+        schoolAdminsLimit: 260,
+        paymentsLimit: requiresPaymentContext ? 1200 : 0,
+        forceRefresh: requiresPaymentContext || isActionCriticalIntent,
+      });
+      let parsed = null;
+      let aiMode = "local";
 
-      const response = await fetch(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        },
-      );
+      if (openAiFirstMode) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          try {
+            const systemPrompt = buildAiSystemPrompt(dataContext);
+            const payload = {
+              model: OPENAI_MODEL,
+              temperature: 0.2,
+              messages: [{ role: "system", content: systemPrompt }, ...messages],
+            };
 
-      const data = await response.json();
-      if (!response.ok) {
-        return res.status(500).json({
-          error: data?.error?.message || "OpenAI request failed",
+            const response = await fetch(
+              "https://api.openai.com/v1/chat/completions",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${OPENAI_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+              },
+            );
+
+            const data = await response.json();
+            if (response.ok) {
+              const content = data?.choices?.[0]?.message?.content || "";
+              parsed = parseAiResponse(content);
+              aiMode = "openai";
+            } else {
+              console.warn(
+                "OpenAI request failed, switching to local assistant mode:",
+                data?.error?.message || "unknown error",
+              );
+            }
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        } catch (openAiError) {
+          console.warn(
+            "OpenAI chat failed, switching to local assistant mode:",
+            openAiError?.message || openAiError,
+          );
+        }
+      }
+
+      if (!parsed) {
+        parsed = buildLocalAiResponse({
+          messages,
+          dataContext,
         });
       }
 
-      const content = data?.choices?.[0]?.message?.content || "";
-      const parsed = parseAiResponse(content);
+      const responseMs = Date.now() - responseStart;
+      const fallbackUsed =
+        Boolean(OPENAI_API_KEY) && openAiFirstMode && aiMode !== "openai";
 
-      await logActivity({
+      void logActivity({
         eventType: "superadmin_ai_chat",
         schoolId: null,
         actorUid: req.user.uid,
@@ -1142,16 +1965,67 @@ app.post(
         meta: {
           promptCount: messages.length,
           actionType: parsed?.action?.type || null,
+          mode: aiMode,
+          responseMs,
         },
+      });
+
+      void recordAiTelemetry({
+        type: "chat",
+        actorUid: req.user.uid,
+        mode: aiMode,
+        responseMs,
+        fallbackUsed,
+        actionSuggested: Boolean(parsed?.action?.type),
       });
 
       return res.json({
         reply: parsed.reply || "",
         action: parsed.action || null,
+        mode: aiMode,
+        dataAsOf: dataContext?.generatedAt || null,
+        responseMs,
       });
     } catch (error) {
       console.error("AI chat error:", error.message || error);
+      void recordAiTelemetry({
+        type: "chat",
+        actorUid: req.user?.uid || null,
+        mode: "error",
+        responseMs: Date.now() - responseStart,
+        fallbackUsed: false,
+        actionSuggested: false,
+        success: false,
+        error: String(error?.message || error),
+      });
       return res.status(500).json({ error: error.message || "AI chat failed" });
+    }
+  },
+);
+
+/**
+ * Super Admin AI action validator
+ * POST /api/superadmin/ai-action-validate
+ */
+app.post(
+  "/api/superadmin/ai-action-validate",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { action } = req.body || {};
+      if (!action || !action.type) {
+        return res.status(400).json({ error: "action.type is required" });
+      }
+
+      const validation = validateAiActionPayload(action);
+      return res.json(validation);
+    } catch (error) {
+      console.error("AI action validation error:", error.message || error);
+      return res
+        .status(500)
+        .json({ error: error.message || "AI action validation failed" });
     }
   },
 );
@@ -1166,41 +2040,30 @@ app.post(
   authMiddleware,
   superAdminMiddleware,
   async (req, res) => {
+    const actionStart = Date.now();
     try {
       const { action } = req.body || {};
       if (!action || !action.type) {
         return res.status(400).json({ error: "action.type is required" });
       }
+      const validation = validateAiActionPayload(action);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: `Action is missing required fields: ${validation.missingFields.join(", ")}`,
+          validation,
+        });
+      }
 
-      const payload = action.payload || {};
+      const payload = validation.payload || {};
+      let actionResult = null;
+      let entityId = null;
+      let schoolId = null;
+      let actionType = validation.type;
 
-      switch (action.type) {
+      switch (actionType) {
         case "create_school": {
-          const {
-            name,
-            phone,
-            address,
-            logoUrl,
-            plan,
-            featurePlan,
-            billingStartType,
-          } = payload;
-          if (!name || typeof name !== "string" || name.trim().length === 0) {
-            return res.status(400).json({
-              error: "School name is required and must be a non-empty string",
-            });
-          }
-
-          const validPlans = ["free", "trial", "monthly", "termly", "yearly"];
-          if (!validPlans.includes(plan)) {
-            return res.status(400).json({ error: "Invalid plan type" });
-          }
-
-          const validFeaturePlans = ["starter", "standard"];
-          if (featurePlan && !validFeaturePlans.includes(featurePlan)) {
-            return res.status(400).json({ error: "Invalid feature plan type" });
-          }
-
+          const { name, phone, address, logoUrl, plan, featurePlan, billingStartType } =
+            payload;
           const baseCode = name
             .replace(/[^a-zA-Z0-9]/g, "")
             .toUpperCase()
@@ -1218,20 +2081,21 @@ app.post(
 
             if (existingSchool.empty) break;
             schoolCode = `${baseCode}${counter}`;
-            counter++;
+            counter += 1;
             if (counter > 999) {
               schoolCode = `${baseCode}${Math.floor(Math.random() * 1000)}`;
             }
           }
 
           const schoolRef = admin.firestore().collection("schools").doc();
-          const schoolId = schoolRef.id;
+          schoolId = schoolRef.id;
+          entityId = schoolId;
 
           const now = Date.now();
           const trialEndsAt =
             plan === "trial" ? new Date(now + 30 * 24 * 60 * 60 * 1000) : null;
 
-          const schoolData = {
+          await schoolRef.set({
             schoolId,
             name: name.trim(),
             code: schoolCode,
@@ -1248,9 +2112,7 @@ app.post(
             },
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             createdBy: req.user.uid,
-          };
-
-          await schoolRef.set(schoolData);
+          });
 
           await logActivity({
             eventType: "school_created",
@@ -1261,35 +2123,19 @@ app.post(
             meta: { name: name.trim(), plan },
           });
 
-          await logActivity({
-            eventType: "superadmin_ai_action_confirmed",
-            schoolId: null,
-            actorUid: req.user.uid,
-            actorRole: "super_admin",
-            entityId: schoolId,
-            meta: { actionType: action.type },
-          });
-
-          return res.json({
-            success: true,
+          actionResult = {
             schoolId,
             code: schoolCode,
             message: "School created successfully",
-          });
+          };
+          break;
         }
         case "create_school_admin": {
-          const { schoolId, fullName, email, password } = payload;
-
-          if (!schoolId || !fullName || !email) {
-            return res.status(400).json({
-              error: "Missing required fields: schoolId, fullName, email",
-            });
-          }
-
+          const { schoolId: targetSchoolId, fullName, email, password } = payload;
           const schoolDoc = await admin
             .firestore()
             .collection("schools")
-            .doc(schoolId.trim())
+            .doc(targetSchoolId.trim())
             .get();
 
           if (!schoolDoc.exists) {
@@ -1315,13 +2161,7 @@ app.post(
 
           const authPassword = password
             ? password
-            : Math.random().toString(36).slice(-12) + "Aa1!";
-
-          if (password && password.length < 6) {
-            return res
-              .status(400)
-              .json({ error: "Password must be at least 6 characters long" });
-          }
+            : `${Math.random().toString(36).slice(-8)}Aa1!`;
 
           const userRecord = await admin.auth().createUser({
             email: email.trim(),
@@ -1329,52 +2169,40 @@ app.post(
             displayName: fullName.trim(),
           });
 
-          const userData = {
-            fullName: fullName.trim(),
-            email: email.trim(),
-            role: "school_admin",
-            schoolId: schoolId.trim(),
-            status: "active",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          };
-
           await admin
             .firestore()
             .collection("users")
             .doc(userRecord.uid)
-            .set(userData);
+            .set({
+              fullName: fullName.trim(),
+              email: email.trim(),
+              role: "school_admin",
+              schoolId: targetSchoolId.trim(),
+              status: "active",
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+          schoolId = targetSchoolId.trim();
+          entityId = userRecord.uid;
 
           await logActivity({
             eventType: "school_admin_created",
-            schoolId: schoolId.trim(),
+            schoolId,
             actorUid: req.user.uid,
             actorRole: "super_admin",
             entityId: userRecord.uid,
             meta: { email: email.trim(), fullName: fullName.trim() },
           });
 
-          await logActivity({
-            eventType: "superadmin_ai_action_confirmed",
-            schoolId: schoolId.trim(),
-            actorUid: req.user.uid,
-            actorRole: "super_admin",
-            entityId: userRecord.uid,
-            meta: { actionType: action.type },
-          });
-
-          return res.json({
-            success: true,
+          actionResult = {
             uid: userRecord.uid,
             email: email.trim(),
             message: "School admin created successfully",
-          });
+          };
+          break;
         }
         case "reset_school_admin_password": {
           const { adminUid } = payload;
-          if (!adminUid) {
-            return res.status(400).json({ error: "adminUid is required" });
-          }
-
           const userRecord = await admin.auth().getUser(adminUid);
           if (!userRecord.email) {
             return res.status(400).json({ error: "Admin email not found" });
@@ -1384,39 +2212,27 @@ app.post(
             .auth()
             .generatePasswordResetLink(userRecord.email);
 
+          entityId = adminUid;
+          schoolId = null;
+
           await logActivity({
             eventType: "school_admin_password_reset",
-            schoolId: null,
+            schoolId,
             actorUid: req.user.uid,
             actorRole: "super_admin",
             entityId: adminUid,
             meta: { email: userRecord.email },
           });
 
-          await logActivity({
-            eventType: "superadmin_ai_action_confirmed",
-            schoolId: null,
-            actorUid: req.user.uid,
-            actorRole: "super_admin",
-            entityId: adminUid,
-            meta: { actionType: action.type },
-          });
-
-          return res.json({
-            success: true,
+          actionResult = {
             email: userRecord.email,
             resetLink,
             message: "Password reset link generated successfully",
-          });
+          };
+          break;
         }
         case "provision_user": {
-          const { uid, role, schoolId, fullName, email } = payload;
-          if (!uid || !role || !fullName || !email) {
-            return res.status(400).json({
-              error: "Missing required fields: uid, role, fullName, email",
-            });
-          }
-
+          const { uid, role, schoolId: targetSchoolId, fullName, email } = payload;
           try {
             await admin.auth().getUser(uid);
           } catch (error) {
@@ -1437,49 +2253,355 @@ app.post(
             });
           }
 
-          const userData = {
+          await admin.firestore().collection("users").doc(uid).set({
             fullName: fullName.trim(),
             email: email.trim(),
             role: role.trim(),
-            ...(schoolId && { schoolId: schoolId.trim() }),
+            ...(targetSchoolId && { schoolId: targetSchoolId.trim() }),
             status: "active",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          };
+          });
 
-          await admin.firestore().collection("users").doc(uid).set(userData);
+          schoolId = targetSchoolId || null;
+          entityId = uid;
 
           await logActivity({
             eventType: "user_provisioned",
-            schoolId: schoolId || null,
+            schoolId,
             actorUid: req.user.uid,
             actorRole: "super_admin",
             entityId: uid,
             meta: { role, email: email.trim(), fullName: fullName.trim() },
           });
 
-          await logActivity({
-            eventType: "superadmin_ai_action_confirmed",
-            schoolId: schoolId || null,
-            actorUid: req.user.uid,
-            actorRole: "super_admin",
-            entityId: uid,
-            meta: { actionType: action.type },
-          });
-
-          return res.json({
-            success: true,
+          actionResult = {
             uid,
             message: "User profile provisioned successfully",
-          });
+          };
+          break;
         }
-        default:
+        default: {
           return res.status(400).json({ error: "Unknown action type" });
+        }
       }
+
+      await logActivity({
+        eventType: "superadmin_ai_action_confirmed",
+        schoolId,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId,
+        meta: { actionType },
+      });
+
+      const undo = await createAiActionAudit({
+        actorUid: req.user.uid,
+        actionType,
+        description: validation.description,
+        payload,
+        result: actionResult,
+        entityId,
+        schoolId,
+        canUndo: validation.canUndo,
+      });
+
+      void recordAiTelemetry({
+        type: "action_confirm",
+        actorUid: req.user.uid,
+        actionType,
+        success: true,
+        responseMs: Date.now() - actionStart,
+      });
+
+      return res.json({
+        success: true,
+        actionType,
+        result: actionResult,
+        undo: undo || null,
+      });
     } catch (error) {
       console.error("AI action error:", error.message || error);
+      void recordAiTelemetry({
+        type: "action_confirm",
+        actorUid: req.user?.uid || null,
+        actionType: String(req.body?.action?.type || ""),
+        success: false,
+        responseMs: Date.now() - actionStart,
+        error: String(error?.message || error),
+      });
       return res
         .status(500)
         .json({ error: error.message || "AI action failed" });
+    }
+  },
+);
+
+/**
+ * Super Admin AI undo action
+ * POST /api/superadmin/ai-action-undo
+ */
+app.post(
+  "/api/superadmin/ai-action-undo",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    const undoStart = Date.now();
+    try {
+      const undoToken = trimToString(req.body?.undoToken, 160);
+      if (!undoToken) {
+        return res.status(400).json({ error: "undoToken is required" });
+      }
+
+      const historySnap = await admin
+        .firestore()
+        .collection("ai_action_history")
+        .where("undoToken", "==", undoToken)
+        .limit(1)
+        .get();
+
+      if (historySnap.empty) {
+        return res.status(404).json({ error: "Undo token not found" });
+      }
+
+      const historyDoc = historySnap.docs[0];
+      const history = historyDoc.data() || {};
+      if (!history.canUndo) {
+        return res.status(400).json({ error: "This action cannot be undone" });
+      }
+      if (history.undoneAt) {
+        return res.status(409).json({ error: "This action was already undone" });
+      }
+      if (history.undoBefore && Date.now() > Number(history.undoBefore)) {
+        return res
+          .status(410)
+          .json({ error: "Undo window has expired for this action" });
+      }
+
+      const actionType = trimToString(history.actionType, 80);
+      const result = history.result || {};
+      const payload = history.payload || {};
+
+      switch (actionType) {
+        case "create_school": {
+          const schoolId = trimToString(result.schoolId || payload.schoolId, 80);
+          if (schoolId) {
+            await admin.firestore().collection("schools").doc(schoolId).delete();
+          }
+          break;
+        }
+        case "create_school_admin": {
+          const adminUid = trimToString(result.uid || payload.adminUid, 120);
+          if (!adminUid) {
+            return res
+              .status(400)
+              .json({ error: "Missing admin UID for undo operation" });
+          }
+          await admin.auth().updateUser(adminUid, { disabled: true });
+          await admin.firestore().collection("users").doc(adminUid).delete();
+          break;
+        }
+        case "provision_user": {
+          const uid = trimToString(result.uid || payload.uid, 120);
+          if (!uid) {
+            return res
+              .status(400)
+              .json({ error: "Missing UID for undo operation" });
+          }
+          await admin.firestore().collection("users").doc(uid).delete();
+          break;
+        }
+        default:
+          return res
+            .status(400)
+            .json({ error: "Undo is not supported for this action type" });
+      }
+
+      await historyDoc.ref.set(
+        {
+          undoneAt: admin.firestore.FieldValue.serverTimestamp(),
+          undoneBy: req.user.uid,
+          undoResult: { success: true },
+        },
+        { merge: true },
+      );
+
+      await logActivity({
+        eventType: "superadmin_ai_action_undone",
+        schoolId: history.schoolId || null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: history.entityId || null,
+        meta: { actionType },
+      });
+
+      void recordAiTelemetry({
+        type: "action_undo",
+        actorUid: req.user.uid,
+        actionType,
+        success: true,
+        responseMs: Date.now() - undoStart,
+      });
+
+      return res.json({
+        success: true,
+        actionType,
+        message: "Action undone successfully",
+      });
+    } catch (error) {
+      console.error("AI undo error:", error.message || error);
+      void recordAiTelemetry({
+        type: "action_undo",
+        actorUid: req.user?.uid || null,
+        success: false,
+        responseMs: Date.now() - undoStart,
+        error: String(error?.message || error),
+      });
+      return res
+        .status(500)
+        .json({ error: error.message || "AI undo failed" });
+    }
+  },
+);
+
+/**
+ * Super Admin AI feedback
+ * POST /api/superadmin/ai-feedback
+ */
+app.post(
+  "/api/superadmin/ai-feedback",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const messageId = trimToString(req.body?.messageId, 160);
+      const conversationId = trimToString(req.body?.conversationId, 120);
+      const rating = trimToString(req.body?.rating, 10).toLowerCase();
+      const message = trimToString(req.body?.message, 2000);
+      if (!messageId || !conversationId) {
+        return res
+          .status(400)
+          .json({ error: "messageId and conversationId are required" });
+      }
+      if (!["up", "down"].includes(rating)) {
+        return res.status(400).json({ error: "rating must be up or down" });
+      }
+
+      await admin.firestore().collection("ai_feedback").add({
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        messageId,
+        conversationId,
+        rating,
+        message,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        timestampMs: Date.now(),
+      });
+
+      void recordAiTelemetry({
+        type: "feedback",
+        actorUid: req.user.uid,
+        success: true,
+        rating,
+      });
+
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("AI feedback error:", error.message || error);
+      return res
+        .status(500)
+        .json({ error: error.message || "AI feedback failed" });
+    }
+  },
+);
+
+/**
+ * Super Admin AI metrics
+ * GET /api/superadmin/ai-metrics
+ */
+app.get(
+  "/api/superadmin/ai-metrics",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const periodDays = Math.max(1, Math.min(90, Number(req.query.days) || 14));
+      const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+
+      const telemetrySnap = await admin
+        .firestore()
+        .collection("ai_telemetry")
+        .where("timestampMs", ">=", cutoffMs)
+        .limit(5000)
+        .get();
+      const feedbackSnap = await admin
+        .firestore()
+        .collection("ai_feedback")
+        .where("timestampMs", ">=", cutoffMs)
+        .limit(5000)
+        .get();
+
+      const telemetryRows = telemetrySnap.docs.map((doc) => doc.data() || {});
+      const feedbackRows = feedbackSnap.docs.map((doc) => doc.data() || {});
+
+      const chatRows = telemetryRows.filter(
+        (row) => row.type === "chat" && row.success !== false,
+      );
+      const responseSeries = chatRows
+        .map((row) => Number(row.responseMs || 0))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b);
+      const totalChats = chatRows.length;
+      const avgResponseMs = responseSeries.length
+        ? Math.round(
+            responseSeries.reduce((sum, value) => sum + value, 0) /
+              responseSeries.length,
+          )
+        : 0;
+      const p95ResponseMs = responseSeries.length
+        ? responseSeries[Math.max(0, Math.floor(responseSeries.length * 0.95) - 1)]
+        : 0;
+      const fallbackUsedCount = chatRows.filter((row) => row.fallbackUsed).length;
+      const fallbackRate = totalChats
+        ? Number(((fallbackUsedCount / totalChats) * 100).toFixed(2))
+        : 0;
+
+      const actionRows = telemetryRows.filter((row) => row.type === "action_confirm");
+      const successfulActionCount = actionRows.filter((row) => row.success).length;
+      const actionSuccessRate = actionRows.length
+        ? Number(((successfulActionCount / actionRows.length) * 100).toFixed(2))
+        : 0;
+
+      const positiveFeedback = feedbackRows.filter(
+        (row) => String(row.rating) === "up",
+      ).length;
+      const negativeFeedback = feedbackRows.filter(
+        (row) => String(row.rating) === "down",
+      ).length;
+      const feedbackTotal = positiveFeedback + negativeFeedback;
+      const feedbackPositiveRate = feedbackTotal
+        ? Number(((positiveFeedback / feedbackTotal) * 100).toFixed(2))
+        : 0;
+
+      return res.json({
+        success: true,
+        periodDays,
+        totalChats,
+        avgResponseMs,
+        p95ResponseMs,
+        fallbackRate,
+        actionSuccessRate,
+        feedbackPositiveRate,
+        positiveFeedback,
+        negativeFeedback,
+      });
+    } catch (error) {
+      console.error("AI metrics error:", error.message || error);
+      return res
+        .status(500)
+        .json({ error: error.message || "AI metrics failed" });
     }
   },
 );

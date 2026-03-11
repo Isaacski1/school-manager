@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "ai:eval": "node scripts/ai-eval.mjs",
     "start": "node server/server.js",
     "server:dev": "nodemon server/server.js",
     "predeploy": "npm run build",

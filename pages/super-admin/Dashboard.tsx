@@ -20,6 +20,12 @@ import {
   confirmSuperAdminAiAction,
   AiChatAction,
   AiChatMessage,
+  AiActionValidationResult,
+  AiUndoMeta,
+  validateSuperAdminAiAction,
+  undoSuperAdminAiAction,
+  submitSuperAdminAiFeedback,
+  getSuperAdminAiMetrics,
 } from "../../services/backendApi";
 import showToast from "../../services/toast";
 import {
@@ -44,6 +50,15 @@ import {
   Bot,
   SendHorizontal,
   ShieldCheck,
+  Plus,
+  MessageSquare,
+  Sparkles,
+  Pin,
+  Pencil,
+  Trash2,
+  ThumbsUp,
+  ThumbsDown,
+  Undo2,
 } from "lucide-react";
 import {
   AreaChart,
@@ -1244,7 +1259,7 @@ const EarningsOverview: React.FC<{
           </ChartSurface>
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1354,7 +1369,7 @@ const EarningsOverview: React.FC<{
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card>
+        <Card className="min-w-0">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1646,7 +1661,7 @@ const EarningsOverview: React.FC<{
             <Wallet size={18} className="text-slate-400" />
           </div>
           <ChartSurface
-            height={Math.max(224, paymentChannelSeries.length * 62 + 30)}
+            height={Math.max(240, paymentChannelSeries.length * 76 + 28)}
             className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 overflow-hidden"
           >
             {paymentChannelSeries.length > 0 ? (
@@ -1657,7 +1672,7 @@ const EarningsOverview: React.FC<{
                 );
 
                 return (
-                  <div className="grid h-full content-center gap-4 px-4 py-5 sm:px-5">
+                  <div className="grid h-full content-center gap-3 px-3 py-4 sm:gap-4 sm:px-5 sm:py-5">
                     {paymentChannelSeries.map((item, index) => {
                       const accent =
                         PAYMENT_CHANNEL_COLORS[
@@ -1669,27 +1684,30 @@ const EarningsOverview: React.FC<{
                           : 0;
 
                       return (
-                        <div key={item.label} className="space-y-2">
-                          <div className="flex items-center justify-between gap-3 text-xs">
-                            <div className="flex min-w-0 items-center gap-2">
+                        <div
+                          key={item.label}
+                          className="space-y-2 rounded-xl border border-slate-200/80 bg-white/80 p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0"
+                        >
+                          <div className="grid gap-2 text-xs sm:flex sm:items-center sm:justify-between sm:gap-3">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
                               <span
                                 className="inline-block h-2.5 w-2.5 rounded-full"
                                 style={{ backgroundColor: accent }}
                               />
-                              <span className="truncate font-medium text-slate-600">
+                              <span className="min-w-0 max-w-[11rem] truncate font-medium text-slate-600 sm:max-w-none">
                                 {item.label}
                               </span>
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                              <span className="shrink-0 whitespace-nowrap rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
                                 {item.count} payment
                                 {item.count === 1 ? "" : "s"}
                               </span>
                             </div>
-                            <span className="shrink-0 font-semibold text-slate-900">
+                            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-900 sm:text-xs">
                               {formatCurrency(item.amount)}
                             </span>
                           </div>
 
-                          <div className="h-4 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80">
+                          <div className="h-3.5 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80 sm:h-4">
                             <div
                               className="h-full rounded-full shadow-[0_10px_20px_-12px_rgba(15,23,42,0.9)]"
                               style={{
@@ -1718,9 +1736,9 @@ const EarningsOverview: React.FC<{
             {paymentChannelSeries.map((item, index) => (
               <div
                 key={item.label}
-                className="flex items-center justify-between"
+                className="flex flex-wrap items-center justify-between gap-2"
               >
-                <span className="flex items-center gap-2 text-slate-600">
+                <span className="flex min-w-0 items-center gap-2 text-slate-600">
                   <span
                     className="inline-block h-2.5 w-2.5 rounded-full"
                     style={{
@@ -1730,9 +1748,9 @@ const EarningsOverview: React.FC<{
                         ],
                     }}
                   />
-                  {item.label}
+                  <span className="truncate">{item.label}</span>
                 </span>
-                <span className="font-semibold text-slate-900">
+                <span className="shrink-0 font-semibold tabular-nums text-slate-900">
                   {formatCurrency(item.amount)}
                 </span>
               </div>
@@ -1919,7 +1937,161 @@ const EarningsOverview: React.FC<{
   );
 };
 
+type AiConversationMessage = AiChatMessage & {
+  id: string;
+  createdAt: number;
+  mode?: "local" | "openai";
+  responseMs?: number;
+  dataAsOf?: number | null;
+};
+
+type AiConversationEntry = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  pinned: boolean;
+  messages: AiConversationMessage[];
+  pendingAction: AiChatAction | null;
+  pendingValidation: AiActionValidationResult | null;
+  lastUndo: AiUndoMeta | null;
+};
+
+type AiMetricsSnapshot = {
+  success: boolean;
+  periodDays: number;
+  totalChats: number;
+  avgResponseMs: number;
+  p95ResponseMs: number;
+  fallbackRate: number;
+  actionSuccessRate: number;
+  feedbackPositiveRate: number;
+  positiveFeedback: number;
+  negativeFeedback: number;
+};
+
+const sortAiConversations = (items: AiConversationEntry[]) =>
+  [...items].sort(
+    (a, b) =>
+      Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+      b.updatedAt - a.updatedAt,
+  );
+
+const buildApiMessages = (
+  messages: AiConversationMessage[],
+): AiChatMessage[] => {
+  const maxWindow = 20;
+  if (messages.length <= maxWindow) {
+    return messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+  }
+
+  const recent = messages.slice(-16);
+  const older = messages.slice(0, -16).filter((message) => message.role !== "system");
+  const olderUserSnippets = older
+    .filter((message) => message.role === "user")
+    .slice(-4)
+    .map((message) => message.content.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const olderAssistantSnippets = older
+    .filter((message) => message.role === "assistant")
+    .slice(-3)
+    .map((message) => message.content.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  const summaryLines = [
+    olderUserSnippets.length
+      ? `Recent user intents: ${olderUserSnippets.join(" | ")}`
+      : "",
+    olderAssistantSnippets.length
+      ? `Recent assistant outcomes: ${olderAssistantSnippets.join(" | ")}`
+      : "",
+  ].filter(Boolean);
+
+  const summaryMessage: AiChatMessage | null = summaryLines.length
+    ? {
+        role: "system",
+        content: `Conversation summary for continuity:\n${summaryLines.join("\n")}`,
+      }
+    : null;
+
+  const payload = [
+    ...(summaryMessage ? [summaryMessage] : []),
+    ...recent.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+  ];
+  return payload.slice(-maxWindow);
+};
+
 const Dashboard: React.FC = () => {
+  const AI_ASSISTANT_NAME = "Isaacski AI";
+  const AI_HISTORY_STORAGE_KEY = "super_admin_ai_history_v1";
+  const AI_FEEDBACK_STORAGE_KEY = "super_admin_ai_feedback_v1";
+  const createAiConversation = (): AiConversationEntry => {
+    const now = Date.now();
+    return {
+      id: `ai-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      title: "New chat",
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      messages: [
+        {
+          id: `msg-${now}-welcome`,
+          createdAt: now,
+          role: "assistant",
+          content:
+            "Hello Super Admin. I can help analyze system data and propose actions. Ask me anything.",
+        },
+      ],
+      pendingAction: null,
+      pendingValidation: null,
+      lastUndo: null,
+    };
+  };
+  const normalizeAiReply = (reply?: string) =>
+    String(reply || "")
+      .replace(/^isaacski ai is active\.?\s*/i, "")
+      .replace(/^isaacski ai summary:\s*/i, "")
+      .trim();
+  const toConversationMessage = (
+    role: AiChatMessage["role"],
+    content: string,
+    extra?: Partial<AiConversationMessage>,
+  ): AiConversationMessage => {
+    const now = Date.now();
+    return {
+      id: `msg-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: now,
+      role,
+      content,
+      ...extra,
+    };
+  };
+  const buildConversationTitle = (input: string) => {
+    const normalized = input.replace(/\s+/g, " ").trim();
+    if (!normalized) return "New chat";
+    if (normalized.length <= 40) return normalized;
+    return `${normalized.slice(0, 40).trimEnd()}...`;
+  };
+  const formatConversationTime = (timestamp: number) => {
+    try {
+      return new Date(timestamp).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "Just now";
+    }
+  };
   const { user } = useAuth();
   // Restrict this page to super-admin users only to avoid permission errors
   if (!user || user.role !== UserRole.SUPER_ADMIN) {
@@ -1966,15 +2138,186 @@ const Dashboard: React.FC = () => {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiMessages, setAiMessages] = useState<AiChatMessage[]>([
-    {
-      role: "assistant" as const,
-      content:
-        "Hello Super Admin. I can help analyze system data and propose actions. Ask me anything.",
+  const [aiValidationLoading, setAiValidationLoading] = useState(false);
+  const [aiMetricsLoading, setAiMetricsLoading] = useState(false);
+  const [aiTyping, setAiTyping] = useState(false);
+  const [aiHistoryOpenMobile, setAiHistoryOpenMobile] = useState(false);
+  const [aiHistorySearch, setAiHistorySearch] = useState("");
+  const [aiMessageFeedback, setAiMessageFeedback] = useState<
+    Record<string, "up" | "down">
+  >(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(AI_FEEDBACK_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [aiMetrics, setAiMetrics] = useState<AiMetricsSnapshot | null>(null);
+  const [aiConversations, setAiConversations] = useState<AiConversationEntry[]>(
+    () => {
+      if (typeof window === "undefined") return [createAiConversation()];
+      try {
+        const raw = window.localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+        if (!raw) return [createAiConversation()];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          return [createAiConversation()];
+        }
+        const normalized = parsed
+          .filter(
+            (item) =>
+              item &&
+              typeof item.id === "string" &&
+              Array.isArray(item.messages) &&
+              item.messages.length > 0,
+          )
+          .map((item) => ({
+            id: item.id,
+            title:
+              typeof item.title === "string" && item.title.trim()
+                ? item.title
+                : "New chat",
+            createdAt:
+              typeof item.createdAt === "number" ? item.createdAt : Date.now(),
+            updatedAt:
+              typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
+            pinned: Boolean(item.pinned),
+            messages: (item.messages as AiConversationMessage[]).map(
+              (message, index) => ({
+                id:
+                  typeof message.id === "string" && message.id
+                    ? message.id
+                    : `msg-${Date.now()}-${index}`,
+                createdAt:
+                  typeof message.createdAt === "number"
+                    ? message.createdAt
+                    : Date.now(),
+                role: message.role || "assistant",
+                content: String(message.content || ""),
+                mode: message.mode,
+                responseMs:
+                  typeof message.responseMs === "number"
+                    ? message.responseMs
+                    : undefined,
+                dataAsOf:
+                  typeof message.dataAsOf === "number"
+                    ? message.dataAsOf
+                    : null,
+              }),
+            ),
+            pendingAction: (item.pendingAction || null) as AiChatAction | null,
+            pendingValidation:
+              (item.pendingValidation ||
+                null) as AiActionValidationResult | null,
+            lastUndo: (item.lastUndo || null) as AiUndoMeta | null,
+          }));
+        return normalized.length
+          ? sortAiConversations(normalized)
+          : [createAiConversation()];
+      } catch {
+        return [createAiConversation()];
+      }
     },
+  );
+  const [activeConversationId, setActiveConversationId] = useState<string>("");
+  const aiMessagesViewportRef = React.useRef<HTMLDivElement | null>(null);
+  const typingTimerRef = React.useRef<number | null>(null);
+  const activeConversation = useMemo(() => {
+    if (!aiConversations.length) return null;
+    return (
+      aiConversations.find((item) => item.id === activeConversationId) ||
+      aiConversations[0]
+    );
+  }, [aiConversations, activeConversationId]);
+  const filteredAiConversations = useMemo(() => {
+    const keyword = aiHistorySearch.toLowerCase().trim();
+    if (!keyword) return aiConversations;
+    return aiConversations.filter((conversation) => {
+      if (conversation.title.toLowerCase().includes(keyword)) return true;
+      return conversation.messages.some((message) =>
+        message.content.toLowerCase().includes(keyword),
+      );
+    });
+  }, [aiConversations, aiHistorySearch]);
+
+  const refreshAiMetrics = useCallback(async () => {
+    setAiMetricsLoading(true);
+    try {
+      const snapshot = await getSuperAdminAiMetrics();
+      setAiMetrics(snapshot);
+    } catch (error) {
+      console.warn("[Dashboard] Failed to load AI metrics", error);
+    } finally {
+      setAiMetricsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!aiConversations.length) return;
+    const conversationExists = aiConversations.some(
+      (item) => item.id === activeConversationId,
+    );
+    if (!activeConversationId || !conversationExists) {
+      setActiveConversationId(aiConversations[0].id);
+    }
+  }, [aiConversations, activeConversationId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        AI_HISTORY_STORAGE_KEY,
+        JSON.stringify(
+          aiConversations.slice(0, 40).map((conversation) => ({
+            ...conversation,
+            messages: conversation.messages.slice(-120),
+          })),
+        ),
+      );
+    } catch {
+      // ignore local storage errors
+    }
+  }, [aiConversations, AI_HISTORY_STORAGE_KEY]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        AI_FEEDBACK_STORAGE_KEY,
+        JSON.stringify(aiMessageFeedback),
+      );
+    } catch {
+      // ignore local storage errors
+    }
+  }, [aiMessageFeedback, AI_FEEDBACK_STORAGE_KEY]);
+
+  useEffect(() => {
+    const viewport = aiMessagesViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [
+    activeConversationId,
+    activeConversation?.messages.length,
+    aiLoading,
+    aiTyping,
   ]);
-  const [aiPendingAction, setAiPendingAction] = useState<AiChatAction | null>(
-    null,
+
+  useEffect(() => {
+    if (!aiOpen) return;
+    refreshAiMetrics();
+  }, [aiOpen, refreshAiMetrics]);
+
+  useEffect(
+    () => () => {
+      if (typingTimerRef.current) {
+        window.clearInterval(typingTimerRef.current);
+      }
+    },
+    [],
   );
 
   const loadData = useCallback(async () => {
@@ -2585,66 +2928,361 @@ const Dashboard: React.FC = () => {
     { label: "Paid", count: kpis.paid, color: "bg-[#E6F0FA] text-[#0B4A82]" },
   ];
 
+  const createNewConversation = () => {
+    const nextConversation = createAiConversation();
+    setAiConversations((prev) => sortAiConversations([nextConversation, ...prev]));
+    setActiveConversationId(nextConversation.id);
+    setAiInput("");
+    setAiHistoryOpenMobile(false);
+  };
+
+  const renameConversation = (conversationId: string) => {
+    const current = aiConversations.find((item) => item.id === conversationId);
+    if (!current) return;
+    const nextTitle = window.prompt("Rename conversation", current.title);
+    if (nextTitle === null) return;
+    const title = buildConversationTitle(nextTitle);
+    setAiConversations((prev) =>
+      sortAiConversations(
+        prev.map((item) =>
+          item.id === conversationId
+            ? { ...item, title, updatedAt: Date.now() }
+            : item,
+        ),
+      ),
+    );
+  };
+
+  const toggleConversationPin = (conversationId: string) => {
+    setAiConversations((prev) =>
+      sortAiConversations(
+        prev.map((item) =>
+          item.id === conversationId
+            ? { ...item, pinned: !item.pinned, updatedAt: Date.now() }
+            : item,
+        ),
+      ),
+    );
+  };
+
+  const deleteConversation = (conversationId: string) => {
+    setAiConversations((prev) => {
+      const remaining = prev.filter((item) => item.id !== conversationId);
+      const next = remaining.length ? sortAiConversations(remaining) : [createAiConversation()];
+      if (!next.some((item) => item.id === activeConversationId)) {
+        setActiveConversationId(next[0].id);
+      }
+      return next;
+    });
+  };
+
+  const appendAssistantMessageWithTyping = useCallback(
+    async (conversationId: string, message: AiConversationMessage) => {
+      const fullText = message.content || "";
+      const placeholder: AiConversationMessage = { ...message, content: "" };
+      setAiConversations((prev) =>
+        sortAiConversations(
+          prev.map((item) =>
+            item.id === conversationId
+              ? {
+                  ...item,
+                  updatedAt: Date.now(),
+                  messages: [...item.messages, placeholder],
+                }
+              : item,
+          ),
+        ),
+      );
+
+      if (!fullText) return;
+      setAiTyping(true);
+
+      await new Promise<void>((resolve) => {
+        let cursor = 0;
+        const step = Math.max(2, Math.ceil(fullText.length / 28));
+        if (typingTimerRef.current) {
+          window.clearInterval(typingTimerRef.current);
+        }
+
+        typingTimerRef.current = window.setInterval(() => {
+          cursor = Math.min(fullText.length, cursor + step);
+          const partial = fullText.slice(0, cursor);
+          setAiConversations((prev) =>
+            prev.map((item) =>
+              item.id === conversationId
+                ? {
+                    ...item,
+                    updatedAt: Date.now(),
+                    messages: item.messages.map((entry) =>
+                      entry.id === placeholder.id
+                        ? { ...entry, content: partial }
+                        : entry,
+                    ),
+                  }
+                : item,
+            ),
+          );
+
+          if (cursor >= fullText.length) {
+            if (typingTimerRef.current) {
+              window.clearInterval(typingTimerRef.current);
+              typingTimerRef.current = null;
+            }
+            setAiTyping(false);
+            resolve();
+          }
+        }, 14);
+      });
+    },
+    [],
+  );
+
   const sendAiMessage = async () => {
     const trimmed = aiInput.trim();
-    if (!trimmed || aiLoading) return;
-    const nextMessages: AiChatMessage[] = [
-      ...aiMessages,
-      { role: "user" as const, content: trimmed },
+    if (!trimmed || aiLoading || !activeConversation) return;
+    const conversationId = activeConversation.id;
+    const userMessage = toConversationMessage("user", trimmed);
+    const nextMessages: AiConversationMessage[] = [
+      ...activeConversation.messages,
+      userMessage,
     ];
-    setAiMessages(nextMessages);
+
+    setAiConversations((prev) =>
+      sortAiConversations(
+        prev.map((item) =>
+          item.id === conversationId
+            ? {
+                ...item,
+                title:
+                  item.title === "New chat"
+                    ? buildConversationTitle(trimmed)
+                    : item.title,
+                updatedAt: Date.now(),
+                pendingAction: null,
+                pendingValidation: null,
+                messages: nextMessages,
+              }
+            : item,
+        ),
+      ),
+    );
     setAiInput("");
     setAiLoading(true);
     try {
-      const response = await superAdminAiChat({ messages: nextMessages });
+      const messagesForApi = buildApiMessages(nextMessages);
+      const response = await superAdminAiChat({ messages: messagesForApi });
+      const normalizedReply =
+        normalizeAiReply(response.reply) ||
+        "I could not generate a response. Please try again.";
+      let validation: AiActionValidationResult | null = null;
+
       if (response.action) {
-        setAiPendingAction(response.action);
+        setAiValidationLoading(true);
+        try {
+          validation = await validateSuperAdminAiAction({ action: response.action });
+        } catch (error) {
+          console.warn("[Dashboard] AI action validation failed", error);
+        } finally {
+          setAiValidationLoading(false);
+        }
       }
-      setAiMessages((prev) => [
-        ...prev,
-        { role: "assistant" as const, content: response.reply || "" },
-      ]);
+
+      setAiConversations((prev) =>
+        sortAiConversations(
+          prev.map((item) =>
+            item.id === conversationId
+              ? {
+                  ...item,
+                  updatedAt: Date.now(),
+                  pendingAction: response.action || null,
+                  pendingValidation: validation,
+                }
+              : item,
+          ),
+        ),
+      );
+      await appendAssistantMessageWithTyping(
+        conversationId,
+        toConversationMessage("assistant", normalizedReply, {
+          mode: response.mode,
+          responseMs: response.responseMs,
+          dataAsOf: response.dataAsOf ?? null,
+        }),
+      );
+      refreshAiMetrics();
     } catch (error: any) {
       showToast(error?.message || "AI chat failed", { type: "error" });
+      await appendAssistantMessageWithTyping(
+        conversationId,
+        toConversationMessage(
+          "assistant",
+          "I could not complete that request right now. Please try again.",
+        ),
+      );
     } finally {
+      setAiValidationLoading(false);
       setAiLoading(false);
     }
   };
 
   const confirmAiAction = async () => {
-    if (!aiPendingAction || aiLoading) return;
+    if (!activeConversation?.pendingAction || aiLoading) return;
+    const conversationId = activeConversation.id;
+    const action = activeConversation.pendingAction;
     setAiLoading(true);
+    setAiValidationLoading(true);
     try {
+      const validation = await validateSuperAdminAiAction({ action });
+      setAiConversations((prev) =>
+        sortAiConversations(
+          prev.map((item) =>
+            item.id === conversationId
+              ? { ...item, pendingValidation: validation, updatedAt: Date.now() }
+              : item,
+          ),
+        ),
+      );
+
+      if (!validation.valid) {
+        const validationText = `I cannot execute this action yet. Missing fields: ${validation.missingFields.join(", ")}.`;
+        await appendAssistantMessageWithTyping(
+          conversationId,
+          toConversationMessage("assistant", validationText),
+        );
+        showToast("Action is missing required fields", { type: "error" });
+        return;
+      }
+
       const response = await confirmSuperAdminAiAction({
-        action: aiPendingAction,
+        action: {
+          ...action,
+          description: validation.description,
+          payload: validation.payload,
+        },
       });
       showToast("Action completed successfully", { type: "success" });
-      setAiMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant" as const,
-          content: `Action completed: ${response.actionType}.`,
-        },
-      ]);
-      setAiPendingAction(null);
+      setAiConversations((prev) =>
+        sortAiConversations(
+          prev.map((item) =>
+            item.id === conversationId
+              ? {
+                  ...item,
+                  updatedAt: Date.now(),
+                  pendingAction: null,
+                  pendingValidation: null,
+                  lastUndo: response.undo || null,
+                }
+              : item,
+          ),
+        ),
+      );
+      await appendAssistantMessageWithTyping(
+        conversationId,
+        toConversationMessage(
+          "assistant",
+          response.undo
+            ? `Action completed: ${response.actionType}. You can undo this for the next 15 minutes.`
+            : `Action completed: ${response.actionType}.`,
+        ),
+      );
       loadData();
+      refreshAiMetrics();
     } catch (error: any) {
       showToast(error?.message || "Action failed", { type: "error" });
+      await appendAssistantMessageWithTyping(
+        conversationId,
+        toConversationMessage(
+          "assistant",
+          "I could not complete that action. Please review the details and try again.",
+        ),
+      );
+    } finally {
+      setAiValidationLoading(false);
+      setAiLoading(false);
+    }
+  };
+
+  const undoAiAction = async () => {
+    if (!activeConversation?.lastUndo || aiLoading) return;
+    const conversationId = activeConversation.id;
+    setAiLoading(true);
+    try {
+      const response = await undoSuperAdminAiAction({
+        undoToken: activeConversation.lastUndo.undoToken,
+      });
+      setAiConversations((prev) =>
+        sortAiConversations(
+          prev.map((item) =>
+            item.id === conversationId
+              ? { ...item, updatedAt: Date.now(), lastUndo: null }
+              : item,
+          ),
+        ),
+      );
+      await appendAssistantMessageWithTyping(
+        conversationId,
+        toConversationMessage("assistant", response.message),
+      );
+      showToast("Action undone", { type: "success" });
+      loadData();
+      refreshAiMetrics();
+    } catch (error: any) {
+      showToast(error?.message || "Undo failed", { type: "error" });
     } finally {
       setAiLoading(false);
     }
   };
 
+  const submitMessageFeedback = async (
+    conversationId: string,
+    message: AiConversationMessage,
+    rating: "up" | "down",
+  ) => {
+    const feedbackKey = `${conversationId}:${message.id}`;
+    if (aiMessageFeedback[feedbackKey]) return;
+    setAiMessageFeedback((prev) => ({ ...prev, [feedbackKey]: rating }));
+    try {
+      await submitSuperAdminAiFeedback({
+        conversationId,
+        messageId: message.id,
+        rating,
+        message: message.content,
+      });
+      refreshAiMetrics();
+    } catch (error: any) {
+      setAiMessageFeedback((prev) => {
+        const next = { ...prev };
+        delete next[feedbackKey];
+        return next;
+      });
+      showToast(error?.message || "Feedback failed", { type: "error" });
+    }
+  };
+
   const cancelAiAction = () => {
-    setAiPendingAction(null);
-    setAiMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant" as const,
-        content:
-          "Action canceled. Let me know if you want to try something else.",
-      },
-    ]);
+    if (!activeConversation) return;
+    const conversationId = activeConversation.id;
+    setAiConversations((prev) =>
+      sortAiConversations(
+        prev.map((item) =>
+          item.id === conversationId
+            ? {
+                ...item,
+                updatedAt: Date.now(),
+                pendingAction: null,
+                pendingValidation: null,
+              }
+            : item,
+        ),
+      ),
+    );
+    void appendAssistantMessageWithTyping(
+      conversationId,
+      toConversationMessage(
+        "assistant",
+        "Action canceled. Let me know if you want to try something else.",
+      ),
+    );
   };
 
   return (
@@ -2675,7 +3313,7 @@ const Dashboard: React.FC = () => {
                   className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-[#0B4A82] text-white rounded-lg text-sm font-medium hover:bg-[#0B4A82] transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1160A8]"
                 >
                   <Bot size={16} />
-                  Super Admin AI
+                  {AI_ASSISTANT_NAME}
                 </button>
                 <Link
                   to="/super-admin/schools"
@@ -2720,84 +3358,381 @@ const Dashboard: React.FC = () => {
         <Modal
           isOpen={aiOpen}
           onClose={() => setAiOpen(false)}
-          title="Super Admin AI Assistant"
-          className="max-w-3xl"
+          title={`${AI_ASSISTANT_NAME} Assistant`}
+          className="max-w-6xl"
         >
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <ShieldCheck size={14} />
-              Super Admin only • Actions require confirmation
-            </div>
-            <div className="h-[420px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-              {aiMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={`flex ${
-                    message.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
-                      message.role === "user"
-                        ? "bg-[#0B4A82] text-white"
-                        : "bg-white text-slate-700 border border-slate-200"
-                    }`}
-                  >
-                    {message.content}
+            <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-blue-50 p-4 shadow-sm">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+                    <ShieldCheck size={14} />
+                    Super Admin • Secure Assistant Workspace
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/90 px-3 py-1 text-[11px] font-medium text-cyan-700">
+                    <Sparkles size={13} />
+                    {AI_ASSISTANT_NAME} • Live Session
                   </div>
                 </div>
-              ))}
-              {aiLoading && (
-                <div className="text-xs text-slate-400">Thinking...</div>
-              )}
-            </div>
-
-            {aiPendingAction && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <div className="text-sm font-semibold text-amber-900">
-                  Action suggested
-                </div>
-                <div className="text-xs text-amber-800 mt-1">
-                  {aiPendingAction.description || aiPendingAction.type}
-                </div>
-                <div className="flex items-center gap-2 mt-3">
-                  <button
-                    onClick={confirmAiAction}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
-                  >
-                    Confirm action
-                  </button>
-                  <button
-                    onClick={cancelAiAction}
-                    className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                      Avg latency
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {aiMetricsLoading
+                        ? "..."
+                        : `${aiMetrics?.avgResponseMs ?? 0} ms`}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                      P95 latency
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {aiMetricsLoading
+                        ? "..."
+                        : `${aiMetrics?.p95ResponseMs ?? 0} ms`}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                      Positive feedback
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {aiMetricsLoading
+                        ? "..."
+                        : `${aiMetrics?.feedbackPositiveRate ?? 0}%`}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                      Fallback usage
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {aiMetricsLoading
+                        ? "..."
+                        : `${aiMetrics?.fallbackRate ?? 0}%`}
+                    </p>
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendAiMessage();
-                  }
-                }}
-                className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1160A8]"
-                placeholder="Ask the Super Admin AI..."
-              />
-              <button
-                onClick={sendAiMessage}
-                disabled={aiLoading}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0B4A82] text-white text-sm font-semibold hover:bg-[#0B4A82] disabled:opacity-60"
-              >
-                <SendHorizontal size={16} />
-                Send
-              </button>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+              <aside className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <button
+                    onClick={createNewConversation}
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    <Plus size={14} />
+                    New Chat
+                  </button>
+                  <button
+                    onClick={() => setAiHistoryOpenMobile((prev) => !prev)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 lg:hidden"
+                  >
+                    <MessageSquare size={14} />
+                    History
+                  </button>
+                </div>
+                <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5">
+                  <Search size={14} className="text-slate-400" />
+                  <input
+                    value={aiHistorySearch}
+                    onChange={(e) => setAiHistorySearch(e.target.value)}
+                    placeholder="Search history"
+                    className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"
+                  />
+                </div>
+                <div
+                  className={`space-y-2 overflow-y-auto pr-1 ${aiHistoryOpenMobile ? "max-h-64" : "max-h-0 lg:max-h-[560px]"} transition-all duration-300 lg:max-h-[560px]`}
+                >
+                  {filteredAiConversations.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-white p-3 text-center">
+                      <p className="text-xs text-slate-500">
+                        No matching conversations
+                      </p>
+                    </div>
+                  )}
+                  {filteredAiConversations.map((conversation) => (
+                    <div
+                      key={conversation.id}
+                      className={`rounded-xl border px-3 py-2.5 transition-all ${
+                        activeConversation?.id === conversation.id
+                          ? "border-cyan-300 bg-cyan-50 shadow-sm"
+                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          onClick={() => {
+                            setActiveConversationId(conversation.id);
+                            setAiHistoryOpenMobile(false);
+                          }}
+                          className="flex-1 text-left"
+                        >
+                          <p className="line-clamp-2 text-xs font-semibold text-slate-800">
+                            {conversation.title}
+                          </p>
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            {formatConversationTime(conversation.updatedAt)}
+                          </p>
+                        </button>
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                          {conversation.messages.length}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => toggleConversationPin(conversation.id)}
+                          className={`rounded-lg p-1.5 transition ${
+                            conversation.pinned
+                              ? "bg-amber-100 text-amber-700"
+                              : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                          }`}
+                          title={conversation.pinned ? "Unpin" : "Pin"}
+                        >
+                          <Pin size={13} />
+                        </button>
+                        <button
+                          onClick={() => renameConversation(conversation.id)}
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                          title="Rename"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => deleteConversation(conversation.id)}
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                          title="Delete"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+
+              <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_48%)]" />
+                <div className="relative border-b border-slate-100 px-4 py-3 sm:px-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">
+                        {activeConversation?.title || "New chat"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Select a previous conversation from history to continue
+                        where you left off.
+                      </p>
+                    </div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                      Ready
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  ref={aiMessagesViewportRef}
+                  className="relative h-[360px] overflow-y-auto bg-slate-50/80 p-4 sm:h-[440px] sm:p-5"
+                >
+                  <div className="space-y-3">
+                    {(activeConversation?.messages || []).map((message) => {
+                      const feedbackKey = `${activeConversation?.id}:${message.id}`;
+                      const feedback = aiMessageFeedback[feedbackKey];
+                      return (
+                        <div
+                          key={message.id}
+                          className={`flex ${
+                            message.role === "user"
+                              ? "justify-end"
+                              : "justify-start"
+                          }`}
+                        >
+                          <div className="max-w-[92%] sm:max-w-[80%]">
+                            <div
+                              className={`rounded-2xl px-4 py-3 text-sm shadow-sm transition-all ${
+                                message.role === "user"
+                                  ? "bg-gradient-to-r from-[#0B4A82] to-[#1160A8] text-white"
+                                  : "border border-slate-200 bg-white text-slate-700"
+                              }`}
+                            >
+                              {message.content}
+                            </div>
+                            {message.role === "assistant" && (
+                              <div className="mt-1 flex flex-wrap items-center gap-2 px-1">
+                                {(message.responseMs || message.mode) && (
+                                  <span className="text-[10px] text-slate-400">
+                                    {message.mode ? `${message.mode} • ` : ""}
+                                    {message.responseMs
+                                      ? `${message.responseMs} ms`
+                                      : ""}
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() =>
+                                    submitMessageFeedback(
+                                      activeConversation?.id || "",
+                                      message,
+                                      "up",
+                                    )
+                                  }
+                                  disabled={Boolean(feedback)}
+                                  className={`rounded-md p-1 transition ${
+                                    feedback === "up"
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                  } disabled:cursor-not-allowed`}
+                                  title="Helpful"
+                                >
+                                  <ThumbsUp size={12} />
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    submitMessageFeedback(
+                                      activeConversation?.id || "",
+                                      message,
+                                      "down",
+                                    )
+                                  }
+                                  disabled={Boolean(feedback)}
+                                  className={`rounded-md p-1 transition ${
+                                    feedback === "down"
+                                      ? "bg-rose-100 text-rose-700"
+                                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                  } disabled:cursor-not-allowed`}
+                                  title="Not helpful"
+                                >
+                                  <ThumbsDown size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {aiLoading && (
+                      <div className="flex justify-start">
+                        <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:120ms]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:240ms]" />
+                          Thinking...
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {activeConversation?.pendingAction && (
+                  <div className="border-t border-amber-200 bg-amber-50/70 p-4">
+                    <div className="text-sm font-semibold text-amber-900">
+                      Action suggested
+                    </div>
+                    <div className="mt-1 text-xs text-amber-800">
+                      {activeConversation.pendingAction.description ||
+                        activeConversation.pendingAction.type}
+                    </div>
+                    {activeConversation.pendingValidation && (
+                      <div className="mt-2 space-y-1 rounded-xl border border-amber-200 bg-white/80 p-2.5 text-[11px] text-amber-900">
+                        <div className="font-semibold">
+                          Validation:{" "}
+                          {activeConversation.pendingValidation.valid
+                            ? "ready"
+                            : "needs input"}
+                        </div>
+                        {activeConversation.pendingValidation.missingFields
+                          .length > 0 && (
+                          <div>
+                            Missing:{" "}
+                            {activeConversation.pendingValidation.missingFields.join(
+                              ", ",
+                            )}
+                          </div>
+                        )}
+                        {activeConversation.pendingValidation.warnings.length >
+                          0 && (
+                          <div>
+                            Warnings:{" "}
+                            {activeConversation.pendingValidation.warnings.join(
+                              ", ",
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={confirmAiAction}
+                        disabled={aiValidationLoading || aiLoading}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                      >
+                        {aiValidationLoading ? "Validating..." : "Confirm action"}
+                      </button>
+                      <button
+                        onClick={cancelAiAction}
+                        disabled={aiLoading}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {activeConversation?.lastUndo && (
+                  <div className="border-t border-cyan-200 bg-cyan-50/60 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-cyan-900">
+                          Undo available
+                        </div>
+                        <div className="text-xs text-cyan-800">
+                          You can rollback the last action while the undo window is active.
+                        </div>
+                      </div>
+                      <button
+                        onClick={undoAiAction}
+                        disabled={aiLoading}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Undo2 size={12} />
+                        Undo action
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="border-t border-slate-100 bg-white p-3 sm:p-4">
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      value={aiInput}
+                      onChange={(e) => setAiInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          sendAiMessage();
+                        }
+                      }}
+                      rows={2}
+                      className="max-h-40 min-h-[48px] flex-1 resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+                      placeholder={`Ask ${AI_ASSISTANT_NAME}...`}
+                    />
+                    <button
+                      onClick={sendAiMessage}
+                      disabled={aiLoading || aiTyping || !aiInput.trim()}
+                      className="inline-flex h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <SendHorizontal size={16} />
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </Modal>

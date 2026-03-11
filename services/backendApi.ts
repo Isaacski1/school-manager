@@ -306,9 +306,31 @@ export type AiChatAction = {
   payload?: Record<string, any>;
 };
 
+export type AiUndoMeta = {
+  undoToken: string;
+  actionType: AiChatAction["type"];
+  undoBefore?: number;
+};
+
+export type AiActionValidationResult = {
+  valid: boolean;
+  type: AiChatAction["type"];
+  description: string;
+  payload: Record<string, any>;
+  missingFields: string[];
+  warnings: string[];
+  canUndo: boolean;
+};
+
 export async function superAdminAiChat(payload: {
   messages: AiChatMessage[];
-}): Promise<{ reply: string; action?: AiChatAction | null }> {
+}): Promise<{
+  reply: string;
+  action?: AiChatAction | null;
+  mode?: "local" | "openai";
+  dataAsOf?: number | null;
+  responseMs?: number;
+}> {
   return apiRequest("/api/superadmin/ai-chat", {
     body: payload,
   });
@@ -316,10 +338,57 @@ export async function superAdminAiChat(payload: {
 
 export async function confirmSuperAdminAiAction(payload: {
   action: AiChatAction;
-}): Promise<{ success: boolean; actionType: string; result?: any }> {
+}): Promise<{
+  success: boolean;
+  actionType: string;
+  result?: any;
+  undo?: AiUndoMeta | null;
+}> {
   return apiRequest("/api/superadmin/ai-action", {
     body: payload,
   });
+}
+
+export async function validateSuperAdminAiAction(payload: {
+  action: AiChatAction;
+}): Promise<AiActionValidationResult> {
+  return apiRequest("/api/superadmin/ai-action-validate", {
+    body: payload,
+  });
+}
+
+export async function undoSuperAdminAiAction(payload: {
+  undoToken: string;
+}): Promise<{ success: boolean; actionType: string; message: string }> {
+  return apiRequest("/api/superadmin/ai-action-undo", {
+    body: payload,
+  });
+}
+
+export async function submitSuperAdminAiFeedback(payload: {
+  messageId: string;
+  conversationId: string;
+  rating: "up" | "down";
+  message: string;
+}): Promise<{ success: boolean }> {
+  return apiRequest("/api/superadmin/ai-feedback", {
+    body: payload,
+  });
+}
+
+export async function getSuperAdminAiMetrics(): Promise<{
+  success: boolean;
+  periodDays: number;
+  totalChats: number;
+  avgResponseMs: number;
+  p95ResponseMs: number;
+  fallbackRate: number;
+  actionSuccessRate: number;
+  feedbackPositiveRate: number;
+  positiveFeedback: number;
+  negativeFeedback: number;
+}> {
+  return apiRequest("/api/superadmin/ai-metrics", { method: "GET" });
 }
 
 export { BACKEND_URL };
