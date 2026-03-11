@@ -177,7 +177,7 @@ const SchoolDetails = () => {
     password: "",
   });
   const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
-  const [adminUser, setAdminUser] = useState<User | null>(null);
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
   const [stats, setStats] = useState({
     students: "0",
     teachers: "0",
@@ -229,6 +229,20 @@ const SchoolDetails = () => {
   const OUTPUT_SIZE = 512;
   const MAX_OFFSET = CROP_PREVIEW_SIZE / 2;
 
+  const fetchSchoolAdmins = async (targetSchoolId: string) => {
+    const adminQuery = query(
+      collection(firestore, "users"),
+      where("role", "==", UserRole.SCHOOL_ADMIN),
+      where("schoolId", "==", targetSchoolId),
+    );
+    const adminSnap = await getDocs(adminQuery);
+    const admins = adminSnap.docs
+      .map((adminDoc) => ({ id: adminDoc.id, ...adminDoc.data() }) as User)
+      .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || ""));
+    setAdminUsers(admins);
+    return admins;
+  };
+
   useEffect(() => {
     if (!schoolId) return;
 
@@ -274,16 +288,7 @@ const SchoolDetails = () => {
           notes: schoolData.notes || "",
         });
 
-        const adminQuery = query(
-          collection(firestore, "users"),
-          where("role", "==", UserRole.SCHOOL_ADMIN),
-          where("schoolId", "==", schoolData.id),
-        );
-        const adminSnap = await getDocs(adminQuery);
-        const adminDoc = adminSnap.docs[0];
-        setAdminUser(
-          adminDoc ? ({ id: adminDoc.id, ...adminDoc.data() } as User) : null,
-        );
+        await fetchSchoolAdmins(schoolData.id);
 
         const [studentsSnap, teachersSnap] = await Promise.all([
           getDocs(
@@ -343,9 +348,26 @@ const SchoolDetails = () => {
         school?.status ||
         "inactive") as SchoolFormState["status"]
     ];
-  const adminStatusMeta = adminUser
-    ? STATUS_META[adminUser.status === "active" ? "active" : "inactive"]
-    : null;
+  const adminSummary = useMemo(() => {
+    if (!adminUsers.length) {
+      return {
+        label: "Not assigned",
+        activeCount: 0,
+        inactiveCount: 0,
+      };
+    }
+
+    const activeCount = adminUsers.filter(
+      (admin) => admin.status === "active",
+    ).length;
+    const inactiveCount = adminUsers.length - activeCount;
+
+    return {
+      label: `${activeCount}/${adminUsers.length} active`,
+      activeCount,
+      inactiveCount,
+    };
+  }, [adminUsers]);
 
   const handleFormChange = (field: keyof SchoolFormState, value: string) => {
     if (!formState) return;
@@ -566,17 +588,7 @@ const SchoolDetails = () => {
       );
       setAdminForm({ fullName: "", email: "", password: "" });
       setShowCreateAdmin(false);
-
-      const adminQuery = query(
-        collection(firestore, "users"),
-        where("role", "==", UserRole.SCHOOL_ADMIN),
-        where("schoolId", "==", schoolId),
-      );
-      const adminSnap = await getDocs(adminQuery);
-      const adminDoc = adminSnap.docs[0];
-      setAdminUser(
-        adminDoc ? ({ id: adminDoc.id, ...adminDoc.data() } as User) : null,
-      );
+      await fetchSchoolAdmins(resolvedSchoolId);
     } catch (error: any) {
       console.error("Error creating admin:", error);
       showToast(error.message || "Failed to create admin.", {
@@ -587,8 +599,7 @@ const SchoolDetails = () => {
     }
   };
 
-  const handleResetAdminPassword = async () => {
-    if (!adminUser) return;
+  const handleResetAdminPassword = async (adminUser: User) => {
     try {
       const result = await resetSchoolAdminPassword({
         adminUid: adminUser.id,
@@ -607,14 +618,19 @@ const SchoolDetails = () => {
     }
   };
 
-  const handleToggleAdminStatus = async () => {
-    if (!adminUser) return;
+  const handleToggleAdminStatus = async (adminUser: User) => {
     const nextStatus = adminUser.status === "active" ? "inactive" : "active";
     try {
       await updateDoc(doc(firestore, "users", adminUser.id), {
         status: nextStatus,
       });
-      setAdminUser({ ...adminUser, status: nextStatus });
+      setAdminUsers((prev) =>
+        prev.map((existingAdmin) =>
+          existingAdmin.id === adminUser.id
+            ? { ...existingAdmin, status: nextStatus }
+            : existingAdmin,
+        ),
+      );
       showToast(
         nextStatus === "active"
           ? "Admin activated successfully."
@@ -811,8 +827,8 @@ const SchoolDetails = () => {
                   icon: Calendar,
                 },
                 {
-                  label: "Admin Account",
-                  value: adminUser ? adminUser.status : "Not assigned",
+                  label: "Admin Accounts",
+                  value: adminSummary.label,
                   icon: CheckCircle2,
                 },
               ].map((item) => {
@@ -1025,78 +1041,97 @@ const SchoolDetails = () => {
                         School Admin Access
                       </h2>
                       <p className="mt-2 text-sm leading-6 text-slate-500">
-                        Create, secure, or suspend the assigned school
-                        administrator without leaving this page.
+                        Add, secure, or suspend one or more school
+                        administrators without leaving this page.
                       </p>
                     </div>
 
-                    {!adminUser && (
-                      <button
-                        onClick={() => setShowCreateAdmin(true)}
-                        className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-                      >
-                        <UserPlus size={16} />
-                        Create Admin
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setShowCreateAdmin(true)}
+                      className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                    >
+                      <UserPlus size={16} />
+                      Add Administrator
+                    </button>
                   </div>
 
-                  {adminUser ? (
+                  {adminUsers.length > 0 ? (
                     <div className="grid gap-4">
-                      <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-violet-50 p-5">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="flex items-start gap-4">
-                            <div className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-slate-900 text-white">
-                              <Users size={22} />
+                      <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs text-slate-600">
+                        {adminUsers.length} admin
+                        {adminUsers.length !== 1 ? "s" : ""} linked to this
+                        school: {adminSummary.activeCount} active,{" "}
+                        {adminSummary.inactiveCount} inactive.
+                      </div>
+
+                      {adminUsers.map((adminUser) => {
+                        const adminStatusMeta =
+                          STATUS_META[
+                            adminUser.status === "active"
+                              ? "active"
+                              : "inactive"
+                          ];
+
+                        return (
+                          <div
+                            key={adminUser.id}
+                            className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-violet-50 p-5"
+                          >
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="flex min-w-0 items-start gap-4">
+                                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] bg-slate-900 text-white">
+                                  <Users size={22} />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-lg font-semibold text-slate-900">
+                                    {adminUser.fullName}
+                                  </p>
+                                  <p className="mt-1 break-all text-sm text-slate-500">
+                                    {adminUser.email}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span
+                                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${adminStatusMeta.badgeClass}`}
+                              >
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full ${adminStatusMeta.dotClass}`}
+                                />
+                                {adminUser.status}
+                              </span>
                             </div>
-                            <div>
-                              <p className="text-lg font-semibold text-slate-900">
-                                {adminUser.fullName}
-                              </p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                {adminUser.email}
-                              </p>
+
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <button
+                                onClick={() =>
+                                  handleResetAdminPassword(adminUser)
+                                }
+                                className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                              >
+                                Reset Password
+                              </button>
+                              <button
+                                onClick={() => handleToggleAdminStatus(adminUser)}
+                                className={`rounded-[20px] border px-4 py-3 text-sm font-medium transition ${
+                                  adminUser.status === "active"
+                                    ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                                    : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                }`}
+                              >
+                                {adminUser.status === "active"
+                                  ? "Disable Admin"
+                                  : "Activate Admin"}
+                              </button>
                             </div>
                           </div>
-
-                          {adminStatusMeta && (
-                            <span
-                              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${adminStatusMeta.badgeClass}`}
-                            >
-                              <span
-                                className={`h-2.5 w-2.5 rounded-full ${adminStatusMeta.dotClass}`}
-                              />
-                              {adminUser.status}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <button
-                          onClick={handleResetAdminPassword}
-                          className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                        >
-                          Reset Admin Password
-                        </button>
-                        <button
-                          onClick={handleToggleAdminStatus}
-                          className={`rounded-[20px] border px-4 py-3 text-sm font-medium transition ${
-                            adminUser.status === "active"
-                              ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
-                              : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          }`}
-                        >
-                          {adminUser.status === "active"
-                            ? "Disable Admin"
-                            : "Activate Admin"}
-                        </button>
-                      </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 p-6 text-sm text-slate-500">
-                      No admin account is linked to this school yet. Create one
-                      to enable delegated management.
+                      No admin account is linked to this school yet. Add one or
+                      more administrators to enable delegated management.
                     </div>
                   )}
                 </div>
