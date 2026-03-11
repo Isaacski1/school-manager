@@ -270,6 +270,38 @@ const normalizeMethodLabel = (value?: string) => {
 
 const PLAN_ORDER = ["free", "trial", "monthly", "termly", "yearly"] as const;
 type PlanType = (typeof PLAN_ORDER)[number];
+const PLAN_SET = new Set<PlanType>(PLAN_ORDER);
+
+const normalizeText = (value: unknown, fallback = "") => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (value === null || value === undefined) return fallback;
+  const normalized = String(value).trim();
+  return normalized || fallback;
+};
+
+const normalizePlan = (value: unknown): PlanType => {
+  const normalized = normalizeText(value, "trial").toLowerCase();
+  return PLAN_SET.has(normalized as PlanType)
+    ? (normalized as PlanType)
+    : "trial";
+};
+
+const normalizeStatus = (value: unknown): School["status"] => {
+  const normalized = normalizeText(value, "active").toLowerCase();
+  return normalized === "inactive" ? "inactive" : "active";
+};
+
+const getSchoolName = (value: unknown) => normalizeText(value, "Unnamed School");
+
+const getSchoolCode = (value: unknown, schoolId = "") => {
+  const normalized = normalizeText(value);
+  if (normalized) return normalized;
+  const suffix = schoolId.slice(-6).toUpperCase();
+  return suffix ? `SCH-${suffix}` : "--";
+};
 
 const PLAN_COLORS: Record<PlanType, string> = {
   free: "#10b981",
@@ -601,7 +633,7 @@ const EarningsOverview: React.FC<{
     };
     const planBySchool = new Map<string, PlanType>();
     schools.forEach((school) => {
-      const plan = (school.plan || "trial").toLowerCase() as PlanType;
+      const plan = normalizePlan(school.plan);
       planBySchool.set(school.id, plan);
     });
     normalizedBillingPayments.forEach((payment) => {
@@ -687,7 +719,7 @@ const EarningsOverview: React.FC<{
       );
     }).length;
     const trialsEndingSoon = schools.filter((school) => {
-      if (school.plan !== "trial") return false;
+      if (normalizePlan(school.plan) !== "trial") return false;
       const ends = toSafeDate(school.planEndsAt);
       if (!ends) return false;
       const diffDays = (ends.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
@@ -696,7 +728,7 @@ const EarningsOverview: React.FC<{
     const expiredCount = expiredSubscriptions.length;
     const overdueCount = expiredSubscriptions.length;
     const churnRisk = schools.filter((school) => {
-      const paid = school.plan && !["free", "trial"].includes(school.plan);
+      const paid = !["free", "trial"].includes(normalizePlan(school.plan));
       return (
         paid &&
         (school.status === "inactive" ||
@@ -724,7 +756,7 @@ const EarningsOverview: React.FC<{
       yearly: 0,
     };
     schools.forEach((school) => {
-      const plan = (school.plan || "trial").toLowerCase() as PlanType;
+      const plan = normalizePlan(school.plan);
       if (["free", "trial"].includes(plan)) return;
       const latestPayment = latestBillingBySchool.get(school.id);
       if (!latestPayment) return;
@@ -742,7 +774,7 @@ const EarningsOverview: React.FC<{
   const planPerformance = useMemo(() => {
     return PLAN_ORDER.map((plan) => {
       const schoolsOnPlan = schools.filter(
-        (school) => (school.plan || "trial").toLowerCase() === plan,
+        (school) => normalizePlan(school.plan) === plan,
       );
       const activeCount = schoolsOnPlan.filter(
         (school) => school.status === "active",
@@ -753,7 +785,7 @@ const EarningsOverview: React.FC<{
         : 0;
       const monthlyValue = mrrMetrics.byPlan[plan] || 0;
       const expiredCount = expiredSubscriptions.filter(
-        (school) => (school.plan || "trial").toLowerCase() === plan,
+        (school) => normalizePlan(school.plan) === plan,
       ).length;
       const expiredRate = schoolsOnPlan.length
         ? expiredCount / schoolsOnPlan.length
@@ -796,7 +828,7 @@ const EarningsOverview: React.FC<{
     schools.forEach((school) => {
       planBySchool.set(
         school.id,
-        (school.plan || "trial").toLowerCase() as PlanType,
+        normalizePlan(school.plan),
       );
     });
     normalizedBillingPayments.forEach((payment) => {
@@ -963,7 +995,7 @@ const EarningsOverview: React.FC<{
             value: schools.filter(
               (s) =>
                 s.status === "active" &&
-                !["free", "trial"].includes(s.plan || ""),
+                !["free", "trial"].includes(normalizePlan(s.plan)),
             ).length,
             hint: "Currently billable",
             icon: <Users size={18} />,
@@ -1875,10 +1907,18 @@ const Dashboard: React.FC = () => {
     try {
       const sCol = collection(firestore, "schools");
       const sSnap = await getDocs(sCol);
-      const rows: School[] = sSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-      }));
+      const rows: School[] = sSnap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          ...data,
+          id: d.id,
+          name: getSchoolName(data.name),
+          code: getSchoolCode(data.code, d.id),
+          logoUrl: normalizeText(data.logoUrl),
+          plan: normalizePlan(data.plan),
+          status: normalizeStatus(data.status),
+        } as School;
+      });
       setSchools(rows as School[]);
 
       const aCol = collection(firestore, "activity_logs");
@@ -2139,11 +2179,12 @@ const Dashboard: React.FC = () => {
     const total = schools.length;
     const active = schools.filter((s) => s.status === "active").length;
     const inactive = schools.filter((s) => s.status === "inactive").length;
-    const trial = schools.filter((s) => s.plan === "trial").length;
-    const free = schools.filter((s) => s.plan === "free").length;
-    const paid = schools.filter(
-      (s) => s.plan && s.plan !== "trial" && s.plan !== "free",
-    ).length;
+    const trial = schools.filter((s) => normalizePlan(s.plan) === "trial").length;
+    const free = schools.filter((s) => normalizePlan(s.plan) === "free").length;
+    const paid = schools.filter((s) => {
+      const plan = normalizePlan(s.plan);
+      return plan !== "trial" && plan !== "free";
+    }).length;
     const newSchools = schools.filter((s) => {
       if (!s.createdAt) return false;
       const created =
@@ -2353,17 +2394,19 @@ const Dashboard: React.FC = () => {
       yearly: 0,
     };
     schools.forEach((s) => {
-      const p = (s.plan as string) || "trial";
+      const p = normalizePlan(s.plan);
       counts[p] = (counts[p] || 0) + 1;
     });
     return counts;
   }, [schools]);
 
   const filteredSchools = schools.filter((s) => {
-    if (search && !s.name.toLowerCase().includes(search.toLowerCase()))
+    const schoolName = getSchoolName(s.name);
+    if (search && !schoolName.toLowerCase().includes(search.toLowerCase())) {
       return false;
+    }
     if (statusFilter && s.status !== statusFilter) return false;
-    if (planFilter && s.plan !== planFilter) return false;
+    if (planFilter && normalizePlan(s.plan) !== planFilter) return false;
     return true;
   });
 
@@ -2390,7 +2433,7 @@ const Dashboard: React.FC = () => {
   // Action lists
   const inactiveList = schools.filter((s) => s.status !== "active");
   const trialsList = schools
-    .filter((s) => s.plan === "trial" && s.planEndsAt)
+    .filter((s) => normalizePlan(s.plan) === "trial" && s.planEndsAt)
     .sort((a, b) => {
       const aDate =
         a.planEndsAt instanceof Timestamp
@@ -2404,7 +2447,7 @@ const Dashboard: React.FC = () => {
     });
 
   const expiredSubscriptions = schools
-    .filter((s) => s.plan !== "free" && s.planEndsAt)
+    .filter((s) => normalizePlan(s.plan) !== "free" && s.planEndsAt)
     .map((s) => {
       const raw = s.planEndsAt as any;
       const planEndsAt =
@@ -2969,28 +3012,35 @@ const Dashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {expiredSubscriptions.slice(0, 6).map((s) => (
-                    <tr key={s.id} className="text-slate-600">
-                      <td className="py-3 pr-4">
-                        <Link
-                          to={`/super-admin/schools/${s.id}`}
-                          className="font-semibold text-slate-800 hover:text-[#0B4A82]"
-                        >
-                          {s.name}
-                        </Link>
-                        <div className="text-xs text-slate-400">{s.code}</div>
-                      </td>
-                      <td className="py-3 pr-4 capitalize">{s.plan}</td>
-                      <td className="py-3 pr-4">
-                        {s.graceEndsAt.toLocaleDateString()}
-                      </td>
-                      <td className="py-3">
-                        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-600">
-                          Renewal overdue
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {expiredSubscriptions.slice(0, 6).map((s) => {
+                    const schoolName = getSchoolName(s.name);
+                    const schoolCode = getSchoolCode(s.code, s.id);
+                    const schoolPlan = normalizePlan(s.plan);
+                    return (
+                      <tr key={s.id} className="text-slate-600">
+                        <td className="py-3 pr-4">
+                          <Link
+                            to={`/super-admin/schools/${s.id}`}
+                            className="font-semibold text-slate-800 hover:text-[#0B4A82]"
+                          >
+                            {schoolName}
+                          </Link>
+                          <div className="text-xs text-slate-400">
+                            {schoolCode}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4 capitalize">{schoolPlan}</td>
+                        <td className="py-3 pr-4">
+                          {s.graceEndsAt.toLocaleDateString()}
+                        </td>
+                        <td className="py-3">
+                          <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-600">
+                            Renewal overdue
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -3311,69 +3361,75 @@ const Dashboard: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredSchools.map((s, idx) => (
-                    <tr
-                      key={s.id}
-                      className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${
-                        idx % 2 === 0 ? "bg-white" : "bg-slate-50/30"
-                      }`}
-                    >
-                      <td className="py-4 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 overflow-hidden font-semibold flex-shrink-0">
-                            {s.logoUrl ? (
-                              <img
-                                src={s.logoUrl}
-                                alt={s.name}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              s.name.charAt(0).toUpperCase()
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-900">
-                              {s.name}
+                  filteredSchools.map((s, idx) => {
+                    const schoolName = getSchoolName(s.name);
+                    const schoolCode = getSchoolCode(s.code, s.id);
+                    const schoolStatus = normalizeStatus(s.status);
+                    const schoolPlan = normalizePlan(s.plan);
+                    return (
+                      <tr
+                        key={s.id}
+                        className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${
+                          idx % 2 === 0 ? "bg-white" : "bg-slate-50/30"
+                        }`}
+                      >
+                        <td className="py-4 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 overflow-hidden font-semibold flex-shrink-0">
+                              {s.logoUrl ? (
+                                <img
+                                  src={s.logoUrl}
+                                  alt={schoolName}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                schoolName.charAt(0).toUpperCase()
+                              )}
                             </div>
-                            <div className="text-xs text-slate-500">
-                              {s.code || "â€”"}
+                            <div>
+                              <div className="font-semibold text-slate-900">
+                                {schoolName}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {schoolCode}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            s.status === "active"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-[#E6F0FA] text-[#0B4A82]"
-                          }`}
-                        >
-                          {s.status === "active" ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 capitalize">
-                          {s.plan}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4 text-slate-600">
-                        {s.createdAt
-                          ? s.createdAt instanceof Timestamp
-                            ? s.createdAt.toDate().toLocaleDateString()
-                            : new Date(s.createdAt as any).toLocaleDateString()
-                          : "â€”"}
-                      </td>
-                      <td className="py-4 px-4 text-right">
-                        <Link
-                          to={`/super-admin/schools/${s.id}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0B4A82] text-white hover:bg-[#0B4A82] transition-colors"
-                        >
-                          <Eye size={14} /> View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                              schoolStatus === "active"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-[#E6F0FA] text-[#0B4A82]"
+                            }`}
+                          >
+                            {schoolStatus === "active" ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 capitalize">
+                            {schoolPlan}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4 text-slate-600">
+                          {s.createdAt
+                            ? s.createdAt instanceof Timestamp
+                              ? s.createdAt.toDate().toLocaleDateString()
+                              : new Date(s.createdAt as any).toLocaleDateString()
+                            : "--"}
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <Link
+                            to={`/super-admin/schools/${s.id}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0B4A82] text-white hover:bg-[#0B4A82] transition-colors"
+                          >
+                            <Eye size={14} /> View
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -3538,6 +3594,8 @@ const Dashboard: React.FC = () => {
                   timetable: false,
                   notices: false,
                 };
+                const schoolName = getSchoolName(school.name);
+                const schoolCode = getSchoolCode(school.code, school.id);
                 const activityItems = [
                   { label: "Attendance", value: status.attendance },
                   {
@@ -3561,9 +3619,9 @@ const Dashboard: React.FC = () => {
                       <div>
                         <p className="text-sm text-slate-500">School</p>
                         <p className="text-lg font-semibold text-slate-900">
-                          {school.name}
+                          {schoolName}
                         </p>
-                        <p className="text-xs text-slate-400">{school.code}</p>
+                        <p className="text-xs text-slate-400">{schoolCode}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-slate-500">Completion</p>
