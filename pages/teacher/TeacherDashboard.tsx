@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
@@ -13,6 +13,7 @@ import {
 import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
 import {
+  AttendanceRecord,
   Notice,
   PlatformBroadcast,
   TimeSlot,
@@ -35,12 +36,17 @@ import {
   X,
   Sparkles,
   Calendar,
-  GraduationCap,
-  RefreshCw,
-  CheckCircle,
   AlertCircle,
 } from "lucide-react";
 import VacationOverlay from "./VacationOverlay";
+import SectionState from "./components/SectionState";
+import TodayPrioritiesStrip, {
+  PriorityItem,
+} from "./components/TodayPrioritiesStrip";
+import StudentsNeedingAttention, {
+  StudentAttentionItem,
+} from "./components/StudentsNeedingAttention";
+import useTeacherWeekUtils from "./hooks/useTeacherWeekUtils";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const SKILLS_LIST = [
@@ -111,11 +117,40 @@ const jhsSubjects = [
   "Computing / Coding",
 ];
 
+type SectionKey = "attendance" | "timetable" | "notices" | "analytics";
+
+type SectionStateMap = Record<
+  SectionKey,
+  {
+    loading: boolean;
+    error: string | null;
+  }
+>;
+
+type StudentSkillsDraft = Partial<StudentSkills>;
+
+const createInitialSectionState = (): SectionStateMap => ({
+  attendance: { loading: true, error: null },
+  timetable: { loading: true, error: null },
+  notices: { loading: true, error: null },
+  analytics: { loading: true, error: null },
+});
+
+const toHolidayDateString = (
+  value?: string | { date: string; reason?: string } | null,
+) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value.date || "";
+};
+
 const TeacherDashboard = () => {
   const { user } = useAuth();
   const schoolId = user?.schoolId || null;
   const { school } = useSchool();
   const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
+  const canUseExamReports = hasFeature("basic_exam_reports");
+  const { getLocalDateString, getWeekDates, getWeekLabel } = useTeacherWeekUtils();
 
   const [subjects, setSubjects] = useState<string[]>([]);
 
@@ -128,12 +163,17 @@ const TeacherDashboard = () => {
   const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
   const [isVacation, setIsVacation] = useState(false);
   const [attendanceLocked, setAttendanceLocked] = useState(false);
+  const [sectionState, setSectionState] = useState<SectionStateMap>(
+    createInitialSectionState,
+  );
+  const [refreshSeed, setRefreshSeed] = useState(0);
 
   useEffect(() => {
-    if (assignedClassIds.length > 0) {
+    if (!assignedClassIds.length) return;
+    if (!selectedClassId || !assignedClassIds.includes(selectedClassId)) {
       setSelectedClassId(assignedClassIds[0]);
     }
-  }, [user]);
+  }, [assignedClassIds, selectedClassId]);
 
   const assignedClass = CLASSES_LIST.find((c) => c.id === selectedClassId);
   const classNames = assignedClassIds
@@ -146,7 +186,6 @@ const TeacherDashboard = () => {
   // Teacher Attendance State
   const [teacherAttendance, setTeacherAttendance] =
     useState<TeacherAttendanceRecord | null>(null);
-  const [markingAttendance, setMarkingAttendance] = useState(false);
   const [missedAttendanceModal, setMissedAttendanceModal] = useState<{
     show: boolean;
     dates: string[];
@@ -171,22 +210,24 @@ const TeacherDashboard = () => {
   // Skills Modal State
   const [skillsModalOpen, setSkillsModalOpen] = useState(false);
   const [studentsForSkills, setStudentsForSkills] = useState<Student[]>([]);
-  const [skillsData, setSkillsData] = useState<Record<string, StudentSkills>>(
+  const [skillsData, setSkillsData] = useState<Record<string, StudentSkillsDraft>>(
     {},
   );
   const [savingSkills, setSavingSkills] = useState(false);
 
   // Class students for remarks
   const [classStudents, setClassStudents] = useState<Student[]>([]);
+  const [classAttendanceRecords, setClassAttendanceRecords] = useState<
+    AttendanceRecord[]
+  >([]);
+  const [termAssessments, setTermAssessments] = useState<Assessment[]>([]);
+  const [termRemarks, setTermRemarks] = useState<StudentRemark[]>([]);
 
   // Helper to get current day
   const getCurrentDay = () => {
     const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
     return DAYS.includes(today) ? today : "Monday";
   };
-
-  const getLocalDateString = (date: Date = new Date()) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
   const formatDisplayDate = (dateStr?: string) => {
     if (!dateStr) return "TBD";
@@ -237,115 +278,221 @@ const TeacherDashboard = () => {
     );
   }
 
-  const getWeekDates = (offset = 0) => {
-    const now = new Date();
-    // Go back by N weeks
-    now.setDate(now.getDate() + offset * 7);
+  const setSectionLoading = useCallback((section: SectionKey, loading: boolean) => {
+    setSectionState((prev) => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        loading,
+      },
+    }));
+  }, []);
 
-    const currentDay = now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-    const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay; // Adjust to get Monday
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + mondayOffset);
+  const setSectionError = useCallback((section: SectionKey, error: string | null) => {
+    setSectionState((prev) => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        error,
+      },
+    }));
+  }, []);
 
-    const dates: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      // Monday to Friday
-      const date = new Date(monday);
-      date.setDate(monday.getDate() + i);
-      // Build local YYYY-MM-DD to avoid UTC timezone shifts from toISOString()
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      const d = String(date.getDate()).padStart(2, "0");
-      dates.push(`${y}-${m}-${d}`);
-    }
-    return dates;
-  };
+  const triggerRefresh = useCallback(() => {
+    setRefreshSeed((prev) => prev + 1);
+  }, []);
 
-  const getWeekLabel = (offset: number) => {
-    if (offset === 0) return "This Week";
-    const weekDates = getWeekDates(offset);
-    const startDate = new Date(weekDates[0] + "T00:00:00"); // Add time to avoid timezone issues
-    const endDate = new Date(weekDates[4] + "T00:00:00");
-    const options = { month: "short" as const, day: "numeric" as const };
+  const buildTeacherTrend = useCallback(
+    async (
+      offset: number,
+      options?: { records?: TeacherAttendanceRecord[]; forceEmpty?: boolean },
+    ) => {
+      if (!schoolId || !user?.id) return;
+      const weekDates = getWeekDates(offset);
+      const startDate = weekDates[0];
+      const endDate = weekDates[weekDates.length - 1];
 
-    const start = startDate.toLocaleDateString("en-US", options);
-    const end = endDate.toLocaleDateString("en-US", options);
+      const weekRecords =
+        options?.records ||
+        (await db.getTeacherAttendanceByDateRange(
+          schoolId,
+          user.id,
+          startDate,
+          endDate,
+        ));
 
-    if (offset === -1) return `Last Week (${start} - ${end})`;
-
-    return `${start} - ${end}`;
-  };
-
-  const buildTeacherTrend = async (offset: number) => {
-    if (!schoolId || !user?.id) return;
-    const weekDates = getWeekDates(offset);
-    const weekRecords = await Promise.all(
-      weekDates.map((date) =>
-        db.getTeacherAttendance(schoolId, user?.id || "", date),
-      ),
-    );
-    const trendData = weekDates.map((date, index) => {
-      const record = weekRecords[index];
-      const [y, m, d] = date.split("-").map(Number);
-      const dateObj = new Date(y, m - 1, d);
-      const dayName = dateObj.toLocaleDateString("en-US", {
-        weekday: "short",
+      const recordsByDate = new Map(
+        weekRecords.map((record) => [record.date, record]),
+      );
+      const trendData = weekDates.map((date) => {
+        const record = recordsByDate.get(date);
+        const [y, m, d] = date.split("-").map(Number);
+        const dateObj = new Date(y, m - 1, d);
+        const dayName = dateObj.toLocaleDateString("en-US", {
+          weekday: "short",
+        });
+        const status = record
+          ? record.approvalStatus === "pending"
+            ? "pending"
+            : record.approvalStatus === "approved"
+              ? record.status
+              : record.approvalStatus === "rejected"
+                ? "absent"
+                : record.status || "missing"
+          : "missing";
+        return {
+          day: dayName,
+          percentage: record ? 100 : 0,
+          status,
+        };
       });
-      const status = record
-        ? record.approvalStatus === "pending"
-          ? "pending"
-          : record.approvalStatus === "approved"
-            ? record.status
-            : record.approvalStatus === "rejected"
-              ? "absent"
-              : record.status || "missing"
-        : "missing";
-      return {
-        day: dayName,
-        percentage: record ? 100 : 0,
-        status,
-      };
-    });
-    setTeacherAttendanceTrend((prev) => {
-      const hasAnyRecord = trendData.some((item) => item.status !== "missing");
-      return hasAnyRecord ? trendData : prev;
-    });
-  };
 
-  // Refresh attendance data when returning from attendance page
+      setTeacherAttendanceTrend((prev) => {
+        if (options?.forceEmpty) return trendData;
+        const hasAnyRecord = trendData.some((item) => item.status !== "missing");
+        return hasAnyRecord ? trendData : prev;
+      });
+    },
+    [getWeekDates, schoolId, user?.id],
+  );
+
+  const applyClassAttendanceMetrics = useCallback(
+    (attendanceRecords: AttendanceRecord[], students: Student[]) => {
+      const total = students.length || 1;
+      const weekDates = getWeekDates(weekOffset);
+      const recordsByDate = new Map(
+        attendanceRecords.map((record) => [record.date, record]),
+      );
+      const trendData = weekDates.map((date) => {
+        const record = recordsByDate.get(date);
+        const percentage = record
+          ? Math.round((record.presentStudentIds.length / total) * 100)
+          : 0;
+        const [y, m, d] = date.split("-").map(Number);
+        const dayName = new Date(y, m - 1, d).toLocaleDateString("en-US", {
+          weekday: "short",
+        });
+        return { day: dayName, percentage };
+      });
+
+      setAttendanceTrend(trendData);
+      setTotalStudents(students.length);
+      setClassAttendanceRecords(attendanceRecords);
+
+      const todayKey = getLocalDateString();
+      const todayAttendance = recordsByDate.get(todayKey);
+      const presentTodayCount = todayAttendance
+        ? todayAttendance.presentStudentIds.length
+        : 0;
+      setPresentToday(presentTodayCount);
+      setAbsentToday(todayAttendance ? students.length - presentTodayCount : 0);
+    },
+    [getLocalDateString, getWeekDates, weekOffset],
+  );
+
+  const refreshTeacherAttendanceSnapshot = useCallback(async () => {
+    if (!schoolId || !user?.id) return;
+    try {
+      setSectionLoading("attendance", true);
+      setSectionError("attendance", null);
+      const weekDates = getWeekDates(weekOffset);
+      const [records, todayAttendance] = await Promise.all([
+        db.getTeacherAttendanceByDateRange(
+          schoolId,
+          user.id,
+          weekDates[0],
+          weekDates[weekDates.length - 1],
+        ),
+        db.getTeacherAttendance(schoolId, user.id, getLocalDateString()),
+      ]);
+      await buildTeacherTrend(weekOffset, {
+        records,
+        forceEmpty: true,
+      });
+      setTeacherAttendance(todayAttendance || null);
+    } catch (error) {
+      console.error("Error refreshing teacher attendance:", error);
+      setSectionError(
+        "attendance",
+        "Could not refresh teacher attendance right now.",
+      );
+    } finally {
+      setSectionLoading("attendance", false);
+    }
+  }, [
+    buildTeacherTrend,
+    getLocalDateString,
+    getWeekDates,
+    schoolId,
+    setSectionError,
+    setSectionLoading,
+    user?.id,
+    weekOffset,
+  ]);
+
+  const refreshClassAttendanceSnapshot = useCallback(async () => {
+    if (!schoolId || !selectedClassId) return;
+    try {
+      setSectionLoading("attendance", true);
+      setSectionError("attendance", null);
+      const weekDates = getWeekDates(weekOffset);
+      const weekStartDate = new Date(`${weekDates[0]}T00:00:00`);
+      const lookbackStart = new Date();
+      lookbackStart.setHours(0, 0, 0, 0);
+      lookbackStart.setDate(lookbackStart.getDate() - 30);
+      const rangeStartDate =
+        weekStartDate < lookbackStart ? weekStartDate : lookbackStart;
+      const [attendanceRecords, students] = await Promise.all([
+        db.getClassAttendanceByDateRange(
+          schoolId,
+          selectedClassId,
+          getLocalDateString(rangeStartDate),
+          weekDates[weekDates.length - 1],
+        ),
+        db.getStudents(schoolId, selectedClassId),
+      ]);
+      applyClassAttendanceMetrics(attendanceRecords, students);
+      setClassStudents(students);
+    } catch (error) {
+      console.error("Error refreshing class attendance:", error);
+      setSectionError("attendance", "Could not refresh class attendance.");
+    } finally {
+      setSectionLoading("attendance", false);
+    }
+  }, [
+    applyClassAttendanceMetrics,
+    getLocalDateString,
+    getWeekDates,
+    schoolId,
+    selectedClassId,
+    setSectionError,
+    setSectionLoading,
+    weekOffset,
+  ]);
+
+  // Re-check for missed attendance with batched range reads.
   useEffect(() => {
     let isMounted = true;
 
-    // Re-check for missed attendance when returning to dashboard
     const checkAttendance = async () => {
-      const todayStr = getLocalDateString();
-
-      const todayAttendance = await db.getTeacherAttendance(
-        schoolId || undefined,
-        user?.id || "",
-        todayStr,
-      );
-
       try {
-        if (!schoolId) return;
+        if (!schoolId || !user?.id) return;
         const config = await db.getSchoolConfig(schoolId);
         if (!isMounted) return;
-
-        const currentDate = new Date();
-        const reopenDateObj = config.schoolReopenDate
-          ? new Date(config.schoolReopenDate + "T00:00:00")
-          : null;
-        if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        const reopenDateObj = config.schoolReopenDate
+          ? new Date(`${config.schoolReopenDate}T00:00:00`)
+          : null;
+        if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
+
         const nextTermBeginsObj = config.nextTermBegins
-          ? new Date(config.nextTermBegins + "T00:00:00")
+          ? new Date(`${config.nextTermBegins}T00:00:00`)
           : null;
         if (nextTermBeginsObj) nextTermBeginsObj.setHours(0, 0, 0, 0);
 
-        // Don't show missed attendance reminders on the nextTermBegins day
         if (
           nextTermBeginsObj &&
           today.getTime() === nextTermBeginsObj.getTime()
@@ -356,126 +503,105 @@ const TeacherDashboard = () => {
         }
 
         const vacationDateObj = config.vacationDate
-          ? new Date(config.vacationDate + "T00:00:00")
+          ? new Date(`${config.vacationDate}T00:00:00`)
           : null;
         if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
 
-        const schoolHasReopened =
-          !reopenDateObj || currentDate >= reopenDateObj;
+        const schoolHasReopened = !reopenDateObj || today >= reopenDateObj;
         const isOnVacation =
           vacationDateObj &&
           nextTermBeginsObj &&
           today >= vacationDateObj &&
           today < nextTermBeginsObj;
 
-        if (schoolHasReopened && !isOnVacation) {
-          // Find all missed school days since reopen date
-          const missedDates: string[] = [];
-          let checkDate = new Date();
-          checkDate.setDate(checkDate.getDate() - 1); // Start from yesterday
+        if (!schoolHasReopened || isOnVacation) {
+          setMissedAttendanceModal({ show: false, dates: [] });
+          setMissedStudentAttendanceModal({ show: false, dates: [] });
+          return;
+        }
 
-          const lookbackDate = new Date();
-          lookbackDate.setDate(lookbackDate.getDate() - 10);
-          lookbackDate.setHours(0, 0, 0, 0);
+        const lookbackDate = new Date(today);
+        lookbackDate.setDate(lookbackDate.getDate() - 10);
+        lookbackDate.setHours(0, 0, 0, 0);
+        const startDate =
+          reopenDateObj && reopenDateObj > lookbackDate
+            ? reopenDateObj
+            : lookbackDate;
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
 
-          let startDate = lookbackDate;
-          if (reopenDateObj && reopenDateObj > lookbackDate) {
-            startDate = reopenDateObj;
-          }
+        if (yesterday < startDate) {
+          setMissedAttendanceModal({ show: false, dates: [] });
+          setMissedStudentAttendanceModal({ show: false, dates: [] });
+          return;
+        }
 
-          // Go back until we reach the safe start date
-          while (checkDate >= startDate) {
-            const dayOfWeek = checkDate.getDay();
-            const isVacationDay =
-              vacationDateObj &&
-              checkDate.toDateString() === vacationDateObj.toDateString();
+        const startDateStr = getLocalDateString(startDate);
+        const endDateStr = getLocalDateString(yesterday);
 
-            // Skip weekends and vacation days
-            if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
-              checkDate.setDate(checkDate.getDate() - 1);
-              continue;
-            }
-
-            const dateString = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, "0")}-${String(checkDate.getDate()).padStart(2, "0")}`;
-            const attendance = await db.getTeacherAttendance(
-              schoolId,
-              user?.id || "",
-              dateString,
-            );
-            if (!isMounted) return;
-            if (!attendance) {
-              missedDates.push(dateString);
-            }
-            checkDate.setDate(checkDate.getDate() - 1);
-          }
-
-          if (missedDates.length > 0) {
-            setMissedAttendanceModal({ show: true, dates: missedDates });
-          } else {
-            setMissedAttendanceModal({ show: false, dates: [] });
-          }
-
-          // Check for missed student attendance (all missed dates since reopen)
-          if (selectedClassId) {
-            const studentMissedDates: string[] = [];
-            let checkStudentDate = new Date();
-            checkStudentDate.setDate(checkStudentDate.getDate() - 1);
-
-            const studentStartDate = reopenDateObj || lookbackDate;
-
-            while (checkStudentDate >= studentStartDate) {
-              const dayOfWeek = checkStudentDate.getDay();
-              const isVacationDay =
-                vacationDateObj &&
-                checkStudentDate.toDateString() ===
-                  vacationDateObj.toDateString();
-
-              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
-                checkStudentDate.setDate(checkStudentDate.getDate() - 1);
-                continue;
-              }
-
-              const dateString = `${checkStudentDate.getFullYear()}-${String(checkStudentDate.getMonth() + 1).padStart(2, "0")}-${String(checkStudentDate.getDate()).padStart(2, "0")}`;
-              const studentAttendanceRecord = await db.getAttendance(
+        const [teacherRecords, classRecords] = await Promise.all([
+          db.getTeacherAttendanceByDateRange(
+            schoolId,
+            user.id,
+            startDateStr,
+            endDateStr,
+          ),
+          selectedClassId
+            ? db.getClassAttendanceByDateRange(
                 schoolId,
                 selectedClassId,
-                dateString,
-              );
-              if (!isMounted) return;
-              if (!studentAttendanceRecord) {
-                studentMissedDates.push(dateString);
-              }
-              checkStudentDate.setDate(checkStudentDate.getDate() - 1);
-            }
+                startDateStr,
+                endDateStr,
+              )
+            : Promise.resolve([] as AttendanceRecord[]),
+        ]);
 
-            if (studentMissedDates.length > 0) {
-              setMissedStudentAttendanceModal({
-                show: true,
-                dates: studentMissedDates,
-              });
-            } else {
-              setMissedStudentAttendanceModal({ show: false, dates: [] });
+        if (!isMounted) return;
+        const teacherByDate = new Set(teacherRecords.map((record) => record.date));
+        const classByDate = new Set(classRecords.map((record) => record.date));
+        const missedTeacherDates: string[] = [];
+        const missedStudentDates: string[] = [];
+
+        const cursor = new Date(yesterday);
+        while (cursor >= startDate) {
+          const dayOfWeek = cursor.getDay();
+          const isVacationDay =
+            vacationDateObj &&
+            cursor.toDateString() === vacationDateObj.toDateString();
+          if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isVacationDay) {
+            const dateKey = getLocalDateString(cursor);
+            if (!teacherByDate.has(dateKey)) {
+              missedTeacherDates.push(dateKey);
             }
-          } else {
-            setMissedStudentAttendanceModal({ show: false, dates: [] });
+            if (selectedClassId && !classByDate.has(dateKey)) {
+              missedStudentDates.push(dateKey);
+            }
           }
+          cursor.setDate(cursor.getDate() - 1);
         }
+
+        setMissedAttendanceModal({
+          show: missedTeacherDates.length > 0,
+          dates: missedTeacherDates,
+        });
+        setMissedStudentAttendanceModal({
+          show: Boolean(selectedClassId) && missedStudentDates.length > 0,
+          dates: missedStudentDates,
+        });
       } catch (error) {
         console.error("Error re-checking missed attendance:", error);
       }
     };
 
-    if (user) checkAttendance();
-
+    checkAttendance();
     return () => {
       isMounted = false;
     };
-  }, [user, selectedClassId, weekOffset, schoolId]);
+  }, [schoolId, user?.id, selectedClassId, getLocalDateString, refreshSeed]);
 
   useEffect(() => {
-    if (!schoolId || !user?.id) return;
-    buildTeacherTrend(weekOffset);
-  }, [schoolId, user?.id, weekOffset]);
+    refreshTeacherAttendanceSnapshot();
+  }, [refreshTeacherAttendanceSnapshot]);
 
   useEffect(() => {
     if (!schoolId || !user?.id) return;
@@ -485,18 +611,15 @@ const TeacherDashboard = () => {
       where("teacherId", "==", user.id),
     );
     const unsubscribe = onSnapshot(attendanceRef, async () => {
-      await buildTeacherTrend(weekOffset);
-      const today = getLocalDateString();
-      const attendance = await db.getTeacherAttendance(
-        schoolId,
-        user.id,
-        today,
-      );
-      setTeacherAttendance(attendance);
+      await refreshTeacherAttendanceSnapshot();
     });
 
     return () => unsubscribe();
-  }, [schoolId, user?.id, weekOffset]);
+  }, [refreshTeacherAttendanceSnapshot, schoolId, user?.id]);
+
+  useEffect(() => {
+    refreshClassAttendanceSnapshot();
+  }, [refreshClassAttendanceSnapshot]);
 
   useEffect(() => {
     if (!schoolId || !selectedClassId) return;
@@ -506,406 +629,288 @@ const TeacherDashboard = () => {
       where("classId", "==", selectedClassId),
     );
     const unsubscribe = onSnapshot(attendanceRef, async () => {
-      try {
-        const [attendanceRecords, students] = await Promise.all([
-          db.getClassAttendance(schoolId, selectedClassId),
-          db.getStudents(schoolId, selectedClassId),
-        ]);
-
-        const totalStudents = students.length || 1;
-        const weekDates = getWeekDates(weekOffset);
-        const weekRecords = attendanceRecords.filter((record) =>
-          weekDates.includes(record.date),
-        );
-
-        const trendData = weekDates.map((date) => {
-          const record = weekRecords.find((r) => r.date === date);
-          const percentage = record
-            ? Math.round(
-                (record.presentStudentIds.length / totalStudents) * 100,
-              )
-            : 0;
-          const [y, m, d] = date.split("-").map(Number);
-          const dateObj = new Date(y, m - 1, d);
-          const dayName = dateObj.toLocaleDateString("en-US", {
-            weekday: "short",
-          });
-          return { day: dayName, percentage };
-        });
-
-        setAttendanceTrend(trendData);
-
-        setTotalStudents(students.length);
-        const todayStr = getLocalDateString();
-        const todayAttendance = attendanceRecords.find(
-          (r) => r.date === todayStr,
-        );
-        const presentTodayCount = todayAttendance
-          ? todayAttendance.presentStudentIds.length
-          : 0;
-        setPresentToday(presentTodayCount);
-        setAbsentToday(
-          todayAttendance ? students.length - presentTodayCount : 0,
-        );
-      } catch (error) {
-        console.error("Error updating attendance trend:", error);
-      }
+      await refreshClassAttendanceSnapshot();
     });
 
     return () => unsubscribe();
-  }, [schoolId, selectedClassId, weekOffset]);
+  }, [refreshClassAttendanceSnapshot, schoolId, selectedClassId]);
 
   useEffect(() => {
     let isMounted = true;
 
     const fetchData = async () => {
-      if (!selectedClassId || !schoolId) return;
+      if (!selectedClassId || !schoolId || !user?.id) return;
 
-      // Fetch Config and Subjects
-      let config: SchoolConfig;
+      setSectionLoading("notices", true);
+      setSectionLoading("timetable", true);
+      setSectionLoading("analytics", true);
+      setSectionError("notices", null);
+      setSectionError("timetable", null);
+      setSectionError("analytics", null);
+
+      let config: SchoolConfig = {
+        currentTerm: `Term ${CURRENT_TERM}`,
+        academicYear: ACADEMIC_YEAR,
+        schoolReopenDate: "",
+        schoolName: "School Manager GH",
+        headTeacherRemark:
+          "An outstanding performance. The school is proud of you.",
+        termEndDate: "2024-12-20",
+        vacationDate: "",
+        nextTermBegins: "",
+        termTransitionProcessed: false,
+        schoolId: schoolId || "",
+      };
+      let currentSubjects: string[] = [];
+
       try {
         config = await db.getSchoolConfig(schoolId);
-        if (isMounted) {
-          setSchoolConfig(config);
-          setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);
 
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const todayMs = today.getTime();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayMs = today.getTime();
+        const nextTermBeginsMs = config.nextTermBegins
+          ? new Date(`${config.nextTermBegins}T00:00:00`).getTime()
+          : null;
 
-          let vacationDateMs: number | null = null;
-          if (config.vacationDate) {
-            const vd = new Date(config.vacationDate + "T00:00:00");
-            vd.setHours(0, 0, 0, 0);
-            vacationDateMs = vd.getTime();
-          }
-
-          let nextTermBeginsMs: number | null = null;
-          if (config.nextTermBegins) {
-            const nt = new Date(config.nextTermBegins + "T00:00:00");
-            nt.setHours(0, 0, 0, 0);
-            nextTermBeginsMs = nt.getTime();
-          }
-
-          let vacationStartMs: number | null = null;
-          if (vacationDateMs !== null) {
-            const vdPlusOne = new Date(vacationDateMs);
-            vdPlusOne.setDate(vdPlusOne.getDate() + 1);
-            vacationStartMs = vdPlusOne.getTime();
-          }
-
-          let shouldBeVacation = false;
-          if (vacationStartMs !== null && todayMs >= vacationStartMs) {
-            shouldBeVacation = nextTermBeginsMs
-              ? todayMs < nextTermBeginsMs
-              : true;
-          }
-          setIsVacation(shouldBeVacation);
-
-          const shouldLockAttendance =
-            Boolean(nextTermBeginsMs) &&
-            todayMs >= nextTermBeginsMs! &&
-            !config.schoolReopenDate;
-          setAttendanceLocked(shouldLockAttendance);
-
-          const countWeekdays = (startDate: string, endDate: string) => {
-            const start = new Date(startDate + "T00:00:00");
-            const end = new Date(endDate + "T00:00:00");
-            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-              return 0;
-            }
-            if (start > end) return 0;
-            let count = 0;
-            const current = new Date(start);
-            while (current <= end) {
-              const dayOfWeek = current.getDay();
-              if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-                count++;
-              }
-              current.setDate(current.getDate() + 1);
-            }
-            return count;
+        if (
+          config.nextTermBegins &&
+          nextTermBeginsMs &&
+          todayMs >= nextTermBeginsMs &&
+          config.termTransitionProcessed === false
+        ) {
+          await db.resetForNewTerm(config);
+          const updatedConfig = {
+            ...config,
+            termTransitionProcessed: true,
           };
-
-          const reopenDateObj = config.schoolReopenDate
-            ? new Date(config.schoolReopenDate + "T00:00:00")
-            : null;
-          if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
-
-          const vacationDateObj = config.vacationDate
-            ? new Date(config.vacationDate + "T00:00:00")
-            : null;
-          if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
-
-          let effectiveStart = getLocalDateString();
-          if (reopenDateObj && reopenDateObj <= today) {
-            effectiveStart = getLocalDateString(reopenDateObj);
-          }
-
-          let effectiveEnd = getLocalDateString();
-          if (vacationDateObj && vacationDateObj < today) {
-            effectiveEnd = getLocalDateString(vacationDateObj);
-          }
-
-          const totalPossibleDays = countWeekdays(effectiveStart, effectiveEnd);
-          const holidayCount = (config.holidayDates || []).filter((date) => {
-            if (!date) return false;
-            const holiday = new Date(date + "T00:00:00");
-            if (Number.isNaN(holiday.getTime())) return false;
-            return (
-              holiday >= new Date(effectiveStart + "T00:00:00") &&
-              holiday <= new Date(effectiveEnd + "T00:00:00")
-            );
-          }).length;
-          const totalDays = Math.max(0, totalPossibleDays - holidayCount);
-          const totalWeeks = Math.max(0, Math.ceil(totalDays / 5));
-          setTotalSchoolDays(totalDays);
-          setTotalSchoolWeeks(totalWeeks);
-
-          console.log("--- Vacation Overlay Debug ---");
-          console.log(
-            "Current Date (Local Midnight):",
-            today.toLocaleDateString(),
-          );
-          console.log("Vacation Date (Last School Day):", config.vacationDate);
-          console.log(
-            "Vacation Starts (Local Midnight):",
-            vacationStartMs
-              ? new Date(vacationStartMs).toLocaleDateString()
-              : "N/A",
-          );
-          console.log(
-            "Next Term Begins (Local Midnight):",
-            config.nextTermBegins,
-          );
-          console.log("Is Vacation:", shouldBeVacation);
-          console.log("--- End Debug ---");
-
-          // New Term Transition Logic: Check if nextTermBegins date is reached and reset needed
-          if (config.nextTermBegins && todayMs >= nextTermBeginsMs) {
-            if (config.termTransitionProcessed === false) {
-              console.log(
-                "New term begins today or has passed. Initiating dashboard reset...",
-              );
-              try {
-                await db.resetForNewTerm(config);
-                // Mark the transition as processed to prevent repeated resets on subsequent loads
-                await db.updateSchoolConfig({
-                  ...config,
-                  termTransitionProcessed: true,
-                });
-                showToast("New term started! Dashboard has been reset.", {
-                  type: "success",
-                });
-                window.location.reload(); // Reload to reflect new term's state
-              } catch (resetError) {
-                console.error("Error during new term reset:", resetError);
-                showToast("Failed to reset dashboard for new term.", {
-                  type: "error",
-                });
-              }
-            } else {
-              // Already processed, no need to change isVacation here
-            }
-          } else if (
-            config.nextTermBegins &&
-            todayMs < nextTermBeginsMs &&
-            config.termTransitionProcessed === true
-          ) {
-            // If before nextTermBegins but already marked as processed, reset flag (e.g., if admin changes date backward)
-            await db.updateSchoolConfig({
-              ...config,
-              termTransitionProcessed: false,
-            });
-          } else {
-            // No nextTermBegins set, no need to change isVacation here
-          }
+          await db.updateSchoolConfig(updatedConfig);
+          config = updatedConfig;
+          showToast("New term started. Dashboard refreshed.", {
+            type: "success",
+          });
+          triggerRefresh();
+        } else if (
+          config.nextTermBegins &&
+          nextTermBeginsMs &&
+          todayMs < nextTermBeginsMs &&
+          config.termTransitionProcessed === true
+        ) {
+          const resetTransitionFlag = {
+            ...config,
+            termTransitionProcessed: false,
+          };
+          await db.updateSchoolConfig(resetTransitionFlag);
+          config = resetTransitionFlag;
         }
-      } catch (e) {
-        console.error(e);
-        config = {
-          currentTerm: `Term ${CURRENT_TERM}`,
-          academicYear: ACADEMIC_YEAR,
-          schoolReopenDate: "",
-          schoolName: "School Manager GH",
-          headTeacherRemark:
-            "An outstanding performance. The school is proud of you.",
-          termEndDate: "2024-12-20",
-          vacationDate: "2024-12-20",
-          nextTermBegins: "", // Ensure nextTermBegins is also included in fallback config
-          termTransitionProcessed: false, // Default for fallback
-          schoolId: "",
+
+        if (!isMounted) return;
+        setSchoolConfig(config);
+        setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);
+
+        const vacationDateObj = config.vacationDate
+          ? new Date(`${config.vacationDate}T00:00:00`)
+          : null;
+        if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
+        const vacationStartMs =
+          vacationDateObj !== null
+            ? new Date(
+                new Date(vacationDateObj).setDate(vacationDateObj.getDate() + 1),
+              ).getTime()
+            : null;
+        const shouldBeVacation =
+          vacationStartMs !== null
+            ? nextTermBeginsMs
+              ? todayMs >= vacationStartMs && todayMs < nextTermBeginsMs
+              : todayMs >= vacationStartMs
+            : false;
+        setIsVacation(shouldBeVacation);
+
+        setAttendanceLocked(
+          Boolean(nextTermBeginsMs) &&
+            todayMs >= Number(nextTermBeginsMs) &&
+            !config.schoolReopenDate,
+        );
+
+        const countWeekdays = (startDate: string, endDate: string) => {
+          const start = new Date(`${startDate}T00:00:00`);
+          const end = new Date(`${endDate}T00:00:00`);
+          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+          if (start > end) return 0;
+          let count = 0;
+          const current = new Date(start);
+          while (current <= end) {
+            const day = current.getDay();
+            if (day !== 0 && day !== 6) count += 1;
+            current.setDate(current.getDate() + 1);
+          }
+          return count;
         };
+
+        const reopenDateObj = config.schoolReopenDate
+          ? new Date(`${config.schoolReopenDate}T00:00:00`)
+          : null;
+        if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
+
+        let effectiveStart = getLocalDateString();
+        if (reopenDateObj && reopenDateObj <= today) {
+          effectiveStart = getLocalDateString(reopenDateObj);
+        }
+
+        let effectiveEnd = getLocalDateString();
+        if (vacationDateObj && vacationDateObj < today) {
+          effectiveEnd = getLocalDateString(vacationDateObj);
+        }
+
+        const totalPossibleDays = countWeekdays(effectiveStart, effectiveEnd);
+        const holidayCount = (config.holidayDates || []).filter((holidayItem) => {
+          const holidayDate = toHolidayDateString(holidayItem);
+          if (!holidayDate) return false;
+          const holiday = new Date(`${holidayDate}T00:00:00`);
+          if (Number.isNaN(holiday.getTime())) return false;
+          return (
+            holiday >= new Date(`${effectiveStart}T00:00:00`) &&
+            holiday <= new Date(`${effectiveEnd}T00:00:00`)
+          );
+        }).length;
+        const totalDays = Math.max(0, totalPossibleDays - holidayCount);
+        setTotalSchoolDays(totalDays);
+        setTotalSchoolWeeks(Math.max(0, Math.ceil(totalDays / 5)));
+      } catch (error) {
+        console.error("Error fetching school config:", error);
+        setSectionError("analytics", "Could not load school term settings.");
       }
 
-      // Fetch subjects from system settings for the selected class
-      const currentSubjects = await db.getSubjects(schoolId, selectedClassId);
-      if (!isMounted) return;
-      setSubjects(currentSubjects);
+      try {
+        currentSubjects = await db.getSubjects(schoolId, selectedClassId);
+        if (!isMounted) return;
+        setSubjects(currentSubjects);
+      } catch (error) {
+        console.error("Error fetching subjects:", error);
+        setSectionError("analytics", "Could not load class subjects.");
+      }
 
-      // Notices
-      const noticeData = await db.getNotices(schoolId);
-      const broadcastData = await db.getPlatformBroadcasts(schoolId);
-      if (!isMounted) return;
-      setNotices(noticeData);
-      setBroadcasts(broadcastData);
+      try {
+        const [noticeData, broadcastData] = await Promise.all([
+          db.getNotices(schoolId),
+          db.getPlatformBroadcasts(schoolId),
+        ]);
+        if (!isMounted) return;
+        setNotices(noticeData);
+        setBroadcasts(broadcastData);
+      } catch (error) {
+        console.error("Error loading notices:", error);
+        setSectionError("notices", "Could not load notices and broadcasts.");
+      } finally {
+        setSectionLoading("notices", false);
+      }
 
-      // Teacher Attendance
-      const today = getLocalDateString();
-      const attendance = await db.getTeacherAttendance(
-        schoolId,
-        user?.id || "",
-        today,
-      );
-      if (!isMounted) return;
-      setTeacherAttendance(attendance);
-
-      // Class Specific Data
-      if (selectedClassId) {
-        // 1. Timetable
+      try {
         const t = await db.getTimetable(schoolId, selectedClassId);
         if (!isMounted) return;
         setTimetable(t || null);
         setSelectedDay(getCurrentDay());
+      } catch (error) {
+        console.error("Error loading timetable:", error);
+        setSectionError("timetable", "Could not load class schedule.");
+      } finally {
+        setSectionLoading("timetable", false);
+      }
 
-        // 2. Real Attendance Trend (students)
-        try {
-          const [attendanceRecords, students] = await Promise.all([
-            db.getClassAttendance(schoolId, selectedClassId),
+      try {
+        const currentTermNum =
+          parseInt((config.currentTerm || `Term ${CURRENT_TERM}`).split(" ")[1], 10) || 1;
+
+        const [students, allClassAttendance, allSkills, remarksForClass] =
+          await Promise.all([
             db.getStudents(schoolId, selectedClassId),
+            db.getClassAttendance(schoolId, selectedClassId),
+            db.getStudentSkills(schoolId, selectedClassId),
+            db.getStudentRemarks(schoolId, selectedClassId),
           ]);
 
-          if (!isMounted) return;
+        if (!isMounted) return;
+        setClassStudents(students);
+        applyClassAttendanceMetrics(allClassAttendance, students);
 
-          const totalStudents = students.length || 1;
-          const weekDates = getWeekDates(weekOffset);
-          const weekRecords = attendanceRecords.filter((record) =>
-            weekDates.includes(record.date),
-          );
+        const assessmentCollections = await Promise.all(
+          currentSubjects.map((subject) =>
+            db.getAssessments(schoolId, selectedClassId, subject),
+          ),
+        );
+        const flattenedAssessments = assessmentCollections.flat();
+        const currentTermAssessments = flattenedAssessments.filter(
+          (assessment) => assessment.term === currentTermNum,
+        );
+        setTermAssessments(currentTermAssessments);
+        setTermRemarks(
+          remarksForClass.filter((remark) => remark.term === currentTermNum),
+        );
 
-          const trendData = weekDates.map((date) => {
-            const record = weekRecords.find((r) => r.date === date);
-            const percentage = record
-              ? Math.round(
-                  (record.presentStudentIds.length / totalStudents) * 100,
-                )
-              : 0;
-            const [y, m, d] = date.split("-").map(Number);
-            const dateObj = new Date(y, m - 1, d);
-            const dayName = dateObj.toLocaleDateString("en-US", {
-              weekday: "short",
-            });
-            return { day: dayName, percentage };
-          });
-
-          setAttendanceTrend(trendData);
-          setClassStudents(students);
-
-          setTotalStudents(students.length);
-          const todayStr = getLocalDateString();
-          const todayAttendance = attendanceRecords.find(
-            (r) => r.date === todayStr,
-          );
-          const presentTodayCount = todayAttendance
-            ? todayAttendance.presentStudentIds.length
+        const totalScore = currentTermAssessments.reduce((sum, assessment) => {
+          return sum + (assessment.total ?? calculateTotalScore(assessment));
+        }, 0);
+        const classAvg =
+          currentTermAssessments.length > 0
+            ? totalScore / currentTermAssessments.length
             : 0;
-          setPresentToday(presentTodayCount);
-          setAbsentToday(
-            todayAttendance ? students.length - presentTodayCount : 0,
-          );
+        setClassAverage(classAvg);
 
-          // Class Average
-          const currentTermNum = parseInt(
-            (config.currentTerm || `Term ${CURRENT_TERM}`).split(" ")[1],
-          );
-          let totalScore = 0;
-          let totalAssessments = 0;
-          for (const subject of currentSubjects) {
-            const assessments = await db.getAssessments(
-              schoolId,
-              selectedClassId,
-              subject,
+        const termSkills = allSkills.filter((skill) => skill.term === currentTermNum);
+        const conductMap: Record<string, number> = {
+          Excellent: 5,
+          "Very Good": 4,
+          Good: 3,
+          Fair: 2,
+          Poor: 1,
+        };
+        const behaviorValues = termSkills
+          .map((skill) => conductMap[String(skill.conduct || "")] || 0)
+          .filter((value) => value > 0);
+        const behaviorAvg =
+          behaviorValues.length > 0
+            ? behaviorValues.reduce((sum, value) => sum + value, 0) /
+              behaviorValues.length
+            : 0;
+        setBehaviorAverage(behaviorAvg.toFixed(1));
+
+        const standings = currentSubjects
+          .map((subject) => {
+            const subjectAssessments = currentTermAssessments.filter(
+              (assessment) => assessment.subject === subject,
             );
-            const termAssessments = assessments.filter(
-              (a) => a.term === currentTermNum,
-            );
-            for (const assessment of termAssessments) {
+            if (!subjectAssessments.length) return null;
+            let maxScore = -1;
+            let topStudent = "N/A";
+            let total = 0;
+            subjectAssessments.forEach((assessment) => {
               const score = assessment.total ?? calculateTotalScore(assessment);
-              totalScore += score;
-              totalAssessments++;
-            }
-          }
-          const avg = totalAssessments > 0 ? totalScore / totalAssessments : 0;
-          setClassAverage(avg);
-
-          // Behavior Tracker
-          const skills = await db.getStudentSkills(schoolId, selectedClassId);
-          const termSkills = skills.filter((s) => s.term === currentTermNum);
-          let totalConductScore = 0;
-          let conductCount = 0;
-          const conductMap: { [key: string]: number } = {
-            Excellent: 5,
-            "Very Good": 4,
-            Good: 3,
-            Fair: 2,
-            Poor: 1,
-          };
-          for (const skill of termSkills) {
-            if (skill.conduct) {
-              totalConductScore += conductMap[skill.conduct] || 0;
-              conductCount++;
-            }
-          }
-          const avgConduct =
-            conductCount > 0 ? totalConductScore / conductCount : 0;
-          setBehaviorAverage(avgConduct.toFixed(1));
-
-          // Subject Standings
-          const standings: {
-            subject: string;
-            topStudent: string;
-            average: number;
-          }[] = [];
-          for (const subject of currentSubjects) {
-            const assessments = await db.getAssessments(
-              schoolId,
-              selectedClassId,
-              subject,
-            );
-            const termAssessments = assessments.filter(
-              (a) => a.term === currentTermNum,
-            );
-            if (termAssessments.length === 0) continue;
-            let subjTotalScore = 0;
-            let maxScore = 0;
-            let topStudent = "";
-            for (const assessment of termAssessments) {
-              const score = assessment.total ?? calculateTotalScore(assessment);
-              const student = students.find(
-                (s) => s.id === assessment.studentId,
-              );
-              if (student && score > maxScore) {
+              total += score;
+              if (score > maxScore) {
                 maxScore = score;
-                topStudent = student.name;
+                const student = students.find((s) => s.id === assessment.studentId);
+                if (student) topStudent = student.name;
               }
-              subjTotalScore += score;
-            }
-            const avg = subjTotalScore / termAssessments.length;
-            standings.push({ subject, topStudent, average: avg });
-          }
-          standings.sort((a, b) => b.average - a.average);
-          setSubjectStandings(standings);
-        } catch (error) {
-          console.error("Error calculating dashboard stats:", error);
-        }
+            });
+            return {
+              subject,
+              topStudent,
+              average: total / subjectAssessments.length,
+            };
+          })
+          .filter(Boolean) as { subject: string; topStudent: string; average: number }[];
+        standings.sort((a, b) => b.average - a.average);
+        setSubjectStandings(standings);
+      } catch (error) {
+        console.error("Error loading class analytics:", error);
+        setSectionError(
+          "analytics",
+          "Could not load class analytics right now.",
+        );
+      } finally {
+        setSectionLoading("analytics", false);
       }
 
-      // Teacher Attendance Trend (approved/pending)
-      try {
-        await buildTeacherTrend(weekOffset);
-      } catch (error) {
-        console.error("Error calculating teacher attendance trend:", error);
-      }
     };
 
     fetchData();
@@ -913,7 +918,18 @@ const TeacherDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [selectedClassId, weekOffset, schoolId]);
+  }, [
+    applyClassAttendanceMetrics,
+    getLocalDateString,
+    refreshSeed,
+    schoolId,
+    selectedClassId,
+    setSectionError,
+    setSectionLoading,
+    triggerRefresh,
+    user?.id,
+    weekOffset,
+  ]);
 
   // Update displayed schedule when day or data changes
   useEffect(() => {
@@ -958,41 +974,213 @@ const TeacherDashboard = () => {
     }
   };
 
-  const handleMarkAttendance = async (status: "present" | "absent") => {
-    if (!user?.id) return;
-    if (attendanceLocked) {
-      showToast(
-        "Attendance is locked until the admin sets a school re-open date.",
-        { type: "warning" },
-      );
-      return;
-    }
-    setMarkingAttendance(true);
-    try {
-      const today = getLocalDateString();
-      const record: TeacherAttendanceRecord = {
-        id: `${schoolId}_${user.id}_${today}`,
-        date: today,
-        teacherId: user.id,
-        schoolId: schoolId || schoolConfig?.schoolId || "",
-        status,
-        approvalStatus: "pending",
-      };
-      await db.saveTeacherAttendance(record);
-      setTeacherAttendance(record);
+  const todayClassAttendanceRecord = useMemo(() => {
+    const todayKey = getLocalDateString();
+    return classAttendanceRecords.find((record) => record.date === todayKey);
+  }, [classAttendanceRecords, getLocalDateString]);
 
-      // Notification
-      await db.addSystemNotification(
-        `${user?.fullName || "Teacher"} submitted ${status} attendance for ${today} (pending approval)`,
-        "attendance",
-        schoolId || schoolConfig?.schoolId || "",
-      );
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setMarkingAttendance(false);
+  const priorities = useMemo<PriorityItem[]>(() => {
+    const next: PriorityItem[] = [];
+
+    if (attendanceLocked) {
+      next.push({
+        id: "attendance-locked",
+        title: "Attendance is locked",
+        description:
+          "Admin must set a school reopen date before attendance can be submitted.",
+        tone: "high",
+      });
+    } else if (!todayClassAttendanceRecord) {
+      next.push({
+        id: "student-attendance",
+        title: "Take student attendance",
+        description: `Attendance for ${assignedClass?.name || "your class"} is still pending today.`,
+        tone: "high",
+        actionLabel: "Take Attendance",
+        actionTo: "/teacher/attendance",
+      });
     }
-  };
+
+    if (!teacherAttendance) {
+      next.push({
+        id: "teacher-attendance",
+        title: "Mark your attendance",
+        description: "Your staff attendance has not been submitted today.",
+        tone: "high",
+        actionLabel: "Mark Now",
+        actionTo: "/teacher/my-attendance",
+      });
+    } else if (teacherAttendance.approvalStatus === "pending") {
+      next.push({
+        id: "teacher-pending",
+        title: "Attendance awaiting approval",
+        description: "Your latest attendance is pending admin approval.",
+        tone: "medium",
+      });
+    }
+
+    if (canUseExamReports && termAssessments.length === 0) {
+      next.push({
+        id: "assessments",
+        title: "Record assessments",
+        description: "No assessment scores found for this term yet.",
+        tone: "medium",
+        actionLabel: "Open Gradebook",
+        actionTo: "/teacher/assessment",
+      });
+    }
+
+    const urgentNotices = notices.filter((notice) => notice.type === "urgent");
+    if (urgentNotices.length > 0) {
+      next.push({
+        id: "urgent-notice",
+        title: "Review urgent notices",
+        description: `${urgentNotices.length} urgent notice(s) require attention.`,
+        tone: "normal",
+      });
+    }
+
+    return next.slice(0, 3);
+  }, [
+    assignedClass?.name,
+    attendanceLocked,
+    canUseExamReports,
+    notices,
+    teacherAttendance,
+    termAssessments.length,
+    todayClassAttendanceRecord,
+  ]);
+
+  const studentsNeedingAttention = useMemo<StudentAttentionItem[]>(() => {
+    if (!classStudents.length) return [];
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const lookbackStart = new Date(today);
+    lookbackStart.setDate(lookbackStart.getDate() - 20);
+
+    const schoolDays = classAttendanceRecords
+      .filter((record) => {
+        const date = new Date(`${record.date}T00:00:00`);
+        if (Number.isNaN(date.getTime())) return false;
+        if (date < lookbackStart || date > today) return false;
+        const day = date.getDay();
+        return day !== 0 && day !== 6;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 10);
+
+    const passMark = Number(schoolConfig?.passMark || 50);
+    const className = assignedClass?.name || "Class";
+    const remarksByStudent = new Set(termRemarks.map((remark) => remark.studentId));
+    const scoresByStudent = new Map<string, number[]>();
+
+    termAssessments.forEach((assessment) => {
+      const score = assessment.total ?? calculateTotalScore(assessment);
+      const current = scoresByStudent.get(assessment.studentId) || [];
+      current.push(score);
+      scoresByStudent.set(assessment.studentId, current);
+    });
+
+    const attentionRows: StudentAttentionItem[] = classStudents
+      .map((student) => {
+        const reasons: string[] = [];
+
+        if (schoolDays.length > 0) {
+          const absentCount = schoolDays.filter(
+            (record) => !record.presentStudentIds.includes(student.id),
+          ).length;
+          if (absentCount >= 2) {
+            reasons.push(`${absentCount} absences in recent school days`);
+          }
+        }
+
+        const scores = scoresByStudent.get(student.id) || [];
+        if (scores.length >= 2) {
+          const avg = scores.reduce((sum, value) => sum + value, 0) / scores.length;
+          if (avg < passMark) {
+            reasons.push(`Low average (${avg.toFixed(1)}%)`);
+          }
+        }
+
+        if (termAssessments.length > 0 && !remarksByStudent.has(student.id)) {
+          reasons.push("Remark not entered");
+        }
+
+        return {
+          studentId: student.id,
+          studentName: student.name,
+          className,
+          reasons,
+        };
+      })
+      .filter((row) => row.reasons.length > 0)
+      .sort((a, b) => b.reasons.length - a.reasons.length);
+
+    return attentionRows.slice(0, 8);
+  }, [
+    assignedClass?.name,
+    classAttendanceRecords,
+    classStudents,
+    schoolConfig?.passMark,
+    termAssessments,
+    termRemarks,
+  ]);
+
+  const preloadRemarksAndSkills = useCallback(async () => {
+    if (!schoolId || !selectedClassId) {
+      return { students: [] as Student[] };
+    }
+    const students =
+      classStudents.length > 0
+        ? classStudents
+        : await db.getStudents(schoolId, selectedClassId);
+
+    const [existingRemarks, existingSkills] = await Promise.all([
+      db.getStudentRemarks(schoolId, selectedClassId),
+      db.getStudentSkills(schoolId, selectedClassId),
+    ]);
+
+    const remarksMap = existingRemarks.reduce(
+      (acc, remark) => {
+        acc[remark.studentId] = {
+          remark: remark.remark,
+          behaviorTag: remark.behaviorTag as
+            | "Excellent"
+            | "Good"
+            | "Needs Improvement"
+            | "",
+        };
+        return acc;
+      },
+      {} as Record<
+        string,
+        {
+          remark: string;
+          behaviorTag: "Excellent" | "Good" | "Needs Improvement" | "";
+        }
+      >,
+    );
+
+    const skillsMap = existingSkills.reduce(
+      (acc, skill) => {
+        acc[skill.studentId] = {
+          punctuality: skill.punctuality,
+          neatness: skill.neatness,
+          conduct: skill.conduct,
+          attitudeToWork: skill.attitudeToWork,
+          classParticipation: skill.classParticipation,
+          homeworkCompletion: skill.homeworkCompletion,
+        };
+        return acc;
+      },
+      {} as Record<string, StudentSkillsDraft>,
+    );
+
+    setRemarksData(remarksMap);
+    setSkillsData(skillsMap);
+    return { students };
+  }, [classStudents, schoolId, selectedClassId]);
 
   return (
     <Layout title="Teacher Dashboard">
@@ -1030,6 +1218,9 @@ const TeacherDashboard = () => {
           </div>
         </div>
       )}
+
+      <TodayPrioritiesStrip items={priorities} />
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">
@@ -1183,63 +1374,14 @@ const TeacherDashboard = () => {
 
             <button
               onClick={async () => {
-                // Fetch students first if not loaded
-                let students = classStudents;
-                if (!students || students.length === 0) {
-                  students = await db.getStudents(schoolId, selectedClassId);
+                try {
+                  const { students } = await preloadRemarksAndSkills();
+                  setStudentsForRemarks(students || []);
+                  setRemarksModalOpen(true);
+                } catch (error) {
+                  console.error("Failed to preload remarks:", error);
+                  showToast("Could not load remarks data.", { type: "error" });
                 }
-
-                const existingRemarks = await db.getStudentRemarks(
-                  schoolId,
-                  selectedClassId,
-                );
-                const remarksMap = existingRemarks.reduce(
-                  (acc, remark) => {
-                    acc[remark.studentId] = {
-                      remark: remark.remark,
-                      behaviorTag: remark.behaviorTag as
-                        | "Excellent"
-                        | "Good"
-                        | "Needs Improvement"
-                        | "",
-                    };
-                    return acc;
-                  },
-                  {} as Record<
-                    string,
-                    {
-                      remark: string;
-                      behaviorTag:
-                        | "Excellent"
-                        | "Good"
-                        | "Needs Improvement"
-                        | "";
-                    }
-                  >,
-                );
-                setRemarksData(remarksMap);
-
-                const existingSkills = await db.getStudentSkills(
-                  schoolId,
-                  selectedClassId,
-                );
-                const skillsMap = existingSkills.reduce(
-                  (acc, skill) => {
-                    acc[skill.studentId] = {
-                      punctuality: skill.punctuality,
-                      neatness: skill.neatness,
-                      conduct: skill.conduct,
-                      attitudeToWork: skill.attitudeToWork,
-                      classParticipation: skill.classParticipation,
-                      homeworkCompletion: skill.homeworkCompletion,
-                    };
-                    return acc;
-                  },
-                  {} as Record<string, any>,
-                );
-                setSkillsData(skillsMap);
-                setStudentsForRemarks(students || []);
-                setRemarksModalOpen(true);
               }}
               className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-purple-500 transition-all relative overflow-hidden w-full text-left"
             >
@@ -1259,33 +1401,14 @@ const TeacherDashboard = () => {
 
             <button
               onClick={async () => {
-                // Fetch students first if not loaded
-                let students = classStudents;
-                if (!students || students.length === 0) {
-                  students = await db.getStudents(schoolId, selectedClassId);
+                try {
+                  const { students } = await preloadRemarksAndSkills();
+                  setStudentsForSkills(students || []);
+                  setSkillsModalOpen(true);
+                } catch (error) {
+                  console.error("Failed to preload skills:", error);
+                  showToast("Could not load skills data.", { type: "error" });
                 }
-
-                const existingSkills = await db.getStudentSkills(
-                  schoolId,
-                  selectedClassId,
-                );
-                const skillsMap = existingSkills.reduce(
-                  (acc, skill) => {
-                    acc[skill.studentId] = {
-                      punctuality: skill.punctuality,
-                      neatness: skill.neatness,
-                      conduct: skill.conduct,
-                      attitudeToWork: skill.attitudeToWork,
-                      classParticipation: skill.classParticipation,
-                      homeworkCompletion: skill.homeworkCompletion,
-                    };
-                    return acc;
-                  },
-                  {} as Record<string, any>,
-                );
-                setSkillsData(skillsMap);
-                setStudentsForSkills(students || []);
-                setSkillsModalOpen(true);
               }}
               className="group block bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:border-[#1160A8] transition-all relative overflow-hidden w-full text-left"
             >
@@ -1376,6 +1499,13 @@ const TeacherDashboard = () => {
             </div>
           </div>
 
+          <StudentsNeedingAttention
+            items={studentsNeedingAttention}
+            loading={sectionState.analytics.loading}
+            error={sectionState.analytics.error}
+            onRetry={triggerRefresh}
+          />
+
           {/* Attendance Chart Visualization */}
           <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-3 sm:gap-0">
@@ -1402,46 +1532,52 @@ const TeacherDashboard = () => {
                 </button>
               </div>
             </div>
-            <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2">
-              {attendanceTrend.length === 0 ? (
-                <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
-                  <TrendingUp className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
-                  <p className="text-xs sm:text-sm italic">
-                    No attendance records found.
-                  </p>
-                </div>
-              ) : (
-                attendanceTrend.map((data, i) => (
-                  <div
-                    key={i}
-                    className="flex flex-col items-center flex-1 group min-w-0"
-                  >
-                    <div className="relative w-full flex justify-center">
-                      <div
-                        className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-[#E6F0FA] relative overflow-hidden"
-                        style={{ height: "120px" }}
-                      >
-                        <div
-                          className="absolute bottom-0 left-0 right-0 bg-[#1160A8] rounded-t-lg transition-all duration-1000"
-                          style={{ height: `${data.percentage}%` }}
-                        ></div>
-                      </div>
-                      {/* Tooltip - hidden on mobile, shown on larger screens */}
-                      <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                        {data.percentage}%
-                      </div>
-                      {/* Mobile percentage display */}
-                      <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
-                        {data.percentage}%
-                      </div>
-                    </div>
-                    <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">
-                      {data.day}
-                    </span>
+            <SectionState
+              loading={sectionState.attendance.loading}
+              error={sectionState.attendance.error}
+              loadingLabel="Refreshing attendance trends..."
+              onRetry={refreshClassAttendanceSnapshot}
+            />
+            {!sectionState.attendance.loading && !sectionState.attendance.error && (
+              <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2">
+                {attendanceTrend.length === 0 ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
+                    <TrendingUp className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
+                    <p className="text-xs sm:text-sm italic">
+                      No attendance records found.
+                    </p>
                   </div>
-                ))
-              )}
-            </div>
+                ) : (
+                  attendanceTrend.map((data, i) => (
+                    <div
+                      key={i}
+                      className="flex flex-col items-center flex-1 group min-w-0"
+                    >
+                      <div className="relative w-full flex justify-center">
+                        <div
+                          className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-[#E6F0FA] relative overflow-hidden"
+                          style={{ height: "120px" }}
+                        >
+                          <div
+                            className="absolute bottom-0 left-0 right-0 bg-[#1160A8] rounded-t-lg transition-all duration-1000"
+                            style={{ height: `${data.percentage}%` }}
+                          ></div>
+                        </div>
+                        <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                          {data.percentage}%
+                        </div>
+                        <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
+                          {data.percentage}%
+                        </div>
+                      </div>
+                      <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">
+                        {data.day}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           {/* My Attendance Trend */}
@@ -1484,64 +1620,72 @@ const TeacherDashboard = () => {
                 Pending
               </span>
             </div>
-            <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2 mt-2">
-              {teacherAttendanceTrend.length === 0 ? (
-                <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
-                  <ClipboardCheck className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
-                  <p className="text-xs sm:text-sm italic">
-                    No attendance records found.
-                  </p>
-                </div>
-              ) : (
-                teacherAttendanceTrend.map((data, i) => (
-                  <div
-                    key={i}
-                    className="flex flex-col items-center flex-1 group min-w-0"
-                  >
-                    <div className="relative w-full flex justify-center">
-                      <div
-                        className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-emerald-50 relative overflow-hidden"
-                        style={{ height: "120px" }}
-                      >
-                        <div
-                          className={`absolute bottom-0 left-0 right-0 rounded-t-lg transition-all duration-1000 ${
-                            data.status === "pending"
-                              ? "bg-amber-400"
-                              : data.status === "present"
-                                ? "bg-emerald-500"
-                                : data.status === "absent"
-                                  ? "bg-rose-500"
-                                  : "bg-slate-300"
-                          }`}
-                          style={{ height: `${data.percentage}%` }}
-                        ></div>
-                      </div>
-                      <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                        {data.status === "pending"
-                          ? "Pending"
-                          : data.status === "present"
-                            ? "Present"
-                            : data.status === "absent"
-                              ? "Absent"
-                              : "Missing"}
-                      </div>
-                      <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
-                        {data.status === "pending"
-                          ? "Pending"
-                          : data.status === "present"
-                            ? "Present"
-                            : data.status === "absent"
-                              ? "Absent"
-                              : "Missing"}
-                      </div>
-                    </div>
-                    <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">
-                      {data.day}
-                    </span>
+            <SectionState
+              loading={sectionState.attendance.loading}
+              error={sectionState.attendance.error}
+              loadingLabel="Refreshing teacher attendance..."
+              onRetry={refreshTeacherAttendanceSnapshot}
+            />
+            {!sectionState.attendance.loading && !sectionState.attendance.error && (
+              <div className="flex items-end justify-between h-32 sm:h-40 gap-1 sm:gap-2 px-1 sm:px-2 mt-2">
+                {teacherAttendanceTrend.length === 0 ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
+                    <ClipboardCheck className="w-6 h-6 sm:w-8 sm:h-8 mb-2 opacity-30" />
+                    <p className="text-xs sm:text-sm italic">
+                      No attendance records found.
+                    </p>
                   </div>
-                ))
-              )}
-            </div>
+                ) : (
+                  teacherAttendanceTrend.map((data, i) => (
+                    <div
+                      key={i}
+                      className="flex flex-col items-center flex-1 group min-w-0"
+                    >
+                      <div className="relative w-full flex justify-center">
+                        <div
+                          className="w-full max-w-[32px] sm:max-w-[40px] bg-slate-100 rounded-t-lg transition-all duration-500 group-hover:bg-emerald-50 relative overflow-hidden"
+                          style={{ height: "120px" }}
+                        >
+                          <div
+                            className={`absolute bottom-0 left-0 right-0 rounded-t-lg transition-all duration-1000 ${
+                              data.status === "pending"
+                                ? "bg-amber-400"
+                                : data.status === "present"
+                                  ? "bg-emerald-500"
+                                  : data.status === "absent"
+                                    ? "bg-rose-500"
+                                    : "bg-slate-300"
+                            }`}
+                            style={{ height: `${data.percentage}%` }}
+                          ></div>
+                        </div>
+                        <div className="hidden sm:block absolute -top-8 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                          {data.status === "pending"
+                            ? "Pending"
+                            : data.status === "present"
+                              ? "Present"
+                              : data.status === "absent"
+                                ? "Absent"
+                                : "Missing"}
+                        </div>
+                        <div className="sm:hidden absolute -top-6 bg-slate-800 text-white text-xs py-0.5 px-1 rounded opacity-0 group-active:opacity-100 transition-opacity">
+                          {data.status === "pending"
+                            ? "Pending"
+                            : data.status === "present"
+                              ? "Present"
+                              : data.status === "absent"
+                                ? "Absent"
+                                : "Missing"}
+                        </div>
+                      </div>
+                      <span className="text-xs text-slate-500 mt-2 sm:mt-3 font-medium truncate">
+                        {data.day}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1552,84 +1696,92 @@ const TeacherDashboard = () => {
             <h3 className="font-bold text-slate-800 mb-4 flex items-center">
               <Bell className="w-5 h-5 mr-2 text-[#1160A8]" /> Notice Board
             </h3>
-            <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
-              {broadcasts.length > 0 && (
-                <div className="space-y-2">
-                  {broadcasts.map((b) => (
-                    <div
-                      key={b.id}
-                      className={`rounded-xl border px-4 py-3 ${
-                        b.type === "MAINTENANCE"
-                          ? "border-red-200 bg-red-50"
-                          : b.type === "SYSTEM_UPDATE"
-                            ? "border-emerald-200 bg-emerald-50"
-                            : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-semibold text-slate-800 text-sm">
-                          {b.title}
-                        </h4>
-                        <span className="text-[10px] font-semibold text-slate-500">
-                          {b.priority}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">
-                        {b.message}
-                      </p>
-                      {b.type === "SYSTEM_UPDATE" && b.whatsNew?.length && (
-                        <ul className="list-disc pl-5 text-xs text-slate-600 mt-2 space-y-1">
-                          {b.whatsNew.map((item, idx) => (
-                            <li key={idx}>{item}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {b.type === "MAINTENANCE" && (
-                        <p className="text-[11px] text-slate-500 mt-2">
-                          {b.maintenanceStart
-                            ? `Start: ${String(b.maintenanceStart)}`
-                            : ""}{" "}
-                          {b.maintenanceEnd
-                            ? `End: ${String(b.maintenanceEnd)}`
-                            : ""}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {notices.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 italic text-sm">
-                  No announcements at this time.
-                </div>
-              ) : (
-                notices.map((notice) => (
-                  <div
-                    key={notice.id}
-                    className="group relative pl-4 pb-2 border-l-2 border-slate-200 hover:border-[#1160A8] transition-colors"
-                  >
-                    <div
-                      className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${notice.type === "urgent" ? "bg-red-500" : "bg-amber-400"} shadow-sm`}
-                    ></div>
-                    <div>
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-                          {notice.date}
-                        </span>
-                        {notice.type === "urgent" && (
-                          <span className="text-[10px] text-red-500 font-bold px-1.5 py-0.5 bg-red-50 rounded">
-                            URGENT
+            <SectionState
+              loading={sectionState.notices.loading}
+              error={sectionState.notices.error}
+              loadingLabel="Loading notices..."
+              onRetry={triggerRefresh}
+            />
+            {!sectionState.notices.loading && !sectionState.notices.error && (
+              <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
+                {broadcasts.length > 0 && (
+                  <div className="space-y-2">
+                    {broadcasts.map((b) => (
+                      <div
+                        key={b.id}
+                        className={`rounded-xl border px-4 py-3 ${
+                          b.type === "MAINTENANCE"
+                            ? "border-red-200 bg-red-50"
+                            : b.type === "SYSTEM_UPDATE"
+                              ? "border-emerald-200 bg-emerald-50"
+                              : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-slate-800 text-sm">
+                            {b.title}
+                          </h4>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {b.priority}
                           </span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">
+                          {b.message}
+                        </p>
+                        {b.type === "SYSTEM_UPDATE" && b.whatsNew?.length && (
+                          <ul className="list-disc pl-5 text-xs text-slate-600 mt-2 space-y-1">
+                            {b.whatsNew.map((item, idx) => (
+                              <li key={idx}>{item}</li>
+                            ))}
+                          </ul>
+                        )}
+                        {b.type === "MAINTENANCE" && (
+                          <p className="text-[11px] text-slate-500 mt-2">
+                            {b.maintenanceStart
+                              ? `Start: ${String(b.maintenanceStart)}`
+                              : ""}{" "}
+                            {b.maintenanceEnd
+                              ? `End: ${String(b.maintenanceEnd)}`
+                              : ""}
+                          </p>
                         )}
                       </div>
-                      <p className="text-sm font-medium text-slate-800 leading-snug">
-                        {notice.message}
-                      </p>
-                    </div>
+                    ))}
                   </div>
-                ))
-              )}
-            </div>
+                )}
+                {notices.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 italic text-sm">
+                    No announcements at this time.
+                  </div>
+                ) : (
+                  notices.map((notice) => (
+                    <div
+                      key={notice.id}
+                      className="group relative pl-4 pb-2 border-l-2 border-slate-200 hover:border-[#1160A8] transition-colors"
+                    >
+                      <div
+                        className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${notice.type === "urgent" ? "bg-red-500" : "bg-amber-400"} shadow-sm`}
+                      ></div>
+                      <div>
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                            {notice.date}
+                          </span>
+                          {notice.type === "urgent" && (
+                            <span className="text-[10px] text-red-500 font-bold px-1.5 py-0.5 bg-red-50 rounded">
+                              URGENT
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-slate-800 leading-snug">
+                          {notice.message}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           {/* Schedule Widget */}
@@ -1651,48 +1803,55 @@ const TeacherDashboard = () => {
               </select>
             </div>
 
-            {selectedClassId ? (
-              <div className="space-y-4 relative min-h-[150px]">
-                {scheduleForDay.length === 0 ? (
-                  <div className="text-center py-10 text-slate-400 text-sm italic border-2 border-dashed border-slate-100 rounded-lg">
-                    No schedule set for {selectedDay}.
-                  </div>
-                ) : (
-                  <>
-                    {/* Vertical Line */}
-                    <div className="absolute left-2.5 top-2 bottom-2 w-0.5 bg-slate-200"></div>
+            <SectionState
+              loading={sectionState.timetable.loading}
+              error={sectionState.timetable.error}
+              loadingLabel="Loading schedule..."
+              onRetry={triggerRefresh}
+            />
+            {!sectionState.timetable.loading &&
+              !sectionState.timetable.error &&
+              (selectedClassId ? (
+                <div className="space-y-4 relative min-h-[150px]">
+                  {scheduleForDay.length === 0 ? (
+                    <div className="text-center py-10 text-slate-400 text-sm italic border-2 border-dashed border-slate-100 rounded-lg">
+                      No schedule set for {selectedDay}.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="absolute left-2.5 top-2 bottom-2 w-0.5 bg-slate-200"></div>
 
-                    {scheduleForDay.map((slot) => {
-                      const styles = getSlotStyles(slot.type);
-                      return (
-                        <div key={slot.id} className="relative pl-8 group">
-                          <div
-                            className={`absolute left-0 top-1.5 w-5 h-5 bg-white border-2 rounded-full z-10 transition-colors ${styles.border} ${styles.bgHover}`}
-                          ></div>
-                          <div className="flex items-baseline justify-between">
-                            <p className="text-xs text-slate-500 font-mono">
-                              {slot.startTime} - {slot.endTime}
+                      {scheduleForDay.map((slot) => {
+                        const styles = getSlotStyles(slot.type);
+                        return (
+                          <div key={slot.id} className="relative pl-8 group">
+                            <div
+                              className={`absolute left-0 top-1.5 w-5 h-5 bg-white border-2 rounded-full z-10 transition-colors ${styles.border} ${styles.bgHover}`}
+                            ></div>
+                            <div className="flex items-baseline justify-between">
+                              <p className="text-xs text-slate-500 font-mono">
+                                {slot.startTime} - {slot.endTime}
+                              </p>
+                              <span
+                                className={`text-[10px] font-bold uppercase ${styles.badge}`}
+                              >
+                                {slot.type}
+                              </span>
+                            </div>
+                            <p className={`text-sm ${styles.text}`}>
+                              {slot.subject}
                             </p>
-                            <span
-                              className={`text-[10px] font-bold uppercase ${styles.badge}`}
-                            >
-                              {slot.type}
-                            </span>
                           </div>
-                          <p className={`text-sm ${styles.text}`}>
-                            {slot.subject}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-10 text-slate-400">
-                Select a class to view schedule.
-              </div>
-            )}
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-10 text-slate-400">
+                  Select a class to view schedule.
+                </div>
+              ))}
           </div>
         </div>
       </div>
@@ -1959,11 +2118,10 @@ const TeacherDashboard = () => {
                   onClick={async () => {
                     setSavingRemarks(true);
                     try {
-                      for (const student of studentsForRemarks) {
-                        const termNum = parseInt(currentTerm.split(" ")[1]) as
-                          | 1
-                          | 2
-                          | 3;
+                      const termNum =
+                        (parseInt(currentTerm.split(" ")[1], 10) as 1 | 2 | 3) ||
+                        1;
+                      const payloads = studentsForRemarks.map((student) => {
                         const remark: StudentRemark = {
                           id: `${student.id}_${currentTerm}_${ACADEMIC_YEAR}`,
                           studentId: student.id,
@@ -1977,12 +2135,35 @@ const TeacherDashboard = () => {
                           teacherId: user.id,
                           dateCreated: new Date().toISOString().split("T")[0],
                         };
-                        await db.saveStudentRemark(remark);
-                      }
-                      showToast("Remarks saved successfully!", {
-                        type: "success",
+                        return { studentName: student.name, remark };
                       });
-                      setRemarksModalOpen(false);
+
+                      const results = await Promise.allSettled(
+                        payloads.map((entry) => db.saveStudentRemark(entry.remark)),
+                      );
+                      const failed = results
+                        .map((result, index) =>
+                          result.status === "rejected"
+                            ? payloads[index].studentName
+                            : null,
+                        )
+                        .filter(Boolean) as string[];
+
+                      if (!failed.length) {
+                        showToast("Remarks saved successfully!", {
+                          type: "success",
+                        });
+                        setRemarksModalOpen(false);
+                      } else if (failed.length === payloads.length) {
+                        showToast("Failed to save remarks for all students.", {
+                          type: "error",
+                        });
+                      } else {
+                        showToast(
+                          `Saved with partial success. Failed for ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "..." : ""}`,
+                          { type: "warning" },
+                        );
+                      }
                     } catch (err) {
                       console.error(err);
                       showToast("Failed to save remarks", { type: "error" });
@@ -2080,12 +2261,12 @@ const TeacherDashboard = () => {
                   onClick={async () => {
                     setSavingSkills(true);
                     try {
-                      const termNum = parseInt(currentTerm.split(" ")[1]) as
-                        | 1
-                        | 2
-                        | 3;
-                      for (const student of studentsForSkills) {
-                        const skills: StudentSkills = {
+                      const termNum =
+                        (parseInt(currentTerm.split(" ")[1], 10) as 1 | 2 | 3) ||
+                        1;
+                      const payloads = studentsForSkills.map((student) => ({
+                        studentName: student.name,
+                        skills: {
                           id: `${student.id}_${currentTerm}_${ACADEMIC_YEAR}`,
                           studentId: student.id,
                           classId: selectedClassId,
@@ -2093,13 +2274,35 @@ const TeacherDashboard = () => {
                           academicYear: ACADEMIC_YEAR,
                           schoolId: schoolId || schoolConfig?.schoolId || "",
                           ...skillsData[student.id],
-                        };
-                        await db.saveStudentSkills(skills);
+                        } as StudentSkills,
+                      }));
+
+                      const results = await Promise.allSettled(
+                        payloads.map((entry) => db.saveStudentSkills(entry.skills)),
+                      );
+                      const failed = results
+                        .map((result, index) =>
+                          result.status === "rejected"
+                            ? payloads[index].studentName
+                            : null,
+                        )
+                        .filter(Boolean) as string[];
+
+                      if (!failed.length) {
+                        showToast("Skills saved successfully!", {
+                          type: "success",
+                        });
+                        setSkillsModalOpen(false);
+                      } else if (failed.length === payloads.length) {
+                        showToast("Failed to save skills for all students.", {
+                          type: "error",
+                        });
+                      } else {
+                        showToast(
+                          `Saved with partial success. Failed for ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "..." : ""}`,
+                          { type: "warning" },
+                        );
                       }
-                      showToast("Skills saved successfully!", {
-                        type: "success",
-                      });
-                      setSkillsModalOpen(false);
                     } catch (err) {
                       console.error(err);
                       showToast("Failed to save skills", { type: "error" });

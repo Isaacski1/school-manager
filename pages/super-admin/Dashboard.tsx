@@ -232,20 +232,78 @@ const normalizePaymentStatus = (status?: string) => {
   return "pending";
 };
 
-const formatCurrency = (value: number, currency = "GHS") =>
-  new Intl.NumberFormat("en-GH", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(value);
+const supportsCompactNotation = (() => {
+  try {
+    const formatter = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+    return formatter.format(1250).length > 0;
+  } catch {
+    return false;
+  }
+})();
 
-const formatCompactCurrency = (value: number, currency = "GHS") =>
-  new Intl.NumberFormat("en-GH", {
-    style: "currency",
-    currency,
-    notation: Math.abs(value) >= 1000 ? "compact" : "standard",
-    maximumFractionDigits: Math.abs(value) >= 1000 ? 1 : 0,
-  }).format(value);
+const formatNumericValue = (value: number, maximumFractionDigits = 2) => {
+  const normalized = Number.isFinite(value) ? value : 0;
+  const absolute = Math.abs(normalized);
+  const fixed = absolute.toFixed(maximumFractionDigits);
+  const trimmed =
+    maximumFractionDigits > 0 ? fixed.replace(/\.?0+$/, "") : fixed;
+  const parts = trimmed.split(".");
+  const withSeparators = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const body = parts[1] ? `${withSeparators}.${parts[1]}` : withSeparators;
+  return normalized < 0 ? `-${body}` : body;
+};
+
+const formatCurrencyFallback = (value: number, currency: string) =>
+  `${currency} ${formatNumericValue(value, 2)}`;
+
+const formatCompactCurrencyFallback = (value: number, currency: string) => {
+  const absolute = Math.abs(value);
+  const suffixes = [
+    { threshold: 1_000_000_000, suffix: "B" },
+    { threshold: 1_000_000, suffix: "M" },
+    { threshold: 1_000, suffix: "K" },
+  ];
+  for (const entry of suffixes) {
+    if (absolute >= entry.threshold) {
+      const compact = value / entry.threshold;
+      return `${currency} ${formatNumericValue(compact, 1)}${entry.suffix}`;
+    }
+  }
+  return formatCurrencyFallback(value, currency);
+};
+
+const formatCurrency = (value: number, currency = "GHS") => {
+  const normalizedValue = Number.isFinite(value) ? value : 0;
+  try {
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(normalizedValue);
+  } catch {
+    return formatCurrencyFallback(normalizedValue, currency);
+  }
+};
+
+const formatCompactCurrency = (value: number, currency = "GHS") => {
+  const normalizedValue = Number.isFinite(value) ? value : 0;
+  if (!supportsCompactNotation || Math.abs(normalizedValue) < 1000) {
+    return formatCurrency(normalizedValue, currency);
+  }
+  try {
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(normalizedValue);
+  } catch {
+    return formatCompactCurrencyFallback(normalizedValue, currency);
+  }
+};
 
 const toSafeDate = (value?: Timestamp | number | string | Date | null) => {
   if (!value) return null;
@@ -356,6 +414,17 @@ const buildRollingMonths = (count: number) => {
 
 const getMonthKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+const buildRecord = <T,>(
+  keys: string[],
+  createInitialValue: () => T,
+): Record<string, T> => {
+  const result: Record<string, T> = {};
+  keys.forEach((key) => {
+    result[key] = createInitialValue();
+  });
+  return result;
+};
 
 const RiskBadge: React.FC<{ level: "low" | "medium" | "high" }> = ({
   level,
@@ -568,8 +637,14 @@ const EarningsOverview: React.FC<{
 
   const revenueTrend = useMemo(() => {
     const buckets = buildRollingMonths(12);
-    const totals = Object.fromEntries(buckets.map((b) => [b.key, 0]));
-    const counts = Object.fromEntries(buckets.map((b) => [b.key, 0]));
+    const totals = buildRecord(
+      buckets.map((b) => b.key),
+      () => 0,
+    );
+    const counts = buildRecord(
+      buckets.map((b) => b.key),
+      () => 0,
+    );
     normalizedBillingPayments.forEach((payment) => {
       if (payment.normalizedStatus !== "success") return;
       if (!payment.createdAt) return;
@@ -606,8 +681,9 @@ const EarningsOverview: React.FC<{
 
   const paymentStatusTrend = useMemo(() => {
     const buckets = buildRollingMonths(6);
-    const totals = Object.fromEntries(
-      buckets.map((b) => [b.key, { success: 0, pending: 0, failed: 0 }]),
+    const totals = buildRecord(
+      buckets.map((b) => b.key),
+      () => ({ success: 0, pending: 0, failed: 0 }),
     ) as Record<string, { success: number; pending: number; failed: number }>;
     normalizedPayments.forEach((payment) => {
       if (!payment.createdAt) return;
@@ -1995,7 +2071,13 @@ const Dashboard: React.FC = () => {
         });
 
         const schoolPaymentsNested = await Promise.all(schoolPaymentPromises);
-        schoolPaymentRows = schoolPaymentsNested.flat();
+        schoolPaymentRows = schoolPaymentsNested.reduce<PaymentRecord[]>(
+          (acc, schoolRows) => {
+            acc.push(...schoolRows);
+            return acc;
+          },
+          [],
+        );
       } catch (err) {
         console.warn(
           "[Dashboard] Failed to load school payment subcollections",
@@ -2272,11 +2354,13 @@ const Dashboard: React.FC = () => {
       monthBuckets.push({ key, label });
     }
 
-    const monthlyTotals = Object.fromEntries(
-      monthBuckets.map((bucket) => [bucket.key, 0]),
+    const monthlyTotals = buildRecord(
+      monthBuckets.map((bucket) => bucket.key),
+      () => 0,
     ) as Record<string, number>;
-    const monthlyFeesTotals = Object.fromEntries(
-      monthBuckets.map((bucket) => [bucket.key, 0]),
+    const monthlyFeesTotals = buildRecord(
+      monthBuckets.map((bucket) => bucket.key),
+      () => 0,
     ) as Record<string, number>;
 
     const last30Cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

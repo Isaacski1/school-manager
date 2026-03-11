@@ -1392,6 +1392,38 @@ class FirestoreService {
     return snap.docs.map((d) => d.data() as AttendanceRecord);
   }
 
+  async getClassAttendanceByDateRange(
+    schoolId?: string,
+    classId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getClassAttendanceByDateRange",
+    );
+    if (!classId || !startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("classId", "==", classId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      return rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      // Fallback for environments missing composite indexes.
+      const fallback = await this.getClassAttendance(scopedSchoolId, classId);
+      return fallback.filter(
+        (record) => record.date >= startDate && record.date <= endDate,
+      );
+    }
+  }
+
   async getAttendanceByDate(
     schoolId?: string,
     date?: string,
@@ -2041,6 +2073,49 @@ class FirestoreService {
     });
 
     return records[0];
+  }
+
+  async getTeacherAttendanceByDateRange(
+    schoolId?: string,
+    teacherId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getTeacherAttendanceByDateRange",
+    );
+    if (!teacherId || !startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", teacherId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      return rangedSnap.docs.map((docSnap) => {
+        const data = docSnap.data() as TeacherAttendanceRecord;
+        return { ...data, id: data.id || docSnap.id };
+      });
+    } catch (error) {
+      // Fallback for environments missing composite indexes.
+      const fallbackQuery = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", teacherId),
+      );
+      const fallbackSnap = await getDocs(fallbackQuery);
+      return fallbackSnap.docs
+        .map((docSnap) => {
+          const data = docSnap.data() as TeacherAttendanceRecord;
+          return { ...data, id: data.id || docSnap.id };
+        })
+        .filter((record) => record.date >= startDate && record.date <= endDate);
+    }
   }
 
   async getTeacherAttendancePendingByDate(
