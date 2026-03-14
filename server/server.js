@@ -291,6 +291,84 @@ async function superAdminMiddleware(req, res, next) {
   }
 }
 
+/**
+ * Resolve current user's admin MFA policy status.
+ * GET /api/auth/admin-mfa-policy
+ */
+app.get(
+  "/api/auth/admin-mfa-policy",
+  authLimiter,
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const uid = trimToString(req.user?.uid, 120);
+      if (!uid) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+      const callerData = callerDoc.exists ? callerDoc.data() || {} : {};
+      const role = trimToString(callerData.role, 40).toLowerCase() || null;
+
+      const settingsDoc = await admin
+        .firestore()
+        .collection("platformSecuritySettings")
+        .doc("2fa")
+        .get();
+      const settings = settingsDoc.exists ? settingsDoc.data() || {} : {};
+
+      const enforcementModeRaw = trimToString(
+        settings.enforcementMode || "optional",
+        24,
+      ).toLowerCase();
+      const enforcementMode = ["off", "optional", "required"].includes(
+        enforcementModeRaw,
+      )
+        ? enforcementModeRaw
+        : "optional";
+
+      const enabledForSuperAdmins = Boolean(settings.enabledForSuperAdmins);
+      const enabledForSchoolAdmins = Boolean(settings.enabledForSchoolAdmins);
+      const appliesTo =
+        (role === "super_admin" && enabledForSuperAdmins) ||
+        (role === "school_admin" && enabledForSchoolAdmins);
+      const required = appliesTo && enforcementMode === "required";
+
+      const userRecord = await admin.auth().getUser(uid);
+      const enrolledFactors = Array.isArray(
+        userRecord?.multiFactor?.enrolledFactors,
+      )
+        ? userRecord.multiFactor.enrolledFactors
+        : [];
+      const enrolledFactorsCount = enrolledFactors.length;
+      const compliant = !required || enrolledFactorsCount > 0;
+
+      const message =
+        required && !compliant
+          ? "Admin MFA policy requires MFA enrollment for your role. Enroll at least one second factor before signing in."
+          : "Admin MFA policy check passed.";
+
+      return res.json({
+        success: true,
+        role,
+        enforcementMode,
+        enabledForSuperAdmins,
+        enabledForSchoolAdmins,
+        appliesTo,
+        required,
+        enrolledFactorsCount,
+        compliant,
+        message,
+      });
+    } catch (error) {
+      console.error("Admin MFA policy status error:", error.message || error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Failed to resolve MFA policy" });
+    }
+  },
+);
+
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
@@ -318,17 +396,63 @@ If no action, return JSON with {"reply": "..."}.
 Allowed action types:
 - create_school: payload { name, plan, phone?, address?, logoUrl? }
 - create_school_admin: payload { schoolId, fullName, email, password? }
+- update_school_admin_email: payload { adminUid, newEmail, fullName? }
 - reset_school_admin_password: payload { adminUid }
 - provision_user: payload { uid, role, schoolId?, fullName, email }
 - set_school_status: payload { schoolId, status } where status is active|inactive
 - set_school_plan: payload { schoolId, plan } where plan is free|trial|monthly|termly|yearly
 - set_school_feature_plan: payload { schoolId, featurePlan } where featurePlan is starter|standard
+- upsert_plan: payload { id, name, maxStudents }
+- delete_plan: payload { id }
+- assign_school_subscription_plan: payload { schoolId, planId }
 Use clear, short descriptions in "description".
 Never include secrets or API keys. Do not fabricate data. If data is missing, ask for it in reply.
+Do not claim 100% certainty when information is missing or ambiguous.
 Always respond in JSON only.`;
 
   if (!dataContext) return base;
   return `${base}\n\nDATA_CONTEXT:\n${JSON.stringify(dataContext)}`;
+};
+
+const fetchCollectionRows = async ({
+  collectionName,
+  limitCount = 100,
+  orderField = "",
+  whereField = "",
+  whereOp = "==",
+  whereValue = null,
+}) => {
+  const limitValue = Math.max(1, Number(limitCount) || 1);
+  try {
+    let ref = admin.firestore().collection(collectionName);
+    if (whereField) {
+      ref = ref.where(whereField, whereOp, whereValue);
+    }
+    if (orderField) {
+      ref = ref.orderBy(orderField, "desc");
+    }
+    const snap = await ref.limit(limitValue).get();
+    return snap.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() || {}),
+    }));
+  } catch {
+    try {
+      let fallbackRef = admin.firestore().collection(collectionName);
+      if (whereField) {
+        fallbackRef = fallbackRef.where(whereField, whereOp, whereValue);
+      }
+      const fallbackSnap = await fallbackRef
+        .limit(Math.min(500, limitValue))
+        .get();
+      return fallbackSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() || {}),
+      }));
+    } catch {
+      return [];
+    }
+  }
 };
 
 const buildAiDataContext = async (options = {}) => {
@@ -336,11 +460,25 @@ const buildAiDataContext = async (options = {}) => {
     includeSchools = true,
     includeActivity = false,
     includeSchoolAdmins = false,
+    includeUsers = false,
+    includePlans = false,
     includePayments = false,
+    includeBroadcasts = false,
+    includeBackups = false,
+    includeSecurityLogs = false,
+    includeSuspiciousEvents = false,
+    includeAuditLogs = false,
     schoolsLimit = 80,
     activityLimit = 24,
     schoolAdminsLimit = 120,
+    usersLimit = 300,
+    plansLimit = 120,
     paymentsLimit = 300,
+    broadcastsLimit = 80,
+    backupsLimit = 120,
+    securityLogsLimit = 180,
+    suspiciousEventsLimit = 180,
+    auditLogsLimit = 220,
     forceRefresh = false,
   } = options || {};
 
@@ -348,11 +486,25 @@ const buildAiDataContext = async (options = {}) => {
     includeSchools,
     includeActivity,
     includeSchoolAdmins,
+    includeUsers,
+    includePlans,
     includePayments,
+    includeBroadcasts,
+    includeBackups,
+    includeSecurityLogs,
+    includeSuspiciousEvents,
+    includeAuditLogs,
     schoolsLimit,
     activityLimit,
     schoolAdminsLimit,
+    usersLimit,
+    plansLimit,
     paymentsLimit,
+    broadcastsLimit,
+    backupsLimit,
+    securityLogsLimit,
+    suspiciousEventsLimit,
+    auditLogsLimit,
   });
 
   if (!forceRefresh) {
@@ -362,115 +514,179 @@ const buildAiDataContext = async (options = {}) => {
     }
   }
 
-  const tasks = [];
+  const taskEntries = [];
+  const pushTask = (key, promise) => {
+    taskEntries.push([key, promise]);
+  };
+
   if (includeSchools) {
-    tasks.push(
-      admin
-        .firestore()
-        .collection("schools")
-        .orderBy("createdAt", "desc")
-        .limit(schoolsLimit)
-        .get()
-        .then((schoolsSnap) =>
-          schoolsSnap.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() || {}),
-          })),
-        )
-        .catch(() => []),
+    pushTask(
+      "schools",
+      fetchCollectionRows({
+        collectionName: "schools",
+        limitCount: schoolsLimit,
+        orderField: "createdAt",
+      }),
     );
   }
 
   if (includeActivity) {
-    tasks.push(
-      admin
-        .firestore()
-        .collection("activity_logs")
-        .orderBy("createdAt", "desc")
-        .limit(activityLimit)
-        .get()
-        .then((activitySnap) =>
-          activitySnap.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() || {}),
-          })),
-        )
-        .catch(() => []),
+    pushTask(
+      "recentActivity",
+      fetchCollectionRows({
+        collectionName: "activity_logs",
+        limitCount: activityLimit,
+        orderField: "createdAt",
+      }),
     );
   }
 
-  if (includeSchoolAdmins) {
-    tasks.push(
-      admin
-        .firestore()
-        .collection("users")
-        .where("role", "==", "school_admin")
-        .limit(schoolAdminsLimit)
-        .get()
-        .then((schoolAdminSnap) =>
-          schoolAdminSnap.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() || {}),
-          })),
-        )
-        .catch(() => []),
+  if (includeUsers) {
+    pushTask(
+      "users",
+      fetchCollectionRows({
+        collectionName: "users",
+        limitCount: usersLimit,
+        orderField: "createdAt",
+      }),
+    );
+  }
+
+  if (includeSchoolAdmins && !includeUsers) {
+    pushTask(
+      "schoolAdmins",
+      fetchCollectionRows({
+        collectionName: "users",
+        limitCount: schoolAdminsLimit,
+        whereField: "role",
+        whereValue: "school_admin",
+      }),
+    );
+  }
+
+  if (includePlans) {
+    pushTask(
+      "plans",
+      fetchCollectionRows({
+        collectionName: "plans",
+        limitCount: plansLimit,
+        orderField: "updatedAt",
+      }),
     );
   }
 
   if (includePayments) {
-    tasks.push(
-      admin
-        .firestore()
-        .collection("payments")
-        .orderBy("createdAt", "desc")
-        .limit(paymentsLimit)
-        .get()
-        .then((paymentsSnap) =>
-          paymentsSnap.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() || {}),
-          })),
-        )
-        .catch(async () => {
-          try {
-            const fallbackSnap = await admin
-              .firestore()
-              .collection("payments")
-              .limit(Math.min(500, paymentsLimit))
-              .get();
-            return fallbackSnap.docs.map((doc) => ({
-              id: doc.id,
-              ...(doc.data() || {}),
-            }));
-          } catch {
-            return [];
-          }
-        }),
+    pushTask(
+      "payments",
+      fetchCollectionRows({
+        collectionName: "payments",
+        limitCount: paymentsLimit,
+        orderField: "createdAt",
+      }),
     );
   }
 
-  const results = await Promise.all(tasks);
-  let index = 0;
-  const schools = includeSchools
-    ? Array.isArray(results[index])
-      ? results[index++]
-      : []
+  if (includeBroadcasts) {
+    pushTask(
+      "broadcasts",
+      fetchCollectionRows({
+        collectionName: "platformBroadcasts",
+        limitCount: broadcastsLimit,
+        orderField: "createdAt",
+      }),
+    );
+  }
+
+  if (includeBackups) {
+    pushTask(
+      "backups",
+      fetchCollectionRows({
+        collectionName: "backups",
+        limitCount: backupsLimit,
+        orderField: "createdAt",
+      }),
+    );
+  }
+
+  if (includeSecurityLogs) {
+    pushTask(
+      "securityLoginLogs",
+      fetchCollectionRows({
+        collectionName: "securityLoginLogs",
+        limitCount: securityLogsLimit,
+        orderField: "timestamp",
+      }),
+    );
+  }
+
+  if (includeSuspiciousEvents) {
+    pushTask(
+      "suspiciousEvents",
+      fetchCollectionRows({
+        collectionName: "suspiciousEvents",
+        limitCount: suspiciousEventsLimit,
+        orderField: "createdAt",
+      }),
+    );
+  }
+
+  if (includeAuditLogs) {
+    pushTask(
+      "auditLogs",
+      fetchCollectionRows({
+        collectionName: "auditLogs",
+        limitCount: auditLogsLimit,
+        orderField: "timestamp",
+      }),
+    );
+  }
+
+  const resolvedPairs = await Promise.all(
+    taskEntries.map(async ([key, promise]) => [key, await promise]),
+  );
+  const resolved = Object.fromEntries(resolvedPairs);
+
+  const schools = Array.isArray(resolved.schools) ? resolved.schools : [];
+  const recentActivity = Array.isArray(resolved.recentActivity)
+    ? resolved.recentActivity
     : [];
-  const recentActivity = includeActivity
-    ? Array.isArray(results[index])
-      ? results[index++]
-      : []
-    : [];
+  const users = Array.isArray(resolved.users) ? resolved.users : [];
   const schoolAdmins = includeSchoolAdmins
-    ? Array.isArray(results[index])
-      ? results[index++]
-      : []
+    ? includeUsers
+      ? users.filter((userDoc) => String(userDoc?.role || "") === "school_admin")
+      : Array.isArray(resolved.schoolAdmins)
+        ? resolved.schoolAdmins
+        : []
     : [];
-  const payments = includePayments
-    ? Array.isArray(results[index])
-      ? results[index++]
-      : []
+  const plans = Array.isArray(resolved.plans) ? resolved.plans : [];
+  const payments = Array.isArray(resolved.payments) ? resolved.payments : [];
+  const broadcasts = Array.isArray(resolved.broadcasts)
+    ? resolved.broadcasts
     : [];
+  const backups = Array.isArray(resolved.backups) ? resolved.backups : [];
+  const securityLoginLogs = Array.isArray(resolved.securityLoginLogs)
+    ? resolved.securityLoginLogs
+    : [];
+  const suspiciousEvents = Array.isArray(resolved.suspiciousEvents)
+    ? resolved.suspiciousEvents
+    : [];
+  const auditLogs = Array.isArray(resolved.auditLogs) ? resolved.auditLogs : [];
+
+  const usersByRole = users.reduce(
+    (acc, userDoc) => {
+      const roleKey = String(userDoc?.role || "unknown").toLowerCase();
+      acc[roleKey] = (acc[roleKey] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
+
+  const failedLogins = securityLoginLogs.filter(
+    (log) => String(log?.status || "").toUpperCase() === "FAILED",
+  ).length;
+  const openSuspiciousEvents = suspiciousEvents.filter(
+    (row) => String(row?.status || "").toUpperCase() === "OPEN",
+  ).length;
 
   const context = {
     generatedAt: Date.now(),
@@ -478,11 +694,28 @@ const buildAiDataContext = async (options = {}) => {
       schools: schools.length,
       activeSchools: schools.filter((s) => s.status === "active").length,
       inactiveSchools: schools.filter((s) => s.status === "inactive").length,
+      users: users.length,
+      schoolAdmins: schoolAdmins.length,
+      teachers: Number(usersByRole.teacher || 0),
+      plans: plans.length,
+      payments: payments.length,
+      broadcasts: broadcasts.length,
+      backups: backups.length,
+      failedLogins,
+      openSuspiciousEvents,
     },
     schools,
+    users,
     schoolAdmins,
+    plans,
     recentActivity,
     payments,
+    broadcasts,
+    backups,
+    securityLoginLogs,
+    suspiciousEvents,
+    auditLogs,
+    usersByRole,
   };
 
   AI_CONTEXT_CACHE.set(cacheKey, {
@@ -544,6 +777,33 @@ const detectAiPromptIntents = (prompt = "") => {
     (/\bfeature plan\b/.test(plainPrompt) ||
       /\bstarter\b/.test(plainPrompt) ||
       /\bstandard\b/.test(plainPrompt));
+  const wantsSchoolAdminEmailChange =
+    /\b(change|update|set)\b/.test(plainPrompt) &&
+    /\b(admin|administrator|school admin)\b/.test(plainPrompt) &&
+    /\bemail\b/.test(plainPrompt);
+  const wantsPlanConfigAction =
+    /\b(create|add|new|update|edit|set|delete|remove)\b/.test(plainPrompt) &&
+    /\bplan\b/.test(plainPrompt) &&
+    /\b(max students|max student|student limit|plan key|plan id)\b/.test(
+      plainPrompt,
+    );
+  const wantsSubscriptionPlanAssign =
+    /\b(assign|apply|set|update|switch|move|change)\b/.test(plainPrompt) &&
+    /\bplan\b/.test(plainPrompt) &&
+    mentionsInstitution &&
+    /\b(plan id|plan key|configured plan|package)\b/.test(plainPrompt);
+  const asksUsers =
+    /\b(user|users|admin|admins|teacher|teachers)\b/.test(plainPrompt);
+  const asksSecurity =
+    /\b(security|failed login|login history|suspicious|audit)\b/.test(
+      plainPrompt,
+    );
+  const asksPlans = /\b(plan|plans|max students|student limit)\b/.test(
+    plainPrompt,
+  );
+  const asksBackups = /\b(backup|backups|restore)\b/.test(plainPrompt);
+  const asksBroadcasts =
+    /\b(broadcast|announcement|platform message)\b/.test(plainPrompt);
   const asksFreshData =
     /\b(now|today|latest|current|refresh)\b/.test(plainPrompt);
 
@@ -559,6 +819,14 @@ const detectAiPromptIntents = (prompt = "") => {
     wantsSchoolStatusChange,
     wantsSchoolPlanChange,
     wantsSchoolFeaturePlanChange,
+    wantsSchoolAdminEmailChange,
+    wantsPlanConfigAction,
+    wantsSubscriptionPlanAssign,
+    asksUsers,
+    asksSecurity,
+    asksPlans,
+    asksBackups,
+    asksBroadcasts,
     asksFreshData,
   };
 };
@@ -679,6 +947,13 @@ const extractEmailFromText = (text = "") => {
   return match ? match[0] : "";
 };
 
+const extractEmailsFromText = (text = "") => {
+  const matches = String(text)
+    .toLowerCase()
+    .match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g);
+  return Array.from(new Set(matches || []));
+};
+
 const extractQuotedText = (text = "") => {
   const quoteMatch = String(text).match(/["']([^"']{2,80})["']/);
   return quoteMatch ? quoteMatch[1].trim() : "";
@@ -737,6 +1012,43 @@ const extractFeaturePlanFromText = (text = "") => {
   if (/\bstandard\b/.test(lower)) return "standard";
   if (/\bstarter\b/.test(lower)) return "starter";
   return "";
+};
+
+const extractPlanIdFromText = (text = "") => {
+  const keyedMatch = String(text).match(
+    /\b(?:plan key|plan id|key|id)\s*(?:is|=|:)?\s*([a-z0-9][a-z0-9_-]{1,40})\b/i,
+  );
+  if (keyedMatch?.[1]) return keyedMatch[1].toLowerCase();
+
+  const quoted = extractQuotedText(text);
+  if (/^[a-z0-9][a-z0-9_-]{1,40}$/i.test(quoted || "")) {
+    return String(quoted).toLowerCase();
+  }
+
+  return "";
+};
+
+const extractPlanNameFromText = (text = "") => {
+  const explicit = String(text).match(
+    /\b(?:plan name|name)\s*(?:is|=|:)?\s*["']?([A-Za-z][A-Za-z0-9\s'.&-]{1,80})/i,
+  );
+  if (explicit?.[1]) {
+    return explicit[1]
+      .replace(/\b(max students|max student|student limit)\b.*$/i, "")
+      .trim();
+  }
+  const quoted = extractQuotedText(text);
+  return quoted || "";
+};
+
+const extractMaxStudentsFromText = (text = "") => {
+  const explicitMatch = String(text).match(
+    /\b(?:max(?:imum)?\s*students?|student\s*limit)\s*(?:is|to|=|:)?\s*(\d{1,7})\b/i,
+  );
+  if (explicitMatch?.[1]) return Number(explicitMatch[1]);
+  const fallbackMatch = String(text).match(/\b(\d{1,7})\s*(?:students?|learners?)\b/i);
+  if (fallbackMatch?.[1]) return Number(fallbackMatch[1]);
+  return Number.NaN;
 };
 
 const buildActionClarificationQuestion = (prompt = "", schools = []) => {
@@ -838,6 +1150,40 @@ const findSchoolAdminFromText = (text = "", schoolAdmins = []) => {
   return null;
 };
 
+const findPlanFromText = (text = "", plans = []) => {
+  if (!Array.isArray(plans) || plans.length === 0) return null;
+  const lowerText = normalizeText(text);
+
+  const extractedPlanId = extractPlanIdFromText(text);
+  if (extractedPlanId) {
+    const byId = plans.find(
+      (plan) => normalizeText(plan?.id) === normalizeText(extractedPlanId),
+    );
+    if (byId) return byId;
+  }
+
+  const byIdInText = plans.find((plan) =>
+    lowerText.includes(normalizeText(plan?.id)),
+  );
+  if (byIdInText) return byIdInText;
+
+  const quoted = extractQuotedText(text);
+  if (quoted) {
+    const quotedLower = normalizeText(quoted);
+    const byQuotedName = plans.find(
+      (plan) => normalizeText(plan?.name) === quotedLower,
+    );
+    if (byQuotedName) return byQuotedName;
+  }
+
+  const byName = plans.find((plan) =>
+    lowerText.includes(normalizeText(plan?.name)),
+  );
+  if (byName) return byName;
+
+  return null;
+};
+
 const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   const userMessage = [...messages]
     .reverse()
@@ -851,10 +1197,27 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     .trim();
   const mentionsInstitution =
     /\b(school|academy|college|campus|institute)\b/.test(plainPrompt);
+  const hasActionVerb =
+    /\b(create|add|new|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|delete|remove|assign|apply|provision)\b/i.test(
+      prompt,
+    );
   const schools = Array.isArray(dataContext?.schools) ? dataContext.schools : [];
+  const users = Array.isArray(dataContext?.users) ? dataContext.users : [];
   const schoolAdmins = Array.isArray(dataContext?.schoolAdmins)
     ? dataContext.schoolAdmins
+    : users.filter((userDoc) => String(userDoc?.role || "") === "school_admin");
+  const plans = Array.isArray(dataContext?.plans) ? dataContext.plans : [];
+  const broadcasts = Array.isArray(dataContext?.broadcasts)
+    ? dataContext.broadcasts
     : [];
+  const backups = Array.isArray(dataContext?.backups) ? dataContext.backups : [];
+  const securityLoginLogs = Array.isArray(dataContext?.securityLoginLogs)
+    ? dataContext.securityLoginLogs
+    : [];
+  const suspiciousEvents = Array.isArray(dataContext?.suspiciousEvents)
+    ? dataContext.suspiciousEvents
+    : [];
+  const auditLogs = Array.isArray(dataContext?.auditLogs) ? dataContext.auditLogs : [];
   const asOfLabel = dataContext?.generatedAt
     ? new Date(dataContext.generatedAt).toLocaleString()
     : null;
@@ -916,7 +1279,7 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   if (asksCapabilities) {
     return {
       reply:
-        "I can summarize dashboard metrics, calculate recorded billing revenue, and prepare actions like creating schools, creating school admins, resetting admin passwords, activating/deactivating schools, changing school plans, and changing school feature plans.",
+        "I can read Super Admin data across schools, users, plans, payments, activity, security, backups, and broadcasts. I can also prepare and execute actions like creating schools/admins, updating admin emails, resetting passwords, provisioning users, changing school status/plans/feature plans, and managing configured plans.",
       action: null,
     };
   }
@@ -928,7 +1291,7 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   ) {
     return {
       reply:
-        "Yes. I can work like an admin agent: I prepare the exact action and you confirm once, then I execute it safely. You can ask me to create schools/admins, reset admin passwords, activate/deactivate schools, change school plans, or change school feature plans.",
+        "Yes. I can work as your Super Admin agent: I prepare the exact action, you confirm once, then I execute it. I support school/user/plan operations including create, update, activate/deactivate, assignment, and plan configuration changes.",
       action: null,
     };
   }
@@ -940,8 +1303,139 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     const activeAdmins = schoolAdmins.filter(
       (adminUser) => adminUser.status === "active",
     ).length;
+    const teachersCount = users.filter(
+      (userDoc) => String(userDoc?.role || "").toLowerCase() === "teacher",
+    ).length;
     return {
-      reply: `Current snapshot: ${totals.schools} schools (${totals.activeSchools} active, ${totals.inactiveSchools} inactive) and ${schoolAdmins.length} school admin accounts (${activeAdmins} active).${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      reply: `Current snapshot: ${totals.schools} schools (${totals.activeSchools} active, ${totals.inactiveSchools} inactive), ${schoolAdmins.length} school admin accounts (${activeAdmins} active), ${teachersCount} teachers, and ${plans.length} configured plans.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksPlansOverview =
+    /\b(plan|plans|max students|student limit|pricing)\b/i.test(prompt) &&
+    /\b(list|show|what|which|summary|overview|configured)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksPlansOverview) {
+    if (!plans.length) {
+      return {
+        reply:
+          "No configured plans were found in the plans collection. You can ask me to create one.",
+        action: null,
+      };
+    }
+
+    const topPlans = plans
+      .slice(0, 8)
+      .map(
+        (planDoc) =>
+          `${planDoc.name || planDoc.id} (${planDoc.id}) - max students ${Number(planDoc.maxStudents || 0)}`,
+      )
+      .join("; ");
+
+    return {
+      reply: `Configured plans (${plans.length}): ${topPlans}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksUsersOverview =
+    /\b(user|users|admin|admins|teacher|teachers)\b/i.test(prompt) &&
+    /\b(list|count|how many|summary|overview|active|inactive|status)\b/i.test(
+      prompt,
+    ) &&
+    !hasActionVerb;
+  if (asksUsersOverview) {
+    const activeUsers = users.filter(
+      (userDoc) => String(userDoc?.status || "").toLowerCase() === "active",
+    ).length;
+    const inactiveUsers = users.filter(
+      (userDoc) => String(userDoc?.status || "").toLowerCase() === "inactive",
+    ).length;
+    const teachersCount = users.filter(
+      (userDoc) => String(userDoc?.role || "").toLowerCase() === "teacher",
+    ).length;
+    const superAdminsCount = users.filter(
+      (userDoc) => String(userDoc?.role || "").toLowerCase() === "super_admin",
+    ).length;
+
+    return {
+      reply: `Users snapshot: ${users.length} total users, ${activeUsers} active, ${inactiveUsers} inactive, ${schoolAdmins.length} school admins, ${teachersCount} teachers, and ${superAdminsCount} super admins.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksSecurityOverview =
+    /\b(security|failed login|login history|suspicious|audit)\b/i.test(prompt) &&
+    /\b(list|count|summary|overview|status|recent|open)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksSecurityOverview) {
+    const failedLogins = securityLoginLogs.filter(
+      (row) => String(row?.status || "").toUpperCase() === "FAILED",
+    ).length;
+    const successfulLogins = securityLoginLogs.filter(
+      (row) => String(row?.status || "").toUpperCase() === "SUCCESS",
+    ).length;
+    const openSuspiciousEvents = suspiciousEvents.filter(
+      (row) => String(row?.status || "").toUpperCase() === "OPEN",
+    ).length;
+    const resolvedSuspiciousEvents = suspiciousEvents.filter(
+      (row) => String(row?.status || "").toUpperCase() === "RESOLVED",
+    ).length;
+
+    return {
+      reply: `Security snapshot: ${failedLogins} failed logins, ${successfulLogins} successful logins, ${openSuspiciousEvents} open suspicious events, ${resolvedSuspiciousEvents} resolved suspicious events, and ${auditLogs.length} recent audit log entries loaded.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksBackupsOverview =
+    /\b(backup|backups|restore)\b/i.test(prompt) &&
+    /\b(list|count|summary|overview|recent|status)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksBackupsOverview) {
+    return {
+      reply: `Backups snapshot: ${backups.length} recent backup records loaded.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksBroadcastsOverview =
+    /\b(broadcast|announcement|platform message)\b/i.test(prompt) &&
+    /\b(list|count|summary|overview|recent|status)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksBroadcastsOverview) {
+    return {
+      reply: `Broadcast snapshot: ${broadcasts.length} recent platform broadcast records loaded.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksSpecificSchoolOverview =
+    /\b(details?|info|information|profile|overview|summary)\b/i.test(prompt) &&
+    mentionsInstitution &&
+    !hasActionVerb;
+  if (asksSpecificSchoolOverview) {
+    const targetSchool = findSchoolFromText(prompt, schools);
+    if (!targetSchool) {
+      return {
+        reply:
+          "I can provide school details. Please include the exact school name, code, or school ID.",
+        action: null,
+      };
+    }
+
+    const planLabel =
+      targetSchool?.subscription?.planId ||
+      targetSchool?.featurePlan ||
+      targetSchool?.plan ||
+      "unknown";
+    const maxStudents = Number(targetSchool?.limits?.maxStudents || 0);
+    const usedStudents = Number(targetSchool?.studentsCount || 0);
+    const createdAt = parseFlexibleDate(targetSchool?.createdAt);
+
+    return {
+      reply: `${targetSchool.name} (${targetSchool.code || targetSchool.id}) is currently ${targetSchool.status || "active"}, plan ${planLabel}, student usage ${usedStudents}/${maxStudents || "N/A"}, and billing start type ${targetSchool?.billing?.startType || "term_start"}.${createdAt ? ` Created on ${createdAt.toLocaleDateString()}.` : ""}${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
       action: null,
     };
   }
@@ -1067,6 +1561,61 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     };
   }
 
+  const wantsUpdateAdminEmail =
+    /\b(change|update|set)\b/i.test(prompt) &&
+    /\b(email)\b/i.test(prompt) &&
+    /\b(admin|administrator|school admin)\b/i.test(prompt);
+  if (wantsUpdateAdminEmail) {
+    const allEmails = extractEmailsFromText(prompt);
+    const newEmail = allEmails.length ? allEmails[allEmails.length - 1] : "";
+    let adminUser = findSchoolAdminFromText(prompt, schoolAdmins);
+
+    if (!adminUser && allEmails.length >= 2) {
+      const currentEmail = allEmails[0];
+      adminUser = schoolAdmins.find(
+        (candidate) =>
+          normalizeText(candidate?.email) === normalizeText(currentEmail),
+      );
+    }
+
+    if (!adminUser) {
+      return {
+        reply:
+          "I can prepare an admin email update, but I need the target admin (email, full name, or UID).",
+        action: null,
+      };
+    }
+
+    if (!newEmail) {
+      return {
+        reply:
+          "I can prepare this update. Please include the new email address for the admin.",
+        action: null,
+      };
+    }
+
+    if (normalizeText(adminUser.email) === normalizeText(newEmail)) {
+      return {
+        reply:
+          "The provided email matches the admin's current email. Please provide a different new email.",
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared an action to update ${adminUser.fullName || "the admin"} email to ${newEmail}. Confirm to apply it.`,
+      action: {
+        type: "update_school_admin_email",
+        description: `Update admin email for ${adminUser.fullName || adminUser.id}`,
+        payload: {
+          adminUid: adminUser.id,
+          newEmail,
+          ...(adminUser.fullName ? { fullName: adminUser.fullName } : {}),
+        },
+      },
+    };
+  }
+
   const wantsCreateSchool =
     /\b(create|add|new)\b/i.test(prompt) && /\bschool\b/i.test(prompt);
   if (wantsCreateSchool) {
@@ -1096,6 +1645,107 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
         payload: {
           name,
           plan,
+        },
+      },
+    };
+  }
+
+  const wantsDeletePlan =
+    /\b(delete|remove)\b/i.test(prompt) && /\bplan\b/i.test(prompt);
+  if (wantsDeletePlan && !mentionsInstitution) {
+    const targetPlan = findPlanFromText(prompt, plans);
+    if (!targetPlan) {
+      const samplePlans = plans
+        .slice(0, 5)
+        .map((planDoc) => `${planDoc.name || planDoc.id} (${planDoc.id})`)
+        .join(", ");
+      return {
+        reply: `I can prepare a plan delete action, but I need the plan name or plan key.${samplePlans ? ` Available plans: ${samplePlans}.` : ""}`,
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared an action to delete plan ${targetPlan.name || targetPlan.id} (${targetPlan.id}). Confirm to proceed.`,
+      action: {
+        type: "delete_plan",
+        description: `Delete configured plan ${targetPlan.name || targetPlan.id}`,
+        payload: {
+          id: targetPlan.id,
+        },
+      },
+    };
+  }
+
+  const wantsUpsertPlan =
+    /\b(create|add|new|update|edit|set)\b/i.test(prompt) &&
+    /\bplan\b/i.test(prompt) &&
+    /\b(max students|max student|student limit|plan key|plan id)\b/i.test(
+      prompt,
+    ) &&
+    !mentionsInstitution;
+  if (wantsUpsertPlan) {
+    const existingPlan = findPlanFromText(prompt, plans);
+    const planId = extractPlanIdFromText(prompt) || existingPlan?.id || "";
+    const planName =
+      extractPlanNameFromText(prompt) || existingPlan?.name || "";
+    const maxStudents = extractMaxStudentsFromText(prompt);
+    const missingFields = [];
+    if (!planId) missingFields.push("plan key (id)");
+    if (!planName) missingFields.push("plan name");
+    if (!Number.isFinite(maxStudents) || maxStudents < 0) {
+      missingFields.push("max students");
+    }
+
+    if (missingFields.length) {
+      return {
+        reply: `I can prepare a plan save action, but I still need: ${missingFields.join(", ")}.`,
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared an action to save plan ${planName} (${planId}) with max students ${Math.floor(maxStudents)}. Confirm to apply it.`,
+      action: {
+        type: "upsert_plan",
+        description: `Save plan ${planName} (${planId})`,
+        payload: {
+          id: planId,
+          name: planName,
+          maxStudents: Math.floor(maxStudents),
+        },
+      },
+    };
+  }
+
+  const mentionsConfiguredPlan = Boolean(findPlanFromText(prompt, plans));
+  const wantsAssignConfiguredPlan =
+    /\b(assign|apply|switch|move|set|update|change)\b/i.test(prompt) &&
+    /\bplan\b/i.test(prompt) &&
+    mentionsInstitution &&
+    mentionsConfiguredPlan;
+  if (wantsAssignConfiguredPlan) {
+    const targetSchool = findSchoolFromText(prompt, schools);
+    const targetPlan = findPlanFromText(prompt, plans);
+    if (!targetSchool || !targetPlan) {
+      const samplePlans = plans
+        .slice(0, 5)
+        .map((planDoc) => `${planDoc.name || planDoc.id} (${planDoc.id})`)
+        .join(", ");
+      return {
+        reply: `I can prepare a configured-plan assignment, but I need both school name/ID and plan key/name.${samplePlans ? ` Available plans: ${samplePlans}.` : ""}`,
+        action: null,
+      };
+    }
+
+    return {
+      reply: `I prepared an action to assign configured plan ${targetPlan.name || targetPlan.id} to ${targetSchool.name}. Confirm to apply it.`,
+      action: {
+        type: "assign_school_subscription_plan",
+        description: `Assign configured plan ${targetPlan.name || targetPlan.id} to ${targetSchool.name}`,
+        payload: {
+          schoolId: targetSchool.id,
+          planId: targetPlan.id,
         },
       },
     };
@@ -1204,7 +1854,7 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   }
 
   const soundsLikeActionRequest =
-    /\b(create|add|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|provision)\b/i.test(
+    /\b(create|add|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|provision|delete|remove|assign|apply)\b/i.test(
       prompt,
     );
   if (soundsLikeActionRequest) {
@@ -1383,6 +2033,26 @@ const validateAiActionPayload = (action = {}) => {
       canUndo = true;
       break;
     }
+    case "update_school_admin_email": {
+      const adminUid = trimToString(payload?.adminUid, 80);
+      const newEmail = trimToString(payload?.newEmail, 120).toLowerCase();
+      const fullName = trimToString(payload?.fullName, 120);
+      if (!adminUid) missingFields.push("adminUid");
+      if (!newEmail) missingFields.push("newEmail");
+      if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        missingFields.push("valid newEmail");
+      }
+      normalizedPayload = {
+        adminUid,
+        newEmail,
+        ...(fullName ? { fullName } : {}),
+      };
+      if (!description) {
+        description = `Update admin email to ${newEmail || "new email"}`;
+      }
+      canUndo = true;
+      break;
+    }
     case "reset_school_admin_password": {
       const adminUid = trimToString(payload?.adminUid, 80);
       if (!adminUid) missingFields.push("adminUid");
@@ -1471,6 +2141,51 @@ const validateAiActionPayload = (action = {}) => {
       };
       if (!description) {
         description = `Set school ${schoolId || "unknown"} feature plan to ${normalizedPayload.featurePlan}`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "upsert_plan": {
+      const id = trimToString(payload?.id, 80).toLowerCase();
+      const name = trimToString(payload?.name, 120);
+      const maxStudents = Number(payload?.maxStudents);
+      if (!id) missingFields.push("id");
+      if (!name) missingFields.push("name");
+      if (!Number.isFinite(maxStudents) || maxStudents < 0) {
+        missingFields.push("maxStudents");
+      }
+      if (id.includes("/")) {
+        missingFields.push("id(no slash)");
+      }
+      normalizedPayload = {
+        id,
+        name,
+        maxStudents: Number.isFinite(maxStudents) ? Math.floor(maxStudents) : 0,
+      };
+      if (!description) {
+        description = `Save plan ${name || id || "plan"}`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "delete_plan": {
+      const id = trimToString(payload?.id, 80).toLowerCase();
+      if (!id) missingFields.push("id");
+      normalizedPayload = { id };
+      if (!description) {
+        description = `Delete plan ${id || "plan"}`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "assign_school_subscription_plan": {
+      const schoolId = trimToString(payload?.schoolId, 80);
+      const planId = trimToString(payload?.planId, 80).toLowerCase();
+      if (!schoolId) missingFields.push("schoolId");
+      if (!planId) missingFields.push("planId");
+      normalizedPayload = { schoolId, planId };
+      if (!description) {
+        description = `Assign configured plan ${planId || "plan"} to school ${schoolId || "unknown"}`;
       }
       canUndo = true;
       break;
@@ -2237,38 +2952,60 @@ app.post(
         Boolean(OPENAI_API_KEY) && SUPERADMIN_AI_MODE === "openai_first";
       const shouldSkipContext =
         promptIntent.isSmallTalk || promptIntent.asksCapabilities;
-      const needsSchoolContext =
-        promptIntent.wantsSummary ||
-        promptIntent.wantsSchoolAdminAction ||
-        promptIntent.wantsCreateSchool ||
-        promptIntent.wantsSchoolStatusChange ||
-        promptIntent.wantsSchoolPlanChange ||
-        promptIntent.wantsSchoolFeaturePlanChange ||
-        promptIntent.wantsResetPassword;
-      const needsSchoolAdmins =
-        promptIntent.wantsSummary ||
-        promptIntent.wantsSchoolAdminAction ||
-        promptIntent.wantsResetPassword;
-      const needsPaymentContext = promptIntent.asksFinance;
 
       const dataContext = shouldSkipContext
         ? {
             generatedAt: Date.now(),
-            totals: { schools: 0, activeSchools: 0, inactiveSchools: 0 },
+            totals: {
+              schools: 0,
+              activeSchools: 0,
+              inactiveSchools: 0,
+              users: 0,
+              schoolAdmins: 0,
+              teachers: 0,
+              plans: 0,
+              payments: 0,
+              broadcasts: 0,
+              backups: 0,
+              failedLogins: 0,
+              openSuspiciousEvents: 0,
+            },
             schools: [],
+            users: [],
             schoolAdmins: [],
+            plans: [],
             recentActivity: [],
             payments: [],
+            broadcasts: [],
+            backups: [],
+            securityLoginLogs: [],
+            suspiciousEvents: [],
+            auditLogs: [],
+            usersByRole: {},
           }
         : await buildAiDataContext({
-            includeSchools: needsSchoolContext || needsPaymentContext,
-            includeActivity: false,
-            includeSchoolAdmins: needsSchoolAdmins,
-            includePayments: needsPaymentContext,
-            schoolsLimit: needsSchoolContext ? 240 : 80,
-            activityLimit: 0,
-            schoolAdminsLimit: needsSchoolAdmins ? 160 : 0,
-            paymentsLimit: needsPaymentContext ? 400 : 0,
+            includeSchools: true,
+            includeActivity: true,
+            includeSchoolAdmins: true,
+            includeUsers: true,
+            includePlans: true,
+            includePayments: true,
+            includeBroadcasts: true,
+            includeBackups: true,
+            includeSecurityLogs: true,
+            includeSuspiciousEvents: true,
+            includeAuditLogs: true,
+            schoolsLimit: 260,
+            activityLimit: 220,
+            schoolAdminsLimit: 220,
+            usersLimit: 520,
+            plansLimit: 160,
+            paymentsLimit: 520,
+            broadcastsLimit: 180,
+            backupsLimit: 220,
+            securityLogsLimit: 300,
+            suspiciousEventsLimit: 220,
+            auditLogsLimit: 260,
             forceRefresh: promptIntent.asksFreshData,
           });
       let parsed = buildLocalAiResponse({
@@ -2585,6 +3322,91 @@ app.post(
           };
           break;
         }
+        case "update_school_admin_email": {
+          const { adminUid, newEmail, fullName } = payload;
+          const trimmedEmail = trimToString(newEmail, 120).toLowerCase();
+          const trimmedFullName = trimToString(fullName, 120);
+
+          const userRecord = await admin.auth().getUser(adminUid);
+          if (!userRecord) {
+            return res.status(404).json({ error: "Admin user not found" });
+          }
+
+          if (userRecord.email && userRecord.email !== trimmedEmail) {
+            try {
+              const existingUser = await admin.auth().getUserByEmail(trimmedEmail);
+              if (existingUser.uid !== adminUid) {
+                return res
+                  .status(400)
+                  .json({ error: "A user with this email already exists" });
+              }
+            } catch (error) {
+              if (error.code !== "auth/user-not-found") {
+                throw error;
+              }
+            }
+          }
+
+          const userRef = admin.firestore().collection("users").doc(adminUid);
+          const userDoc = await userRef.get();
+          if (!userDoc.exists) {
+            return res.status(404).json({ error: "Admin profile not found" });
+          }
+          const userData = userDoc.data() || {};
+          if (trimToString(userData.role, 32) !== "school_admin") {
+            return res
+              .status(400)
+              .json({ error: "Target user is not a school admin" });
+          }
+
+          const previousEmail = trimToString(
+            userRecord.email || userData.email,
+            120,
+          ).toLowerCase();
+          const previousFullName = trimToString(
+            userData.fullName || userRecord.displayName,
+            120,
+          );
+
+          await admin.auth().updateUser(adminUid, {
+            email: trimmedEmail,
+            ...(trimmedFullName ? { displayName: trimmedFullName } : {}),
+          });
+
+          await userRef.set(
+            {
+              email: trimmedEmail,
+              ...(trimmedFullName ? { fullName: trimmedFullName } : {}),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          schoolId = trimToString(userData.schoolId, 80) || null;
+          entityId = adminUid;
+
+          await logActivity({
+            eventType: "school_admin_email_updated",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: adminUid,
+            meta: {
+              previousEmail,
+              newEmail: trimmedEmail,
+            },
+          });
+
+          actionResult = {
+            adminUid,
+            previousEmail,
+            newEmail: trimmedEmail,
+            previousFullName: previousFullName || null,
+            fullName: trimmedFullName || previousFullName || null,
+            message: "Admin email updated successfully",
+          };
+          break;
+        }
         case "reset_school_admin_password": {
           const { adminUid } = payload;
           const userRecord = await admin.auth().getUser(adminUid);
@@ -2790,6 +3612,175 @@ app.post(
           };
           break;
         }
+        case "upsert_plan": {
+          const { id, name, maxStudents } = payload;
+          const planId = trimToString(id, 80).toLowerCase();
+          const planName = trimToString(name, 120);
+          const max = Math.max(0, Math.floor(Number(maxStudents) || 0));
+          const planRef = admin.firestore().collection("plans").doc(planId);
+          const existingPlanDoc = await planRef.get();
+          const previousPlan = existingPlanDoc.exists
+            ? { id: planId, ...(existingPlanDoc.data() || {}) }
+            : null;
+
+          const nextPlanData = {
+            name: planName,
+            maxStudents: max,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...(existingPlanDoc.exists
+              ? {}
+              : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+          };
+          await planRef.set(nextPlanData, { merge: true });
+
+          entityId = planId;
+          schoolId = null;
+
+          await logActivity({
+            eventType: "plan_upserted",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: planId,
+            meta: {
+              previousName: previousPlan?.name || null,
+              previousMaxStudents: Number(previousPlan?.maxStudents || 0),
+              name: planName,
+              maxStudents: max,
+            },
+          });
+
+          actionResult = {
+            id: planId,
+            previousPlan,
+            plan: {
+              id: planId,
+              name: planName,
+              maxStudents: max,
+            },
+            message: "Plan saved successfully",
+          };
+          break;
+        }
+        case "delete_plan": {
+          const { id } = payload;
+          const planId = trimToString(id, 80).toLowerCase();
+          const planRef = admin.firestore().collection("plans").doc(planId);
+          const planDoc = await planRef.get();
+          if (!planDoc.exists) {
+            return res.status(404).json({ error: "Plan not found" });
+          }
+
+          const assignedSchools = await admin
+            .firestore()
+            .collection("schools")
+            .where("subscription.planId", "==", planId)
+            .limit(10)
+            .get();
+
+          if (!assignedSchools.empty) {
+            const sampleSchoolNames = assignedSchools.docs
+              .slice(0, 3)
+              .map((docSnap) => trimToString(docSnap.data()?.name, 80))
+              .filter(Boolean)
+              .join(", ");
+            return res.status(400).json({
+              error: `Cannot delete plan because it is assigned to ${assignedSchools.size} school(s)${sampleSchoolNames ? `: ${sampleSchoolNames}` : ""}`,
+            });
+          }
+
+          const deletedPlan = { id: planId, ...(planDoc.data() || {}) };
+          await planRef.delete();
+
+          entityId = planId;
+          schoolId = null;
+
+          await logActivity({
+            eventType: "plan_deleted",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: planId,
+            meta: {
+              name: deletedPlan?.name || null,
+              maxStudents: Number(deletedPlan?.maxStudents || 0),
+            },
+          });
+
+          actionResult = {
+            id: planId,
+            deletedPlan,
+            message: "Plan deleted successfully",
+          };
+          break;
+        }
+        case "assign_school_subscription_plan": {
+          const { schoolId: targetSchoolId, planId } = payload;
+          const schoolRef = admin
+            .firestore()
+            .collection("schools")
+            .doc(targetSchoolId.trim());
+          const schoolDoc = await schoolRef.get();
+          if (!schoolDoc.exists) {
+            return res.status(404).json({ error: "School not found" });
+          }
+
+          const planDoc = await admin
+            .firestore()
+            .collection("plans")
+            .doc(trimToString(planId, 80).toLowerCase())
+            .get();
+          if (!planDoc.exists) {
+            return res.status(404).json({ error: "Plan not found" });
+          }
+
+          const planData = planDoc.data() || {};
+          const schoolData = schoolDoc.data() || {};
+          const previousPlanId = trimToString(
+            schoolData?.subscription?.planId,
+            80,
+          );
+          const previousMaxStudents = Number(
+            schoolData?.limits?.maxStudents || 0,
+          );
+          const nextPlanId = trimToString(planDoc.id, 80);
+          const maxStudents = Number(planData.maxStudents || 0);
+
+          await schoolRef.set(
+            {
+              subscription: { planId: nextPlanId },
+              limits: { maxStudents },
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          schoolId = targetSchoolId.trim();
+          entityId = schoolId;
+
+          await logActivity({
+            eventType: "school_subscription_plan_assigned",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId: schoolId,
+            meta: {
+              previousPlanId: previousPlanId || null,
+              planId: nextPlanId,
+              maxStudents,
+            },
+          });
+
+          actionResult = {
+            schoolId,
+            previousPlanId: previousPlanId || null,
+            planId: nextPlanId,
+            previousMaxStudents,
+            maxStudents,
+            message: "Configured plan assigned successfully",
+          };
+          break;
+        }
         default: {
           return res.status(400).json({ error: "Unknown action type" });
         }
@@ -2911,6 +3902,36 @@ app.post(
           await admin.firestore().collection("users").doc(adminUid).delete();
           break;
         }
+        case "update_school_admin_email": {
+          const adminUid = trimToString(result.adminUid || payload.adminUid, 120);
+          const previousEmail = trimToString(
+            result.previousEmail || payload.previousEmail,
+            120,
+          ).toLowerCase();
+          const previousFullName = trimToString(result.previousFullName, 120);
+          if (!adminUid || !previousEmail) {
+            return res.status(400).json({
+              error: "Missing adminUid or previousEmail for undo operation",
+            });
+          }
+          await admin.auth().updateUser(adminUid, {
+            email: previousEmail,
+            ...(previousFullName ? { displayName: previousFullName } : {}),
+          });
+          await admin
+            .firestore()
+            .collection("users")
+            .doc(adminUid)
+            .set(
+              {
+                email: previousEmail,
+                ...(previousFullName ? { fullName: previousFullName } : {}),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          break;
+        }
         case "provision_user": {
           const uid = trimToString(result.uid || payload.uid, 120);
           if (!uid) {
@@ -2979,6 +4000,82 @@ app.post(
             .set(
               {
                 featurePlan: previousFeaturePlan,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          break;
+        }
+        case "upsert_plan": {
+          const planId = trimToString(result.id || payload.id, 80).toLowerCase();
+          if (!planId) {
+            return res
+              .status(400)
+              .json({ error: "Missing id for undo operation" });
+          }
+          const previousPlan = result.previousPlan || null;
+          if (previousPlan && typeof previousPlan === "object") {
+            const restoredPlan = { ...(previousPlan || {}) };
+            delete restoredPlan.id;
+            await admin
+              .firestore()
+              .collection("plans")
+              .doc(planId)
+              .set(
+                {
+                  ...restoredPlan,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+              );
+          } else {
+            await admin.firestore().collection("plans").doc(planId).delete();
+          }
+          break;
+        }
+        case "delete_plan": {
+          const planId = trimToString(result.id || payload.id, 80).toLowerCase();
+          const deletedPlan = result.deletedPlan || null;
+          if (!planId || !deletedPlan) {
+            return res.status(400).json({
+              error: "Missing id or deletedPlan for undo operation",
+            });
+          }
+          const restoredPlan = { ...(deletedPlan || {}) };
+          delete restoredPlan.id;
+          await admin
+            .firestore()
+            .collection("plans")
+            .doc(planId)
+            .set(
+              {
+                ...restoredPlan,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                ...(restoredPlan.createdAt
+                  ? {}
+                  : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+              },
+              { merge: true },
+            );
+          break;
+        }
+        case "assign_school_subscription_plan": {
+          const schoolId = trimToString(result.schoolId || payload.schoolId, 80);
+          if (!schoolId) {
+            return res
+              .status(400)
+              .json({ error: "Missing schoolId for undo operation" });
+          }
+          const previousPlanId = trimToString(result.previousPlanId, 80);
+          const previousMaxStudents = Number(result.previousMaxStudents || 0);
+          await admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId)
+            .set(
+              {
+                subscription: previousPlanId ? { planId: previousPlanId } : {},
+                limits: { maxStudents: previousMaxStudents },
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
               },
               { merge: true },

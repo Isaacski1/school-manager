@@ -8,12 +8,14 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
   where,
   getDocs,
   getCountFromServer,
+  serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
 import { PlanConfig, School } from "../../types";
@@ -32,6 +34,7 @@ import {
   MoreHorizontal,
   X,
   Save,
+  Pencil,
   Trash2,
 } from "lucide-react";
 
@@ -70,6 +73,8 @@ const Schools = () => {
   const [schoolToDelete, setSchoolToDelete] = useState<School | null>(null);
   const [isCreatingSchool, setIsCreatingSchool] = useState(false);
   const [isDeletingSchool, setIsDeletingSchool] = useState(false);
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
+  const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null);
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [logoZoom, setLogoZoom] = useState(1);
   const [logoOffset, setLogoOffset] = useState({ x: 0, y: 0 });
@@ -421,18 +426,71 @@ const Schools = () => {
   };
 
   const handleSavePlan = async () => {
-    if (!planForm.id || !planForm.name) return;
+    const id = planForm.id.trim().toLowerCase();
+    const name = planForm.name.trim();
+    const maxStudents = Number(planForm.maxStudents);
+
+    if (!id || !name) {
+      showToast("Plan key and name are required.", { type: "error" });
+      return;
+    }
+
+    if (id.includes("/")) {
+      showToast("Plan key cannot include '/'.", { type: "error" });
+      return;
+    }
+
+    if (!Number.isFinite(maxStudents) || maxStudents < 0) {
+      showToast("Max students must be 0 or greater.", { type: "error" });
+      return;
+    }
+
+    const payload = {
+      id,
+      name,
+      maxStudents: Math.floor(maxStudents),
+    };
+
+    setIsSavingPlan(true);
     try {
-      await createOrUpdatePlan({
-        id: planForm.id,
-        name: planForm.name,
-        maxStudents: Number(planForm.maxStudents),
+      try {
+        await createOrUpdatePlan(payload);
+      } catch (error: any) {
+        const recoverableBackendError =
+          error?.status === 404 ||
+          error?.code === "CONNECTION_FAILED" ||
+          /cannot connect to the backend/i.test(error?.message || "") ||
+          /http 404/i.test(error?.message || "");
+
+        if (!recoverableBackendError) {
+          throw error;
+        }
+
+        await setDoc(
+          doc(firestore, "plans", payload.id),
+          {
+            name: payload.name,
+            maxStudents: payload.maxStudents,
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
+      setPlanForm(payload);
+      setPlans((prev) => {
+        const next = prev.filter((plan) => plan.id !== payload.id);
+        next.unshift(payload);
+        return next;
       });
       showToast("Plan saved successfully.", { type: "success" });
       await loadPlans();
     } catch (error: any) {
       console.error("Plan save failed", error);
       showToast(error?.message || "Failed to save plan.", { type: "error" });
+    } finally {
+      setIsSavingPlan(false);
     }
   };
 
@@ -452,6 +510,45 @@ const Schools = () => {
     } catch (error: any) {
       console.error("Plan assignment failed", error);
       showToast(error?.message || "Failed to assign plan.", { type: "error" });
+    }
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    if (!planId) return;
+    if (!window.confirm("Delete this plan? This action cannot be undone.")) {
+      return;
+    }
+
+    setDeletingPlanId(planId);
+    try {
+      const assignedSchoolsSnap = await getDocs(
+        query(
+          collection(firestore, "schools"),
+          where("subscription.planId", "==", planId),
+        ),
+      );
+
+      if (!assignedSchoolsSnap.empty) {
+        showToast(
+          `Cannot delete. This plan is assigned to ${assignedSchoolsSnap.size} school(s).`,
+          { type: "error" },
+        );
+        return;
+      }
+
+      await deleteDoc(doc(firestore, "plans", planId));
+      setPlans((prev) => prev.filter((plan) => plan.id !== planId));
+
+      if (planForm.id === planId) {
+        setPlanForm({ id: "starter", name: "Starter", maxStudents: 0 });
+      }
+
+      showToast("Plan deleted successfully.", { type: "success" });
+    } catch (error: any) {
+      console.error("Plan delete failed", error);
+      showToast(error?.message || "Failed to delete plan.", { type: "error" });
+    } finally {
+      setDeletingPlanId(null);
     }
   };
 
@@ -1060,7 +1157,8 @@ const Schools = () => {
               </h3>
               <button
                 onClick={() => setShowPlanModal(false)}
-                className="text-slate-400 hover:text-slate-700"
+                disabled={isSavingPlan}
+                className="text-slate-400 hover:text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <X size={20} />
               </button>
@@ -1074,7 +1172,8 @@ const Schools = () => {
                   </label>
                   <input
                     type="text"
-                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    disabled={isSavingPlan}
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                     value={planForm.id}
                     onChange={(e) =>
                       setPlanForm((prev) => ({ ...prev, id: e.target.value }))
@@ -1088,7 +1187,8 @@ const Schools = () => {
                   </label>
                   <input
                     type="text"
-                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    disabled={isSavingPlan}
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                     value={planForm.name}
                     onChange={(e) =>
                       setPlanForm((prev) => ({ ...prev, name: e.target.value }))
@@ -1103,7 +1203,8 @@ const Schools = () => {
                   <input
                     type="number"
                     min={0}
-                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                    disabled={isSavingPlan}
+                    className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                     value={planForm.maxStudents}
                     onChange={(e) =>
                       setPlanForm((prev) => ({
@@ -1119,18 +1220,29 @@ const Schools = () => {
               <div className="flex justify-end gap-3 mt-4">
                 <button
                   type="button"
+                  disabled={isSavingPlan}
                   onClick={() => setShowPlanModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Close
                 </button>
                 <button
                   type="button"
+                  disabled={isSavingPlan}
                   onClick={handleSavePlan}
-                  className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
+                  className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Save size={18} className="mr-2" />
-                  Save Plan
+                  {isSavingPlan ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={18} className="mr-2" />
+                      Save Plan
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -1174,19 +1286,38 @@ const Schools = () => {
                             Key: {plan.id} · Max Students: {plan.maxStudents}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPlanForm({
-                              id: plan.id,
-                              name: plan.name,
-                              maxStudents: plan.maxStudents,
-                            })
-                          }
-                          className="text-xs text-[#1160A8] hover:underline"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isSavingPlan || deletingPlanId === plan.id}
+                            onClick={() =>
+                              setPlanForm({
+                                id: plan.id,
+                                name: plan.name,
+                                maxStudents: plan.maxStudents,
+                              })
+                            }
+                            className="p-1.5 rounded-md text-[#1160A8] hover:bg-[#E6F0FA] disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Edit plan"
+                            aria-label={`Edit ${plan.name}`}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSavingPlan || deletingPlanId === plan.id}
+                            onClick={() => handleDeletePlan(plan.id)}
+                            className="p-1.5 rounded-md text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Delete plan"
+                            aria-label={`Delete ${plan.name}`}
+                          >
+                            {deletingPlanId === plan.id ? (
+                              <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-red-600"></div>
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}

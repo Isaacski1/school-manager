@@ -1,12 +1,19 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { auth } from "../services/firebase";
-import { logSecurityLogin } from "../services/backendApi";
+import {
+  getAdminMfaPolicyStatus,
+  logSecurityLogin,
+} from "../services/backendApi";
 import {
   getMultiFactorResolver,
-  signInWithEmailAndPassword,
+  PhoneAuthProvider,
+  PhoneMultiFactorGenerator,
+  RecaptchaVerifier,
   sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
 } from "firebase/auth";
 import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 import schoolLogo from "../logo/apple-icon-180x180.png";
@@ -28,6 +35,62 @@ const Login = () => {
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState("");
 
+  // MFA Sign-in State
+  const [mfaResolver, setMfaResolver] = useState<any | null>(null);
+  const [mfaSelectedHintIndex, setMfaSelectedHintIndex] = useState(0);
+  const [mfaVerificationId, setMfaVerificationId] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaError, setMfaError] = useState("");
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
+
+  const isMfaFlow = Boolean(mfaResolver);
+  const mfaHints = useMemo(() => mfaResolver?.hints || [], [mfaResolver]);
+  const selectedMfaHint = useMemo(
+    () => mfaHints[mfaSelectedHintIndex] || null,
+    [mfaHints, mfaSelectedHintIndex],
+  );
+  const selectedMfaHintIsPhone =
+    selectedMfaHint?.factorId === PhoneMultiFactorGenerator.FACTOR_ID;
+
+  const resetMfaFlow = () => {
+    setMfaResolver(null);
+    setMfaSelectedHintIndex(0);
+    setMfaVerificationId("");
+    setMfaCode("");
+    setMfaError("");
+    setMfaLoading(false);
+  };
+
+  const getMfaHintLabel = (hint: any, index: number) => {
+    if (!hint) return `Factor ${index + 1}`;
+    const factorType =
+      hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+        ? "SMS"
+        : hint.factorId || "Second factor";
+    const displayName = hint.displayName ? ` (${hint.displayName})` : "";
+    const phone = hint.phoneNumber ? ` ${hint.phoneNumber}` : "";
+    return `${factorType}${displayName}${phone}`.trim();
+  };
+
+  const getRecaptchaVerifier = () => {
+    if (recaptchaVerifierRef.current) return recaptchaVerifierRef.current;
+    const verifier = new RecaptchaVerifier(auth, "mfa-recaptcha-container", {
+      size: "invisible",
+    });
+    recaptchaVerifierRef.current = verifier;
+    return verifier;
+  };
+
+  const evaluateAdminMfaPolicy = async () => {
+    const policy = await getAdminMfaPolicyStatus();
+    if (!policy.required || policy.compliant) return;
+    throw new Error(
+      policy.message ||
+        "Admin MFA policy requires second-factor enrollment for your role.",
+    );
+  };
+
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
@@ -35,13 +98,24 @@ const Login = () => {
     }
   }, [isAuthenticated, authLoading, navigate]);
 
+  useEffect(() => {
+    return () => {
+      recaptchaVerifierRef.current?.clear();
+      recaptchaVerifierRef.current = null;
+    };
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setFormError("");
+    setMfaError("");
+    let firstFactorSignedIn = false;
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      firstFactorSignedIn = true;
+      await evaluateAdminMfaPolicy();
       await logSecurityLogin({
         status: "SUCCESS",
         email,
@@ -50,36 +124,154 @@ const Login = () => {
       // AuthContext listener will handle the redirection via the useEffect above
     } catch (err: any) {
       console.error(err);
+
+      if (err?.code === "auth/multi-factor-auth-required") {
+        const resolver = getMultiFactorResolver(auth, err);
+        if (!resolver?.hints?.length) {
+          setFormError(
+            "This account requires MFA, but no enrolled second factor was found.",
+          );
+          setLoading(false);
+          return;
+        }
+
+        setMfaResolver(resolver);
+        setMfaSelectedHintIndex(0);
+        setMfaVerificationId("");
+        setMfaCode("");
+        setMfaError("");
+        setFormError("");
+        setLoading(false);
+        return;
+      }
+
       let msg = "Failed to sign in.";
       if (
-        err.code === "auth/invalid-credential" ||
-        err.code === "auth/user-not-found" ||
-        err.code === "auth/wrong-password"
+        err?.code === "auth/invalid-credential" ||
+        err?.code === "auth/user-not-found" ||
+        err?.code === "auth/wrong-password"
       ) {
         msg = "Invalid email or password.";
-      } else if (err.code === "auth/multi-factor-auth-required") {
-        const resolver = getMultiFactorResolver(auth, err);
-        const factorLabel =
-          resolver.hints.length === 1
-            ? "one enrolled factor"
-            : `${resolver.hints.length} enrolled factors`;
-        msg =
-          "This account requires multi-factor authentication. The second-factor verification screen is not complete yet, so complete the sign-in from Firebase-supported admin tooling before enforcing MFA here.";
-        if (resolver.hints.length > 0) {
-          msg += ` Firebase detected ${factorLabel} on this account.`;
-        }
-      } else if (err.code === "auth/too-many-requests") {
+      } else if (err?.code === "auth/too-many-requests") {
         msg = "Too many failed attempts. Please try again later.";
+      } else if (
+        String(err?.message || "").includes(
+          "Admin MFA policy requires MFA enrollment",
+        )
+      ) {
+        msg = err.message;
       }
+
+      if (firstFactorSignedIn) {
+        try {
+          await signOut(auth);
+        } catch {
+          // no-op
+        }
+      }
+
       await logSecurityLogin({
         status: "FAILED",
         email,
-        errorCode: err?.code || null,
+        errorCode: err?.code || "login_failed",
         userAgent: navigator.userAgent,
       });
       setFormError(msg);
       setLoading(false);
     }
+  };
+
+  const handleSendMfaCode = async () => {
+    if (!mfaResolver || !selectedMfaHint) {
+      setMfaError("No second factor is available for this login.");
+      return;
+    }
+
+    if (!selectedMfaHintIsPhone) {
+      setMfaError(
+        "This factor type is not supported in this screen yet. Use an SMS factor or Firebase admin tooling.",
+      );
+      return;
+    }
+
+    setMfaLoading(true);
+    setMfaError("");
+    try {
+      const phoneInfoOptions = {
+        multiFactorHint: selectedMfaHint,
+        session: mfaResolver.session,
+      };
+      const verifier = getRecaptchaVerifier();
+      const phoneAuthProvider = new PhoneAuthProvider(auth);
+      const verificationId = await phoneAuthProvider.verifyPhoneNumber(
+        phoneInfoOptions as any,
+        verifier,
+      );
+      setMfaVerificationId(verificationId);
+      setMfaCode("");
+    } catch (err: any) {
+      console.error("MFA code send failed", err);
+      setMfaError(
+        err?.message || "Failed to send verification code. Please try again.",
+      );
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleVerifyMfaCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaResolver || !mfaVerificationId) {
+      setMfaError("Verification session is missing. Please request a new code.");
+      return;
+    }
+    if (!mfaCode.trim()) {
+      setMfaError("Enter the verification code.");
+      return;
+    }
+
+    setMfaLoading(true);
+    setMfaError("");
+    try {
+      const credential = PhoneAuthProvider.credential(
+        mfaVerificationId,
+        mfaCode.trim(),
+      );
+      const assertion = PhoneMultiFactorGenerator.assertion(credential);
+      await mfaResolver.resolveSignIn(assertion);
+
+      await logSecurityLogin({
+        status: "SUCCESS",
+        email,
+        userAgent: navigator.userAgent,
+      });
+
+      resetMfaFlow();
+    } catch (err: any) {
+      console.error("MFA verification failed", err);
+      let msg = "Could not verify the security code.";
+      if (
+        err?.code === "auth/invalid-verification-code" ||
+        err?.code === "auth/code-expired"
+      ) {
+        msg = "Invalid or expired verification code. Request a new one.";
+      }
+      setMfaError(msg);
+      await logSecurityLogin({
+        status: "FAILED",
+        email,
+        errorCode: err?.code || "mfa_verification_failed",
+        userAgent: navigator.userAgent,
+      });
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const cancelMfaFlow = () => {
+    resetMfaFlow();
+    setFormError("");
+    setLoading(false);
   };
 
   const handlePasswordReset = async (e: React.FormEvent) => {
@@ -116,6 +308,7 @@ const Login = () => {
     setIsResetting(!isResetting);
     setFormError("");
     setResetSuccess("");
+    setMfaError("");
     // Keep email if typed, clear password
     setPassword("");
   };
@@ -193,9 +386,11 @@ const Login = () => {
             School Manager GH
           </h1>
           <p className="text-slate-500 mt-2 text-sm">
-            {isResetting
-              ? "Reset your password"
-              : "Sign in to manage the system"}
+            {isMfaFlow
+              ? "Complete your second-factor verification"
+              : isResetting
+                ? "Reset your password"
+                : "Sign in to manage the system"}
           </p>
         </div>
 
@@ -218,6 +413,14 @@ const Login = () => {
           </div>
         )}
 
+        {/* MFA Error */}
+        {mfaError && (
+          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center">
+            <AlertCircle size={16} className="mr-2 flex-shrink-0" />
+            {mfaError}
+          </div>
+        )}
+
         {/* Success Message (Reset Link Sent) */}
         {resetSuccess && (
           <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 text-sm rounded-lg border border-emerald-100 flex items-center">
@@ -226,7 +429,108 @@ const Login = () => {
           </div>
         )}
 
-        {isResetting ? (
+        {isMfaFlow ? (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Select Second Factor
+              </label>
+              <select
+                value={mfaSelectedHintIndex}
+                onChange={(e) => {
+                  setMfaSelectedHintIndex(Number(e.target.value));
+                  setMfaVerificationId("");
+                  setMfaCode("");
+                  setMfaError("");
+                }}
+                disabled={mfaLoading}
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
+              >
+                {mfaHints.map((hint: any, index: number) => (
+                  <option key={`${hint.uid || index}`} value={index}>
+                    {getMfaHintLabel(hint, index)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {!mfaVerificationId ? (
+              <button
+                type="button"
+                onClick={handleSendMfaCode}
+                disabled={mfaLoading || !selectedMfaHintIsPhone}
+                className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
+                  mfaLoading || !selectedMfaHintIsPhone
+                    ? "opacity-70 cursor-not-allowed"
+                    : ""
+                }`}
+              >
+                {mfaLoading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                    Sending code...
+                  </>
+                ) : (
+                  "Send Verification Code"
+                )}
+              </button>
+            ) : (
+              <form onSubmit={handleVerifyMfaCode} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">
+                    Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={mfaCode}
+                    onChange={(e) =>
+                      setMfaCode(e.target.value.replace(/[^0-9]/g, ""))
+                    }
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
+                    placeholder="Enter code sent to your phone"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={mfaLoading}
+                  className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
+                    mfaLoading ? "opacity-70 cursor-not-allowed" : ""
+                  }`}
+                >
+                  {mfaLoading ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify & Sign In"
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSendMfaCode}
+                  disabled={mfaLoading || !selectedMfaHintIsPhone}
+                  className="w-full text-center text-sm text-[#1160A8] hover:text-[#0B4A82] font-medium"
+                >
+                  Resend code
+                </button>
+              </form>
+            )}
+
+            <button
+              type="button"
+              onClick={cancelMfaFlow}
+              disabled={mfaLoading}
+              className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
+            >
+              <ArrowLeft size={16} className="mr-1" /> Back to Sign In
+            </button>
+          </div>
+        ) : isResetting ? (
           // RESET PASSWORD FORM
           <form onSubmit={handlePasswordReset} className="space-y-6">
             <div>
@@ -336,6 +640,8 @@ const Login = () => {
           </p>
         </div>
       </div>
+
+      <div id="mfa-recaptcha-container" className="hidden" />
     </div>
   );
 };

@@ -266,6 +266,23 @@ export async function logSecurityLogin(payload: {
   return apiRequest("/api/security/log-login", { body: payload });
 }
 
+export type AdminMfaPolicyStatus = {
+  success: boolean;
+  role: string | null;
+  enforcementMode: "off" | "optional" | "required";
+  enabledForSuperAdmins: boolean;
+  enabledForSchoolAdmins: boolean;
+  appliesTo: boolean;
+  required: boolean;
+  enrolledFactorsCount: number;
+  compliant: boolean;
+  message: string;
+};
+
+export async function getAdminMfaPolicyStatus(): Promise<AdminMfaPolicyStatus> {
+  return apiRequest("/api/auth/admin-mfa-policy", { method: "GET" });
+}
+
 export async function initiateSchoolBilling(payload: {
   amount: number;
   currency?: "GHS";
@@ -300,11 +317,15 @@ export type AiChatAction = {
   type:
     | "create_school"
     | "create_school_admin"
+    | "update_school_admin_email"
     | "reset_school_admin_password"
     | "provision_user"
     | "set_school_status"
     | "set_school_plan"
-    | "set_school_feature_plan";
+    | "set_school_feature_plan"
+    | "upsert_plan"
+    | "delete_plan"
+    | "assign_school_subscription_plan";
   description?: string;
   payload?: Record<string, any>;
 };
