@@ -244,7 +244,7 @@ const Reports = () => {
 
       <div
         id="report-content"
-        className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)] print:h-auto print:border-none print:shadow-none"
+        className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)] print:h-auto print:border-none print:shadow-none"
       >
         {/* Header */}
         <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-white to-emerald-50 print:bg-white print:border-none">
@@ -272,7 +272,7 @@ const Reports = () => {
 
             <div className="flex flex-wrap items-center gap-3">
               <select
-                className="border border-slate-200 rounded-full px-4 py-2 text-sm bg-white text-slate-700 shadow-sm no-print focus:ring-2 focus:ring-emerald-200"
+                className="border border-slate-200 rounded-full px-4 py-2 text-sm bg-white text-slate-700 shadow-sm no-print focus:ring-2 focus:ring-emerald-200 w-full sm:w-auto"
                 value={selectedClass}
                 onChange={(e) => setSelectedClass(e.target.value)}
               >
@@ -315,7 +315,7 @@ const Reports = () => {
         {/* Table */}
         <div
           id="table-container"
-          className="flex-1 overflow-auto p-4 print:overflow-visible print:p-0"
+          className="flex-1 min-h-0 overflow-y-auto p-4 print:overflow-visible print:p-0"
         >
           {schoolConfig.currentTerm?.includes("3") && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 no-print">

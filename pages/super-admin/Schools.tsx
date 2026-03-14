@@ -664,14 +664,14 @@ const Schools = () => {
       {/* Create School Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl relative overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white rounded-xl max-w-md w-full p-4 sm:p-6 shadow-xl relative overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex items-start justify-between gap-3 mb-4 sm:mb-6">
               <h3 className="text-lg font-bold text-slate-900">
                 Create New School
               </h3>
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="text-slate-400 hover:text-slate-700"
+                className="shrink-0 text-slate-400 hover:text-slate-700"
               >
                 <X size={20} />
               </button>
@@ -679,7 +679,7 @@ const Schools = () => {
 
             <form
               onSubmit={handleCreateSchool}
-              className="space-y-4 overflow-y-auto pr-1"
+              className="space-y-4 overflow-y-auto pr-0 sm:pr-1 min-h-0"
             >
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -914,8 +914,8 @@ const Schools = () => {
               </div>
 
               <div className="border border-slate-200 rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                  <div className="min-w-0">
                     <h4 className="text-sm font-semibold text-slate-800">
                       Clone from Template
                     </h4>
@@ -926,7 +926,7 @@ const Schools = () => {
                   <button
                     type="button"
                     onClick={() => setCloneFromTemplate((prev) => !prev)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    className={`self-end sm:self-auto relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                       cloneFromTemplate ? "bg-emerald-500" : "bg-slate-200"
                     }`}
                     aria-pressed={cloneFromTemplate}
@@ -980,19 +980,19 @@ const Schools = () => {
                 )}
               </div>
 
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   disabled={isCreatingSchool}
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isCreatingSchool}
-                  className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isCreatingSchool ? (
                     <>
@@ -1053,8 +1053,8 @@ const Schools = () => {
       {/* Plan Management Modal */}
       {showPlanModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative overflow-hidden">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] shadow-xl relative overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 sm:p-6 border-b border-slate-100">
               <h3 className="text-lg font-bold text-slate-900">
                 Plan Configuration
               </h3>
@@ -1066,7 +1066,7 @@ const Schools = () => {
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 px-4 pb-4 pt-4 sm:px-6 sm:pb-6 overflow-y-auto">
               <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -1151,7 +1151,7 @@ const Schools = () => {
                     </button>
                   </div>
                 )}
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {plans.length === 0 ? (
                     <p className="text-sm text-slate-500">
                       {plansLoading

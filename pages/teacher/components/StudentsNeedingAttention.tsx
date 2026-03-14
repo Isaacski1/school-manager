@@ -22,13 +22,13 @@ const StudentsNeedingAttention: React.FC<StudentsNeedingAttentionProps> = ({
   onRetry,
 }) => {
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="font-bold text-slate-800 flex items-center">
+    <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 min-w-0">
+      <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <h3 className="font-bold text-slate-800 flex items-center text-base sm:text-[1.625rem]">
           <AlertTriangle className="mr-2 h-5 w-5 text-amber-500" />
           Students Needing Attention
         </h3>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-500">
+        <span className="self-start sm:self-auto rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-500">
           {items.length} flagged
         </span>
       </div>
@@ -55,23 +55,23 @@ const StudentsNeedingAttention: React.FC<StudentsNeedingAttentionProps> = ({
           No flagged students right now.
         </div>
       ) : (
-        <div className="max-h-[280px] space-y-3 overflow-y-auto pr-1">
+        <div className="max-h-none sm:max-h-[280px] space-y-3 overflow-y-visible sm:overflow-y-auto pr-0 sm:pr-1">
           {items.map((item) => (
             <div
               key={item.studentId}
               className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <UserRound className="h-4 w-4 text-amber-600" />
-                <p className="text-sm font-semibold text-slate-800">
+                <p className="text-sm font-semibold text-slate-800 break-words">
                   {item.studentName}
                 </p>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-slate-500 whitespace-nowrap">
                   {item.className}
                 </span>
               </div>
-              <div className="mt-1 text-xs text-slate-600">
-                {item.reasons.join(" • ")}
+              <div className="mt-1 text-xs text-slate-600 break-words">
+                {item.reasons.join(" | ")}
               </div>
             </div>
           ))}
@@ -82,4 +82,3 @@ const StudentsNeedingAttention: React.FC<StudentsNeedingAttentionProps> = ({
 };
 
 export default StudentsNeedingAttention;
-

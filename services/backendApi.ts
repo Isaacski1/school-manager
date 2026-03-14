@@ -301,7 +301,10 @@ export type AiChatAction = {
     | "create_school"
     | "create_school_admin"
     | "reset_school_admin_password"
-    | "provision_user";
+    | "provision_user"
+    | "set_school_status"
+    | "set_school_plan"
+    | "set_school_feature_plan";
   description?: string;
   payload?: Record<string, any>;
 };

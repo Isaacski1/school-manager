@@ -4019,7 +4019,7 @@ const FeesPayments: React.FC = () => {
             </div>
           </div>
 
-          <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+          <div className={`relative overflow-hidden ${DASH_PANEL} p-4 sm:p-6`}>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -4036,24 +4036,24 @@ const FeesPayments: React.FC = () => {
                 <Filter size={14} /> {filteredLedgerRows.length} records
               </div>
             </div>
-            <div className="mt-4 overflow-x-auto rounded-[24px] border border-white/80 bg-white/70 p-2 shadow-sm">
-              <table className="w-full text-left text-sm">
+            <div className="mt-4 overflow-x-auto rounded-[24px] border border-white/80 bg-white/70 p-2 sm:p-3 shadow-sm">
+              <table className="w-full min-w-[760px] text-left text-sm">
                 <thead>
                   <tr className="text-xs uppercase text-slate-400">
-                    <th className="py-2">Student</th>
-                    <th className="py-2">Class</th>
-                    <th className="py-2">Total Due</th>
-                    <th className="py-2">Paid</th>
-                    <th className="py-2">Balance</th>
-                    <th className="py-2">Status</th>
-                    <th className="py-2"></th>
+                    <th className="py-2 px-2 min-w-[170px]">Student</th>
+                    <th className="py-2 px-2 whitespace-nowrap">Class</th>
+                    <th className="py-2 px-2 whitespace-nowrap">Total Due</th>
+                    <th className="py-2 px-2 whitespace-nowrap">Paid</th>
+                    <th className="py-2 px-2 whitespace-nowrap">Balance</th>
+                    <th className="py-2 px-2 whitespace-nowrap">Status</th>
+                    <th className="py-2 px-2"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     Array.from({ length: 6 }).map((_, index) => (
                       <tr key={index} className="border-t border-slate-100">
-                        <td className="py-3" colSpan={7}>
+                        <td className="py-3 px-2" colSpan={7}>
                           <SkeletonBlock className="h-6 w-full" />
                         </td>
                       </tr>
@@ -4081,24 +4081,24 @@ const FeesPayments: React.FC = () => {
                           key={ledger.id}
                           className="border-t border-slate-100"
                         >
-                          <td className="py-3 font-medium text-slate-800">
+                          <td className="py-3 px-2 font-medium text-slate-800">
                             {student?.name || ledger.studentId}
                           </td>
-                          <td className="py-3 text-slate-500">
+                          <td className="py-3 px-2 whitespace-nowrap text-slate-500">
                             {CLASSES_LIST.find(
                               (cls) => cls.id === ledger.classId,
                             )?.name || "-"}
                           </td>
-                          <td className="py-3 text-slate-600">
+                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
                             {formatMoney(totalDue)}
                           </td>
-                          <td className="py-3 text-slate-600">
+                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
                             {formatMoney(totalPaid)}
                           </td>
-                          <td className="py-3 text-slate-600">
+                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
                             {formatMoney(balance)}
                           </td>
-                          <td className="py-3">
+                          <td className="py-3 px-2 whitespace-nowrap">
                             <span
                               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                                 status === "paid"
@@ -4111,12 +4111,12 @@ const FeesPayments: React.FC = () => {
                               {status}
                             </span>
                           </td>
-                          <td className="py-3 text-right">
+                          <td className="py-3 px-2 text-right whitespace-nowrap">
                             <button
                               onClick={() =>
                                 openLedgerPayments(ledger.id, ledger.studentId)
                               }
-                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 whitespace-nowrap"
                             >
                               <FilePenLine size={14} /> Edit
                             </button>
@@ -4387,13 +4387,13 @@ const FeesPayments: React.FC = () => {
           )}
           {ledgerPaymentModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur">
-              <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-                <div className="flex items-start justify-between bg-gradient-to-r from-amber-500 via-rose-500 to-violet-500 px-6 py-5 text-white">
-                  <div>
+              <div className="flex max-h-[88vh] w-full max-w-[95vw] sm:max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-3 bg-gradient-to-r from-amber-500 via-rose-500 to-violet-500 px-4 py-4 text-white sm:px-6 sm:py-5">
+                  <div className="min-w-0">
                     <p className="text-xs uppercase tracking-[0.2em] text-white/70">
                       Student Payments
                     </p>
-                    <h3 className="text-xl font-semibold">
+                    <h3 className="text-lg font-semibold sm:text-xl">
                       Edit Recorded Payments
                     </h3>
                   </div>
@@ -4402,19 +4402,19 @@ const FeesPayments: React.FC = () => {
                       setLedgerPaymentModal(null);
                       setEditingPayment(null);
                     }}
-                    className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/80 hover:text-white"
+                    className="shrink-0 whitespace-nowrap rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/80 hover:text-white"
                   >
                     Close
                   </button>
                 </div>
 
-                <div className="px-6 py-6">
+                <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6">
                   {selectedLedgerSummary && (
                     <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
                       <p className="text-xs uppercase tracking-[0.2em] text-indigo-500">
                         Balance timeline
                       </p>
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                      <div className="mt-3 grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-4">
                         <div className="rounded-xl border border-white/60 bg-white/80 px-3 py-2 text-xs text-slate-600">
                           <span className="block text-[11px] text-slate-400">
                             Total Due
@@ -4460,9 +4460,9 @@ const FeesPayments: React.FC = () => {
                       ledgerPayments.map((payment) => (
                         <div
                           key={payment.id}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3"
+                          className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                         >
-                          <div>
+                          <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900">
                               {payment.feeName}
                             </p>
@@ -4471,13 +4471,13 @@ const FeesPayments: React.FC = () => {
                               {new Date(payment.createdAt).toLocaleDateString()}
                             </p>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
                             <span className="text-sm font-semibold text-slate-800">
                               {formatMoney(payment.amountPaid)}
                             </span>
                             <button
                               onClick={() => startEditPayment(payment)}
-                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 whitespace-nowrap"
                             >
                               <FilePenLine size={14} /> Edit
                             </button>
@@ -4489,18 +4489,18 @@ const FeesPayments: React.FC = () => {
 
                   {editingPayment && (
                     <div className="mt-6 rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
                           <p className="text-xs uppercase tracking-[0.2em] text-amber-500">
                             Edit Payment
                           </p>
-                          <p className="text-sm font-semibold text-slate-900">
+                          <p className="text-sm font-semibold text-slate-900 break-words">
                             {editingPayment.feeName}
                           </p>
                         </div>
                         <button
                           onClick={() => setEditingPayment(null)}
-                          className="text-xs font-semibold text-slate-500"
+                          className="text-left text-xs font-semibold text-slate-500 sm:text-right"
                         >
                           Cancel
                         </button>
@@ -4561,7 +4561,7 @@ const FeesPayments: React.FC = () => {
                       <div className="mt-4 flex justify-end">
                         <button
                           onClick={handleSavePaymentEdit}
-                          className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
+                          className="w-full rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white sm:w-auto"
                         >
                           Save Changes
                         </button>

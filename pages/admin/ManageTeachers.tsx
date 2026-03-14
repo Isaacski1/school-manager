@@ -450,7 +450,9 @@ const ManageTeachers = () => {
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Email</th>
                 <th className="px-6 py-3">Account Status</th>
-                <th className="px-6 py-3">Assigned Classes</th>
+                <th className="px-6 py-3 whitespace-nowrap">
+                  Assigned Classes
+                </th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -505,13 +507,13 @@ const ManageTeachers = () => {
                         )}
                       </td>
 
-                      <td className="px-6 py-3">
+                      <td className="px-6 py-3 min-w-[140px]">
                         <div className="flex flex-wrap gap-1">
                           {classNames.length > 0 ? (
                             classNames.map((name) => (
                               <span
                                 key={name}
-                                className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
+                                className="inline-flex items-center whitespace-nowrap px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
                               >
                                 {name}
                               </span>

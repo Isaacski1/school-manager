@@ -437,16 +437,18 @@ const ManageBackups = () => {
     rows: Partial<Backup>[],
     icon: React.ReactNode,
   ) => (
-    <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.45)]">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-5">
-        <div className="flex items-center gap-4">
-          <div className="rounded-2xl bg-slate-950 p-3 text-white">{icon}</div>
-          <div>
-            <h2 className="text-2xl font-bold text-slate-950">{title}</h2>
+    <section className="rounded-[32px] border border-slate-200 bg-white p-4 sm:p-6 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.45)]">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <div className="rounded-2xl bg-slate-950 p-3 text-white shrink-0">{icon}</div>
+          <div className="min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-950 break-words">
+              {title}
+            </h2>
             <p className="text-sm text-slate-600">{subtitle}</p>
           </div>
         </div>
-        <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700">
+        <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 shrink-0">
           {rows.length}
         </div>
       </div>
@@ -463,12 +465,12 @@ const ManageBackups = () => {
             const topMetrics = getTopMetrics(entry);
 
             return (
-              <article
+          <article
                 key={entry.id}
-                className={`rounded-[28px] border p-5 shadow-[0_24px_70px_-48px_rgba(15,23,42,0.8)] ${style.card}`}
+                className={`rounded-[28px] border p-4 sm:p-5 shadow-[0_24px_70px_-48px_rgba(15,23,42,0.8)] ${style.card}`}
               >
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="space-y-3">
+                  <div className="min-w-0 space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${style.badge}`}
@@ -482,7 +484,7 @@ const ManageBackups = () => {
                       ) : null}
                     </div>
                     <div>
-                      <h3 className="text-xl font-bold text-slate-950">
+                      <h3 className="text-lg sm:text-xl font-bold text-slate-950 break-words">
                         {getEntryTitle(entry)}
                       </h3>
                       <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
@@ -498,12 +500,14 @@ const ManageBackups = () => {
                       ].map((item) => (
                         <div
                           key={`${entry.id}_${item.label}`}
-                          className="rounded-2xl border border-white/80 bg-white/75 px-4 py-3"
+                          className={`rounded-2xl border border-white/80 bg-white/75 px-4 py-3 ${
+                            item.label === "Created" ? "col-span-2 md:col-span-1" : ""
+                          }`}
                         >
                           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
                             {item.label}
                           </p>
-                          <p className="mt-2 font-semibold text-slate-900">
+                          <p className="mt-2 text-sm sm:text-base font-semibold leading-6 text-slate-900 break-words">
                             {item.value}
                           </p>
                         </div>
@@ -529,7 +533,7 @@ const ManageBackups = () => {
                     <button
                       onClick={() => handleView(entry.id || "")}
                       title="View Backup"
-                      className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+                      className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50 whitespace-nowrap"
                     >
                       <Eye size={16} className="mr-2" /> View
                     </button>
@@ -538,7 +542,7 @@ const ManageBackups = () => {
                         onClick={() => handleDownload(entry.id || "")}
                         disabled={isTrialPlan}
                         title="Download Backup"
-                        className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-60"
+                        className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-60 whitespace-nowrap"
                       >
                         <Download size={16} className="mr-2" /> Download
                       </button>
@@ -555,14 +559,14 @@ const ManageBackups = () => {
                           ? "Restore Backup"
                           : "Restore Recovery Record"
                       }
-                      className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
+                      className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100 disabled:opacity-60 whitespace-nowrap"
                     >
                       <RefreshCcw size={16} className="mr-2" /> Restore
                     </button>
                     <button
                       onClick={() => setEntryToDelete(entry)}
                       disabled={isTrialPlan || busyAction !== null}
-                      className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-900 transition hover:bg-rose-100 disabled:opacity-60"
+                      className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-900 transition hover:bg-rose-100 disabled:opacity-60 whitespace-nowrap"
                     >
                       <Trash2 size={16} className="mr-2" /> Delete
                     </button>

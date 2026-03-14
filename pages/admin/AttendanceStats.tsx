@@ -118,16 +118,16 @@ const AttendanceStats = () => {
 
   return (
     <Layout title="Attendance Statistics">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)]">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)]">
         {/* Header & Filters */}
-        <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row justify-between xl:items-center gap-4 bg-slate-50">
+        <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col lg:flex-row justify-between lg:items-center gap-4 bg-slate-50">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                 Select Class
               </label>
               <select
-                className="border border-slate-300 rounded-md px-3 py-2 text-sm w-48 bg-white text-slate-900"
+                className="border border-slate-300 rounded-md px-3 py-2 text-sm w-full sm:w-48 bg-white text-slate-900"
                 value={selectedClass}
                 onChange={(e) => setSelectedClass(e.target.value)}
               >
@@ -166,108 +166,110 @@ const AttendanceStats = () => {
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-0">
           {loading ? (
             <div className="text-center py-20 text-slate-400">
               Calculating Attendance Data...
             </div>
           ) : (
-            <table className="w-full text-left text-sm text-slate-600">
-              <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200 sticky top-0 z-10">
-                <tr>
-                  <th className="px-6 py-4">Student Name</th>
-                  <th className="px-6 py-4 text-center">Days Present</th>
-                  <th className="px-6 py-4 text-center">Total School Days</th>
-                  <th className="px-6 py-4 w-1/3">Attendance Rate</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {stats.length === 0 ? (
+            <div className="w-full overflow-auto">
+              <table className="w-full min-w-[680px] text-left text-sm text-slate-600">
+                <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200 sticky top-0 z-10">
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-400">
-                      No students found in this class.
-                    </td>
+                    <th className="px-6 py-4">Student Name</th>
+                    <th className="px-6 py-4 text-center">Days Present</th>
+                    <th className="px-6 py-4 text-center">Total School Days</th>
+                    <th className="px-6 py-4 w-1/3">Attendance Rate</th>
                   </tr>
-                ) : (
-                  stats.map((s) => {
-                    // Color Logic
-                    let barColor = "bg-emerald-500";
-                    let badgeColor =
-                      "text-emerald-700 bg-emerald-50 border-emerald-200";
-                    let rowClass = "hover:bg-slate-50";
-                    let warningIcon = null;
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {stats.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-8 text-center text-slate-400">
+                        No students found in this class.
+                      </td>
+                    </tr>
+                  ) : (
+                    stats.map((s) => {
+                      // Color Logic
+                      let barColor = "bg-emerald-500";
+                      let badgeColor =
+                        "text-emerald-700 bg-emerald-50 border-emerald-200";
+                      let rowClass = "hover:bg-slate-50";
+                      let warningIcon = null;
 
-                    if (s.percentage < 50) {
-                      barColor = "bg-red-500";
-                      badgeColor =
-                        "text-[#0B4A82] bg-[#E6F0FA] border-[#E6F0FA]";
-                      rowClass = "bg-[#E6F0FA]/60 hover:bg-[#E6F0FA]/80";
-                      warningIcon = (
-                        <span title="Critical Attendance">
-                          <AlertTriangle
-                            size={14}
-                            className="text-[#0B4A82] ml-2"
-                          />
-                        </span>
-                      );
-                    } else if (s.percentage < 90) {
-                      barColor = "bg-amber-400";
-                      badgeColor =
-                        "text-amber-700 bg-amber-50 border-amber-200";
-                    }
-
-                    return (
-                      <tr
-                        key={s.id}
-                        className={`${rowClass} transition-colors border-b border-slate-100 last:border-0`}
-                      >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center">
-                            <div
-                              className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white mr-3 shadow-sm ${s.gender === "Male" ? "bg-[#0B4A82]" : "bg-pink-500"}`}
-                            >
-                              {s.name.charAt(0)}
-                            </div>
-                            <div>
-                              <p className="font-semibold text-slate-800 flex items-center">
-                                {s.name}
-                                {warningIcon}
-                              </p>
-                              <p className="text-xs text-slate-500">
-                                {s.gender}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="font-bold text-slate-800 text-lg">
-                            {s.presentDays}
+                      if (s.percentage < 50) {
+                        barColor = "bg-red-500";
+                        badgeColor =
+                          "text-[#0B4A82] bg-[#E6F0FA] border-[#E6F0FA]";
+                        rowClass = "bg-[#E6F0FA]/60 hover:bg-[#E6F0FA]/80";
+                        warningIcon = (
+                          <span title="Critical Attendance">
+                            <AlertTriangle
+                              size={14}
+                              className="text-[#0B4A82] ml-2"
+                            />
                           </span>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="text-slate-500">{s.totalDays}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+                        );
+                      } else if (s.percentage < 90) {
+                        barColor = "bg-amber-400";
+                        badgeColor =
+                          "text-amber-700 bg-amber-50 border-amber-200";
+                      }
+
+                      return (
+                        <tr
+                          key={s.id}
+                          className={`${rowClass} transition-colors border-b border-slate-100 last:border-0`}
+                        >
+                          <td className="px-6 py-4">
+                            <div className="flex items-center">
                               <div
-                                className={`h-full ${barColor} transition-all duration-500 rounded-full`}
-                                style={{ width: `${s.percentage}%` }}
-                              ></div>
+                                className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white mr-3 shadow-sm ${s.gender === "Male" ? "bg-[#0B4A82]" : "bg-pink-500"}`}
+                              >
+                                {s.name.charAt(0)}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-800 flex items-center">
+                                  {s.name}
+                                  {warningIcon}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {s.gender}
+                                </p>
+                              </div>
                             </div>
-                            <span
-                              className={`text-xs font-bold px-2.5 py-1 rounded border ${badgeColor} min-w-[3.5rem] text-center shadow-sm`}
-                            >
-                              {s.percentage}%
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className="font-bold text-slate-800 text-lg">
+                              {s.presentDays}
                             </span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className="text-slate-500">{s.totalDays}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+                                <div
+                                  className={`h-full ${barColor} transition-all duration-500 rounded-full`}
+                                  style={{ width: `${s.percentage}%` }}
+                                ></div>
+                              </div>
+                              <span
+                                className={`text-xs font-bold px-2.5 py-1 rounded border ${badgeColor} min-w-[3.5rem] text-center shadow-sm`}
+                              >
+                                {s.percentage}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>

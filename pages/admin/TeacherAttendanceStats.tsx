@@ -85,9 +85,9 @@ const TeacherAttendanceStats = () => {
 
   return (
     <Layout title="Teacher Attendance Analytics">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-[calc(100vh-8rem)]">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)]">
         {/* Header & Filters */}
-        <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row justify-between xl:items-center gap-4 bg-slate-50">
+        <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col lg:flex-row justify-between lg:items-center gap-4 bg-slate-50">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <h3 className="text-lg font-semibold text-slate-800">
               Teacher Attendance Overview
@@ -100,7 +100,7 @@ const TeacherAttendanceStats = () => {
                 </label>
                 <input
                   type="date"
-                  className="border border-slate-300 rounded-md px-3 py-2 text-sm w-40 bg-white text-slate-900"
+                  className="border border-slate-300 rounded-md px-3 py-2 text-sm w-full sm:w-40 bg-white text-slate-900"
                   value={termStartDate}
                   onChange={(e) => setTermStartDate(e.target.value)}
                 />
@@ -112,7 +112,7 @@ const TeacherAttendanceStats = () => {
                 </label>
                 <input
                   type="date"
-                  className="border border-slate-300 rounded-md px-3 py-2 text-sm w-40 bg-white text-slate-900"
+                  className="border border-slate-300 rounded-md px-3 py-2 text-sm w-full sm:w-40 bg-white text-slate-900"
                   value={vacationDate}
                   onChange={(e) => setVacationDate(e.target.value)}
                 />
@@ -134,13 +134,13 @@ const TeacherAttendanceStats = () => {
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-0">
           {loading ? (
             <div className="text-center py-20 text-slate-400">
               Analyzing Teacher Attendance Data...
             </div>
           ) : (
-            <div className="p-6 space-y-6">
+            <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
               {analytics.length === 0 ? (
                 <div className="text-center py-20 text-slate-400">
                   No teacher attendance data found.
@@ -149,22 +149,22 @@ const TeacherAttendanceStats = () => {
                 analytics.map((teacher) => (
                   <div
                     key={teacher.teacherId}
-                    className="bg-slate-50 rounded-xl p-6 border border-slate-200"
+                    className="bg-slate-50 rounded-xl p-4 sm:p-6 border border-slate-200"
                   >
                     {/* Teacher Header */}
-                    <div className="flex items-center justify-between mb-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#0B4A82] border-2 border-[#E6F0FA] flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                    <div className="mb-4 sm:mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+                        <div className="w-12 h-12 rounded-full bg-[#0B4A82] border-2 border-[#E6F0FA] flex items-center justify-center text-white font-bold text-lg shadow-lg shrink-0">
                           {teacher.teacherName.charAt(0)}
                         </div>
-                        <div>
-                          <h3 className="text-xl font-bold text-slate-800">
+                        <div className="min-w-0">
+                          <h3 className="text-lg sm:text-xl font-bold text-slate-800 break-words">
                             {teacher.teacherName}
                           </h3>
-                          <div className="flex items-center gap-4 mt-1">
-                            <div className="flex items-center gap-2">
+                          <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+                            <div className="flex items-center gap-2 min-w-0">
                               <Calendar size={14} className="text-slate-500" />
-                              <span className="text-sm text-slate-600">
+                              <span className="text-xs sm:text-sm text-slate-600 break-words">
                                 {teacher.termStartDate} -{" "}
                                 {teacher.vacationDate || "Present"}
                               </span>

@@ -87,21 +87,21 @@ const SecuritySettings: React.FC = () => {
 
   return (
     <Layout title="Security Settings">
-      <div className="p-6 space-y-6">
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900">
+      <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">
             Admin MFA Policy
           </h1>
-          <p className="text-slate-600">
+          <p className="mt-2 text-sm text-slate-600 sm:text-base">
             Store the platform policy for two-factor authentication on admin
             accounts. Firebase enrollment and challenge UI still needs to be
             completed before strict enforcement is switched on.
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-          <div className="flex items-center justify-between gap-4">
-            <div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <div className="flex items-start justify-between gap-3 sm:items-center sm:gap-4">
+            <div className="min-w-0 flex-1">
               <h2 className="font-semibold text-slate-800">
                 Enable MFA for Super Admins
               </h2>
@@ -112,7 +112,7 @@ const SecuritySettings: React.FC = () => {
             <button
               onClick={() => toggleAudience("enabledForSuperAdmins")}
               disabled={saving || !settings}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center self-start rounded-full transition-colors sm:self-auto ${
                 settings?.enabledForSuperAdmins
                   ? "bg-emerald-500"
                   : "bg-slate-200"
@@ -128,8 +128,8 @@ const SecuritySettings: React.FC = () => {
             </button>
           </div>
 
-          <div className="mt-6 flex items-center justify-between gap-4">
-            <div>
+          <div className="mt-6 flex items-start justify-between gap-3 sm:items-center sm:gap-4">
+            <div className="min-w-0 flex-1">
               <h2 className="font-semibold text-slate-800">
                 Enable MFA for School Admins
               </h2>
@@ -140,7 +140,7 @@ const SecuritySettings: React.FC = () => {
             <button
               onClick={() => toggleAudience("enabledForSchoolAdmins")}
               disabled={saving || !settings}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center self-start rounded-full transition-colors sm:self-auto ${
                 settings?.enabledForSchoolAdmins
                   ? "bg-emerald-500"
                   : "bg-slate-200"
@@ -162,7 +162,7 @@ const SecuritySettings: React.FC = () => {
               Keep this on optional until enrollment and verification steps are
               fully rolled out for admins.
             </p>
-            <div className="mt-4 flex flex-wrap gap-3">
+            <div className="mt-4 flex flex-wrap gap-2 sm:gap-3">
               {(["off", "optional", "required"] as const).map((mode) => {
                 const active = settings?.enforcementMode === mode;
                 return (

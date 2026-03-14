@@ -1202,8 +1202,8 @@ const SystemSettings = () => {
 
             {/* Subject Management */}
             {/* Subject Management */}
-            <div className="bg-emerald-100 rounded-2xl shadow-sm border border-slate-100 p-6">
-              <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center">
+            <div className="bg-emerald-100 rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6 overflow-hidden">
+              <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6 text-slate-800 flex items-center">
                 <Book className="mr-2 text-[#0B4A82]" size={24} />
                 Manage Class Subjects
               </h2>
@@ -1240,24 +1240,27 @@ const SystemSettings = () => {
                 </select>
               </div>
 
-              <form onSubmit={handleAddSubject} className="flex gap-2 mb-6">
+              <form
+                onSubmit={handleAddSubject}
+                className="grid grid-cols-[1fr_auto] gap-2 mb-5 sm:mb-6"
+              >
                 <input
                   type="text"
                   required
-                  className="flex-1 border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#1160A8] outline-none text-sm"
+                  className="min-w-0 border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#1160A8] outline-none text-sm"
                   placeholder="New subject name..."
                   value={newSubjectName}
                   onChange={(e) => setNewSubjectName(e.target.value)}
                 />
                 <button
                   type="submit"
-                  className="bg-[#1160A8] text-white px-4 py-2 rounded-xl hover:bg-[#0B4A82] transition-colors"
+                  className="h-11 w-11 shrink-0 inline-flex items-center justify-center bg-[#1160A8] text-white rounded-xl hover:bg-[#0B4A82] transition-colors"
                 >
                   <Plus size={20} />
                 </button>
               </form>
 
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              <div className="space-y-2 max-h-none sm:max-h-[320px] overflow-y-visible sm:overflow-y-auto pr-1 sm:pr-2">
                 {currentClassSubjects.length === 0 ? (
                   <p className="text-sm text-slate-500 text-center italic">
                     No subjects configured for this class. Add some above!
@@ -1266,13 +1269,13 @@ const SystemSettings = () => {
                   currentClassSubjects.map((subject) => (
                     <div
                       key={subject}
-                      className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group"
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 group"
                     >
                       {editingSubject?.original === subject ? (
-                        <div className="flex items-center flex-1 gap-2">
+                        <div className="flex items-center flex-1 min-w-0 gap-2">
                           <input
                             type="text"
-                            className="flex-1 border border-slate-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] outline-none"
+                            className="flex-1 min-w-0 border border-slate-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] outline-none"
                             value={editingSubject.current}
                             onChange={(e) =>
                               setEditingSubject({
@@ -1297,10 +1300,10 @@ const SystemSettings = () => {
                         </div>
                       ) : (
                         <>
-                          <span className="text-sm font-medium text-slate-700">
+                          <span className="text-sm font-medium text-slate-700 break-words">
                             {subject}
                           </span>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex gap-1 self-end sm:self-auto opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => startEditSubject(subject)}
                               className="text-slate-400 hover:text-[#1160A8] p-1.5 hover:bg-[#E6F0FA] rounded-md transition-colors"
@@ -1324,12 +1327,12 @@ const SystemSettings = () => {
 
             {/* Term Backup Section */}
             {canUseBackups && (
-              <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-6">
-                <h2 className="text-xl font-bold mb-6 text-white flex items-center">
+              <div className="bg-gradient-to-br from-[#2A1206] via-[#1F2937] to-[#111827] rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-amber-500/20 p-4 sm:p-6">
+                <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6 text-white flex items-center">
                   <Save className="mr-2 text-amber-200" size={24} />
                   Recovery and Full Backup
                 </h2>
-                <p className="text-sm text-slate-300 mb-4">
+                <p className="text-sm text-slate-300 mb-4 leading-relaxed">
                   Create a full-system snapshot of your school workspace,
                   including settings, users, finance data, notices, timetables,
                   academic records, and activity history. Deleted records and
@@ -1340,17 +1343,17 @@ const SystemSettings = () => {
                   onClick={handleCreateSystemBackup}
                   disabled={isCreatingBackup || isTrialPlan}
                   title="Create Full System Backup"
-                  className="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-full hover:bg-purple-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed text-sm sm:text-base"
                 >
                   {isCreatingBackup ? (
                     <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
                       Creating...
                     </>
                   ) : (
                     <>
-                      <Save size={16} className="mr-2" /> Create Full System
-                      Backup
+                      <Save size={16} />
+                      <span>Create Full System Backup</span>
                     </>
                   )}
                 </button>
@@ -1422,15 +1425,15 @@ const SystemSettings = () => {
           </div>
 
           {/* Right Column: Notices Management */}
-          <div className="bg-red-800 rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-white/10 p-6 flex flex-col h-full max-h-[720px]">
-            <h2 className="text-xl font-bold mb-6 text-white flex items-center">
+          <div className="bg-red-800 rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-white/10 p-4 sm:p-6 flex flex-col h-auto lg:h-full max-h-none lg:max-h-[720px]">
+            <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6 text-white flex items-center">
               <Megaphone className="mr-2 text-emerald-200" size={24} />
               School Notices
             </h2>
 
             <form
               onSubmit={handleAddNotice}
-              className="mb-6 bg-white/5 p-4 rounded-2xl border border-white/10"
+              className="mb-5 sm:mb-6 bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/10"
             >
               <div className="mb-3">
                 <label className="block text-sm font-medium text-slate-300 mb-1">
@@ -1460,8 +1463,8 @@ const SystemSettings = () => {
                   onChange={(e) => setNewNotice(e.target.value)}
                 />
               </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                <div className="flex items-center flex-wrap gap-4">
                   <label className="flex items-center text-sm cursor-pointer text-white">
                     <input
                       type="radio"
@@ -1486,7 +1489,7 @@ const SystemSettings = () => {
                 <button
                   type="submit"
                   disabled={isAddingNotice}
-                  className="bg-emerald-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-emerald-700 transition-colors flex items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto bg-emerald-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-emerald-700 transition-colors inline-flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {isAddingNotice ? (
                     <>
@@ -1502,7 +1505,7 @@ const SystemSettings = () => {
               </div>
             </form>
 
-            <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+            <div className="flex-1 overflow-visible lg:overflow-y-auto pr-0 lg:pr-1 min-h-0">
               <h3 className="text-sm font-bold text-slate-100 uppercase mb-3">
                 Active Notices
               </h3>
@@ -1515,10 +1518,10 @@ const SystemSettings = () => {
                   notices.map((notice) => (
                     <div
                       key={notice.id}
-                      className="flex justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-900 transition-colors"
+                      className="flex gap-2 sm:gap-3 justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-900 transition-colors"
                     >
                       <div
-                        className={`border-l-2 pl-3 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
+                        className={`border-l-2 pl-3 min-w-0 flex-1 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
                       >
                         <p className="text-sm text-slate-100 font-medium">
                           {notice.message}
@@ -1530,7 +1533,7 @@ const SystemSettings = () => {
                       </div>
                       <button
                         onClick={() => handleDeleteNotice(notice.id)}
-                        className="text-slate-300 hover:text-[#1160A8] transition-colors p-1"
+                        className="shrink-0 text-slate-300 hover:text-[#1160A8] transition-colors p-1"
                         title="Delete Notice"
                       >
                         <Trash2 size={16} />

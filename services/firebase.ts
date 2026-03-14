@@ -8,12 +8,12 @@ import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 
 const fallbackFirebaseConfig = {
-  apiKey: "AIzaSyCHlCLhumJn50nw2JBgJTGeIH_6GKzjFbA",
-  authDomain: "noble-care-management-system.firebaseapp.com",
-  projectId: "noble-care-management-system",
-  storageBucket: "noble-care-management-system.firebasestorage.app",
-  messagingSenderId: "573085015524",
-  appId: "1:573085015524:web:29ae8a509813ec1199fbf1",
+  apiKey: "AIzaSyCt11AcFi9JbwedTdOGRBNOsG-h_0psGBo",
+  authDomain: "school-manager-gh.firebaseapp.com",
+  projectId: "school-manager-gh",
+  storageBucket: "school-manager-gh.firebasestorage.app",
+  messagingSenderId: "69639965950",
+  appId: "1:69639965950:web:afd5727a824b7f7ac2e9af",
 };
 
 const envFirebaseConfig = {
@@ -82,3 +82,4 @@ if (typeof window !== "undefined") {
     );
   }
 }
+

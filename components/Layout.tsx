@@ -315,7 +315,15 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     icon: any;
     label: string;
   }) => {
-    const isActive = location.pathname === href;
+    const [targetPath, queryString = ""] = href.split("?");
+    const targetQuery = new URLSearchParams(queryString);
+    const currentQuery = new URLSearchParams(location.search);
+    const matchesQuery =
+      !queryString ||
+      Array.from(targetQuery.entries()).every(
+        ([key, value]) => currentQuery.get(key) === value,
+      );
+    const isActive = location.pathname === targetPath && matchesQuery;
     return (
       <Link
         to={href}
@@ -402,7 +410,16 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         <nav className="flex-1 py-4 sm:py-6 space-y-1">
           {isSuperAdmin ? (
             <>
-              <NavItem href="/" icon={LayoutDashboard} label="Dashboard" />
+              <NavItem
+                href="/super-admin/dashboard"
+                icon={LayoutDashboard}
+                label="Dashboard"
+              />
+              <NavItem
+                href="/super-admin/dashboard?assistant=1"
+                icon={MessageSquare}
+                label="Isaacski AI"
+              />
               <NavItem
                 href="/super-admin/schools"
                 icon={GraduationCap}

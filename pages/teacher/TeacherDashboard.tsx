@@ -1429,7 +1429,7 @@ const TeacherDashboard = () => {
 
           {/* Class Overview Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 min-w-0">
               <h4 className="font-bold text-slate-800 mb-2">Class Health</h4>
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
@@ -1450,7 +1450,7 @@ const TeacherDashboard = () => {
                 </div>
               </div>
             </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 min-w-0">
               <h4 className="font-bold text-slate-800 mb-2">
                 Average Performance
               </h4>
@@ -1466,7 +1466,7 @@ const TeacherDashboard = () => {
                 )}
               </div>
             </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 min-w-0">
               <h4 className="font-bold text-slate-800 mb-2">
                 Behavior Average
               </h4>
@@ -1482,19 +1482,30 @@ const TeacherDashboard = () => {
                 )}
               </div>
             </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 min-w-0">
               <h4 className="font-bold text-slate-800 mb-2">
                 Subject Standings
               </h4>
-              <div className="space-y-1 max-h-20 overflow-y-auto">
-                {subjectStandings.slice(0, 3).map((s) => (
-                  <div key={s.subject} className="flex justify-between text-xs">
-                    <span>{s.subject}:</span>
-                    <span className="font-semibold">
-                      {s.topStudent || "N/A"}
-                    </span>
-                  </div>
-                ))}
+              <div className="space-y-2 max-h-none sm:max-h-24 overflow-y-visible sm:overflow-y-auto pr-0 sm:pr-1">
+                {subjectStandings.slice(0, 3).length > 0 ? (
+                  subjectStandings.slice(0, 3).map((s) => (
+                    <div
+                      key={s.subject}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 text-xs min-w-0"
+                    >
+                      <span className="text-slate-700 break-words">
+                        {s.subject}:
+                      </span>
+                      <span className="font-semibold text-slate-900 text-right break-words max-w-[9rem]">
+                        {s.topStudent || "N/A"}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-400 italic">
+                    No subject standings yet.
+                  </p>
+                )}
               </div>
             </div>
           </div>

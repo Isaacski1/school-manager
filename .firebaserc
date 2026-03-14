@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "noble-care-management-system"
+    "default": "school-manager-gh",
+    "prod": "school-manager-gh",
+    "staging": "noble-care-management-system"
   }
 }

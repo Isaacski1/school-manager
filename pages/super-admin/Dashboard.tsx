@@ -12,7 +12,7 @@ import {
 import { firestore } from "../../services/firebase";
 import { useAuth } from "../../context/AuthContext";
 import { UserRole } from "../../types";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { School } from "../../types";
 import Modal from "../../components/Modal";
 import {
@@ -55,6 +55,8 @@ import {
   Sparkles,
   Pin,
   Pencil,
+  Copy,
+  Check,
   Trash2,
   ThumbsUp,
   ThumbsDown,
@@ -1015,7 +1017,7 @@ const EarningsOverview: React.FC<{
 
   return (
     <div className="space-y-8">
-      <div className="rounded-3xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-white p-6">
+      <div className="rounded-3xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-white p-4 sm:p-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
@@ -1029,14 +1031,14 @@ const EarningsOverview: React.FC<{
               one unified view.
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+          <div className="flex w-full flex-wrap items-center gap-2 text-xs text-slate-500 lg:w-auto lg:justify-end">
+            <span className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-center leading-tight sm:text-left">
               {kpis.paid} paid schools
             </span>
-            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+            <span className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-center leading-tight sm:text-left">
               {paymentMetrics.paidCount} successful payments
             </span>
-            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">
+            <span className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-center leading-tight sm:text-left">
               {paymentMetrics.successRate}% success rate
             </span>
           </div>
@@ -1124,20 +1126,23 @@ const EarningsOverview: React.FC<{
         ].map((item) => (
           <div
             key={item.label}
-            className={`min-w-0 rounded-2xl border border-slate-100 bg-gradient-to-br ${item.gradient} p-4 shadow-sm hover:shadow-lg transition-all ${item.glow}`}
+            className={`min-w-0 rounded-2xl border border-slate-100 bg-gradient-to-br ${item.gradient} p-4 sm:p-5 shadow-sm hover:shadow-lg transition-all ${item.glow}`}
           >
-            <div className="flex items-start justify-between">
-              <div className="min-w-0 flex-1 pr-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1 pr-0 sm:pr-3">
                 <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
                   {item.label}
                 </p>
-                <div className="mt-3 break-words text-[clamp(1.35rem,4vw,1.95rem)] font-bold leading-tight text-slate-900">
+                <div
+                  className="mt-3 truncate text-[clamp(1.35rem,5.3vw,2rem)] font-bold leading-tight text-slate-900 tabular-nums"
+                  title={String(item.value)}
+                >
                   {item.value}
                 </div>
                 <p className="text-xs text-slate-500 mt-2">{item.hint}</p>
               </div>
               <span
-                className={`h-10 w-10 flex-shrink-0 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow-md`}
+                className={`h-11 w-11 sm:h-10 sm:w-10 self-end sm:self-auto flex-shrink-0 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow-md`}
               >
                 {item.icon}
               </span>
@@ -1150,7 +1155,7 @@ const EarningsOverview: React.FC<{
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card className="xl:col-span-2">
+        <Card className="xl:col-span-2 p-4 sm:p-6">
           <div className="flex flex-col gap-3 mb-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1259,7 +1264,7 @@ const EarningsOverview: React.FC<{
           </ChartSurface>
         </Card>
 
-        <Card className="min-w-0">
+        <Card className="min-w-0 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1369,7 +1374,7 @@ const EarningsOverview: React.FC<{
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card className="min-w-0">
+        <Card className="min-w-0 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1453,7 +1458,7 @@ const EarningsOverview: React.FC<{
           </div>
         </Card>
 
-        <Card className="xl:col-span-2">
+        <Card className="xl:col-span-2 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1592,7 +1597,7 @@ const EarningsOverview: React.FC<{
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card>
+        <Card className="p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1650,7 +1655,7 @@ const EarningsOverview: React.FC<{
           </div>
         </Card>
 
-        <Card>
+        <Card className="p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1758,7 +1763,7 @@ const EarningsOverview: React.FC<{
           </div>
         </Card>
 
-        <Card className="bg-gradient-to-br from-slate-50 via-white to-slate-50">
+        <Card className="bg-gradient-to-br from-slate-50 via-white to-slate-50 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="text-lg font-semibold text-slate-900">
@@ -1798,7 +1803,7 @@ const EarningsOverview: React.FC<{
         </Card>
       </div>
 
-      <Card>
+      <Card className="p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h4 className="text-lg font-semibold text-slate-900">
@@ -1847,7 +1852,7 @@ const EarningsOverview: React.FC<{
         </div>
       </Card>
 
-      <Card>
+      <Card className="p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h4 className="text-lg font-semibold text-slate-900">
@@ -2093,6 +2098,8 @@ const Dashboard: React.FC = () => {
     }
   };
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   // Restrict this page to super-admin users only to avoid permission errors
   if (!user || user.role !== UserRole.SUPER_ADMIN) {
     return (
@@ -2143,6 +2150,13 @@ const Dashboard: React.FC = () => {
   const [aiTyping, setAiTyping] = useState(false);
   const [aiHistoryOpenMobile, setAiHistoryOpenMobile] = useState(false);
   const [aiHistorySearch, setAiHistorySearch] = useState("");
+  const [aiCopiedMessageId, setAiCopiedMessageId] = useState<string | null>(
+    null,
+  );
+  const [aiEditingMessageId, setAiEditingMessageId] = useState<string | null>(
+    null,
+  );
+  const [aiEditDraft, setAiEditDraft] = useState("");
   const [aiMessageFeedback, setAiMessageFeedback] = useState<
     Record<string, "up" | "down">
   >(() => {
@@ -2267,6 +2281,12 @@ const Dashboard: React.FC = () => {
   }, [aiConversations, activeConversationId]);
 
   useEffect(() => {
+    setAiEditingMessageId(null);
+    setAiEditDraft("");
+    setAiCopiedMessageId(null);
+  }, [activeConversationId]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
@@ -2282,6 +2302,32 @@ const Dashboard: React.FC = () => {
       // ignore local storage errors
     }
   }, [aiConversations, AI_HISTORY_STORAGE_KEY]);
+
+  const closeAiModal = useCallback(() => {
+    setAiOpen(false);
+    const params = new URLSearchParams(location.search);
+    const hadAssistantFlag = params.has("assistant") || params.has("ai");
+    if (!hadAssistantFlag) return;
+    params.delete("assistant");
+    params.delete("ai");
+    const nextQuery = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextQuery ? `?${nextQuery}` : "",
+      },
+      { replace: true },
+    );
+  }, [location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const shouldOpenAssistant =
+      params.get("assistant") === "1" || params.get("ai") === "1";
+    if (shouldOpenAssistant) {
+      setAiOpen(true);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3037,6 +3083,152 @@ const Dashboard: React.FC = () => {
     [],
   );
 
+  const requestAssistantReply = useCallback(
+    async (conversationId: string, nextMessages: AiConversationMessage[]) => {
+      setAiLoading(true);
+      try {
+        const messagesForApi = buildApiMessages(nextMessages);
+        const response = await superAdminAiChat({ messages: messagesForApi });
+        const normalizedReply =
+          normalizeAiReply(response.reply) ||
+          "I could not generate a response. Please try again.";
+        let validation: AiActionValidationResult | null = null;
+
+        if (response.action) {
+          setAiValidationLoading(true);
+          try {
+            validation = await validateSuperAdminAiAction({
+              action: response.action,
+            });
+          } catch (error) {
+            console.warn("[Dashboard] AI action validation failed", error);
+          } finally {
+            setAiValidationLoading(false);
+          }
+        }
+
+        setAiConversations((prev) =>
+          sortAiConversations(
+            prev.map((item) =>
+              item.id === conversationId
+                ? {
+                    ...item,
+                    updatedAt: Date.now(),
+                    pendingAction: response.action || null,
+                    pendingValidation: validation,
+                  }
+                : item,
+            ),
+          ),
+        );
+        await appendAssistantMessageWithTyping(
+          conversationId,
+          toConversationMessage("assistant", normalizedReply, {
+            mode: response.mode,
+            responseMs: response.responseMs,
+            dataAsOf: response.dataAsOf ?? null,
+          }),
+        );
+        refreshAiMetrics();
+      } catch (error: any) {
+        showToast(error?.message || "AI chat failed", { type: "error" });
+        await appendAssistantMessageWithTyping(
+          conversationId,
+          toConversationMessage(
+            "assistant",
+            "I could not complete that request right now. Please try again.",
+          ),
+        );
+      } finally {
+        setAiValidationLoading(false);
+        setAiLoading(false);
+      }
+    },
+    [appendAssistantMessageWithTyping, refreshAiMetrics],
+  );
+
+  const copyAiMessage = async (message: AiConversationMessage) => {
+    const text = String(message.content || "").trim();
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setAiCopiedMessageId(message.id);
+      window.setTimeout(() => {
+        setAiCopiedMessageId((prev) => (prev === message.id ? null : prev));
+      }, 1400);
+      showToast("Message copied", { type: "success" });
+    } catch {
+      showToast("Could not copy message", { type: "error" });
+    }
+  };
+
+  const startAiMessageEdit = (message: AiConversationMessage) => {
+    if (message.role !== "user" || aiLoading) return;
+    setAiEditingMessageId(message.id);
+    setAiEditDraft(message.content);
+  };
+
+  const cancelAiMessageEdit = () => {
+    setAiEditingMessageId(null);
+    setAiEditDraft("");
+  };
+
+  const saveAiMessageEditAndRegenerate = async (messageId: string) => {
+    const trimmed = aiEditDraft.trim();
+    if (!trimmed || aiLoading || !activeConversation) return;
+    const conversationId = activeConversation.id;
+    const targetIndex = activeConversation.messages.findIndex(
+      (message) => message.id === messageId && message.role === "user",
+    );
+    if (targetIndex < 0) {
+      showToast("Unable to edit that message", { type: "error" });
+      return;
+    }
+
+    const nextMessages = activeConversation.messages
+      .slice(0, targetIndex + 1)
+      .map((message, index) =>
+        index === targetIndex
+          ? { ...message, content: trimmed, createdAt: Date.now() }
+          : message,
+      );
+
+    setAiConversations((prev) =>
+      sortAiConversations(
+        prev.map((item) =>
+          item.id === conversationId
+            ? {
+                ...item,
+                title:
+                  item.title === "New chat"
+                    ? buildConversationTitle(trimmed)
+                    : item.title,
+                updatedAt: Date.now(),
+                pendingAction: null,
+                pendingValidation: null,
+                lastUndo: null,
+                messages: nextMessages,
+              }
+            : item,
+        ),
+      ),
+    );
+    setAiEditingMessageId(null);
+    setAiEditDraft("");
+    await requestAssistantReply(conversationId, nextMessages);
+  };
+
   const sendAiMessage = async () => {
     const trimmed = aiInput.trim();
     if (!trimmed || aiLoading || !activeConversation) return;
@@ -3067,62 +3259,7 @@ const Dashboard: React.FC = () => {
       ),
     );
     setAiInput("");
-    setAiLoading(true);
-    try {
-      const messagesForApi = buildApiMessages(nextMessages);
-      const response = await superAdminAiChat({ messages: messagesForApi });
-      const normalizedReply =
-        normalizeAiReply(response.reply) ||
-        "I could not generate a response. Please try again.";
-      let validation: AiActionValidationResult | null = null;
-
-      if (response.action) {
-        setAiValidationLoading(true);
-        try {
-          validation = await validateSuperAdminAiAction({ action: response.action });
-        } catch (error) {
-          console.warn("[Dashboard] AI action validation failed", error);
-        } finally {
-          setAiValidationLoading(false);
-        }
-      }
-
-      setAiConversations((prev) =>
-        sortAiConversations(
-          prev.map((item) =>
-            item.id === conversationId
-              ? {
-                  ...item,
-                  updatedAt: Date.now(),
-                  pendingAction: response.action || null,
-                  pendingValidation: validation,
-                }
-              : item,
-          ),
-        ),
-      );
-      await appendAssistantMessageWithTyping(
-        conversationId,
-        toConversationMessage("assistant", normalizedReply, {
-          mode: response.mode,
-          responseMs: response.responseMs,
-          dataAsOf: response.dataAsOf ?? null,
-        }),
-      );
-      refreshAiMetrics();
-    } catch (error: any) {
-      showToast(error?.message || "AI chat failed", { type: "error" });
-      await appendAssistantMessageWithTyping(
-        conversationId,
-        toConversationMessage(
-          "assistant",
-          "I could not complete that request right now. Please try again.",
-        ),
-      );
-    } finally {
-      setAiValidationLoading(false);
-      setAiLoading(false);
-    }
+    await requestAssistantReply(conversationId, nextMessages);
   };
 
   const confirmAiAction = async () => {
@@ -3357,7 +3494,7 @@ const Dashboard: React.FC = () => {
 
         <Modal
           isOpen={aiOpen}
-          onClose={() => setAiOpen(false)}
+          onClose={closeAiModal}
           title={`${AI_ASSISTANT_NAME} Assistant`}
           className="max-w-6xl"
         >
@@ -3544,6 +3681,8 @@ const Dashboard: React.FC = () => {
                     {(activeConversation?.messages || []).map((message) => {
                       const feedbackKey = `${activeConversation?.id}:${message.id}`;
                       const feedback = aiMessageFeedback[feedbackKey];
+                      const isEditingMessage =
+                        aiEditingMessageId === message.id && message.role === "user";
                       return (
                         <div
                           key={message.id}
@@ -3554,63 +3693,136 @@ const Dashboard: React.FC = () => {
                           }`}
                         >
                           <div className="max-w-[92%] sm:max-w-[80%]">
-                            <div
-                              className={`rounded-2xl px-4 py-3 text-sm shadow-sm transition-all ${
-                                message.role === "user"
-                                  ? "bg-gradient-to-r from-[#0B4A82] to-[#1160A8] text-white"
-                                  : "border border-slate-200 bg-white text-slate-700"
-                              }`}
-                            >
-                              {message.content}
-                            </div>
-                            {message.role === "assistant" && (
-                              <div className="mt-1 flex flex-wrap items-center gap-2 px-1">
-                                {(message.responseMs || message.mode) && (
-                                  <span className="text-[10px] text-slate-400">
-                                    {message.mode ? `${message.mode} • ` : ""}
-                                    {message.responseMs
-                                      ? `${message.responseMs} ms`
-                                      : ""}
-                                  </span>
-                                )}
-                                <button
-                                  onClick={() =>
-                                    submitMessageFeedback(
-                                      activeConversation?.id || "",
-                                      message,
-                                      "up",
-                                    )
-                                  }
-                                  disabled={Boolean(feedback)}
-                                  className={`rounded-md p-1 transition ${
-                                    feedback === "up"
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                                  } disabled:cursor-not-allowed`}
-                                  title="Helpful"
-                                >
-                                  <ThumbsUp size={12} />
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    submitMessageFeedback(
-                                      activeConversation?.id || "",
-                                      message,
-                                      "down",
-                                    )
-                                  }
-                                  disabled={Boolean(feedback)}
-                                  className={`rounded-md p-1 transition ${
-                                    feedback === "down"
-                                      ? "bg-rose-100 text-rose-700"
-                                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                                  } disabled:cursor-not-allowed`}
-                                  title="Not helpful"
-                                >
-                                  <ThumbsDown size={12} />
-                                </button>
+                            {isEditingMessage ? (
+                              <div className="rounded-2xl border border-cyan-200 bg-white p-3 shadow-sm">
+                                <textarea
+                                  value={aiEditDraft}
+                                  onChange={(event) => setAiEditDraft(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                                      event.preventDefault();
+                                      void saveAiMessageEditAndRegenerate(message.id);
+                                    }
+                                  }}
+                                  rows={3}
+                                  className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+                                  placeholder="Edit message and regenerate..."
+                                />
+                                <div className="mt-2 flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={cancelAiMessageEdit}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      void saveAiMessageEditAndRegenerate(message.id)
+                                    }
+                                    disabled={aiLoading || !aiEditDraft.trim()}
+                                    className="rounded-lg bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Save & Regenerate
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div
+                                className={`rounded-2xl px-4 py-3 text-sm shadow-sm transition-all ${
+                                  message.role === "user"
+                                    ? "bg-gradient-to-r from-[#0B4A82] to-[#1160A8] text-white"
+                                    : "border border-slate-200 bg-white text-slate-700"
+                                }`}
+                              >
+                                {message.content}
                               </div>
                             )}
+                            <div
+                              className={`mt-1 flex flex-wrap items-center gap-2 px-1 ${
+                                message.role === "user" ? "justify-end" : ""
+                              }`}
+                            >
+                              {message.role === "assistant" && (
+                                <>
+                                  {(message.responseMs || message.mode) && (
+                                    <span className="text-[10px] text-slate-400">
+                                      {message.mode ? `${message.mode} • ` : ""}
+                                      {message.responseMs
+                                        ? `${message.responseMs} ms`
+                                        : ""}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              <button
+                                onClick={() => void copyAiMessage(message)}
+                                disabled={!message.content.trim()}
+                                className={`rounded-md p-1 transition disabled:cursor-not-allowed ${
+                                  aiCopiedMessageId === message.id
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                }`}
+                                title={
+                                  aiCopiedMessageId === message.id ? "Copied" : "Copy"
+                                }
+                              >
+                                {aiCopiedMessageId === message.id ? (
+                                  <Check size={12} />
+                                ) : (
+                                  <Copy size={12} />
+                                )}
+                              </button>
+                              {message.role === "user" && !isEditingMessage && (
+                                <button
+                                  onClick={() => startAiMessageEdit(message)}
+                                  disabled={aiLoading}
+                                  className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                  title="Edit and regenerate"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              )}
+                              {message.role === "assistant" && (
+                                <>
+                                  <button
+                                    onClick={() =>
+                                      submitMessageFeedback(
+                                        activeConversation?.id || "",
+                                        message,
+                                        "up",
+                                      )
+                                    }
+                                    disabled={Boolean(feedback)}
+                                    className={`rounded-md p-1 transition ${
+                                      feedback === "up"
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                    } disabled:cursor-not-allowed`}
+                                    title="Helpful"
+                                  >
+                                    <ThumbsUp size={12} />
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      submitMessageFeedback(
+                                        activeConversation?.id || "",
+                                        message,
+                                        "down",
+                                      )
+                                    }
+                                    disabled={Boolean(feedback)}
+                                    className={`rounded-md p-1 transition ${
+                                      feedback === "down"
+                                        ? "bg-rose-100 text-rose-700"
+                                        : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                    } disabled:cursor-not-allowed`}
+                                    title="Not helpful"
+                                  >
+                                    <ThumbsDown size={12} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -3708,7 +3920,7 @@ const Dashboard: React.FC = () => {
                 )}
 
                 <div className="border-t border-slate-100 bg-white p-3 sm:p-4">
-                  <div className="flex items-end gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <textarea
                       value={aiInput}
                       onChange={(e) => setAiInput(e.target.value)}
@@ -3719,13 +3931,13 @@ const Dashboard: React.FC = () => {
                         }
                       }}
                       rows={2}
-                      className="max-h-40 min-h-[48px] flex-1 resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+                      className="w-full min-w-0 max-h-40 min-h-[56px] sm:min-h-[48px] sm:flex-1 resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
                       placeholder={`Ask ${AI_ASSISTANT_NAME}...`}
                     />
                     <button
                       onClick={sendAiMessage}
                       disabled={aiLoading || aiTyping || !aiInput.trim()}
-                      className="inline-flex h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex h-11 w-full sm:w-auto sm:shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <SendHorizontal size={16} />
                       Send
@@ -3779,32 +3991,32 @@ const Dashboard: React.FC = () => {
           )}
         </div>
 
-        <Card className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+        <Card className="mb-8 -mx-1 sm:mx-0 p-4 sm:p-6 md:p-7">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:gap-5 mb-6 sm:mb-7">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">
+              <h3 className="text-xl font-semibold text-slate-900">
                 Billing Health
               </h3>
               <p className="text-sm text-slate-600">
                 Premium payment status overview
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center shadow-sm">
-                <Wallet size={18} />
+            <div className="flex w-full sm:w-auto items-center justify-between sm:justify-start gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-[#E6F0FA] text-[#0B4A82] flex items-center justify-center shadow-sm">
+                <Wallet size={20} />
               </div>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-2">
-                <p className="text-[11px] text-emerald-600 uppercase font-semibold tracking-widest">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 sm:px-5 py-2.5 sm:py-3 min-w-[132px]">
+                <p className="text-xs text-emerald-600 uppercase font-semibold tracking-widest">
                   Success rate
                 </p>
-                <p className="text-lg font-bold text-emerald-700">
+                <p className="text-xl font-bold text-emerald-700 leading-tight">
                   {paymentMetrics.successRate}%
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
             {[
               {
                 label: "Successful",
@@ -3841,25 +4053,25 @@ const Dashboard: React.FC = () => {
               return (
                 <div
                   key={item.label}
-                  className={`rounded-2xl border border-slate-100 bg-gradient-to-br ${item.accent} p-5 shadow-sm hover:shadow-md transition-all`}
+                  className={`rounded-2xl border border-slate-100 bg-gradient-to-br ${item.accent} p-5 sm:p-6 shadow-sm hover:shadow-md transition-all`}
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
+                      <p className="text-[13px] uppercase tracking-widest text-slate-500 font-semibold">
                         {item.label}
                       </p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">
+                      <p className="text-4xl sm:text-3xl font-bold text-slate-900 mt-2 leading-none">
                         {item.value}
                       </p>
                     </div>
                     <div
-                      className={`w-11 h-11 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow`}
+                      className={`w-12 h-12 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow`}
                     >
                       {item.icon}
                     </div>
                   </div>
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between text-xs text-slate-500">
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between text-sm text-slate-500">
                       <span>Share of total</span>
                       <span className={`font-semibold ${item.text}`}>
                         {percentage}%
@@ -3947,7 +4159,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-100 bg-white p-5">
+            <div className="rounded-2xl border border-slate-100 bg-white p-3 sm:p-5">
               <EarningsOverview
                 loading={loading}
                 schools={schools}
@@ -4067,7 +4279,7 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* Plan Distribution Card */}
-        <Card className="mb-8">
+        <Card className="mb-8 p-4 sm:p-6">
           <div className="mb-6">
             <h2 className="text-lg font-semibold text-slate-900">
               Plan Distribution
@@ -4190,11 +4402,11 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               <select
                 value={activityFilter}
                 onChange={(e) => setActivityFilter(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                className="w-full sm:w-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
               >
                 <option value="">All events</option>
                 <option value="school_created">School created</option>
@@ -4223,7 +4435,7 @@ const Dashboard: React.FC = () => {
               </select>
               <button
                 onClick={loadData}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 <RefreshCw size={14} />
                 Refresh
@@ -4250,17 +4462,17 @@ const Dashboard: React.FC = () => {
               description="System events will appear here as schools use the platform."
             />
           ) : (
-            <div className="max-h-[420px] overflow-y-auto pr-1 space-y-3">
+            <div className="max-h-[420px] overflow-y-auto pr-0 sm:pr-1 space-y-3">
               {activityFeed.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl border border-slate-100 bg-white p-4"
+                  className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl border border-slate-100 bg-white p-3 sm:p-4"
                 >
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 break-words">
                       {formatActivityLabel(entry)}
                     </p>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-1 break-all">
                       {entry.schoolId ? `School: ${entry.schoolId}` : "System"}
                     </p>
                   </div>
@@ -4474,7 +4686,7 @@ const Dashboard: React.FC = () => {
         </Card>
 
         {/* Daily Operations Checklist */}
-        <Card className="bg-gradient-to-br from-white via-slate-50 to-white border border-slate-100">
+        <Card className="bg-gradient-to-br from-white via-slate-50 to-white border border-slate-100 p-4 sm:p-6">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             <div>
               <div className="flex items-center gap-2 mb-2">
@@ -4596,11 +4808,11 @@ const Dashboard: React.FC = () => {
           </div>
 
           <div className="mt-8">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between gap-2 mb-4">
               <h3 className="text-base font-semibold text-slate-900">
                 School Activity Status
               </h3>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 whitespace-nowrap">
                 Live today per school
               </span>
             </div>
@@ -4632,35 +4844,37 @@ const Dashboard: React.FC = () => {
                 return (
                   <div
                     key={school.id}
-                    className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow"
+                    className="rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow"
                   >
-                    <div className="flex items-center justify-between">
-                      <div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
                         <p className="text-sm text-slate-500">School</p>
-                        <p className="text-lg font-semibold text-slate-900">
+                        <p className="text-lg font-semibold text-slate-900 break-words leading-tight">
                           {schoolName}
                         </p>
                         <p className="text-xs text-slate-400">{schoolCode}</p>
                       </div>
-                      <div className="text-right">
+                      <div className="text-left sm:text-right sm:shrink-0">
                         <p className="text-xs text-slate-500">Completion</p>
                         <p className="text-lg font-bold text-emerald-600">
                           {completedCount}/{activityItems.length}
                         </p>
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       {activityItems.map((item) => (
                         <div
                           key={item.label}
-                          className={`flex items-center justify-between rounded-lg border px-2 py-1.5 ${
+                          className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 ${
                             item.value
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : "border-slate-200 bg-slate-50 text-slate-500"
                           }`}
                         >
-                          <span>{item.label}</span>
-                          <span className="font-semibold">
+                          <span className="min-w-0 break-words">
+                            {item.label}
+                          </span>
+                          <span className="shrink-0 font-semibold">
                             {item.value ? "Done" : "Pending"}
                           </span>
                         </div>
