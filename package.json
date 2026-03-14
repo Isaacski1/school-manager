@@ -8,6 +8,8 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "ai:eval": "node scripts/ai-eval.mjs",
+    "env:test": "node scripts/switch-env.mjs test",
+    "env:prod": "node scripts/switch-env.mjs prod",
     "start": "node server/server.js",
     "server:dev": "nodemon server/server.js",
     "predeploy": "npm run build",
