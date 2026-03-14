@@ -25,29 +25,52 @@ const LOCAL_DEV_ORIGINS = [
   "http://127.0.0.1:5173",
 ];
 
+const normalizeOriginValue = (value) => String(value || "").trim().replace(/\/$/, "");
+
 const collectOrigins = (...values) =>
   values
     .flatMap((value) =>
       typeof value === "string" ? value.split(",") : [],
     )
-    .map((value) => value.trim())
+    .map((value) => normalizeOriginValue(value))
     .filter(Boolean);
 
+const configuredOrigins = collectOrigins(
+  process.env.CORS_ALLOWED_ORIGINS,
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  process.env.APP_URL,
+  process.env.PUBLIC_APP_URL,
+  process.env.SITE_URL,
+  process.env.VITE_FRONTEND_URL,
+  process.env.VITE_SITE_URL,
+);
+
 const allowedOrigins = new Set([
-  ...LOCAL_DEV_ORIGINS,
-  ...collectOrigins(
-    process.env.CORS_ALLOWED_ORIGINS,
-    process.env.CLIENT_URL,
-    process.env.FRONTEND_URL,
-    process.env.APP_URL,
-    process.env.PUBLIC_APP_URL,
-    process.env.SITE_URL,
-    process.env.VITE_FRONTEND_URL,
-    process.env.VITE_SITE_URL,
-  ),
+  ...LOCAL_DEV_ORIGINS.map((origin) => normalizeOriginValue(origin)),
+  ...configuredOrigins.filter((origin) => !origin.includes("*")),
 ]);
 
-const isAllowedOrigin = (origin) => !origin || allowedOrigins.has(origin);
+const wildcardOriginPatterns = configuredOrigins.filter((origin) =>
+  origin.includes("*"),
+);
+
+const escapeRegex = (value) =>
+  String(value || "").replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+
+const wildcardToRegex = (pattern) => {
+  const escaped = escapeRegex(pattern).replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i");
+};
+
+const wildcardOriginRegexes = wildcardOriginPatterns.map(wildcardToRegex);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  const normalizedOrigin = normalizeOriginValue(origin);
+  if (allowedOrigins.has(normalizedOrigin)) return true;
+  return wildcardOriginRegexes.some((regex) => regex.test(normalizedOrigin));
+};
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
@@ -177,6 +200,16 @@ if (!serviceAccount.project_id) {
     "CRITICAL: Service Account JSON is invalid or missing 'project_id'.",
   );
   process.exit(1);
+}
+
+const firebaseProjectId =
+  serviceAccount.project_id ||
+  process.env.FIREBASE_PROJECT_ID ||
+  process.env.GCLOUD_PROJECT ||
+  "";
+if (firebaseProjectId) {
+  allowedOrigins.add(`https://${firebaseProjectId}.web.app`);
+  allowedOrigins.add(`https://${firebaseProjectId}.firebaseapp.com`);
 }
 
 try {

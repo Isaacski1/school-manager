@@ -1,4 +1,9 @@
-const resolvedApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
+const sanitizeBaseUrl = (value?: string) =>
+  String(value || "").trim().replace(/\/$/, "");
+
+const resolvedApiBaseUrl =
+  sanitizeBaseUrl(import.meta.env.VITE_API_BASE_URL) ||
+  sanitizeBaseUrl(import.meta.env.VITE_BACKEND_URL);
 const defaultApiBaseUrl = import.meta.env.DEV
   ? "http://localhost:3001"
   : "https://school-manager-hehk.onrender.com";
@@ -14,6 +19,6 @@ if (
   import.meta.env.PROD
 ) {
   console.warn(
-    "[Config] VITE_API_BASE_URL is not set. Production is falling back to the default backend URL.",
+    "[Config] VITE_API_BASE_URL / VITE_BACKEND_URL not set. Production is falling back to the default backend URL.",
   );
 }
