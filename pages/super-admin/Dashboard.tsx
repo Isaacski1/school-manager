@@ -3496,7 +3496,7 @@ const Dashboard: React.FC = () => {
           isOpen={aiOpen}
           onClose={closeAiModal}
           title={`${AI_ASSISTANT_NAME} Assistant`}
-          className="max-w-6xl"
+          className="mx-auto max-w-[94vw] lg:max-w-7xl xl:translate-x-32"
         >
           <div className="space-y-4">
             <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-blue-50 p-4 shadow-sm">
