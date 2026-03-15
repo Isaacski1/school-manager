@@ -91,6 +91,28 @@ const Login = () => {
     );
   };
 
+  const isMfaEnrollmentRequiredError = (err: any) => {
+    const message = String(err?.message || "").toLowerCase();
+    return (
+      message.includes("requires mfa enrollment") ||
+      message.includes("requires second-factor enrollment") ||
+      message.includes("enroll at least one second factor")
+    );
+  };
+
+  const safeLogSecurityLogin = async (payload: {
+    status: "SUCCESS" | "FAILED";
+    email?: string | null;
+    errorCode?: string | null;
+    userAgent?: string | null;
+  }) => {
+    try {
+      await logSecurityLogin(payload);
+    } catch (logError) {
+      console.warn("Security login logging failed", logError);
+    }
+  };
+
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
@@ -115,8 +137,20 @@ const Login = () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       firstFactorSignedIn = true;
-      await evaluateAdminMfaPolicy();
-      await logSecurityLogin({
+      try {
+        await evaluateAdminMfaPolicy();
+      } catch (policyError: any) {
+        if (isMfaEnrollmentRequiredError(policyError)) {
+          throw policyError;
+        }
+        // Do not block sign-in when backend policy lookup is unreachable.
+        console.warn(
+          "Skipping admin MFA policy check due to backend error",
+          policyError,
+        );
+      }
+
+      await safeLogSecurityLogin({
         status: "SUCCESS",
         email,
         userAgent: navigator.userAgent,
@@ -154,15 +188,11 @@ const Login = () => {
         msg = "Invalid email or password.";
       } else if (err?.code === "auth/too-many-requests") {
         msg = "Too many failed attempts. Please try again later.";
-      } else if (
-        String(err?.message || "").includes(
-          "Admin MFA policy requires MFA enrollment",
-        )
-      ) {
+      } else if (isMfaEnrollmentRequiredError(err)) {
         msg = err.message;
       }
 
-      if (firstFactorSignedIn) {
+      if (firstFactorSignedIn && isMfaEnrollmentRequiredError(err)) {
         try {
           await signOut(auth);
         } catch {
@@ -170,7 +200,7 @@ const Login = () => {
         }
       }
 
-      await logSecurityLogin({
+      await safeLogSecurityLogin({
         status: "FAILED",
         email,
         errorCode: err?.code || "login_failed",
@@ -257,7 +287,7 @@ const Login = () => {
         msg = "Invalid or expired verification code. Request a new one.";
       }
       setMfaError(msg);
-      await logSecurityLogin({
+      await safeLogSecurityLogin({
         status: "FAILED",
         email,
         errorCode: err?.code || "mfa_verification_failed",
