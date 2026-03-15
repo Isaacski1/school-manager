@@ -4,13 +4,10 @@ import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { showToast } from "../../services/toast";
 import { firestore } from "../../services/firebase";
-import { collection, deleteDoc, doc, getDoc, getDocs } from "firebase/firestore";
-import {
-  Backup,
-  BackupType,
-  RecoveryCollectionScope,
-  School,
-} from "../../types";
+import { deleteDoc, doc, getDoc } from "firebase/firestore";
+import { getSuperAdminBackupsPage } from "../../services/backendApi";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
+import { Backup, BackupType, RecoveryCollectionScope } from "../../types";
 import {
   Building,
   Download,
@@ -22,6 +19,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+
+const BACKUPS_CACHE_KEY = "super_admin_backups_page_1_v1";
+const BACKUPS_CACHE_TTL_MS = 45_000;
+const BACKUPS_PAGE_SIZE = 80;
+
+type SchoolOption = {
+  id: string;
+  name: string;
+};
+
+type BackupListEntry = Partial<Backup> & { recordCount?: number };
 
 const FULL_BACKUP_TYPES = new Set<BackupType>([
   "term-reset",
@@ -55,11 +63,11 @@ const isFullBackup = (entry?: Partial<Backup> | Backup | null) =>
 const formatTimestamp = (value?: number | null) =>
   value ? new Date(value).toLocaleString() : "-";
 
-const getEntryTitle = (entry: Partial<Backup>) =>
+const getEntryTitle = (entry: BackupListEntry) =>
   entry.recoveryMeta?.title ||
   `${entry.term || "Backup"} - ${entry.academicYear || ""}`;
 
-const getEntryTypeLabel = (entry: Partial<Backup>) => {
+const getEntryTypeLabel = (entry: BackupListEntry) => {
   switch (entry.backupType) {
     case "recycle-bin":
       return "Recycle Bin";
@@ -75,13 +83,16 @@ const getEntryTypeLabel = (entry: Partial<Backup>) => {
   }
 };
 
-const getEntryDescription = (entry: Partial<Backup>) =>
+const getEntryDescription = (entry: BackupListEntry) =>
   entry.recoveryMeta?.description ||
   (entry.backupType === "safety-restore"
     ? "Automatic safety backup created before a restore."
     : "Full school snapshot.");
 
-const getRecordCount = (entry: Partial<Backup>) => {
+const getRecordCount = (entry: BackupListEntry) => {
+  if (typeof entry.recordCount === "number") {
+    return entry.recordCount;
+  }
   if (typeof entry.recoveryMeta?.recordCount === "number") {
     return entry.recoveryMeta.recordCount;
   }
@@ -105,10 +116,13 @@ const getCollectionBadges = (collections: RecoveryCollectionScope[] = []) =>
   );
 
 const Backups: React.FC = () => {
-  const [schools, setSchools] = useState<School[]>([]);
-  const [entries, setEntries] = useState<Partial<Backup>[]>([]);
+  const [schools, setSchools] = useState<SchoolOption[]>([]);
+  const [entries, setEntries] = useState<BackupListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMoreEntries, setLoadingMoreEntries] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMoreEntries, setHasMoreEntries] = useState(false);
 
   const [filterSchoolId, setFilterSchoolId] = useState("");
   const [filterTerm, setFilterTerm] = useState("");
@@ -116,20 +130,20 @@ const Backups: React.FC = () => {
   const [filterDate, setFilterDate] = useState("");
 
   const [selectedEntry, setSelectedEntry] = useState<Backup | null>(null);
-  const [entryToDelete, setEntryToDelete] = useState<Partial<Backup> | null>(
+  const [entryToDelete, setEntryToDelete] = useState<BackupListEntry | null>(
     null,
   );
   const [entryToRestoreBackup, setEntryToRestoreBackup] =
-    useState<Partial<Backup> | null>(null);
+    useState<BackupListEntry | null>(null);
   const [entryToRestoreRecovery, setEntryToRestoreRecovery] =
-    useState<Partial<Backup> | null>(null);
+    useState<BackupListEntry | null>(null);
   const [busyAction, setBusyAction] = useState<
     "delete" | "restore-backup" | "restore-recovery" | null
   >(null);
 
   const schoolMap = useMemo(
     () =>
-      schools.reduce<Record<string, School>>((acc, school) => {
+      schools.reduce<Record<string, SchoolOption>>((acc, school) => {
         acc[school.id] = school;
         return acc;
       }, {}),
@@ -141,35 +155,81 @@ const Backups: React.FC = () => {
     return schoolMap[schoolId]?.name || schoolId;
   };
 
-  const refreshEntries = async () => {
+  const normalizeEntry = (row: any): BackupListEntry => ({
+    id: String(row?.id || ""),
+    schoolId: row?.schoolId ? String(row.schoolId) : "",
+    term: row?.term ? String(row.term) : "",
+    academicYear: row?.academicYear ? String(row.academicYear) : "",
+    backupType: (row?.backupType || "manual") as BackupType,
+    timestamp: Number(row?.timestamp || 0),
+    recoveryMeta: row?.recoveryMeta || undefined,
+    recordCount: Number(row?.recordCount || 0),
+  });
+
+  const normalizeSchool = (row: any): SchoolOption => ({
+    id: String(row?.id || ""),
+    name: String(row?.name || "Unnamed School"),
+  });
+
+  const refreshEntries = async (forceRefresh = false) => {
     setLoading(true);
     setError(null);
     try {
-      const [schoolSnap, backupSnap] = await Promise.all([
-        getDocs(collection(firestore, "schools")),
-        getDocs(collection(firestore, "backups")),
-      ]);
-      setSchools(
-        schoolSnap.docs.map(
-          (schoolDoc) => ({ id: schoolDoc.id, ...(schoolDoc.data() as any) }) as School,
-        ),
+      if (forceRefresh) {
+        clearClientCache(BACKUPS_CACHE_KEY);
+      }
+
+      const page = await resolveClientCache(
+        BACKUPS_CACHE_KEY,
+        BACKUPS_CACHE_TTL_MS,
+        async () =>
+          getSuperAdminBackupsPage({
+            limit: BACKUPS_PAGE_SIZE,
+            includeSchools: true,
+            forceRefresh,
+          }),
+        { forceRefresh },
       );
-      setEntries(
-        backupSnap.docs
-          .map((backupDoc) => backupDoc.data() as Partial<Backup>)
-          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)),
-      );
-    } catch (err) {
+
+      setSchools((page.schools || []).map(normalizeSchool));
+      setEntries((page.items || []).map(normalizeEntry));
+      setNextCursor(page.nextCursor || null);
+      setHasMoreEntries(Boolean(page.hasMore));
+    } catch (err: any) {
       console.error("Failed to load recovery records", err);
-      setError("Failed to load recovery records.");
-      showToast("Failed to load recovery records.", { type: "error" });
+      const message =
+        err?.message || "Failed to load recovery records.";
+      setError(message);
+      showToast(message, { type: "error" });
     } finally {
       setLoading(false);
     }
   };
 
+  const loadMoreEntries = async () => {
+    if (!nextCursor || loadingMoreEntries) return;
+    setLoadingMoreEntries(true);
+    try {
+      const page = await getSuperAdminBackupsPage({
+        limit: BACKUPS_PAGE_SIZE,
+        cursor: nextCursor,
+        includeSchools: false,
+      });
+      setEntries((prev) => [...prev, ...(page.items || []).map(normalizeEntry)]);
+      setNextCursor(page.nextCursor || null);
+      setHasMoreEntries(Boolean(page.hasMore));
+    } catch (err: any) {
+      console.error("Failed to load more recovery records", err);
+      showToast(err?.message || "Failed to load more recovery records.", {
+        type: "error",
+      });
+    } finally {
+      setLoadingMoreEntries(false);
+    }
+  };
+
   useEffect(() => {
-    refreshEntries();
+    void refreshEntries(false);
   }, []);
 
   const filteredEntries = useMemo(
@@ -271,7 +331,7 @@ const Backups: React.FC = () => {
       }
       setEntryToDelete(null);
       showToast("Record deleted.", { type: "success" });
-      await refreshEntries();
+      await refreshEntries(true);
     } catch (err) {
       console.error("Failed to delete record", err);
       showToast("Failed to delete record.", { type: "error" });
@@ -290,7 +350,7 @@ const Backups: React.FC = () => {
       }
       setEntryToRestoreBackup(null);
       showToast("Backup restored for the school.", { type: "success" });
-      await refreshEntries();
+      await refreshEntries(true);
     } catch (err: any) {
       console.error("Failed to restore backup", err);
       showToast(err?.message || "Failed to restore backup.", {
@@ -316,10 +376,10 @@ const Backups: React.FC = () => {
       showToast("Recovery record restored for the school.", {
         type: "success",
       });
-      await refreshEntries();
-    } catch (err: any) {
+      await refreshEntries(true);
+    } catch (err) {
       console.error("Failed to restore recovery record", err);
-      showToast(err?.message || "Failed to restore recovery record.", {
+      showToast((err as any)?.message || "Failed to restore recovery record.", {
         type: "error",
       });
     } finally {
@@ -329,7 +389,7 @@ const Backups: React.FC = () => {
 
   const renderList = (
     title: string,
-    rows: Partial<Backup>[],
+    rows: BackupListEntry[],
     icon: React.ReactNode,
   ) => (
     <section className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
@@ -455,7 +515,7 @@ const Backups: React.FC = () => {
         <div className="rounded-xl border border-[#E6F0FA] bg-[#E6F0FA] p-8 text-center">
           <p className="text-[#0B4A82]">{error}</p>
           <button
-            onClick={refreshEntries}
+            onClick={() => void refreshEntries(true)}
             className="mt-4 inline-flex items-center rounded-lg bg-[#0B4A82] px-4 py-2 text-white hover:bg-[#083862]"
           >
             <RefreshCcw size={16} className="mr-2" /> Retry
@@ -487,7 +547,7 @@ const Backups: React.FC = () => {
             </div>
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={refreshEntries}
+                onClick={() => void refreshEntries(true)}
                 className="rounded-lg bg-[#0B4A82] px-4 py-2 text-sm font-medium text-white hover:bg-[#083862]"
               >
                 <RefreshCcw size={16} className="mr-2 inline" /> Refresh
@@ -592,6 +652,24 @@ const Backups: React.FC = () => {
           "Full Backups",
           fullBackups,
           <Shield className="text-[#0B4A82]" size={20} />,
+        )}
+
+        {hasMoreEntries && (
+          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="flex flex-col items-center justify-center gap-3">
+              <p className="text-sm text-slate-500">
+                More records are available.
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadMoreEntries()}
+                disabled={loadingMoreEntries}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loadingMoreEntries ? "Loading..." : "Load more records"}
+              </button>
+            </div>
+          </section>
         )}
       </div>
 

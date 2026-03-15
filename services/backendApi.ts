@@ -9,6 +9,16 @@ import { API_BASE_URL } from "../src/config";
 
 const BACKEND_URL = API_BASE_URL;
 
+const buildQueryString = (params: Record<string, any>) => {
+  const search = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const query = search.toString();
+  return query ? `?${query}` : "";
+};
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -281,6 +291,174 @@ export type AdminMfaPolicyStatus = {
 
 export async function getAdminMfaPolicyStatus(): Promise<AdminMfaPolicyStatus> {
   return apiRequest("/api/auth/admin-mfa-policy", { method: "GET" });
+}
+
+export type SuperAdminDashboardOverview = {
+  success: boolean;
+  cached?: boolean;
+  generatedAt: number;
+  schools: Array<Record<string, any>>;
+  activity: Array<Record<string, any>>;
+  payments: Array<Record<string, any>>;
+  dailyChecklist?: {
+    summary: Record<string, { completed: number; total: number }>;
+    perSchool: Record<
+      string,
+      {
+        attendance: boolean;
+        teacherAttendance: boolean;
+        assessments: boolean;
+        timetable: boolean;
+        notices: boolean;
+      }
+    >;
+  };
+  limits?: Record<string, number>;
+};
+
+export async function getSuperAdminDashboardOverview(params?: {
+  forceRefresh?: boolean;
+  schoolsLimit?: number;
+  activityLimit?: number;
+  paymentsLimit?: number;
+  checklistLimit?: number;
+}): Promise<SuperAdminDashboardOverview> {
+  const query = buildQueryString({
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+    schoolsLimit: params?.schoolsLimit,
+    activityLimit: params?.activityLimit,
+    paymentsLimit: params?.paymentsLimit,
+    checklistLimit: params?.checklistLimit,
+  });
+  return apiRequest(`/api/superadmin/dashboard-overview${query}`, {
+    method: "GET",
+  });
+}
+
+export type SuperAdminAnalyticsOverview = {
+  success: boolean;
+  cached?: boolean;
+  generatedAt: number;
+  schools: Array<Record<string, any>>;
+  payments: Array<Record<string, any>>;
+  events: Array<Record<string, any>>;
+  activityLogs: Array<Record<string, any>>;
+  studentCounts: Record<string, number>;
+  months: Array<{ key: string; label: string }>;
+  growthSeries: Array<{ label: string; value: number }>;
+  revenueSeries: Array<{ label: string; value: number }>;
+  activitySeries: Array<{ label: string; value: number }>;
+  totals: {
+    totalSchools: number;
+    activeSchools: number;
+    totalStudents: number;
+    avgStudents: number;
+    newSchoolsThisMonth: number;
+    newSchoolsLastMonth: number;
+    growthRate: number;
+    successfulRevenue: number;
+    successfulPayments: number;
+    issuePayments: number;
+  };
+  topActiveSchools: Array<Record<string, any>>;
+  featureUsage: Array<{ key: string; value: number }>;
+};
+
+export async function getSuperAdminAnalyticsOverview(params?: {
+  forceRefresh?: boolean;
+  schoolsLimit?: number;
+  paymentsLimit?: number;
+  eventsLimit?: number;
+  activityLimit?: number;
+}): Promise<SuperAdminAnalyticsOverview> {
+  const query = buildQueryString({
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+    schoolsLimit: params?.schoolsLimit,
+    paymentsLimit: params?.paymentsLimit,
+    eventsLimit: params?.eventsLimit,
+    activityLimit: params?.activityLimit,
+  });
+  return apiRequest(`/api/superadmin/analytics-overview${query}`, {
+    method: "GET",
+  });
+}
+
+export type SuperAdminPagedResponse<T> = {
+  success: boolean;
+  cached?: boolean;
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export async function getSuperAdminSchoolsPage(params?: {
+  limit?: number;
+  cursor?: string | null;
+  forceRefresh?: boolean;
+}): Promise<SuperAdminPagedResponse<Record<string, any>>> {
+  const query = buildQueryString({
+    limit: params?.limit,
+    cursor: params?.cursor || undefined,
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+  });
+  return apiRequest(`/api/superadmin/schools-page${query}`, { method: "GET" });
+}
+
+export async function getSuperAdminUsersPage(params?: {
+  limit?: number;
+  cursor?: string | null;
+  excludeSuperAdmins?: boolean;
+  forceRefresh?: boolean;
+}): Promise<SuperAdminPagedResponse<Record<string, any>>> {
+  const query = buildQueryString({
+    limit: params?.limit,
+    cursor: params?.cursor || undefined,
+    excludeSuperAdmins:
+      params?.excludeSuperAdmins === undefined
+        ? 1
+        : params.excludeSuperAdmins
+          ? 1
+          : 0,
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+  });
+  return apiRequest(`/api/superadmin/users-page${query}`, { method: "GET" });
+}
+
+export async function getSuperAdminPaymentsPage(params?: {
+  limit?: number;
+  cursor?: string | null;
+  forceRefresh?: boolean;
+}): Promise<SuperAdminPagedResponse<Record<string, any>>> {
+  const query = buildQueryString({
+    limit: params?.limit,
+    cursor: params?.cursor || undefined,
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+  });
+  return apiRequest(`/api/superadmin/payments-page${query}`, { method: "GET" });
+}
+
+export async function getSuperAdminBackupsPage(params?: {
+  limit?: number;
+  cursor?: string | null;
+  includeSchools?: boolean;
+  forceRefresh?: boolean;
+}): Promise<
+  SuperAdminPagedResponse<Record<string, any>> & {
+    schools?: Array<{ id: string; name: string }>;
+  }
+> {
+  const query = buildQueryString({
+    limit: params?.limit,
+    cursor: params?.cursor || undefined,
+    includeSchools:
+      params?.includeSchools === undefined
+        ? 1
+        : params.includeSchools
+          ? 1
+          : 0,
+    forceRefresh: params?.forceRefresh ? 1 : undefined,
+  });
+  return apiRequest(`/api/superadmin/backups-page${query}`, { method: "GET" });
 }
 
 export async function initiateSchoolBilling(payload: {

@@ -5,7 +5,6 @@ import { showToast } from "../../services/toast";
 import { firestore } from "../../services/firebase";
 import {
   collection,
-  onSnapshot,
   doc,
   getDoc,
   setDoc,
@@ -14,7 +13,6 @@ import {
   query,
   where,
   getDocs,
-  getCountFromServer,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
@@ -23,8 +21,10 @@ import { useAuth } from "../../context/AuthContext";
 import {
   createOrUpdatePlan,
   createSchool,
+  getSuperAdminSchoolsPage,
   updateSchoolPlan,
 } from "../../services/backendApi";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
 import {
   Plus,
   Building,
@@ -61,9 +61,9 @@ const Schools = () => {
   const [plans, setPlans] = useState<PlanConfig[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
-  const [studentCounts, setStudentCounts] = useState<Record<string, number>>(
-    {},
-  );
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMoreSchools, setHasMoreSchools] = useState(false);
+  const [loadingMoreSchools, setLoadingMoreSchools] = useState(false);
   const [planForm, setPlanForm] = useState<{
     id: string;
     name: string;
@@ -123,77 +123,77 @@ const Schools = () => {
     }
   };
 
-  useEffect(() => {
-    const loadUserRole = async () => {
-      if (!user?.id) return;
-      try {
-        const userSnap = await getDoc(doc(firestore, "users", user.id));
-        console.log("[SUPER_ADMIN][Schools] auth.uid:", user.id);
-        console.log(
-          "[SUPER_ADMIN][Schools] user doc exists:",
-          userSnap.exists(),
-        );
-        console.log("[SUPER_ADMIN][Schools] user role:", userSnap.data()?.role);
-      } catch (error) {
-        console.error("[SUPER_ADMIN][Schools] Failed to load user role", error);
+  const SCHOOLS_CACHE_KEY = "super_admin_schools_page_1_v1";
+  const SCHOOLS_PAGE_SIZE = 60;
+
+  const loadUserRole = async () => {
+    if (!user?.id) return;
+    try {
+      const userSnap = await getDoc(doc(firestore, "users", user.id));
+      console.log("[SUPER_ADMIN][Schools] auth.uid:", user.id);
+      console.log("[SUPER_ADMIN][Schools] user doc exists:", userSnap.exists());
+      console.log("[SUPER_ADMIN][Schools] user role:", userSnap.data()?.role);
+    } catch (error) {
+      console.error("[SUPER_ADMIN][Schools] Failed to load user role", error);
+    }
+  };
+
+  const loadFirstSchoolsPage = async (forceRefresh = false) => {
+    setLoading(true);
+    try {
+      if (forceRefresh) {
+        clearClientCache(SCHOOLS_CACHE_KEY);
       }
-    };
-
-    const schoolsRef = collection(firestore, "schools");
-    const unsubscribe = onSnapshot(
-      schoolsRef,
-      (snapshot) => {
-        const schoolsData = snapshot.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              ...doc.data(),
-            }) as School,
-        );
-        setSchools(schoolsData);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Failed to load schools", error);
-        setLoading(false);
-        showToast(error?.message || "Missing or insufficient permissions.", {
-          type: "error",
-        });
-      },
-    );
-
-    loadPlans();
-    loadUserRole();
-
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    const loadCounts = async () => {
-      if (!schools.length) {
-        setStudentCounts({});
-        return;
-      }
-      try {
-        const entries = await Promise.all(
-          schools.map(async (school) => {
-            const snap = await getCountFromServer(
-              query(
-                collection(firestore, "students"),
-                where("schoolId", "==", school.id),
-              ),
-            );
-            return [school.id, snap.data().count] as const;
+      const firstPage = await resolveClientCache(
+        SCHOOLS_CACHE_KEY,
+        45_000,
+        async () =>
+          getSuperAdminSchoolsPage({
+            limit: SCHOOLS_PAGE_SIZE,
+            forceRefresh,
           }),
-        );
-        setStudentCounts(Object.fromEntries(entries));
-      } catch (error) {
-        console.error("Failed to load student counts", error);
-      }
-    };
+        { forceRefresh },
+      );
+      setSchools((firstPage.items || []) as School[]);
+      setNextCursor(firstPage.nextCursor || null);
+      setHasMoreSchools(Boolean(firstPage.hasMore));
+    } catch (error: any) {
+      console.error("Failed to load schools", error);
+      showToast(error?.message || "Missing or insufficient permissions.", {
+        type: "error",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    loadCounts();
-  }, [schools]);
+  const loadMoreSchools = async () => {
+    if (!nextCursor || loadingMoreSchools) return;
+    setLoadingMoreSchools(true);
+    try {
+      const page = await getSuperAdminSchoolsPage({
+        limit: SCHOOLS_PAGE_SIZE,
+        cursor: nextCursor,
+      });
+      setSchools((prev) => [...prev, ...((page.items || []) as School[])]);
+      setNextCursor(page.nextCursor || null);
+      setHasMoreSchools(Boolean(page.hasMore));
+    } catch (error: any) {
+      console.error("Failed to load more schools", error);
+      showToast(error?.message || "Failed to load more schools.", {
+        type: "error",
+      });
+    } finally {
+      setLoadingMoreSchools(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadInitial = async () => {
+      await Promise.all([loadPlans(), loadUserRole(), loadFirstSchoolsPage(false)]);
+    };
+    void loadInitial();
+  }, []);
 
   const handleCreateSchool = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,6 +264,7 @@ const Schools = () => {
       setLogoNatural({ width: 0, height: 0 });
       setShowCreateModal(false);
       showToast("School created successfully!", { type: "success" });
+      await loadFirstSchoolsPage(true);
     } catch (error: any) {
       console.error("Error creating school:", error);
       showToast(error.message || "Failed to create school", { type: "error" });
@@ -298,6 +299,12 @@ const Schools = () => {
       await updateDoc(doc(firestore, "schools", schoolId), {
         status: newStatus,
       });
+      setSchools((prev) =>
+        prev.map((school) =>
+          school.id === schoolId ? { ...school, status: newStatus } : school,
+        ),
+      );
+      clearClientCache(SCHOOLS_CACHE_KEY);
       showToast(
         `School ${newStatus === "active" ? "activated" : "deactivated"}`,
         { type: "success" },
@@ -412,6 +419,7 @@ const Schools = () => {
       );
       setShowDeleteModal(false);
       setSchoolToDelete(null);
+      await loadFirstSchoolsPage(true);
     } catch (error: any) {
       console.error("Error deleting school:", error);
       showToast(error.message || "Failed to delete school", { type: "error" });
@@ -501,11 +509,30 @@ const Schools = () => {
         await updateDoc(doc(firestore, "schools", schoolId), {
           featurePlan: nextPlanId,
         });
+        setSchools((prev) =>
+          prev.map((school) =>
+            school.id === schoolId
+              ? { ...school, featurePlan: nextPlanId as "starter" | "standard" }
+              : school,
+          ),
+        );
+        clearClientCache(SCHOOLS_CACHE_KEY);
         showToast("Feature plan updated successfully.", { type: "success" });
         return;
       }
 
       await updateSchoolPlan({ schoolId, planId: nextPlanId });
+      setSchools((prev) =>
+        prev.map((school) =>
+          school.id === schoolId
+            ? {
+                ...school,
+                subscription: { ...(school.subscription || {}), planId: nextPlanId },
+              }
+            : school,
+        ),
+      );
+      clearClientCache(SCHOOLS_CACHE_KEY);
       showToast("Plan assigned successfully.", { type: "success" });
     } catch (error: any) {
       console.error("Plan assignment failed", error);
@@ -599,6 +626,12 @@ const Schools = () => {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button
+              onClick={() => void loadFirstSchoolsPage(true)}
+              className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              Refresh
+            </button>
+            <button
               onClick={() => setShowPlanModal(true)}
               className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
             >
@@ -690,7 +723,7 @@ const Schools = () => {
                       </td>
                       <td className="px-6 py-4">
                         {`${
-                          school.studentsCount ?? studentCounts[school.id] ?? 0
+                          school.studentsCount ?? 0
                         }/${resolvePlanLimit(school) || "—"}`}
                       </td>
                       <td className="px-6 py-4">
@@ -755,6 +788,18 @@ const Schools = () => {
               </tbody>
             </table>
           </div>
+          {hasMoreSchools && (
+            <div className="border-t border-slate-100 px-6 py-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMoreSchools()}
+                disabled={loadingMoreSchools}
+                className="inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loadingMoreSchools ? "Loading..." : "Load more schools"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

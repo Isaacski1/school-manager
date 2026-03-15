@@ -1,15 +1,5 @@
 ﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
-import {
-  collection,
-  collectionGroup,
-  query,
-  getDocs,
-  orderBy,
-  limit,
-  Timestamp,
-  where,
-} from "firebase/firestore";
-import { firestore } from "../../services/firebase";
+import { Timestamp } from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
 import { UserRole } from "../../types";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -26,8 +16,10 @@ import {
   undoSuperAdminAiAction,
   submitSuperAdminAiFeedback,
   getSuperAdminAiMetrics,
+  getSuperAdminDashboardOverview,
 } from "../../services/backendApi";
 import showToast from "../../services/toast";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
 import {
   RefreshCw,
   Users,
@@ -2142,6 +2134,8 @@ const Dashboard: React.FC = () => {
       }
     >;
   }>({ summary: {}, perSchool: {} });
+  const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
+  const DASHBOARD_CACHE_TTL_MS = 45_000;
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -2366,283 +2360,95 @@ const Dashboard: React.FC = () => {
     [],
   );
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setPaymentsError(null);
-    try {
-      const sCol = collection(firestore, "schools");
-      const sSnap = await getDocs(sCol);
-      const rows: School[] = sSnap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          ...data,
-          id: d.id,
-          name: getSchoolName(data.name),
-          code: getSchoolCode(data.code, d.id),
-          logoUrl: normalizeText(data.logoUrl),
-          plan: normalizePlan(data.plan),
-          status: normalizeStatus(data.status),
-        } as School;
-      });
-      setSchools(rows as School[]);
-
-      const aCol = collection(firestore, "activity_logs");
-      const aQ = query(aCol, orderBy("createdAt", "desc"), limit(20));
-      const aSnap = await getDocs(aQ);
-      const events = aSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-      })) as ActivityEntry[];
-      setActivity(events);
-
-      const rootPaymentsSnap = await getDocs(
-        query(
-          collection(firestore, "payments"),
-          orderBy("createdAt", "desc"),
-          limit(1000),
-        ),
-      );
-      const rootPaymentRows = rootPaymentsSnap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          ...data,
-          amount: data.amount ?? data.amountPaid,
-          createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
-          paymentMethod: data.paymentMethod ?? data.method ?? data.channel,
-          method: data.method ?? data.paymentMethod,
-          channel: data.channel ?? data.paymentMethod ?? data.method,
-          provider: data.provider ?? data.gateway ?? data.processor,
-          paymentType: data.paymentType ?? data.payment_method ?? data.type,
-          module: data.module ?? "billing",
-          type: data.type ?? "subscription",
-          category: data.category ?? "subscription",
-        } as PaymentRecord;
-      });
-
-      // Pull school-level payments for finance v2 setups
-      let schoolPaymentRows: PaymentRecord[] = [];
+  const loadData = useCallback(
+    async (options?: { forceRefresh?: boolean }) => {
+      const forceRefresh = Boolean(options?.forceRefresh);
+      setLoading(true);
+      setPaymentsError(null);
       try {
-        const schoolPaymentPromises = rows.map(async (school) => {
-          if (!school.id) return [] as PaymentRecord[];
-          try {
-            const schoolPaymentsSnap = await getDocs(
-              query(
-                collection(firestore, "schools", school.id, "payments"),
-                orderBy("createdAt", "desc"),
-                limit(500),
-              ),
-            );
-            return schoolPaymentsSnap.docs.map((docSnap) => {
-              const data = docSnap.data() as any;
-              return {
-                id: `${school.id}_${docSnap.id}`,
-                ...data,
-                schoolId: data.schoolId ?? school.id,
-                schoolName: data.schoolName ?? school.name,
-                amount: data.amount ?? data.amountPaid,
-                createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
-                paymentMethod:
-                  data.paymentMethod ?? data.method ?? data.channel,
-                method: data.method ?? data.paymentMethod,
-                channel: data.channel ?? data.paymentMethod ?? data.method,
-                provider: data.provider ?? data.gateway ?? data.processor,
-                paymentType:
-                  data.paymentType ?? data.payment_method ?? data.type,
-                module: data.module ?? "billing",
-                type: data.type ?? "subscription",
-                category: data.category ?? "subscription",
-              } as PaymentRecord;
-            });
-          } catch (err) {
-            return [] as PaymentRecord[];
-          }
-        });
-
-        const schoolPaymentsNested = await Promise.all(schoolPaymentPromises);
-        schoolPaymentRows = schoolPaymentsNested.reduce<PaymentRecord[]>(
-          (acc, schoolRows) => {
-            acc.push(...schoolRows);
-            return acc;
-          },
-          [],
+        if (forceRefresh) {
+          clearClientCache(DASHBOARD_CACHE_KEY);
+        }
+        const payload = await resolveClientCache(
+          DASHBOARD_CACHE_KEY,
+          DASHBOARD_CACHE_TTL_MS,
+          async () =>
+            getSuperAdminDashboardOverview({
+              forceRefresh,
+              schoolsLimit: 2500,
+              activityLimit: 120,
+              paymentsLimit: 4000,
+              checklistLimit: 25000,
+            }),
+          { forceRefresh },
         );
-      } catch (err) {
-        console.warn(
-          "[Dashboard] Failed to load school payment subcollections",
-          err,
+
+        const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
+          ...(row || {}),
+          id: String(row?.id || ""),
+          name: getSchoolName(row?.name),
+          code: getSchoolCode(row?.code, row?.id),
+          logoUrl: normalizeText(row?.logoUrl),
+          plan: normalizePlan(row?.plan),
+          status: normalizeStatus(row?.status),
+          createdAt: row?.createdAt || null,
+        }));
+        const normalizedActivity: ActivityEntry[] = (payload?.activity || []).map(
+          (row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            createdAt: row?.createdAt || null,
+            schoolId: row?.schoolId || "",
+            eventType: row?.eventType || "activity",
+          }),
         );
-      }
+        const normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
+          (row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            amount: row?.amount ?? row?.amountPaid ?? 0,
+            createdAt: row?.createdAt ?? row?.paidAt ?? row?.verifiedAt ?? null,
+            paymentMethod: row?.paymentMethod ?? row?.method ?? row?.channel,
+            method: row?.method ?? row?.paymentMethod,
+            channel: row?.channel ?? row?.paymentMethod ?? row?.method,
+            provider: row?.provider ?? row?.gateway ?? row?.processor,
+            paymentType: row?.paymentType ?? row?.payment_method ?? row?.type,
+            module: row?.module ?? "billing",
+            type: row?.type ?? "subscription",
+            category: row?.category ?? "subscription",
+          }),
+        );
 
-      const combinedPayments = [...rootPaymentRows, ...schoolPaymentRows];
-      const paymentRows = combinedPayments.filter(
-        (payment, index, self) =>
-          index ===
-          self.findIndex(
-            (p) => p.id === payment.id && p.schoolId === payment.schoolId,
-          ),
-      );
-      console.log("[Dashboard] Payments loaded", {
-        total: paymentRows.length,
-        billingPayments: paymentRows.filter(
-          (p) =>
-            (p as any).module === "billing" ||
-            (p as any).type === "subscription",
-        ).length,
-        range: {
-          min: paymentRows[paymentRows.length - 1]?.createdAt ?? null,
-          max: paymentRows[0]?.createdAt ?? null,
-        },
-        sample: paymentRows.slice(0, 3).map((p) => ({
-          id: p.id,
-          schoolId: p.schoolId,
-          amount: p.amount,
-          status: p.status,
-          module: (p as any).module,
-          type: (p as any).type,
-        })),
-      });
-      setPayments(paymentRows);
+        setSchools(normalizedSchools);
+        setActivity(normalizedActivity);
+        setPayments(normalizedPayments);
 
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.error(err);
-      setPaymentsError("Unable to load payment history.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!schools.length) return;
-    const loadDailyChecklist = async () => {
-      try {
-        const now = new Date();
-        const toLocalYYYYMMDD = (date: Date) => {
-          const y = date.getFullYear();
-          const m = String(date.getMonth() + 1).padStart(2, "0");
-          const d = String(date.getDate()).padStart(2, "0");
-          return `${y}-${m}-${d}`;
+        const fallbackDailySummary = {
+          attendance: { completed: 0, total: normalizedSchools.length },
+          teacherAttendance: { completed: 0, total: normalizedSchools.length },
+          assessments: { completed: 0, total: normalizedSchools.length },
+          timetable: { completed: 0, total: normalizedSchools.length },
+          notices: { completed: 0, total: normalizedSchools.length },
         };
-        const today = toLocalYYYYMMDD(now);
-        const startOfDay = new Date(now);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(now);
-        endOfDay.setHours(23, 59, 59, 999);
-        const startMs = startOfDay.getTime();
-        const endMs = endOfDay.getTime();
-        const totalSchools = schools.length;
-        const completion = {
-          attendance: { completed: 0, total: totalSchools },
-          teacherAttendance: { completed: 0, total: totalSchools },
-          assessments: { completed: 0, total: totalSchools },
-          timetable: { completed: 0, total: totalSchools },
-          notices: { completed: 0, total: totalSchools },
-        } as Record<string, { completed: number; total: number }>;
-        const perSchool: Record<
-          string,
-          {
-            attendance: boolean;
-            teacherAttendance: boolean;
-            assessments: boolean;
-            timetable: boolean;
-            notices: boolean;
-          }
-        > = {};
-
-        const [
-          attendanceSnap,
-          teacherAttendanceSnap,
-          assessmentsSnap,
-          timetablesSnap,
-          noticesSnap,
-        ] = await Promise.all([
-          getDocs(
-            query(
-              collection(firestore, "attendance"),
-              where("date", "==", today),
-            ),
-          ),
-          getDocs(
-            query(
-              collection(firestore, "teacher_attendance"),
-              where("date", "==", today),
-            ),
-          ),
-          getDocs(
-            query(
-              collection(firestore, "assessments"),
-              where("createdAt", ">=", startMs),
-              where("createdAt", "<=", endMs),
-            ),
-          ),
-          getDocs(collection(firestore, "timetables")),
-          getDocs(
-            query(
-              collection(firestore, "notices"),
-              where("createdAt", ">=", startMs),
-              where("createdAt", "<=", endMs),
-            ),
-          ),
-        ]);
-
-        const attendanceSchools = new Set(
-          attendanceSnap.docs
-            .map((doc) => (doc.data() as any).schoolId)
-            .filter(Boolean),
-        );
-        const teacherAttendanceSchools = new Set(
-          teacherAttendanceSnap.docs
-            .map((doc) => (doc.data() as any).schoolId)
-            .filter(Boolean),
-        );
-        const assessmentSchools = new Set(
-          assessmentsSnap.docs
-            .map((doc) => (doc.data() as any).schoolId)
-            .filter(Boolean),
-        );
-        const timetableSchools = new Set(
-          timetablesSnap.docs
-            .map((doc) => (doc.data() as any).schoolId)
-            .filter(Boolean),
-        );
-        const noticeSchools = new Set(
-          noticesSnap.docs
-            .map((doc) => (doc.data() as any).schoolId)
-            .filter(Boolean),
-        );
-
-        schools.forEach((school) => {
-          const schoolId = school.id;
-          if (!schoolId) return;
-
-          const status = {
-            attendance: attendanceSchools.has(schoolId),
-            teacherAttendance: teacherAttendanceSchools.has(schoolId),
-            assessments: assessmentSchools.has(schoolId),
-            timetable: timetableSchools.has(schoolId),
-            notices: noticeSchools.has(schoolId),
-          };
-          perSchool[schoolId] = status;
-
-          if (status.attendance) completion.attendance.completed += 1;
-          if (status.teacherAttendance)
-            completion.teacherAttendance.completed += 1;
-          if (status.assessments) completion.assessments.completed += 1;
-          if (status.timetable) completion.timetable.completed += 1;
-          if (status.notices) completion.notices.completed += 1;
+        setDailyChecklist({
+          summary: payload?.dailyChecklist?.summary || fallbackDailySummary,
+          perSchool: payload?.dailyChecklist?.perSchool || {},
         });
-        setDailyChecklist({ summary: completion, perSchool });
+        setLastUpdated(
+          payload?.generatedAt ? new Date(payload.generatedAt) : new Date(),
+        );
       } catch (err) {
-        console.error("Failed to load daily checklist", err);
+        console.error(err);
+        setPaymentsError("Unable to load payment history.");
+      } finally {
+        setLoading(false);
       }
-    };
-
-    loadDailyChecklist();
-  }, [schools]);
+    },
+    [DASHBOARD_CACHE_KEY],
+  );
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData]);
 
   // KPI calculations (unchanged logic)
@@ -3322,7 +3128,7 @@ const Dashboard: React.FC = () => {
             : `Action completed: ${response.actionType}.`,
         ),
       );
-      loadData();
+      void loadData({ forceRefresh: true });
       refreshAiMetrics();
     } catch (error: any) {
       showToast(error?.message || "Action failed", { type: "error" });
@@ -3361,7 +3167,7 @@ const Dashboard: React.FC = () => {
         toConversationMessage("assistant", response.message),
       );
       showToast("Action undone", { type: "success" });
-      loadData();
+      void loadData({ forceRefresh: true });
       refreshAiMetrics();
     } catch (error: any) {
       showToast(error?.message || "Undo failed", { type: "error" });
@@ -3460,7 +3266,7 @@ const Dashboard: React.FC = () => {
                   View Schools
                 </Link>
                 <button
-                  onClick={() => loadData()}
+                  onClick={() => void loadData({ forceRefresh: true })}
                   aria-label="Refresh dashboard"
                   className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1160A8]"
                 >
@@ -4434,7 +4240,7 @@ const Dashboard: React.FC = () => {
                 </option>
               </select>
               <button
-                onClick={loadData}
+                onClick={() => void loadData({ forceRefresh: true })}
                 className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 <RefreshCw size={14} />

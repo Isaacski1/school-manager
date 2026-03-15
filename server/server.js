@@ -387,6 +387,10 @@ const AI_CONTEXT_CACHE_TTL_MS = Number(
   process.env.SUPERADMIN_AI_CACHE_TTL_MS || 45000,
 );
 const AI_CONTEXT_CACHE = new Map();
+const SUPERADMIN_VIEW_CACHE_TTL_MS = Number(
+  process.env.SUPERADMIN_VIEW_CACHE_TTL_MS || 45000,
+);
+const SUPERADMIN_VIEW_CACHE = new Map();
 
 const buildAiSystemPrompt = (dataContext) => {
   const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
@@ -454,6 +458,191 @@ const fetchCollectionRows = async ({
     }
   }
 };
+
+const toPositiveInt = (value, fallback, min = 1, max = 2000) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const normalized = Math.floor(parsed);
+  if (normalized < min) return min;
+  if (normalized > max) return max;
+  return normalized;
+};
+
+const toBooleanFlag = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+};
+
+const toMillisValue = (value) => {
+  const dt = parseFlexibleDate(value);
+  return dt ? dt.getTime() : null;
+};
+
+const buildSuperAdminViewCacheKey = (scope, uid, query = {}) => {
+  const stableQuery = Object.keys(query || {})
+    .sort()
+    .reduce((acc, key) => {
+      const current = query[key];
+      if (current === undefined || current === null || current === "") {
+        return acc;
+      }
+      acc[key] = String(current);
+      return acc;
+    }, {});
+  return `${scope}:${uid || "anonymous"}:${JSON.stringify(stableQuery)}`;
+};
+
+const getCachedSuperAdminView = (cacheKey) => {
+  const cached = SUPERADMIN_VIEW_CACHE.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    SUPERADMIN_VIEW_CACHE.delete(cacheKey);
+    return null;
+  }
+  return cached.payload;
+};
+
+const setCachedSuperAdminView = (
+  cacheKey,
+  payload,
+  ttlMs = SUPERADMIN_VIEW_CACHE_TTL_MS,
+) => {
+  SUPERADMIN_VIEW_CACHE.set(cacheKey, {
+    payload,
+    expiresAt: Date.now() + Math.max(5000, Number(ttlMs) || 0),
+  });
+};
+
+const clearSuperAdminViewCache = () => {
+  SUPERADMIN_VIEW_CACHE.clear();
+};
+
+const normalizeSchoolForView = (docId, data = {}) => {
+  const planRaw = String(data.plan || "trial").toLowerCase();
+  const statusRaw = String(data.status || "active").toLowerCase();
+  const validPlan = ["free", "trial", "monthly", "termly", "yearly"].includes(
+    planRaw,
+  )
+    ? planRaw
+    : "trial";
+  const validStatus = ["active", "inactive"].includes(statusRaw)
+    ? statusRaw
+    : "active";
+
+  return {
+    id: docId,
+    name: String(data.name || "Unnamed School").trim() || "Unnamed School",
+    code:
+      String(data.code || "").trim() || String(docId || "").slice(-6).toUpperCase(),
+    logoUrl: String(data.logoUrl || "").trim(),
+    phone: String(data.phone || "").trim(),
+    address: String(data.address || "").trim(),
+    plan: validPlan,
+    status: validStatus,
+    featurePlan: String(data.featurePlan || "starter").toLowerCase(),
+    createdBy: data.createdBy || null,
+    createdAt: toMillisValue(data.createdAt),
+    planEndsAt: toMillisValue(data.planEndsAt),
+    studentsCount: Number(data.studentsCount || 0) || 0,
+    limits: data.limits || {},
+    billing: data.billing || {},
+    subscription: data.subscription || {},
+  };
+};
+
+const normalizePaymentForView = (docId, data = {}) => ({
+  id: docId,
+  schoolId: String(data.schoolId || "").trim() || null,
+  schoolName: String(data.schoolName || "").trim() || "Unknown School",
+  adminEmail: String(data.adminEmail || "").trim() || null,
+  amount: Number(data.amount ?? data.amountPaid ?? 0) || 0,
+  currency: String(data.currency || "GHS").trim() || "GHS",
+  status: String(data.status || "pending").trim() || "pending",
+  reference: String(data.reference || "").trim() || null,
+  createdAt: toMillisValue(data.createdAt ?? data.paidAt ?? data.verifiedAt),
+  module: String(data.module || "billing"),
+  type: String(data.type || "subscription"),
+  category: String(data.category || "subscription"),
+  paymentMethod:
+    String(data.paymentMethod || data.method || data.channel || "").trim() || null,
+});
+
+const listCollectionPage = async ({
+  collectionName,
+  orderField = "createdAt",
+  direction = "desc",
+  cursorDocId = "",
+  limitCount = 50,
+}) => {
+  const db = admin.firestore();
+  const pageSize = toPositiveInt(limitCount, 50, 1, 250);
+  const dir = String(direction).toLowerCase() === "asc" ? "asc" : "desc";
+  const cursorId = String(cursorDocId || "").trim();
+
+  const buildPrimaryQuery = async () => {
+    let ref = db.collection(collectionName).orderBy(orderField, dir);
+    if (cursorId) {
+      const cursorSnap = await db.collection(collectionName).doc(cursorId).get();
+      if (cursorSnap.exists) {
+        ref = ref.startAfter(cursorSnap);
+      }
+    }
+    return ref.limit(pageSize).get();
+  };
+
+  const buildFallbackQuery = async () => {
+    let ref = db
+      .collection(collectionName)
+      .orderBy(admin.firestore.FieldPath.documentId(), dir);
+    if (cursorId) {
+      ref = ref.startAfter(cursorId);
+    }
+    return ref.limit(pageSize).get();
+  };
+
+  let snap;
+  let usedFallback = false;
+  try {
+    snap = await buildPrimaryQuery();
+  } catch (error) {
+    usedFallback = true;
+    snap = await buildFallbackQuery();
+  }
+
+  const items = snap.docs.map((docSnap) => ({
+    id: docSnap.id,
+    ...(docSnap.data() || {}),
+  }));
+  const nextCursor =
+    snap.size === pageSize ? snap.docs[snap.docs.length - 1]?.id || null : null;
+
+  return {
+    items,
+    nextCursor,
+    hasMore: Boolean(nextCursor),
+    pageSize,
+    usedFallback,
+  };
+};
+
+const toLocalDateKey = (date = new Date()) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const normalizeSchoolId = (value) => {
+  const schoolId = String(value || "").trim();
+  return schoolId || null;
+};
+
+const extractUniqueSchoolIds = (rows = []) =>
+  new Set(
+    rows
+      .map((row) => normalizeSchoolId(row?.schoolId))
+      .filter((schoolId) => Boolean(schoolId)),
+  );
 
 const buildAiDataContext = async (options = {}) => {
   const {
@@ -2388,6 +2577,840 @@ const DEFAULT_CLASS_SUBJECTS = {
 };
 
 /**
+ * Super Admin Dashboard Overview (cached + aggregated)
+ * GET /api/superadmin/dashboard-overview
+ */
+app.get(
+  "/api/superadmin/dashboard-overview",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 2000, 50, 5000);
+      const activityLimit = toPositiveInt(req.query?.activityLimit, 60, 10, 400);
+      const paymentsLimit = toPositiveInt(
+        req.query?.paymentsLimit,
+        2500,
+        100,
+        8000,
+      );
+      const checklistLimit = toPositiveInt(
+        req.query?.checklistLimit,
+        20000,
+        500,
+        100000,
+      );
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "dashboard-overview",
+        req.user?.uid,
+        {
+          schoolsLimit,
+          activityLimit,
+          paymentsLimit,
+          checklistLimit,
+        },
+      );
+
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const db = admin.firestore();
+      const safeGetRows = async (loader) => {
+        try {
+          return await loader();
+        } catch {
+          return [];
+        }
+      };
+
+      const [schoolRows, activityRows, paymentRows] = await Promise.all([
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "schools",
+            limitCount: schoolsLimit,
+            orderField: "createdAt",
+          }),
+        ),
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "activity_logs",
+            limitCount: activityLimit,
+            orderField: "createdAt",
+          }),
+        ),
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "payments",
+            limitCount: paymentsLimit,
+            orderField: "createdAt",
+          }),
+        ),
+      ]);
+
+      const schools = schoolRows.map((row) => normalizeSchoolForView(row.id, row));
+      const activity = activityRows.map((row) => ({
+        id: row.id,
+        schoolId: normalizeSchoolId(row.schoolId),
+        eventType: String(row.eventType || row.actionType || "activity"),
+        actorUid: row.actorUid || null,
+        actorRole: row.actorRole || null,
+        createdAt: toMillisValue(row.createdAt || row.timestamp || row.timestampMs),
+        meta: row.meta || null,
+      }));
+      const payments = paymentRows.map((row) => normalizePaymentForView(row.id, row));
+
+      const now = new Date();
+      const today = toLocalDateKey(now);
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+      const startMs = startOfDay.getTime();
+      const endMs = endOfDay.getTime();
+
+      const getRowsFromSnap = (snap) =>
+        Array.isArray(snap?.docs) ? snap.docs.map((docSnap) => docSnap.data()) : [];
+
+      const [
+        attendanceSnap,
+        teacherAttendanceSnap,
+        assessmentsSnap,
+        timetablesSnap,
+        noticesSnap,
+      ] = await Promise.all([
+        db
+          .collection("attendance")
+          .where("date", "==", today)
+          .limit(checklistLimit)
+          .get()
+          .catch(() => null),
+        db
+          .collection("teacher_attendance")
+          .where("date", "==", today)
+          .limit(checklistLimit)
+          .get()
+          .catch(() => null),
+        db
+          .collection("assessments")
+          .where("createdAt", ">=", startMs)
+          .where("createdAt", "<=", endMs)
+          .limit(checklistLimit)
+          .get()
+          .catch(() => null),
+        db
+          .collection("timetables")
+          .limit(checklistLimit)
+          .get()
+          .catch(() => null),
+        db
+          .collection("notices")
+          .where("createdAt", ">=", startMs)
+          .where("createdAt", "<=", endMs)
+          .limit(checklistLimit)
+          .get()
+          .catch(() => null),
+      ]);
+
+      const attendanceSchools = extractUniqueSchoolIds(getRowsFromSnap(attendanceSnap));
+      const teacherAttendanceSchools = extractUniqueSchoolIds(
+        getRowsFromSnap(teacherAttendanceSnap),
+      );
+      const assessmentSchools = extractUniqueSchoolIds(getRowsFromSnap(assessmentsSnap));
+      const timetableSchools = extractUniqueSchoolIds(getRowsFromSnap(timetablesSnap));
+      const noticeSchools = extractUniqueSchoolIds(getRowsFromSnap(noticesSnap));
+
+      const totalSchools = schools.length;
+      const dailyChecklistSummary = {
+        attendance: { completed: 0, total: totalSchools },
+        teacherAttendance: { completed: 0, total: totalSchools },
+        assessments: { completed: 0, total: totalSchools },
+        timetable: { completed: 0, total: totalSchools },
+        notices: { completed: 0, total: totalSchools },
+      };
+      const dailyChecklistPerSchool = {};
+
+      schools.forEach((school) => {
+        const schoolId = normalizeSchoolId(school.id);
+        if (!schoolId) return;
+
+        const status = {
+          attendance: attendanceSchools.has(schoolId),
+          teacherAttendance: teacherAttendanceSchools.has(schoolId),
+          assessments: assessmentSchools.has(schoolId),
+          timetable: timetableSchools.has(schoolId),
+          notices: noticeSchools.has(schoolId),
+        };
+        dailyChecklistPerSchool[schoolId] = status;
+
+        if (status.attendance) dailyChecklistSummary.attendance.completed += 1;
+        if (status.teacherAttendance) {
+          dailyChecklistSummary.teacherAttendance.completed += 1;
+        }
+        if (status.assessments) dailyChecklistSummary.assessments.completed += 1;
+        if (status.timetable) dailyChecklistSummary.timetable.completed += 1;
+        if (status.notices) dailyChecklistSummary.notices.completed += 1;
+      });
+
+      const payload = {
+        generatedAt: Date.now(),
+        schools,
+        activity,
+        payments,
+        dailyChecklist: {
+          summary: dailyChecklistSummary,
+          perSchool: dailyChecklistPerSchool,
+        },
+        limits: {
+          schoolsLimit,
+          activityLimit,
+          paymentsLimit,
+          checklistLimit,
+        },
+      };
+
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Dashboard overview error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to build dashboard overview",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin Analytics Overview (cached + aggregated)
+ * GET /api/superadmin/analytics-overview
+ */
+app.get(
+  "/api/superadmin/analytics-overview",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 2500, 50, 5000);
+      const paymentsLimit = toPositiveInt(
+        req.query?.paymentsLimit,
+        5000,
+        100,
+        10000,
+      );
+      const eventsLimit = toPositiveInt(req.query?.eventsLimit, 5000, 100, 10000);
+      const activityLimit = toPositiveInt(
+        req.query?.activityLimit,
+        5000,
+        100,
+        10000,
+      );
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "analytics-overview",
+        req.user?.uid,
+        {
+          schoolsLimit,
+          paymentsLimit,
+          eventsLimit,
+          activityLimit,
+        },
+      );
+
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const safeGetRows = async (loader) => {
+        try {
+          return await loader();
+        } catch {
+          return [];
+        }
+      };
+
+      const [schoolRows, paymentRows, eventRows, activityRows] = await Promise.all([
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "schools",
+            limitCount: schoolsLimit,
+            orderField: "createdAt",
+          }),
+        ),
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "payments",
+            limitCount: paymentsLimit,
+            orderField: "createdAt",
+          }),
+        ),
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "analyticsEvents",
+            limitCount: eventsLimit,
+            orderField: "createdAt",
+          }),
+        ),
+        safeGetRows(() =>
+          fetchCollectionRows({
+            collectionName: "activity_logs",
+            limitCount: activityLimit,
+            orderField: "createdAt",
+          }),
+        ),
+      ]);
+
+      const schools = schoolRows.map((row) => normalizeSchoolForView(row.id, row));
+      const payments = paymentRows.map((row) => normalizePaymentForView(row.id, row));
+      const events = eventRows.map((row) => ({
+        id: row.id,
+        schoolId: normalizeSchoolId(row.schoolId),
+        actionType: row.actionType || null,
+        userRole: row.userRole || null,
+        createdAt: toMillisValue(row.createdAt),
+      }));
+      const activityLogs = activityRows.map((row) => ({
+        id: row.id,
+        schoolId: normalizeSchoolId(row.schoolId),
+        eventType: row.eventType || null,
+        createdAt: toMillisValue(row.createdAt || row.timestamp || row.timestampMs),
+      }));
+
+      const now = new Date();
+      const months = [];
+      for (let offset = 11; offset >= 0; offset -= 1) {
+        const dt = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+        months.push({
+          key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`,
+          label: dt.toLocaleDateString("en-US", {
+            month: "short",
+            year: "numeric",
+          }),
+        });
+      }
+
+      const growthMap = Object.fromEntries(months.map((month) => [month.key, 0]));
+      const revenueMap = Object.fromEntries(months.map((month) => [month.key, 0]));
+      const activityMap = Object.fromEntries(months.map((month) => [month.key, 0]));
+
+      const activityBySchool = {};
+      const featureUsageMap = {};
+
+      schools.forEach((school) => {
+        const createdDate = parseFlexibleDate(school.createdAt);
+        if (!createdDate) return;
+        const key = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, "0")}`;
+        if (growthMap[key] !== undefined) {
+          growthMap[key] += 1;
+        }
+      });
+
+      let successfulRevenue = 0;
+      let successfulPayments = 0;
+      let issuePayments = 0;
+      payments.forEach((payment) => {
+        const status = normalizePaymentStatus(payment.status);
+        const createdDate = parseFlexibleDate(payment.createdAt);
+        if (!createdDate) return;
+        const key = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, "0")}`;
+        if (status === "success") {
+          const amount = normalizeAmount(payment.amount);
+          successfulRevenue += amount;
+          successfulPayments += 1;
+          if (revenueMap[key] !== undefined) {
+            revenueMap[key] += amount;
+          }
+        }
+        if (status === "failed") {
+          issuePayments += 1;
+        }
+      });
+
+      const recordActivity = (schoolId, createdAt) => {
+        const createdDate = parseFlexibleDate(createdAt);
+        if (!createdDate) return;
+        const key = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, "0")}`;
+        if (activityMap[key] !== undefined) {
+          activityMap[key] += 1;
+        }
+        const normalizedSchoolId = normalizeSchoolId(schoolId);
+        if (!normalizedSchoolId) return;
+        if (!activityBySchool[normalizedSchoolId]) {
+          activityBySchool[normalizedSchoolId] = { count: 0, last: null };
+        }
+        activityBySchool[normalizedSchoolId].count += 1;
+        const createdMs = createdDate.getTime();
+        if (
+          !activityBySchool[normalizedSchoolId].last ||
+          createdMs > activityBySchool[normalizedSchoolId].last
+        ) {
+          activityBySchool[normalizedSchoolId].last = createdMs;
+        }
+      };
+
+      events.forEach((eventRow) => {
+        const usageKey = String(
+          eventRow.actionType || eventRow.userRole || "unknown_event",
+        );
+        featureUsageMap[usageKey] = (featureUsageMap[usageKey] || 0) + 1;
+        recordActivity(eventRow.schoolId, eventRow.createdAt);
+      });
+      activityLogs.forEach((row) => {
+        if (!events.length) {
+          const usageKey = String(row.eventType || "platform_activity");
+          featureUsageMap[usageKey] = (featureUsageMap[usageKey] || 0) + 1;
+        }
+        recordActivity(row.schoolId, row.createdAt);
+      });
+
+      const studentCounts = Object.fromEntries(
+        schools.map((school) => [school.id, Number(school.studentsCount || 0) || 0]),
+      );
+
+      const totalSchools = schools.length;
+      const activeSchools = schools.filter((school) => school.status === "active").length;
+      const totalStudents = Object.values(studentCounts).reduce(
+        (sum, value) => sum + Number(value || 0),
+        0,
+      );
+      const avgStudents = totalSchools ? Math.round(totalStudents / totalSchools) : 0;
+
+      const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const getMonthCount = (targetDate) =>
+        schools.filter((school) => {
+          const created = parseFlexibleDate(school.createdAt);
+          if (!created) return false;
+          return (
+            created.getFullYear() === targetDate.getFullYear() &&
+            created.getMonth() === targetDate.getMonth()
+          );
+        }).length;
+      const newSchoolsThisMonth = getMonthCount(thisMonth);
+      const newSchoolsLastMonth = getMonthCount(lastMonth);
+      const growthRate =
+        newSchoolsLastMonth === 0
+          ? newSchoolsThisMonth === 0
+            ? 0
+            : 100
+          : Math.round(
+              ((newSchoolsThisMonth - newSchoolsLastMonth) / newSchoolsLastMonth) *
+                100,
+            );
+
+      const topActiveSchools = schools
+        .map((school) => ({
+          ...school,
+          activityScore: activityBySchool[school.id]?.count || 0,
+          lastActive: activityBySchool[school.id]?.last || null,
+        }))
+        .sort((left, right) => right.activityScore - left.activityScore)
+        .slice(0, 8);
+
+      const featureUsage = Object.entries(featureUsageMap)
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => right.value - left.value)
+        .slice(0, 16);
+
+      const payload = {
+        generatedAt: Date.now(),
+        schools,
+        payments,
+        events,
+        activityLogs,
+        studentCounts,
+        months,
+        growthSeries: months.map((month) => ({
+          label: month.label,
+          value: growthMap[month.key] || 0,
+        })),
+        revenueSeries: months.map((month) => ({
+          label: month.label,
+          value: revenueMap[month.key] || 0,
+        })),
+        activitySeries: months.map((month) => ({
+          label: month.label,
+          value: activityMap[month.key] || 0,
+        })),
+        totals: {
+          totalSchools,
+          activeSchools,
+          totalStudents,
+          avgStudents,
+          newSchoolsThisMonth,
+          newSchoolsLastMonth,
+          growthRate,
+          successfulRevenue,
+          successfulPayments,
+          issuePayments,
+        },
+        topActiveSchools,
+        featureUsage,
+      };
+
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Analytics overview error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to build analytics overview",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin schools list (paginated)
+ * GET /api/superadmin/schools-page
+ */
+app.get(
+  "/api/superadmin/schools-page",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const limitCount = toPositiveInt(req.query?.limit, 50, 5, 200);
+      const cursorDocId = String(req.query?.cursor || "").trim();
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "schools-page",
+        req.user?.uid,
+        { limitCount, cursorDocId },
+      );
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const page = await listCollectionPage({
+        collectionName: "schools",
+        orderField: "createdAt",
+        direction: "desc",
+        cursorDocId,
+        limitCount,
+      });
+      const items = page.items.map((row) => normalizeSchoolForView(row.id, row));
+
+      const payload = {
+        items,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Schools page error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to load schools page",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin users list (paginated)
+ * GET /api/superadmin/users-page
+ */
+app.get(
+  "/api/superadmin/users-page",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const limitCount = toPositiveInt(req.query?.limit, 100, 10, 300);
+      const cursorDocId = String(req.query?.cursor || "").trim();
+      const excludeSuperAdmins = toBooleanFlag(
+        req.query?.excludeSuperAdmins ?? "1",
+      );
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "users-page",
+        req.user?.uid,
+        {
+          limitCount,
+          cursorDocId,
+          excludeSuperAdmins: excludeSuperAdmins ? "1" : "0",
+        },
+      );
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const page = await listCollectionPage({
+        collectionName: "users",
+        orderField: "createdAt",
+        direction: "desc",
+        cursorDocId,
+        limitCount,
+      });
+
+      const items = page.items
+        .map((row) => ({
+          id: row.id,
+          fullName: String(row.fullName || "").trim(),
+          email: String(row.email || "").trim(),
+          role: String(row.role || row.userRole || "").trim() || null,
+          schoolId: normalizeSchoolId(row.schoolId),
+          status: String(row.status || "active").trim() || "active",
+          createdAt: toMillisValue(row.createdAt),
+          lastLogin: toMillisValue(row.lastLogin),
+          lastLoginAt:
+            Number(row.lastLoginAt || 0) ||
+            toMillisValue(row.lastLoginAt) ||
+            null,
+        }))
+        .filter((row) =>
+          excludeSuperAdmins ? String(row.role) !== "super_admin" : true,
+        );
+
+      const payload = {
+        items,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Users page error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to load users page",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin payments list (paginated)
+ * GET /api/superadmin/payments-page
+ */
+app.get(
+  "/api/superadmin/payments-page",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const limitCount = toPositiveInt(req.query?.limit, 120, 10, 300);
+      const cursorDocId = String(req.query?.cursor || "").trim();
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "payments-page",
+        req.user?.uid,
+        { limitCount, cursorDocId },
+      );
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const page = await listCollectionPage({
+        collectionName: "payments",
+        orderField: "createdAt",
+        direction: "desc",
+        cursorDocId,
+        limitCount,
+      });
+      const items = page.items.map((row) => normalizePaymentForView(row.id, row));
+
+      const payload = {
+        items,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Payments page error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to load payments page",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin backups list (paginated)
+ * GET /api/superadmin/backups-page
+ */
+app.get(
+  "/api/superadmin/backups-page",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const limitCount = toPositiveInt(req.query?.limit, 80, 10, 200);
+      const cursorDocId = String(req.query?.cursor || "").trim();
+      const includeSchools = toBooleanFlag(req.query?.includeSchools ?? "1");
+      const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
+
+      const cacheKey = buildSuperAdminViewCacheKey(
+        "backups-page",
+        req.user?.uid,
+        {
+          limitCount,
+          cursorDocId,
+          includeSchools: includeSchools ? "1" : "0",
+        },
+      );
+      if (!forceRefresh) {
+        const cached = getCachedSuperAdminView(cacheKey);
+        if (cached) {
+          return res.json({
+            success: true,
+            cached: true,
+            ...cached,
+          });
+        }
+      }
+
+      const page = await listCollectionPage({
+        collectionName: "backups",
+        orderField: "timestamp",
+        direction: "desc",
+        cursorDocId,
+        limitCount,
+      });
+
+      const computeBackupRecordCount = (entry = {}) => {
+        const explicit = Number(entry?.recoveryMeta?.recordCount || 0);
+        if (explicit > 0) return explicit;
+        const data = entry?.data || {};
+        return [
+          Array.isArray(data.students) ? data.students.length : 0,
+          Array.isArray(data.teacherAttendanceRecords)
+            ? data.teacherAttendanceRecords.length
+            : 0,
+          Array.isArray(data.users) ? data.users.length : 0,
+          Array.isArray(data.notices) ? data.notices.length : 0,
+          Array.isArray(data.classSubjects) ? data.classSubjects.length : 0,
+          Array.isArray(data.payments) ? data.payments.length : 0,
+          Array.isArray(data.fees) ? data.fees.length : 0,
+          Array.isArray(data.studentLedgers) ? data.studentLedgers.length : 0,
+        ].reduce((sum, value) => sum + value, 0);
+      };
+
+      const items = page.items.map((row) => {
+        const recoveryMeta = row.recoveryMeta || {};
+        return {
+          id: row.id,
+          schoolId: normalizeSchoolId(row.schoolId),
+          term: String(row.term || "").trim() || null,
+          academicYear: String(row.academicYear || "").trim() || null,
+          backupType: String(row.backupType || "manual").trim() || "manual",
+          timestamp: Number(row.timestamp || 0) || toMillisValue(row.createdAt) || 0,
+          createdAt: toMillisValue(row.createdAt),
+          recoveryMeta: {
+            title: recoveryMeta.title || null,
+            description: recoveryMeta.description || null,
+            recordCount:
+              Number(recoveryMeta.recordCount || 0) ||
+              computeBackupRecordCount(row),
+            collections: Array.isArray(recoveryMeta.collections)
+              ? recoveryMeta.collections
+              : [],
+          },
+          recordCount: computeBackupRecordCount(row),
+        };
+      });
+
+      let schools = [];
+      if (includeSchools) {
+        const schoolRows = await fetchCollectionRows({
+          collectionName: "schools",
+          limitCount: 3000,
+          orderField: "createdAt",
+        });
+        schools = schoolRows.map((row) => ({
+          id: row.id,
+          name: String(row.name || "Unnamed School").trim() || "Unnamed School",
+        }));
+      }
+
+      const payload = {
+        items,
+        schools,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
+      setCachedSuperAdminView(cacheKey, payload);
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
+      });
+    } catch (error) {
+      console.error("Backups page error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to load backups page",
+      });
+    }
+  },
+);
+
+/**
  * Create School
  * POST /api/superadmin/create-school
  */
@@ -2628,6 +3651,7 @@ app.post(
       }
 
       console.log(`School created successfully: ${schoolId}`);
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         schoolId,
@@ -2737,6 +3761,7 @@ app.post(
           { merge: true },
         );
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         id: String(id),
@@ -2794,6 +3819,7 @@ app.post(
           { merge: true },
         );
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         message: "School plan updated successfully",
@@ -2910,6 +3936,7 @@ app.post(
         ? null
         : await admin.auth().generatePasswordResetLink(email);
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         uid: userRecord.uid,
@@ -4697,6 +5724,7 @@ app.post(
         meta: { email: userRecord.email },
       });
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         email: userRecord.email,
@@ -4784,6 +5812,7 @@ app.post(
         meta: { email: trimmedEmail },
       });
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         email: trimmedEmail,
@@ -4867,6 +5896,7 @@ app.post(
         meta: { role, email: email.trim(), fullName: fullName.trim() },
       });
 
+      clearSuperAdminViewCache();
       return res.json({
         success: true,
         uid,

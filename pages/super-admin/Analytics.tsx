@@ -1,15 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
-import { firestore } from "../../services/firebase";
-import {
-  collection,
-  getDocs,
-  orderBy,
-  query,
-  Timestamp,
-} from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
 import { School } from "../../types";
+import { getSuperAdminAnalyticsOverview } from "../../services/backendApi";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
 import {
   Activity,
   BarChart3,
@@ -134,63 +129,58 @@ const Analytics = () => {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [studentCounts, setStudentCounts] = useState<Record<string, number>>({});
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
+  const ANALYTICS_CACHE_TTL_MS = 60_000;
 
-  const loadData = async () => {
+  const loadData = async (options?: { forceRefresh?: boolean }) => {
+    const forceRefresh = Boolean(options?.forceRefresh);
     setLoading(true);
     try {
-      const [schoolSnap, paymentSnap, eventsSnap, activitySnap, studentsSnap] =
-        await Promise.all([
-          getDocs(
-            query(collection(firestore, "schools"), orderBy("createdAt", "desc")),
-          ),
-          getDocs(
-            query(collection(firestore, "payments"), orderBy("createdAt", "desc")),
-          ),
-          getDocs(
-            query(
-              collection(firestore, "analyticsEvents"),
-              orderBy("createdAt", "desc"),
-            ),
-          ),
-          getDocs(
-            query(
-              collection(firestore, "activity_logs"),
-              orderBy("createdAt", "desc"),
-            ),
-          ),
-          getDocs(collection(firestore, "students")),
-        ]);
+      if (forceRefresh) {
+        clearClientCache(ANALYTICS_CACHE_KEY);
+      }
+      const payload = await resolveClientCache(
+        ANALYTICS_CACHE_KEY,
+        ANALYTICS_CACHE_TTL_MS,
+        async () =>
+          getSuperAdminAnalyticsOverview({
+            forceRefresh,
+            schoolsLimit: 2500,
+            paymentsLimit: 5000,
+            eventsLimit: 5000,
+            activityLimit: 5000,
+          }),
+        { forceRefresh },
+      );
 
       setSchools(
-        schoolSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as School) })),
+        (payload?.schools || []).map((row: any) => ({
+          ...(row as School),
+          id: row.id,
+        })),
       );
       setPayments(
-        paymentSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as PaymentRecord),
+        (payload?.payments || []).map((row: any) => ({
+          id: row.id,
+          ...(row as PaymentRecord),
         })),
       );
       setEvents(
-        eventsSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as AnalyticsEvent),
+        (payload?.events || []).map((row: any) => ({
+          id: row.id,
+          ...(row as AnalyticsEvent),
         })),
       );
       setActivityLogs(
-        activitySnap.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as ActivityLog),
+        (payload?.activityLogs || []).map((row: any) => ({
+          id: row.id,
+          ...(row as ActivityLog),
         })),
       );
-
-      const counts: Record<string, number> = {};
-      studentsSnap.docs.forEach((doc) => {
-        const data = doc.data() as { schoolId?: string | null };
-        if (!data.schoolId) return;
-        counts[data.schoolId] = (counts[data.schoolId] || 0) + 1;
-      });
-      setStudentCounts(counts);
-      setLastLoadedAt(new Date());
+      setStudentCounts(payload?.studentCounts || {});
+      setLastLoadedAt(
+        payload?.generatedAt ? new Date(payload.generatedAt) : new Date(),
+      );
     } catch (error: any) {
       console.error("Failed to load analytics", error);
       showToast(error?.message || "Failed to load analytics.", { type: "error" });
@@ -594,7 +584,7 @@ const Analytics = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      void loadData();
+                      void loadData({ forceRefresh: true });
                     }}
                     disabled={loading}
                     className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"

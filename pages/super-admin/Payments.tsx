@@ -1,12 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  getDocs,
-  orderBy,
-  query,
-  Timestamp,
-} from "firebase/firestore";
-import { firestore } from "../../services/firebase";
+import { Timestamp } from "firebase/firestore";
+import { getSuperAdminPaymentsPage } from "../../services/backendApi";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
 import { showToast } from "../../services/toast";
 import { Search, RefreshCw } from "lucide-react";
 
@@ -19,10 +14,14 @@ type PaymentRecord = {
   currency?: string;
   status?: string;
   reference?: string;
-  createdAt?: Timestamp | number | string;
+  createdAt?: Timestamp | number | string | null;
 };
 
-const formatDate = (value?: Timestamp | number | string) => {
+const PAYMENTS_CACHE_KEY = "super_admin_payments_page_1_v1";
+const PAYMENTS_CACHE_TTL_MS = 45_000;
+const PAYMENTS_PAGE_SIZE = 160;
+
+const formatDate = (value?: Timestamp | number | string | null) => {
   if (!value) return "-";
   if (value instanceof Timestamp) {
     return value.toDate().toLocaleString();
@@ -87,10 +86,25 @@ const isSuccessfulPayment = (status?: string) => {
   return ["success", "paid", "active"].includes(normalized);
 };
 
+const normalizePayment = (row: any): PaymentRecord => ({
+  id: String(row?.id || ""),
+  schoolId: row?.schoolId ? String(row.schoolId) : "",
+  schoolName: String(row?.schoolName || "Unknown School"),
+  adminEmail: row?.adminEmail ? String(row.adminEmail) : "",
+  amount: Number(row?.amount ?? row?.amountPaid ?? 0) || 0,
+  currency: String(row?.currency || "GHS"),
+  status: String(row?.status || "pending"),
+  reference: row?.reference ? String(row.reference) : "",
+  createdAt: row?.createdAt ?? row?.paidAt ?? row?.verifiedAt ?? null,
+});
+
 const Payments: React.FC = () => {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
 
   const pieColors = [
     {
@@ -125,62 +139,28 @@ const Payments: React.FC = () => {
     },
   ];
 
-  const loadPayments = async () => {
+  const loadPayments = async (forceRefresh = false) => {
     setLoading(true);
     try {
-      console.log("[PAYMENTS] Starting to load payments...");
-      const paymentsRef = collection(firestore, "payments");
-      const paymentsQuery = query(paymentsRef, orderBy("createdAt", "desc"));
-
-      console.log("[PAYMENTS] Executing query...");
-      const snap = await getDocs(paymentsQuery);
-      console.log("[PAYMENTS] Query result:", {
-        docsCount: snap.docs.length,
-        empty: snap.empty,
-      });
-
-      const rows = snap.docs
-        .map((doc) => {
-          const data = doc.data() as any;
-          console.log("[PAYMENTS] Processing doc:", doc.id, data);
-          return {
-            id: doc.id,
-            schoolId: data.schoolId || "",
-            schoolName: data.schoolName || "Unknown School",
-            adminEmail: data.adminEmail || "",
-            amount: data.amount ?? data.amountPaid,
-            currency: data.currency || "GHS",
-            status: data.status || "pending",
-            reference: data.reference || "",
-            createdAt: data.createdAt ?? data.paidAt ?? data.verifiedAt,
-          } as PaymentRecord;
-        })
-        .sort((a, b) => {
-          const aTime =
-            a.createdAt instanceof Timestamp
-              ? a.createdAt.toMillis()
-              : typeof a.createdAt === "number"
-                ? a.createdAt
-                : new Date(a.createdAt || 0).getTime();
-          const bTime =
-            b.createdAt instanceof Timestamp
-              ? b.createdAt.toMillis()
-              : typeof b.createdAt === "number"
-                ? b.createdAt
-                : new Date(b.createdAt || 0).getTime();
-          return bTime - aTime;
-        });
-      console.log("[PAYMENTS] Processed rows:", rows);
-      setPayments(rows);
-      showToast(`Loaded ${rows.length} payment(s).`, { type: "success" });
+      if (forceRefresh) {
+        clearClientCache(PAYMENTS_CACHE_KEY);
+      }
+      const page = await resolveClientCache(
+        PAYMENTS_CACHE_KEY,
+        PAYMENTS_CACHE_TTL_MS,
+        async () =>
+          getSuperAdminPaymentsPage({
+            limit: PAYMENTS_PAGE_SIZE,
+            forceRefresh,
+          }),
+        { forceRefresh },
+      );
+      setPayments((page.items || []).map(normalizePayment));
+      setNextCursor(page.nextCursor || null);
+      setHasMore(Boolean(page.hasMore));
     } catch (error: any) {
-      console.error("[PAYMENTS] Failed to load payments", error);
-      console.error("[PAYMENTS] Error details:", {
-        message: error.message,
-        code: error.code,
-        type: error.type,
-      });
-      showToast(`Failed to load payment data: ${error.message}`, {
+      console.error("Failed to load payments", error);
+      showToast(`Failed to load payment data: ${error?.message || "Unknown error"}`, {
         type: "error",
       });
     } finally {
@@ -188,8 +168,29 @@ const Payments: React.FC = () => {
     }
   };
 
+  const loadMorePayments = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await getSuperAdminPaymentsPage({
+        limit: PAYMENTS_PAGE_SIZE,
+        cursor: nextCursor,
+      });
+      setPayments((prev) => [...prev, ...(page.items || []).map(normalizePayment)]);
+      setNextCursor(page.nextCursor || null);
+      setHasMore(Boolean(page.hasMore));
+    } catch (error: any) {
+      console.error("Failed to load more payments", error);
+      showToast(error?.message || "Failed to load more payments.", {
+        type: "error",
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   useEffect(() => {
-    loadPayments();
+    void loadPayments(false);
   }, []);
 
   const filteredPayments = useMemo(() => {
@@ -229,18 +230,12 @@ const Payments: React.FC = () => {
         value: current.value + normalizeAmount(payment.amount),
       });
     });
-    return Array.from(totals.values())
-      .sort((a, b) => b.value - a.value);
+    return Array.from(totals.values()).sort((a, b) => b.value - a.value);
   }, [successfulPayments]);
 
   const successfulStats = useMemo(() => {
-    const total = successfulBreakdown.reduce(
-      (sum, entry) => sum + entry.value,
-      0,
-    );
-    const currency = successfulPayments.find(
-      (payment) => payment.currency,
-    )?.currency;
+    const total = successfulBreakdown.reduce((sum, entry) => sum + entry.value, 0);
+    const currency = successfulPayments.find((payment) => payment.currency)?.currency;
     return { total, currency: currency || "GHS" };
   }, [successfulBreakdown, successfulPayments]);
 
@@ -255,7 +250,7 @@ const Payments: React.FC = () => {
             </p>
           </div>
           <button
-            onClick={loadPayments}
+            onClick={() => void loadPayments(true)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
             disabled={loading}
           >
@@ -499,6 +494,19 @@ const Payments: React.FC = () => {
                 No payments found yet.
               </div>
             )}
+          </div>
+        )}
+
+        {!loading && hasMore && (
+          <div className="mt-4 flex justify-center border-t border-slate-100 pt-4">
+            <button
+              type="button"
+              onClick={() => void loadMorePayments()}
+              disabled={loadingMore}
+              className="inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {loadingMore ? "Loading..." : "Load more payments"}
+            </button>
           </div>
         )}
       </div>

@@ -1,25 +1,24 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Timestamp,
-  collection,
-  getDocs,
-  orderBy,
-  query,
-} from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
 import Layout from "../../components/Layout";
-import { firestore } from "../../services/firebase";
+import { getSuperAdminUsersPage } from "../../services/backendApi";
+import { clearClientCache, resolveClientCache } from "../../services/clientCache";
 import { showToast } from "../../services/toast";
 import { User, UserRole } from "../../types";
 
+const USERS_CACHE_KEY = "super_admin_users_page_1_v1";
+const USERS_CACHE_TTL_MS = 45_000;
+const USERS_PAGE_SIZE = 120;
+
 const formatDate = (value?: Date | Timestamp | number | string | null) => {
-  if (!value) return "—";
+  if (!value) return "-";
   if (value instanceof Date) return value.toLocaleDateString();
   if (value instanceof Timestamp) return value.toDate().toLocaleDateString();
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleDateString();
 };
 
-const roleLabel = (role?: UserRole | string) => {
+const roleLabel = (role?: UserRole | string | null) => {
   switch (role) {
     case UserRole.SUPER_ADMIN:
       return "Super Admin";
@@ -28,36 +27,89 @@ const roleLabel = (role?: UserRole | string) => {
     case UserRole.TEACHER:
       return "Teacher";
     default:
-      return role || "—";
+      return role || "-";
   }
+};
+
+const normalizeUser = (row: any): User => {
+  const status = String(row?.status || "active").toLowerCase();
+  const role = String(row?.role || row?.userRole || "").trim();
+  return {
+    id: String(row?.id || ""),
+    fullName: String(row?.fullName || "").trim(),
+    email: String(row?.email || "").trim(),
+    role: (role || UserRole.SCHOOL_ADMIN) as UserRole,
+    schoolId: row?.schoolId ? String(row.schoolId) : null,
+    status: status === "inactive" ? "inactive" : "active",
+    createdAt:
+      typeof row?.createdAt === "number" ? new Date(row.createdAt) : undefined,
+    lastLogin: row?.lastLogin ?? null,
+    lastLoginAt:
+      typeof row?.lastLoginAt === "number" ? Number(row.lastLoginAt) : null,
+  };
 };
 
 const SuperAdminUsers: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+
+  const loadFirstUsersPage = async (forceRefresh = false) => {
+    setLoading(true);
+    try {
+      if (forceRefresh) {
+        clearClientCache(USERS_CACHE_KEY);
+      }
+      const page = await resolveClientCache(
+        USERS_CACHE_KEY,
+        USERS_CACHE_TTL_MS,
+        async () =>
+          getSuperAdminUsersPage({
+            limit: USERS_PAGE_SIZE,
+            excludeSuperAdmins: true,
+            forceRefresh,
+          }),
+        { forceRefresh },
+      );
+      const normalized = (page.items || []).map(normalizeUser);
+      setUsers(normalized);
+      setNextCursor(page.nextCursor || null);
+      setHasMore(Boolean(page.hasMore));
+    } catch (error: any) {
+      console.error("Failed to load users", error);
+      showToast(error?.message || "Failed to load users.", { type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMoreUsers = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await getSuperAdminUsersPage({
+        limit: USERS_PAGE_SIZE,
+        cursor: nextCursor,
+        excludeSuperAdmins: true,
+      });
+      setUsers((prev) => [...prev, ...(page.items || []).map(normalizeUser)]);
+      setNextCursor(page.nextCursor || null);
+      setHasMore(Boolean(page.hasMore));
+    } catch (error: any) {
+      console.error("Failed to load more users", error);
+      showToast(error?.message || "Failed to load more users.", {
+        type: "error",
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
-    const loadUsers = async () => {
-      setLoading(true);
-      try {
-        const snapshot = await getDocs(
-          query(collection(firestore, "users"), orderBy("createdAt", "desc")),
-        );
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Omit<User, "id">),
-        }));
-        setUsers(data);
-      } catch (error: any) {
-        console.error("Failed to load users", error);
-        showToast(error?.message || "Failed to load users.", { type: "error" });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadUsers();
+    void loadFirstUsersPage(false);
   }, []);
 
   const filteredUsers = useMemo(() => {
@@ -82,18 +134,28 @@ const SuperAdminUsers: React.FC = () => {
                 Manage all platform users and review their status.
               </p>
             </div>
-            <div className="w-full sm:w-72">
-              <label className="sr-only" htmlFor="users-search">
-                Search users
-              </label>
-              <input
-                id="users-search"
-                type="text"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by name, email, role..."
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
-              />
+            <div className="flex w-full items-center gap-2 sm:w-auto">
+              <div className="w-full sm:w-72">
+                <label className="sr-only" htmlFor="users-search">
+                  Search users
+                </label>
+                <input
+                  id="users-search"
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search by name, email, role..."
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadFirstUsersPage(true)}
+                disabled={loading}
+                className="inline-flex items-center rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Refresh
+              </button>
             </div>
           </div>
         </div>
@@ -107,6 +169,9 @@ const SuperAdminUsers: React.FC = () => {
                     filteredUsers.length === 1 ? "" : "s"
                   } found`}
             </p>
+            {!loading && hasMore && (
+              <p className="text-xs text-slate-500">More users available</p>
+            )}
           </div>
 
           <div className="overflow-x-auto">
@@ -138,16 +203,16 @@ const SuperAdminUsers: React.FC = () => {
                   filteredUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-slate-50">
                       <td className="px-6 py-4 font-medium text-slate-900">
-                        {user.fullName || "—"}
+                        {user.fullName || "-"}
                       </td>
                       <td className="px-6 py-4 text-slate-700">
-                        {user.email || "—"}
+                        {user.email || "-"}
                       </td>
                       <td className="px-6 py-4 text-slate-700">
                         {roleLabel(user.role)}
                       </td>
                       <td className="px-6 py-4 text-slate-700">
-                        {user.schoolId || "—"}
+                        {user.schoolId || "-"}
                       </td>
                       <td className="px-6 py-4">
                         <span
@@ -157,7 +222,7 @@ const SuperAdminUsers: React.FC = () => {
                               : "bg-amber-50 text-amber-700"
                           }`}
                         >
-                          {user.status || "—"}
+                          {user.status || "-"}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-slate-700">
@@ -169,6 +234,19 @@ const SuperAdminUsers: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {hasMore && !loading && (
+            <div className="border-t border-slate-100 px-6 py-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMoreUsers()}
+                disabled={loadingMore}
+                className="inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loadingMore ? "Loading..." : "Load more users"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </Layout>
