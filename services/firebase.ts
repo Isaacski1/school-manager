@@ -29,15 +29,39 @@ const hasCompleteEnvFirebaseConfig = Object.values(envFirebaseConfig).every(
   (value) => typeof value === "string" && value.trim().length > 0,
 );
 
+const inferHostingProjectId = () => {
+  if (typeof window === "undefined") return null;
+  const host = String(window.location.hostname || "").toLowerCase();
+  if (host.endsWith(".web.app")) {
+    return host.slice(0, -".web.app".length);
+  }
+  if (host.endsWith(".firebaseapp.com")) {
+    return host.slice(0, -".firebaseapp.com".length);
+  }
+  return null;
+};
+
+const inferredHostingProjectId = inferHostingProjectId();
+const envProjectId = String(envFirebaseConfig.projectId || "").trim();
+const shouldIgnoreEnvConfigForHostingMismatch = Boolean(
+  import.meta.env.PROD &&
+    hasCompleteEnvFirebaseConfig &&
+    inferredHostingProjectId &&
+    envProjectId &&
+    envProjectId !== inferredHostingProjectId,
+);
+
 export const firebaseConfig = hasCompleteEnvFirebaseConfig
-  ? {
-      apiKey: envFirebaseConfig.apiKey!,
-      authDomain: envFirebaseConfig.authDomain!,
-      projectId: envFirebaseConfig.projectId!,
-      storageBucket: envFirebaseConfig.storageBucket!,
-      messagingSenderId: envFirebaseConfig.messagingSenderId!,
-      appId: envFirebaseConfig.appId!,
-    }
+  ? shouldIgnoreEnvConfigForHostingMismatch
+    ? fallbackFirebaseConfig
+    : {
+        apiKey: envFirebaseConfig.apiKey!,
+        authDomain: envFirebaseConfig.authDomain!,
+        projectId: envFirebaseConfig.projectId!,
+        storageBucket: envFirebaseConfig.storageBucket!,
+        messagingSenderId: envFirebaseConfig.messagingSenderId!,
+        appId: envFirebaseConfig.appId!,
+      }
   : fallbackFirebaseConfig;
 
 const firebaseFunctionsRegion =
@@ -73,9 +97,20 @@ if (typeof window !== "undefined") {
   console.info("[Firebase] runtime config", {
     projectId: firebaseConfig.projectId,
     appId: firebaseConfig.appId,
-    usingEnvConfig: hasCompleteEnvFirebaseConfig,
+    usingEnvConfig:
+      hasCompleteEnvFirebaseConfig && !shouldIgnoreEnvConfigForHostingMismatch,
     functionsRegion: firebaseFunctionsRegion || "default",
+    hostingProjectId: inferredHostingProjectId,
   });
+  if (shouldIgnoreEnvConfigForHostingMismatch) {
+    console.warn(
+      "[Firebase] Ignoring VITE_FIREBASE_* config because it does not match this hosting domain.",
+      {
+        envProjectId,
+        hostingProjectId: inferredHostingProjectId,
+      },
+    );
+  }
   if (!hasCompleteEnvFirebaseConfig && import.meta.env.PROD) {
     console.warn(
       "[Firebase] Production is using fallback Firebase config. Set VITE_FIREBASE_* values for each environment.",
