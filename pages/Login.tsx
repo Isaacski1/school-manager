@@ -53,6 +53,11 @@ const Login = () => {
   const selectedMfaHintIsPhone =
     selectedMfaHint?.factorId === PhoneMultiFactorGenerator.FACTOR_ID;
 
+  const normalizeEmailInput = (value: string) =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
   const resetMfaFlow = () => {
     setMfaResolver(null);
     setMfaSelectedHintIndex(0);
@@ -133,9 +138,16 @@ const Login = () => {
     setFormError("");
     setMfaError("");
     let firstFactorSignedIn = false;
+    const normalizedEmail = normalizeEmailInput(email);
+
+    if (!normalizedEmail) {
+      setFormError("Enter a valid email address.");
+      setLoading(false);
+      return;
+    }
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, normalizedEmail, password);
       firstFactorSignedIn = true;
       try {
         await evaluateAdminMfaPolicy();
@@ -152,7 +164,7 @@ const Login = () => {
 
       await safeLogSecurityLogin({
         status: "SUCCESS",
-        email,
+        email: normalizedEmail,
         userAgent: navigator.userAgent,
       });
       // AuthContext listener will handle the redirection via the useEffect above
@@ -185,7 +197,10 @@ const Login = () => {
         err?.code === "auth/user-not-found" ||
         err?.code === "auth/wrong-password"
       ) {
-        msg = "Invalid email or password.";
+        msg =
+          "Invalid email or password. If this is production, reset the password or confirm this account exists in the production Firebase project.";
+      } else if (err?.code === "auth/invalid-email") {
+        msg = "Please enter a valid email address.";
       } else if (err?.code === "auth/too-many-requests") {
         msg = "Too many failed attempts. Please try again later.";
       } else if (isMfaEnrollmentRequiredError(err)) {
@@ -202,7 +217,7 @@ const Login = () => {
 
       await safeLogSecurityLogin({
         status: "FAILED",
-        email,
+        email: normalizedEmail,
         errorCode: err?.code || "login_failed",
         userAgent: navigator.userAgent,
       });
@@ -309,15 +324,16 @@ const Login = () => {
     setLoading(true);
     setFormError("");
     setResetSuccess("");
+    const normalizedEmail = normalizeEmailInput(email);
 
-    if (!email) {
+    if (!normalizedEmail) {
       setFormError("Please enter your email address to reset password.");
       setLoading(false);
       return;
     }
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, normalizedEmail);
       setResetSuccess("Password reset link has been sent to your email.");
       setFormError("");
     } catch (err: any) {
