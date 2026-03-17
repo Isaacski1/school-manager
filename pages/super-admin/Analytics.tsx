@@ -145,10 +145,10 @@ const Analytics = () => {
         async () =>
           getSuperAdminAnalyticsOverview({
             forceRefresh,
-            schoolsLimit: 2500,
-            paymentsLimit: 5000,
-            eventsLimit: 5000,
-            activityLimit: 5000,
+            schoolsLimit: 1200,
+            paymentsLimit: 2000,
+            eventsLimit: 2000,
+            activityLimit: 2000,
           }),
         { forceRefresh },
       );

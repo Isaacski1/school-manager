@@ -2375,10 +2375,10 @@ const Dashboard: React.FC = () => {
           async () =>
             getSuperAdminDashboardOverview({
               forceRefresh,
-              schoolsLimit: 2500,
+              schoolsLimit: 800,
               activityLimit: 120,
-              paymentsLimit: 4000,
-              checklistLimit: 25000,
+              paymentsLimit: 1200,
+              checklistLimit: 12000,
             }),
           { forceRefresh },
         );

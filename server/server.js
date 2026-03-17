@@ -572,8 +572,15 @@ const fetchCollectionRows = async ({
   whereField = "",
   whereOp = "==",
   whereValue = null,
+  selectFields = [],
 }) => {
   const limitValue = Math.max(1, Number(limitCount) || 1);
+  const projection =
+    Array.isArray(selectFields) && selectFields.length
+      ? selectFields
+          .map((field) => String(field || "").trim())
+          .filter((field) => field.length > 0)
+      : [];
   try {
     let ref = admin.firestore().collection(collectionName);
     if (whereField) {
@@ -581,6 +588,9 @@ const fetchCollectionRows = async ({
     }
     if (orderField) {
       ref = ref.orderBy(orderField, "desc");
+    }
+    if (projection.length) {
+      ref = ref.select(...projection);
     }
     const snap = await ref.limit(limitValue).get();
     return snap.docs.map((doc) => ({
@@ -592,6 +602,9 @@ const fetchCollectionRows = async ({
       let fallbackRef = admin.firestore().collection(collectionName);
       if (whereField) {
         fallbackRef = fallbackRef.where(whereField, whereOp, whereValue);
+      }
+      if (projection.length) {
+        fallbackRef = fallbackRef.select(...projection);
       }
       const fallbackSnap = await fallbackRef
         .limit(Math.min(500, limitValue))
@@ -663,6 +676,34 @@ const setCachedSuperAdminView = (
 const clearSuperAdminViewCache = () => {
   SUPERADMIN_VIEW_CACHE.clear();
 };
+
+const withTimeoutFallback = (
+  promise,
+  timeoutMs = 2500,
+  fallbackValue = null,
+) =>
+  new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallbackValue);
+    }, Math.max(250, Number(timeoutMs) || 2500));
+
+    Promise.resolve(promise)
+      .then((result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallbackValue);
+      });
+  });
 
 const roundMetric = (value, digits = 2) => {
   const numeric = Number(value);
@@ -2871,20 +2912,22 @@ app.get(
   async (req, res) => {
     try {
       const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
-      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 2000, 50, 5000);
-      const activityLimit = toPositiveInt(req.query?.activityLimit, 60, 10, 400);
+      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 800, 25, 5000);
+      const activityLimit = toPositiveInt(req.query?.activityLimit, 120, 10, 500);
       const paymentsLimit = toPositiveInt(
         req.query?.paymentsLimit,
-        2500,
-        100,
+        1200,
+        50,
         8000,
       );
       const checklistLimit = toPositiveInt(
         req.query?.checklistLimit,
-        20000,
-        500,
+        12000,
+        100,
         100000,
       );
+      const DASHBOARD_QUERY_TIMEOUT_MS = 2800;
+      const CHECKLIST_QUERY_TIMEOUT_MS = 2200;
 
       const cacheKey = buildSuperAdminViewCacheKey(
         "dashboard-overview",
@@ -2910,11 +2953,12 @@ app.get(
 
       const db = admin.firestore();
       const safeGetRows = async (loader) => {
-        try {
-          return await loader();
-        } catch {
-          return [];
-        }
+        const rows = await withTimeoutFallback(
+          Promise.resolve().then(loader),
+          DASHBOARD_QUERY_TIMEOUT_MS,
+          [],
+        );
+        return Array.isArray(rows) ? rows : [];
       };
 
       const [schoolRows, activityRows, paymentRows] = await Promise.all([
@@ -2923,6 +2967,23 @@ app.get(
             collectionName: "schools",
             limitCount: schoolsLimit,
             orderField: "createdAt",
+            selectFields: [
+              "name",
+              "code",
+              "logoUrl",
+              "phone",
+              "address",
+              "plan",
+              "status",
+              "featurePlan",
+              "createdBy",
+              "createdAt",
+              "planEndsAt",
+              "studentsCount",
+              "limits",
+              "billing",
+              "subscription",
+            ],
           }),
         ),
         safeGetRows(() =>
@@ -2930,6 +2991,17 @@ app.get(
             collectionName: "activity_logs",
             limitCount: activityLimit,
             orderField: "createdAt",
+            selectFields: [
+              "schoolId",
+              "eventType",
+              "actionType",
+              "actorUid",
+              "actorRole",
+              "createdAt",
+              "timestamp",
+              "timestampMs",
+              "meta",
+            ],
           }),
         ),
         safeGetRows(() =>
@@ -2937,6 +3009,25 @@ app.get(
             collectionName: "payments",
             limitCount: paymentsLimit,
             orderField: "createdAt",
+            selectFields: [
+              "schoolId",
+              "schoolName",
+              "adminEmail",
+              "amount",
+              "amountPaid",
+              "currency",
+              "status",
+              "reference",
+              "createdAt",
+              "paidAt",
+              "verifiedAt",
+              "module",
+              "type",
+              "category",
+              "paymentMethod",
+              "method",
+              "channel",
+            ],
           }),
         ),
       ]);
@@ -2965,6 +3056,23 @@ app.get(
       const getRowsFromSnap = (snap) =>
         Array.isArray(snap?.docs) ? snap.docs.map((docSnap) => docSnap.data()) : [];
 
+      const checklistScanLimit = Math.min(
+        checklistLimit,
+        Math.max(
+          300,
+          Math.max(schools.length || 0, 1) * 80,
+        ),
+      );
+
+      const runChecklistQuery = (loader) =>
+        withTimeoutFallback(
+          Promise.resolve()
+            .then(loader)
+            .catch(() => null),
+          CHECKLIST_QUERY_TIMEOUT_MS,
+          null,
+        );
+
       const [
         attendanceSnap,
         teacherAttendanceSnap,
@@ -2972,37 +3080,47 @@ app.get(
         timetablesSnap,
         noticesSnap,
       ] = await Promise.all([
-        db
-          .collection("attendance")
-          .where("date", "==", today)
-          .limit(checklistLimit)
-          .get()
-          .catch(() => null),
-        db
-          .collection("teacher_attendance")
-          .where("date", "==", today)
-          .limit(checklistLimit)
-          .get()
-          .catch(() => null),
-        db
-          .collection("assessments")
-          .where("createdAt", ">=", startMs)
-          .where("createdAt", "<=", endMs)
-          .limit(checklistLimit)
-          .get()
-          .catch(() => null),
-        db
-          .collection("timetables")
-          .limit(checklistLimit)
-          .get()
-          .catch(() => null),
-        db
-          .collection("notices")
-          .where("createdAt", ">=", startMs)
-          .where("createdAt", "<=", endMs)
-          .limit(checklistLimit)
-          .get()
-          .catch(() => null),
+        runChecklistQuery(() =>
+          db
+            .collection("attendance")
+            .select("schoolId")
+            .where("date", "==", today)
+            .limit(checklistScanLimit)
+            .get(),
+        ),
+        runChecklistQuery(() =>
+          db
+            .collection("teacher_attendance")
+            .select("schoolId")
+            .where("date", "==", today)
+            .limit(checklistScanLimit)
+            .get(),
+        ),
+        runChecklistQuery(() =>
+          db
+            .collection("assessments")
+            .select("schoolId")
+            .where("createdAt", ">=", startMs)
+            .where("createdAt", "<=", endMs)
+            .limit(checklistScanLimit)
+            .get(),
+        ),
+        runChecklistQuery(() =>
+          db
+            .collection("timetables")
+            .select("schoolId")
+            .limit(checklistScanLimit)
+            .get(),
+        ),
+        runChecklistQuery(() =>
+          db
+            .collection("notices")
+            .select("schoolId")
+            .where("createdAt", ">=", startMs)
+            .where("createdAt", "<=", endMs)
+            .limit(checklistScanLimit)
+            .get(),
+        ),
       ]);
 
       const attendanceSchools = extractUniqueSchoolIds(getRowsFromSnap(attendanceSnap));
@@ -3059,6 +3177,7 @@ app.get(
           activityLimit,
           paymentsLimit,
           checklistLimit,
+          checklistScanLimit,
         },
       };
 
@@ -3089,20 +3208,21 @@ app.get(
   async (req, res) => {
     try {
       const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
-      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 2500, 50, 5000);
+      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 1200, 50, 5000);
       const paymentsLimit = toPositiveInt(
         req.query?.paymentsLimit,
-        5000,
-        100,
+        2000,
+        50,
         10000,
       );
-      const eventsLimit = toPositiveInt(req.query?.eventsLimit, 5000, 100, 10000);
+      const eventsLimit = toPositiveInt(req.query?.eventsLimit, 2000, 50, 10000);
       const activityLimit = toPositiveInt(
         req.query?.activityLimit,
-        5000,
-        100,
+        2000,
+        50,
         10000,
       );
+      const ANALYTICS_QUERY_TIMEOUT_MS = 2800;
 
       const cacheKey = buildSuperAdminViewCacheKey(
         "analytics-overview",
@@ -3127,11 +3247,12 @@ app.get(
       }
 
       const safeGetRows = async (loader) => {
-        try {
-          return await loader();
-        } catch {
-          return [];
-        }
+        const rows = await withTimeoutFallback(
+          Promise.resolve().then(loader),
+          ANALYTICS_QUERY_TIMEOUT_MS,
+          [],
+        );
+        return Array.isArray(rows) ? rows : [];
       };
 
       const [schoolRows, paymentRows, eventRows, activityRows] = await Promise.all([
@@ -3140,6 +3261,23 @@ app.get(
             collectionName: "schools",
             limitCount: schoolsLimit,
             orderField: "createdAt",
+            selectFields: [
+              "name",
+              "code",
+              "logoUrl",
+              "phone",
+              "address",
+              "plan",
+              "status",
+              "featurePlan",
+              "createdBy",
+              "createdAt",
+              "planEndsAt",
+              "studentsCount",
+              "limits",
+              "billing",
+              "subscription",
+            ],
           }),
         ),
         safeGetRows(() =>
@@ -3147,6 +3285,25 @@ app.get(
             collectionName: "payments",
             limitCount: paymentsLimit,
             orderField: "createdAt",
+            selectFields: [
+              "schoolId",
+              "schoolName",
+              "adminEmail",
+              "amount",
+              "amountPaid",
+              "currency",
+              "status",
+              "reference",
+              "createdAt",
+              "paidAt",
+              "verifiedAt",
+              "module",
+              "type",
+              "category",
+              "paymentMethod",
+              "method",
+              "channel",
+            ],
           }),
         ),
         safeGetRows(() =>
@@ -3154,6 +3311,7 @@ app.get(
             collectionName: "analyticsEvents",
             limitCount: eventsLimit,
             orderField: "createdAt",
+            selectFields: ["schoolId", "actionType", "userRole", "createdAt"],
           }),
         ),
         safeGetRows(() =>
@@ -3161,6 +3319,7 @@ app.get(
             collectionName: "activity_logs",
             limitCount: activityLimit,
             orderField: "createdAt",
+            selectFields: ["schoolId", "eventType", "createdAt", "timestamp", "timestampMs"],
           }),
         ),
       ]);
