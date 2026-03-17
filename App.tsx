@@ -41,6 +41,7 @@ import SuperAdminBackups from "./pages/super-admin/Backups";
 import SuperAdminPayments from "./pages/super-admin/Payments";
 import SuperAdminUsers from "./pages/super-admin/Users";
 import SuperAdminAnalytics from "./pages/super-admin/Analytics";
+import SuperAdminSystemHealth from "./pages/super-admin/SystemHealth";
 import SuperAdminBroadcasts from "./pages/super-admin/Broadcasts";
 import LoginHistory from "./pages/super-admin/security/LoginHistory";
 import SuspiciousEvents from "./pages/super-admin/security/SuspiciousEvents";
@@ -522,6 +523,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
             <SuperAdminAnalytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/system-health"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminSystemHealth />
           </ProtectedRoute>
         }
       />

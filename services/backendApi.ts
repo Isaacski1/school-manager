@@ -461,6 +461,80 @@ export async function getSuperAdminBackupsPage(params?: {
   return apiRequest(`/api/superadmin/backups-page${query}`, { method: "GET" });
 }
 
+export type SuperAdminRequestStatusBuckets = {
+  success2xx: number;
+  redirect3xx: number;
+  client4xx: number;
+  server5xx: number;
+  rateLimited429: number;
+  other: number;
+};
+
+export type SuperAdminRequestWindowMetrics = {
+  totalRequests: number;
+  requestsPerMinute: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  maxLatencyMs: number;
+  errorRatePct: number;
+  statusBuckets: SuperAdminRequestStatusBuckets;
+};
+
+export type SuperAdminSystemHealth = {
+  success: boolean;
+  generatedAt: number;
+  runtime: {
+    environment: string;
+    nodeVersion: string;
+    pid: number;
+    platform: string;
+    uptimeSeconds: number;
+    cpuCores: number;
+    loadAverage: number[];
+    normalizedLoadPct: {
+      oneMinute: number;
+      fiveMinutes: number;
+      fifteenMinutes: number;
+    };
+    memoryMb: {
+      rss: number;
+      heapUsed: number;
+      heapTotal: number;
+      external: number;
+      arrayBuffers: number;
+    };
+  };
+  requests: {
+    active: number;
+    retainedPoints: number;
+    retentionMinutes: number;
+    last1m: SuperAdminRequestWindowMetrics;
+    last5m: SuperAdminRequestWindowMetrics;
+    topSlowRoutes: Array<{
+      route: string;
+      requests: number;
+      avgLatencyMs: number;
+      p95LatencyMs: number;
+      maxLatencyMs: number;
+      errorRatePct: number;
+    }>;
+  };
+  limiters: {
+    api: {
+      windowMs: number;
+      limit: number;
+    };
+    auth: {
+      windowMs: number;
+      limit: number;
+    };
+  };
+};
+
+export async function getSuperAdminSystemHealth(): Promise<SuperAdminSystemHealth> {
+  return apiRequest("/api/superadmin/system-health", { method: "GET" });
+}
+
 export async function initiateSchoolBilling(payload: {
   amount: number;
   currency?: "GHS";

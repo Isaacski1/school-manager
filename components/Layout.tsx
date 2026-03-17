@@ -457,6 +457,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 label="Analytics"
               />
               <NavItem
+                href="/super-admin/system-health"
+                icon={Activity}
+                label="System Health"
+              />
+              <NavItem
                 href="/super-admin/backups"
                 icon={Shield}
                 label="Backups"

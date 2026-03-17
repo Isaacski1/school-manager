@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import express from "express";
@@ -130,9 +131,120 @@ app.use(
   }),
 );
 
+const API_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const API_LIMIT_MAX_REQUESTS = 300;
+const AUTH_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_LIMIT_MAX_REQUESTS = 120;
+
+const parsePositiveNumber = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const REQUEST_METRICS_RETENTION_MS = Math.max(
+  5 * 60 * 1000,
+  parsePositiveNumber(process.env.REQUEST_METRICS_RETENTION_MS, 60 * 60 * 1000),
+);
+const REQUEST_METRICS_MAX_POINTS = Math.max(
+  2000,
+  Math.floor(parsePositiveNumber(process.env.REQUEST_METRICS_MAX_POINTS, 20000)),
+);
+const REQUEST_METRICS = [];
+let ACTIVE_REQUESTS = 0;
+let lastRequestMetricsPruneAt = 0;
+
+const normalizeRequestPath = (value) => {
+  const pathOnly = String(value || "/").split("?")[0] || "/";
+  const segments = pathOnly.split("/");
+  const normalized = segments
+    .map((segment, index) => {
+      if (!segment || index === 0) return segment;
+      const isNumeric = /^\d+$/.test(segment);
+      const isLongToken =
+        /^[a-f0-9-]{12,}$/i.test(segment) || segment.length > 24;
+      return isNumeric || isLongToken ? ":id" : segment;
+    })
+    .join("/");
+
+  if (normalized.length <= 180) return normalized;
+  return `${normalized.slice(0, 177)}...`;
+};
+
+const pruneRequestMetrics = (now = Date.now()) => {
+  const cutoffMs = now - REQUEST_METRICS_RETENTION_MS;
+  while (
+    REQUEST_METRICS.length &&
+    REQUEST_METRICS[0].timestampMs < cutoffMs
+  ) {
+    REQUEST_METRICS.shift();
+  }
+  if (REQUEST_METRICS.length > REQUEST_METRICS_MAX_POINTS) {
+    REQUEST_METRICS.splice(
+      0,
+      REQUEST_METRICS.length - REQUEST_METRICS_MAX_POINTS,
+    );
+  }
+  lastRequestMetricsPruneAt = now;
+};
+
+const maybePruneRequestMetrics = (now = Date.now()) => {
+  if (
+    REQUEST_METRICS.length < REQUEST_METRICS_MAX_POINTS &&
+    now - lastRequestMetricsPruneAt < 15000
+  ) {
+    return;
+  }
+  pruneRequestMetrics(now);
+};
+
+const recordRequestMetric = (entry) => {
+  REQUEST_METRICS.push(entry);
+  maybePruneRequestMetrics(entry.timestampMs);
+};
+
+app.use((req, res, next) => {
+  const startedAtMs = Date.now();
+  const startedAtNs = process.hrtime.bigint();
+  const method = String(req.method || "GET").toUpperCase();
+  const path = normalizeRequestPath(req.originalUrl || req.url || "/");
+  ACTIVE_REQUESTS += 1;
+
+  let finalized = false;
+  const finalizeMetric = (statusCode, aborted = false) => {
+    if (finalized) return;
+    finalized = true;
+    ACTIVE_REQUESTS = Math.max(0, ACTIVE_REQUESTS - 1);
+
+    const elapsedNs = process.hrtime.bigint() - startedAtNs;
+    const elapsedMs = Number(elapsedNs) / 1_000_000;
+    recordRequestMetric({
+      timestampMs: startedAtMs,
+      method,
+      path,
+      statusCode: Number(statusCode) || (aborted ? 499 : 0),
+      durationMs: Number.isFinite(elapsedMs) ? elapsedMs : 0,
+      aborted,
+    });
+  };
+
+  res.on("finish", () => {
+    finalizeMetric(res.statusCode, false);
+  });
+
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      finalizeMetric(499, true);
+      return;
+    }
+    finalizeMetric(res.statusCode, false);
+  });
+
+  next();
+});
+
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 300,
+  windowMs: API_LIMIT_WINDOW_MS,
+  limit: API_LIMIT_MAX_REQUESTS,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: {
@@ -141,8 +253,8 @@ const apiLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 120,
+  windowMs: AUTH_LIMIT_WINDOW_MS,
+  limit: AUTH_LIMIT_MAX_REQUESTS,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: {
@@ -515,6 +627,142 @@ const setCachedSuperAdminView = (
 
 const clearSuperAdminViewCache = () => {
   SUPERADMIN_VIEW_CACHE.clear();
+};
+
+const roundMetric = (value, digits = 2) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Number(numeric.toFixed(digits));
+};
+
+const getPercentileValue = (values = [], percentile = 0.95) => {
+  if (!Array.isArray(values) || !values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const normalizedPercentile = Math.min(
+    1,
+    Math.max(0, Number(percentile) || 0.95),
+  );
+  const index = Math.max(0, Math.ceil(sorted.length * normalizedPercentile) - 1);
+  return sorted[index];
+};
+
+const summarizeRequestWindow = (entries = [], windowMs = 60000) => {
+  const statusBuckets = {
+    success2xx: 0,
+    redirect3xx: 0,
+    client4xx: 0,
+    server5xx: 0,
+    rateLimited429: 0,
+    other: 0,
+  };
+
+  const durations = [];
+  entries.forEach((entry) => {
+    const statusCode = Number(entry.statusCode || 0);
+    if (statusCode >= 200 && statusCode < 300) {
+      statusBuckets.success2xx += 1;
+    } else if (statusCode >= 300 && statusCode < 400) {
+      statusBuckets.redirect3xx += 1;
+    } else if (statusCode >= 400 && statusCode < 500) {
+      statusBuckets.client4xx += 1;
+      if (statusCode === 429) {
+        statusBuckets.rateLimited429 += 1;
+      }
+    } else if (statusCode >= 500) {
+      statusBuckets.server5xx += 1;
+    } else {
+      statusBuckets.other += 1;
+    }
+
+    const durationMs = Number(entry.durationMs || 0);
+    if (Number.isFinite(durationMs) && durationMs >= 0) {
+      durations.push(durationMs);
+    }
+  });
+
+  const totalRequests = entries.length;
+  const windowMinutes = Math.max(1 / 60, Number(windowMs) / 60000);
+  const failedCount =
+    statusBuckets.client4xx + statusBuckets.server5xx + statusBuckets.other;
+  const avgLatency =
+    durations.length > 0
+      ? durations.reduce((sum, value) => sum + value, 0) / durations.length
+      : 0;
+  const maxLatency = durations.length ? Math.max(...durations) : 0;
+  const p95Latency = durations.length ? getPercentileValue(durations, 0.95) : 0;
+
+  return {
+    totalRequests,
+    requestsPerMinute: roundMetric(totalRequests / windowMinutes, 2),
+    avgLatencyMs: roundMetric(avgLatency, 2),
+    p95LatencyMs: roundMetric(p95Latency, 2),
+    maxLatencyMs: roundMetric(maxLatency, 2),
+    errorRatePct: totalRequests
+      ? roundMetric((failedCount / totalRequests) * 100, 2)
+      : 0,
+    statusBuckets,
+  };
+};
+
+const buildSlowRouteSummary = (entries = [], maxRows = 8) => {
+  const routeMap = new Map();
+  entries.forEach((entry) => {
+    const method = String(entry.method || "GET").toUpperCase();
+    const path = normalizeRequestPath(entry.path || "/");
+    const key = `${method} ${path}`;
+    if (!routeMap.has(key)) {
+      routeMap.set(key, {
+        route: key,
+        durations: [],
+        requests: 0,
+        errors: 0,
+      });
+    }
+    const bucket = routeMap.get(key);
+    bucket.requests += 1;
+    const durationMs = Number(entry.durationMs || 0);
+    if (Number.isFinite(durationMs) && durationMs >= 0) {
+      bucket.durations.push(durationMs);
+    }
+    const statusCode = Number(entry.statusCode || 0);
+    if (statusCode >= 400 || statusCode <= 0) {
+      bucket.errors += 1;
+    }
+  });
+
+  return Array.from(routeMap.values())
+    .map((bucket) => {
+      const avgLatency = bucket.durations.length
+        ? bucket.durations.reduce((sum, value) => sum + value, 0) /
+          bucket.durations.length
+        : 0;
+      const p95Latency = bucket.durations.length
+        ? getPercentileValue(bucket.durations, 0.95)
+        : 0;
+      const maxLatency = bucket.durations.length
+        ? Math.max(...bucket.durations)
+        : 0;
+      return {
+        route: bucket.route,
+        requests: bucket.requests,
+        avgLatencyMs: roundMetric(avgLatency, 2),
+        p95LatencyMs: roundMetric(p95Latency, 2),
+        maxLatencyMs: roundMetric(maxLatency, 2),
+        errorRatePct: bucket.requests
+          ? roundMetric((bucket.errors / bucket.requests) * 100, 2)
+          : 0,
+      };
+    })
+    .sort((left, right) => {
+      if (right.p95LatencyMs !== left.p95LatencyMs) {
+        return right.p95LatencyMs - left.p95LatencyMs;
+      }
+      if (right.avgLatencyMs !== left.avgLatencyMs) {
+        return right.avgLatencyMs - left.avgLatencyMs;
+      }
+      return right.requests - left.requests;
+    })
+    .slice(0, Math.max(1, Number(maxRows) || 8));
 };
 
 const normalizeSchoolForView = (docId, data = {}) => {
@@ -3080,6 +3328,87 @@ app.get(
       console.error("Analytics overview error:", error.message || error);
       return res.status(500).json({
         error: error.message || "Failed to build analytics overview",
+      });
+    }
+  },
+);
+
+/**
+ * Super Admin system health + load metrics
+ * GET /api/superadmin/system-health
+ */
+app.get(
+  "/api/superadmin/system-health",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const now = Date.now();
+      pruneRequestMetrics(now);
+
+      const oneMinuteEntries = REQUEST_METRICS.filter(
+        (entry) => entry.timestampMs >= now - 60 * 1000,
+      );
+      const fiveMinuteEntries = REQUEST_METRICS.filter(
+        (entry) => entry.timestampMs >= now - 5 * 60 * 1000,
+      );
+
+      const memoryUsage = process.memoryUsage();
+      const bytesToMb = (value) => roundMetric(Number(value || 0) / (1024 * 1024), 2);
+
+      const cpuCores = Math.max(1, Array.isArray(os.cpus()) ? os.cpus().length : 1);
+      const loadAverageRaw =
+        typeof os.loadavg === "function" ? os.loadavg() : [0, 0, 0];
+      const loadAverage = loadAverageRaw.map((value) => roundMetric(value, 2));
+
+      return res.json({
+        success: true,
+        generatedAt: now,
+        runtime: {
+          environment: APP_ENV,
+          nodeVersion: process.version,
+          pid: process.pid,
+          platform: process.platform,
+          uptimeSeconds: Math.floor(process.uptime()),
+          cpuCores,
+          loadAverage,
+          normalizedLoadPct: {
+            oneMinute: roundMetric((loadAverageRaw[0] / cpuCores) * 100, 2),
+            fiveMinutes: roundMetric((loadAverageRaw[1] / cpuCores) * 100, 2),
+            fifteenMinutes: roundMetric((loadAverageRaw[2] / cpuCores) * 100, 2),
+          },
+          memoryMb: {
+            rss: bytesToMb(memoryUsage.rss),
+            heapUsed: bytesToMb(memoryUsage.heapUsed),
+            heapTotal: bytesToMb(memoryUsage.heapTotal),
+            external: bytesToMb(memoryUsage.external),
+            arrayBuffers: bytesToMb(memoryUsage.arrayBuffers),
+          },
+        },
+        requests: {
+          active: ACTIVE_REQUESTS,
+          retainedPoints: REQUEST_METRICS.length,
+          retentionMinutes: Math.round(REQUEST_METRICS_RETENTION_MS / 60000),
+          last1m: summarizeRequestWindow(oneMinuteEntries, 60 * 1000),
+          last5m: summarizeRequestWindow(fiveMinuteEntries, 5 * 60 * 1000),
+          topSlowRoutes: buildSlowRouteSummary(fiveMinuteEntries, 8),
+        },
+        limiters: {
+          api: {
+            windowMs: API_LIMIT_WINDOW_MS,
+            limit: API_LIMIT_MAX_REQUESTS,
+          },
+          auth: {
+            windowMs: AUTH_LIMIT_WINDOW_MS,
+            limit: AUTH_LIMIT_MAX_REQUESTS,
+          },
+        },
+      });
+    } catch (error) {
+      console.error("System health metrics error:", error.message || error);
+      return res.status(500).json({
+        error: error.message || "Failed to load system health metrics",
       });
     }
   },
