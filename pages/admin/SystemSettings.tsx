@@ -79,6 +79,7 @@ const SystemSettings = () => {
     [],
   );
   const [newSubjectName, setNewSubjectName] = useState("");
+  const [isAddingSubject, setIsAddingSubject] = useState(false);
   const [editingSubject, setEditingSubject] = useState<{
     original: string;
     current: string;
@@ -523,8 +524,9 @@ const SystemSettings = () => {
   // --- Subjects Handlers ---
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSubjectName.trim() || !selectedClassId) return;
+    if (!newSubjectName.trim() || !selectedClassId || isAddingSubject) return;
     const targetClassIds = getGroupClassIds(selectedClassId);
+    setIsAddingSubject(true);
     try {
       await Promise.all(
         targetClassIds.map((classId) =>
@@ -566,6 +568,8 @@ const SystemSettings = () => {
           actorName: user?.fullName || "",
         },
       });
+    } finally {
+      setIsAddingSubject(false);
     }
   };
 
@@ -1247,6 +1251,7 @@ const SystemSettings = () => {
                 <input
                   type="text"
                   required
+                  disabled={isAddingSubject}
                   className="min-w-0 border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#1160A8] outline-none text-sm"
                   placeholder="New subject name..."
                   value={newSubjectName}
@@ -1254,9 +1259,21 @@ const SystemSettings = () => {
                 />
                 <button
                   type="submit"
-                  className="h-11 w-11 shrink-0 inline-flex items-center justify-center bg-[#1160A8] text-white rounded-xl hover:bg-[#0B4A82] transition-colors"
+                  disabled={
+                    isAddingSubject ||
+                    !newSubjectName.trim() ||
+                    !selectedClassId
+                  }
+                  className="h-11 w-11 shrink-0 inline-flex items-center justify-center bg-[#1160A8] text-white rounded-xl hover:bg-[#0B4A82] transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
                 >
-                  <Plus size={20} />
+                  {isAddingSubject ? (
+                    <span className="relative inline-flex items-center justify-center">
+                      <span className="absolute h-5 w-5 rounded-full border-2 border-white/35 border-t-white animate-spin" />
+                      <Plus size={18} className="opacity-80 animate-pulse" />
+                    </span>
+                  ) : (
+                    <Plus size={20} />
+                  )}
                 </button>
               </form>
 
