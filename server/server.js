@@ -147,7 +147,7 @@ const REQUEST_METRICS_RETENTION_MS = Math.max(
 );
 const REQUEST_METRICS_MAX_POINTS = Math.max(
   2000,
-  Math.floor(parsePositiveNumber(process.env.REQUEST_METRICS_MAX_POINTS, 20000)),
+  Math.floor(parsePositiveNumber(process.env.REQUEST_METRICS_MAX_POINTS, 8000)),
 );
 const REQUEST_METRICS = [];
 let ACTIVE_REQUESTS = 0;
@@ -533,9 +533,21 @@ const SUPERADMIN_OPENAI_TIMEOUT_MS = Number(
 const AI_CONTEXT_CACHE_TTL_MS = Number(
   process.env.SUPERADMIN_AI_CACHE_TTL_MS || 45000,
 );
+const AI_CONTEXT_CACHE_MAX_ENTRIES = Math.max(
+  20,
+  Math.floor(
+    parsePositiveNumber(process.env.SUPERADMIN_AI_CACHE_MAX_ENTRIES, 80),
+  ),
+);
 const AI_CONTEXT_CACHE = new Map();
 const SUPERADMIN_VIEW_CACHE_TTL_MS = Number(
   process.env.SUPERADMIN_VIEW_CACHE_TTL_MS || 45000,
+);
+const SUPERADMIN_VIEW_CACHE_MAX_ENTRIES = Math.max(
+  50,
+  Math.floor(
+    parsePositiveNumber(process.env.SUPERADMIN_VIEW_CACHE_MAX_ENTRIES, 500),
+  ),
 );
 const SUPERADMIN_VIEW_CACHE = new Map();
 
@@ -662,15 +674,47 @@ const getCachedSuperAdminView = (cacheKey) => {
   return cached.payload;
 };
 
+const pruneExpiringMapCache = (cache, maxEntries, now = Date.now()) => {
+  if (!cache || !(cache instanceof Map)) return;
+
+  cache.forEach((entry, key) => {
+    const expiresAt = Number(entry?.expiresAt || 0);
+    if (expiresAt > 0 && expiresAt <= now) {
+      cache.delete(key);
+    }
+  });
+
+  const limit = Math.max(1, Number(maxEntries) || 1);
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+};
+
+const setMapCacheEntry = (cache, key, value, maxEntries) => {
+  if (!cache || !(cache instanceof Map)) return;
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+  pruneExpiringMapCache(cache, maxEntries, Date.now());
+};
+
 const setCachedSuperAdminView = (
   cacheKey,
   payload,
   ttlMs = SUPERADMIN_VIEW_CACHE_TTL_MS,
 ) => {
-  SUPERADMIN_VIEW_CACHE.set(cacheKey, {
-    payload,
-    expiresAt: Date.now() + Math.max(5000, Number(ttlMs) || 0),
-  });
+  setMapCacheEntry(
+    SUPERADMIN_VIEW_CACHE,
+    cacheKey,
+    {
+      payload,
+      expiresAt: Date.now() + Math.max(5000, Number(ttlMs) || 0),
+    },
+    SUPERADMIN_VIEW_CACHE_MAX_ENTRIES,
+  );
 };
 
 const clearSuperAdminViewCache = () => {
@@ -1025,6 +1069,9 @@ const buildAiDataContext = async (options = {}) => {
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
+    if (cached) {
+      AI_CONTEXT_CACHE.delete(cacheKey);
+    }
   }
 
   const taskEntries = [];
@@ -1231,10 +1278,15 @@ const buildAiDataContext = async (options = {}) => {
     usersByRole,
   };
 
-  AI_CONTEXT_CACHE.set(cacheKey, {
-    value: context,
-    expiresAt: Date.now() + Math.max(5000, AI_CONTEXT_CACHE_TTL_MS),
-  });
+  setMapCacheEntry(
+    AI_CONTEXT_CACHE,
+    cacheKey,
+    {
+      value: context,
+      expiresAt: Date.now() + Math.max(5000, AI_CONTEXT_CACHE_TTL_MS),
+    },
+    AI_CONTEXT_CACHE_MAX_ENTRIES,
+  );
 
   return context;
 };

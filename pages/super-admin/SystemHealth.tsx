@@ -358,48 +358,90 @@ const SystemHealth: React.FC = () => {
                     Slowest Routes ({formatWindow(5 * 60 * 1000)})
                   </h2>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-left text-slate-500 border-b border-slate-100">
-                      <tr>
-                        <th className="py-2 pr-3">Route</th>
-                        <th className="py-2 pr-3">Req</th>
-                        <th className="py-2 pr-3">Avg</th>
-                        <th className="py-2 pr-3">P95</th>
-                        <th className="py-2 pr-3">Err</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {metrics.requests.topSlowRoutes.length === 0 ? (
-                        <tr>
-                          <td className="py-4 text-slate-500" colSpan={5}>
-                            Not enough recent traffic to rank routes.
-                          </td>
-                        </tr>
-                      ) : (
-                        metrics.requests.topSlowRoutes.map((route) => (
-                          <tr key={route.route}>
-                            <td className="py-3 pr-3 font-medium text-slate-900">
-                              {route.route}
-                            </td>
-                            <td className="py-3 pr-3 text-slate-700">
-                              {route.requests}
-                            </td>
-                            <td className="py-3 pr-3 text-slate-700">
-                              {formatNumber(route.avgLatencyMs)} ms
-                            </td>
-                            <td className="py-3 pr-3 text-slate-700">
-                              {formatNumber(route.p95LatencyMs)} ms
-                            </td>
-                            <td className="py-3 pr-3 text-slate-700">
-                              {formatNumber(route.errorRatePct)}%
-                            </td>
+                {metrics.requests.topSlowRoutes.length === 0 ? (
+                  <p className="py-2 text-sm text-slate-500">
+                    Not enough recent traffic to rank routes.
+                  </p>
+                ) : (
+                  <>
+                    <div className="sm:hidden space-y-3">
+                      {metrics.requests.topSlowRoutes.map((route) => (
+                        <div
+                          key={route.route}
+                          className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                        >
+                          <p className="text-xs uppercase tracking-wide text-slate-500">
+                            Route
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 break-all leading-5">
+                            {route.route}
+                          </p>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-lg bg-white p-2">
+                              <p className="text-slate-500">Req</p>
+                              <p className="font-semibold text-slate-900">
+                                {route.requests}
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-white p-2">
+                              <p className="text-slate-500">Err</p>
+                              <p className="font-semibold text-slate-900">
+                                {formatNumber(route.errorRatePct)}%
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-white p-2">
+                              <p className="text-slate-500">Avg</p>
+                              <p className="font-semibold text-slate-900">
+                                {formatNumber(route.avgLatencyMs)} ms
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-white p-2">
+                              <p className="text-slate-500">P95</p>
+                              <p className="font-semibold text-slate-900">
+                                {formatNumber(route.p95LatencyMs)} ms
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="w-full min-w-[640px] text-sm">
+                        <thead className="text-left text-slate-500 border-b border-slate-100">
+                          <tr>
+                            <th className="py-2 pr-3">Route</th>
+                            <th className="py-2 pr-3">Req</th>
+                            <th className="py-2 pr-3">Avg</th>
+                            <th className="py-2 pr-3">P95</th>
+                            <th className="py-2 pr-3">Err</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {metrics.requests.topSlowRoutes.map((route) => (
+                            <tr key={route.route}>
+                              <td className="py-3 pr-3 font-medium text-slate-900 break-all leading-5">
+                                {route.route}
+                              </td>
+                              <td className="py-3 pr-3 text-slate-700">
+                                {route.requests}
+                              </td>
+                              <td className="py-3 pr-3 text-slate-700">
+                                {formatNumber(route.avgLatencyMs)} ms
+                              </td>
+                              <td className="py-3 pr-3 text-slate-700">
+                                {formatNumber(route.p95LatencyMs)} ms
+                              </td>
+                              <td className="py-3 pr-3 text-slate-700">
+                                {formatNumber(route.errorRatePct)}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
