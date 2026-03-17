@@ -3,6 +3,8 @@ import {
   Search,
   GraduationCap,
   UserX,
+  Trash2,
+  AlertTriangle,
   Calendar,
   BookOpen,
   User as UserIcon,
@@ -13,17 +15,25 @@ import {
 import html2pdf from "html2pdf.js";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
+import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
 import { CLASSES_LIST, calculateGrade, getGradeColor } from "../../constants";
 import { Student } from "../../types";
+import { showToast } from "../../services/toast";
+import { logActivity } from "../../services/activityLog";
 import schoolLogo from "../../logo/apple-icon-180x180.png";
 
 const StudentHistory = () => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const schoolId = school?.id || null;
   const [students, setStudents] = useState<Student[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deletingStudentId, setDeletingStudentId] = useState<string | null>(
+    null,
+  );
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
   const [viewStudent, setViewStudent] = useState<Student | null>(null);
   const [performanceData, setPerformanceData] = useState<any>(null);
   const [recordsByTerm, setRecordsByTerm] = useState<
@@ -117,6 +127,12 @@ const StudentHistory = () => {
   const stoppedStudents = filteredStudents.filter(
     (student) => student.studentStatus === "stopped",
   );
+  const deleteClassName = studentToDelete
+    ? CLASSES_LIST.find((c) => c.id === studentToDelete.classId)?.name ||
+      studentToDelete.classId
+    : "";
+  const isDeletePending =
+    !!studentToDelete && deletingStudentId === studentToDelete.id;
 
   const attendanceTotal = performanceData?.attendance?.total;
   const attendancePresent = performanceData?.attendance?.present;
@@ -220,6 +236,80 @@ const StudentHistory = () => {
     setRecordsByTerm({});
     setSelectedTermKey(null);
   };
+
+  const handleDeleteStudent = (student: Student) => {
+    if (!schoolId || deletingStudentId) return;
+    setStudentToDelete(student);
+  };
+
+  const handleConfirmDeleteStudent = async () => {
+    if (!schoolId || deletingStudentId || !studentToDelete) return;
+    const student = studentToDelete;
+
+    const previousStudents = [...students];
+    setDeletingStudentId(student.id);
+    setStudents((prev) => prev.filter((s) => s.id !== student.id));
+
+    if (viewStudent?.id === student.id) {
+      closeViewModal();
+    }
+
+    try {
+      await db.deleteStudent(student.id);
+      setStudentToDelete(null);
+      showToast("Student deleted successfully.", { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "student_deleted",
+        entityId: student.id,
+        meta: {
+          status: "success",
+          module: "Student History",
+          studentName: student.name,
+          classId: student.classId,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error) {
+      console.error("Failed to delete student", error);
+      setStudents(previousStudents);
+      showToast("Failed to delete student. Please try again.", {
+        type: "error",
+      });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "student_delete_failed",
+        entityId: student.id,
+        meta: {
+          status: "failed",
+          module: "Student History",
+          studentName: student.name,
+          classId: student.classId,
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    } finally {
+      setDeletingStudentId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!studentToDelete || isDeletePending) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setStudentToDelete(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isDeletePending, studentToDelete]);
 
   const exportPdf = async () => {
     if (!pdfRef.current || !viewStudent) return;
@@ -364,11 +454,21 @@ const StudentHistory = () => {
                     </div>
                   </div>
                 </div>
-                <span
-                  className={`inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide ${statusStyles}`}
-                >
-                  {statusLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide ${statusStyles}`}
+                  >
+                    {statusLabel}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteStudent(student)}
+                    disabled={deletingStudentId === student.id}
+                    title="Delete student"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
 
               <div className="relative mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
@@ -519,6 +619,99 @@ const StudentHistory = () => {
           </div>
         </div>
       </div>
+
+      {studentToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !isDeletePending) {
+              setStudentToDelete(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-student-title"
+            className="relative w-full max-w-lg overflow-hidden rounded-[30px] border border-rose-200/80 bg-white shadow-[0_35px_100px_-45px_rgba(225,29,72,0.55)]"
+          >
+            <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-r from-rose-50 via-white to-orange-50" />
+            <div className="absolute -top-12 -right-10 h-28 w-28 rounded-full bg-rose-200/60 blur-2xl" />
+            <div className="relative px-6 pt-6 pb-4 sm:px-7">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-700">
+                      Confirm Deletion
+                    </span>
+                    <h3
+                      id="delete-student-title"
+                      className="mt-2 text-xl font-bold text-slate-900"
+                    >
+                      Delete Student Record?
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      This removes the student from history cards immediately.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setStudentToDelete(null)}
+                  disabled={isDeletePending}
+                  className="rounded-full border border-slate-200 bg-white p-2 text-slate-400 transition hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Close delete modal"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-white text-lg font-bold text-slate-700 ring-1 ring-slate-200">
+                    {studentToDelete.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-bold text-slate-900">
+                      {studentToDelete.name}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-600 ring-1 ring-slate-200">
+                        {deleteClassName}
+                      </span>
+                      <span className="rounded-full bg-rose-50 px-2.5 py-1 font-semibold text-rose-700 ring-1 ring-rose-200">
+                        {studentToDelete.studentStatus || "stopped"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                This action can be restored from backup/recycle bin.
+              </div>
+            </div>
+            <div className="relative flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50 px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                onClick={() => setStudentToDelete(null)}
+                disabled={isDeletePending}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteStudent}
+                disabled={isDeletePending}
+                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDeletePending ? "Deleting..." : "Delete Student"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewStudent && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

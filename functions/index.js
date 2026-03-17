@@ -3,6 +3,73 @@ const admin = require("firebase-admin");
 
 admin.initializeApp();
 
+const DEFAULT_BATCH_SIZE = 400;
+
+const normalizeSchoolId = (value) => String(value || "").trim();
+
+async function deleteSchoolScopedCollection(
+  db,
+  collectionName,
+  schoolId,
+  batchSize = DEFAULT_BATCH_SIZE,
+) {
+  const scopedSchoolId = normalizeSchoolId(schoolId);
+  if (!scopedSchoolId) return 0;
+
+  let deletedCount = 0;
+  while (true) {
+    const snapshot = await db
+      .collection(collectionName)
+      .where("schoolId", "==", scopedSchoolId)
+      .limit(batchSize)
+      .get();
+
+    if (snapshot.empty) {
+      break;
+    }
+
+    const batch = db.batch();
+    snapshot.docs.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    deletedCount += snapshot.size;
+
+    if (snapshot.size < batchSize) {
+      break;
+    }
+  }
+
+  return deletedCount;
+}
+
+async function deleteSchoolScopedCollections(
+  db,
+  schoolId,
+  collectionNames = [],
+  batchSize = DEFAULT_BATCH_SIZE,
+) {
+  const deletedDocs = {};
+  for (const collectionName of collectionNames) {
+    const deletedCount = await deleteSchoolScopedCollection(
+      db,
+      collectionName,
+      schoolId,
+      batchSize,
+    );
+    deletedDocs[collectionName] = deletedCount;
+    console.log(`Deleted ${deletedCount} documents from ${collectionName}`);
+  }
+  return deletedDocs;
+}
+
+async function deleteSchoolDocumentTree(db, schoolId) {
+  const schoolRef = db.collection("schools").doc(schoolId);
+  if (typeof db.recursiveDelete === "function") {
+    await db.recursiveDelete(schoolRef);
+    return;
+  }
+  await schoolRef.delete();
+}
+
 exports.deleteAuthUser = functions.firestore
   .document("users/{userId}")
   .onDelete(async (snap, context) => {
@@ -14,39 +81,6 @@ exports.deleteAuthUser = functions.firestore
       console.error(`Error deleting auth user ${userId}:`, error);
     }
   });
-
-async function deleteCollection(db, collectionPath, batchSize) {
-  const collectionRef = db.collection(collectionPath);
-  const query = collectionRef.orderBy("__name__").limit(batchSize);
-
-  return new Promise((resolve, reject) => {
-    deleteQueryBatch(db, query, resolve, reject);
-  });
-}
-
-async function deleteQueryBatch(db, query, resolve, reject) {
-  const snapshot = await query.get();
-
-  const batchSize = snapshot.size;
-  if (batchSize === 0) {
-    // When there are no documents left, we are done
-    resolve();
-    return;
-  }
-
-  // Delete documents in a batch
-  const batch = db.batch();
-  snapshot.docs.forEach((doc) => {
-    batch.delete(doc.ref);
-  });
-  await batch.commit();
-
-  // Recurse on the next process tick, to avoid
-  // exploding the stack.
-  process.nextTick(() => {
-    deleteQueryBatch(db, query, resolve, reject);
-  });
-}
 
 exports.createSchool = functions.https.onCall(async (data, context) => {
   // Check if user is authenticated
@@ -324,7 +358,8 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
     );
   }
 
-  const { schoolId } = data;
+  const db = admin.firestore();
+  const schoolId = normalizeSchoolId(data?.schoolId);
 
   if (!schoolId) {
     throw new functions.https.HttpsError(
@@ -334,11 +369,7 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
   }
 
   // Verify school exists
-  const schoolDoc = await admin
-    .firestore()
-    .collection("schools")
-    .doc(schoolId)
-    .get();
+  const schoolDoc = await db.collection("schools").doc(schoolId).get();
   if (!schoolDoc.exists) {
     throw new functions.https.HttpsError("not-found", "School not found.");
   }
@@ -348,12 +379,11 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
 
   let deletedUsers = 0;
   const deletedDocs = {};
-  const batchSize = 400; // Stay under 500 limit
+  const batchSize = DEFAULT_BATCH_SIZE; // Stay under Firestore batch limit
 
   try {
     // 1. Find and delete all users associated with this school
-    const usersSnapshot = await admin
-      .firestore()
+    const usersSnapshot = await db
       .collection("users")
       .where("schoolId", "==", schoolId)
       .get();
@@ -376,19 +406,27 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
 
     // Execute Auth user deletions in parallel (batched)
     if (userDeletions.length > 0) {
-      await Promise.allSettled(userDeletions);
+      const authDeletionResults = await Promise.allSettled(userDeletions);
+      const failedAuthDeletions = authDeletionResults.filter(
+        (result) => result.status === "rejected",
+      );
       console.log(`Deleted ${userDeletions.length} Auth users`);
+      if (failedAuthDeletions.length > 0) {
+        console.warn(
+          `Failed to delete ${failedAuthDeletions.length} Auth users for school ${schoolId}`,
+        );
+      }
     }
 
     // Delete user documents from Firestore
     if (firestoreUserDeletions.length > 0) {
       const userBatches = [];
       for (let i = 0; i < firestoreUserDeletions.length; i += batchSize) {
-        const batch = admin.firestore().batch();
+        const batch = db.batch();
         const batchUids = firestoreUserDeletions.slice(i, i + batchSize);
 
         for (const uid of batchUids) {
-          batch.delete(admin.firestore().collection("users").doc(uid));
+          batch.delete(db.collection("users").doc(uid));
         }
 
         userBatches.push(batch.commit());
@@ -399,8 +437,8 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
       console.log(`Deleted ${deletedUsers} user documents`);
     }
 
-    // 2. Delete school-scoped collections
-    const collectionsToDelete = [
+    // 2. Delete school-scoped root collections
+    const rootCollectionsToDelete = [
       "students",
       "classes",
       "attendance",
@@ -413,58 +451,36 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
       "admin_notifications",
       "timetables",
       "class_subjects",
-      "settings", // Special case: settings/{schoolId}
+      "fees",
+      "student_ledgers",
+      "payments",
+      "backups",
+      "activity_logs",
+      "activityLogs",
+      "analyticsEvents",
     ];
+    const rootDeletedDocs = await deleteSchoolScopedCollections(
+      db,
+      schoolId,
+      rootCollectionsToDelete,
+      batchSize,
+    );
+    Object.assign(deletedDocs, rootDeletedDocs);
 
-    for (const collectionName of collectionsToDelete) {
-      let deletedCount = 0;
-
-      if (collectionName === "settings") {
-        // Settings is stored as settings/{schoolId}
-        try {
-          await admin.firestore().collection("settings").doc(schoolId).delete();
-          deletedCount = 1;
-        } catch (error) {
-          // Document might not exist, continue
-          console.log(
-            `Settings document ${schoolId} not found or already deleted`,
-          );
-        }
-      } else {
-        // Query documents where schoolId == schoolId
-        const query = admin
-          .firestore()
-          .collection(collectionName)
-          .where("schoolId", "==", schoolId);
-
-        const snapshot = await query.get();
-        const docIds = snapshot.docs.map((doc) => doc.id);
-
-        if (docIds.length > 0) {
-          // Delete in batches
-          for (let i = 0; i < docIds.length; i += batchSize) {
-            const batch = admin.firestore().batch();
-            const batchDocIds = docIds.slice(i, i + batchSize);
-
-            for (const docId of batchDocIds) {
-              batch.delete(
-                admin.firestore().collection(collectionName).doc(docId),
-              );
-            }
-
-            await batch.commit();
-            deletedCount += batchDocIds.length;
-          }
-        }
-      }
-
-      deletedDocs[collectionName] = deletedCount;
-      console.log(`Deleted ${deletedCount} documents from ${collectionName}`);
+    // 3. Delete settings document for this school
+    const settingsRef = db.collection("settings").doc(schoolId);
+    const settingsSnap = await settingsRef.get();
+    if (settingsSnap.exists) {
+      await settingsRef.delete();
+      deletedDocs.settings = 1;
+    } else {
+      deletedDocs.settings = 0;
     }
+    console.log(`Deleted ${deletedDocs.settings} documents from settings`);
 
-    // 3. Finally, delete the school document itself
-    await admin.firestore().collection("schools").doc(schoolId).delete();
-    console.log(`Deleted school document: ${schoolId}`);
+    // 4. Finally, delete school doc and all nested subcollections
+    await deleteSchoolDocumentTree(db, schoolId);
+    console.log(`Deleted school document tree: ${schoolId}`);
 
     return {
       success: true,
@@ -498,18 +514,55 @@ exports.resetTermData = functions.https.onCall(async (data, context) => {
     );
   }
 
-  // Check if the user is a school admin or super admin
+  // Check if the user is a school admin or super admin and resolve school scope
+  const db = admin.firestore();
   const userId = context.auth.uid;
-  const userDoc = await admin.firestore().collection("users").doc(userId).get();
-  if (
-    !userDoc.exists ||
-    (userDoc.data().role !== "school_admin" &&
-      userDoc.data().role !== "super_admin")
-  ) {
+  const userDoc = await db.collection("users").doc(userId).get();
+  if (!userDoc.exists) {
     throw new functions.https.HttpsError(
       "permission-denied",
       "Only admins can perform this action.",
     );
+  }
+
+  const callerData = userDoc.data();
+  const callerRole = callerData.role;
+  const callerSchoolId = normalizeSchoolId(callerData.schoolId);
+  const requestedSchoolId = normalizeSchoolId(data?.schoolId);
+
+  let targetSchoolId = "";
+  if (callerRole === "school_admin") {
+    if (!callerSchoolId) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Your admin profile is missing schoolId.",
+      );
+    }
+    if (requestedSchoolId && requestedSchoolId !== callerSchoolId) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "School admins can only reset term data for their own school.",
+      );
+    }
+    targetSchoolId = callerSchoolId;
+  } else if (callerRole === "super_admin") {
+    if (!requestedSchoolId) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "schoolId is required for super admins.",
+      );
+    }
+    targetSchoolId = requestedSchoolId;
+  } else {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only admins can perform this action.",
+    );
+  }
+
+  const schoolDoc = await db.collection("schools").doc(targetSchoolId).get();
+  if (!schoolDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "School not found.");
   }
 
   const collectionsToDelete = [
@@ -524,17 +577,16 @@ exports.resetTermData = functions.https.onCall(async (data, context) => {
   ];
 
   try {
-    // Delete collections
-    for (const collectionPath of collectionsToDelete) {
-      console.log(`Deleting collection: ${collectionPath}`);
-      await deleteCollection(admin.firestore(), collectionPath, 100);
-    }
+    // Delete term-related records for this school only
+    const deletedDocs = await deleteSchoolScopedCollections(
+      db,
+      targetSchoolId,
+      collectionsToDelete,
+      100,
+    );
 
-    // Reset school config
-    const schoolConfigRef = admin
-      .firestore()
-      .collection("settings")
-      .doc("schoolConfig");
+    // Reset scoped school config (settings/{schoolId})
+    const schoolConfigRef = db.collection("settings").doc(targetSchoolId);
     await schoolConfigRef.set(
       {
         schoolReopenDate: "",
@@ -544,8 +596,13 @@ exports.resetTermData = functions.https.onCall(async (data, context) => {
       { merge: true },
     );
 
-    console.log("Term data reset successfully.");
-    return { success: true, message: "Term data has been successfully reset." };
+    console.log(`Term data reset successfully for school ${targetSchoolId}.`);
+    return {
+      success: true,
+      schoolId: targetSchoolId,
+      deletedDocs,
+      message: "Term data has been successfully reset for the selected school.",
+    };
   } catch (error) {
     console.error("Error resetting term data:", error);
     throw new functions.https.HttpsError(

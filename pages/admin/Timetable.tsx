@@ -19,6 +19,52 @@ import { requireSchoolId } from "../../services/authProfile";
 import { logActivity } from "../../services/activityLog";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const BUILT_IN_SLOT_TYPES = [
+  { value: "arrival", label: "Arrival & Free Play" },
+  { value: "assembly", label: "Morning Assembly" },
+  { value: "lesson", label: "Lesson" },
+  { value: "break", label: "Break" },
+  { value: "snack", label: "Snack" },
+  { value: "lunch", label: "Lunch" },
+  { value: "worship", label: "Worship/Devotion" },
+  { value: "games", label: "Games/Sports" },
+  { value: "clubs", label: "Clubs/Activities" },
+  { value: "cleaning", label: "Clean Up" },
+  { value: "nap", label: "Nap Time" },
+  { value: "closing", label: "Closing" },
+] as const;
+const BUILT_IN_SLOT_TYPE_SET: ReadonlySet<string> = new Set<string>(
+  BUILT_IN_SLOT_TYPES.map((entry) => entry.value),
+);
+const DEFAULT_SUBJECT_BY_TYPE: Record<string, string> = {
+  arrival: "Arrival & Free Play",
+  assembly: "Assembly",
+  lesson: "",
+  break: "Break",
+  snack: "Snack",
+  lunch: "Lunch",
+  worship: "Worship",
+  games: "Games",
+  clubs: "Clubs/Activities",
+  cleaning: "Clean Up",
+  nap: "Nap Time",
+  closing: "Closing",
+};
+const getSlotTypeLabel = (type: string) => {
+  const builtIn = BUILT_IN_SLOT_TYPES.find((entry) => entry.value === type);
+  if (builtIn) return builtIn.label;
+  return type
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+const normalizeCustomType = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
 const Timetable = () => {
   const { user } = useAuth();
@@ -28,6 +74,8 @@ const Timetable = () => {
   const [loading, setLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(DAYS[0]);
   const [subjects, setSubjects] = useState<string[]>([]);
+  const [customTypes, setCustomTypes] = useState<string[]>([]);
+  const [customTypeInput, setCustomTypeInput] = useState("");
 
   // Form State for new slot
   const [newSlot, setNewSlot] = useState<Partial<TimeSlot>>({
@@ -62,6 +110,17 @@ const Timetable = () => {
       DAYS.forEach((day) => {
         if (!schedule[day]) schedule[day] = [];
       });
+      const customTypesFromSlots = Object.values(schedule)
+        .flatMap((slots) => slots.map((slot) => slot.type))
+        .filter((type) => type && !BUILT_IN_SLOT_TYPE_SET.has(type));
+      const customTypesFromSavedList = (data?.customTypes || []).filter(
+        (type) => type && !BUILT_IN_SLOT_TYPE_SET.has(type),
+      );
+      const mergedCustomTypes = Array.from(
+        new Set([...customTypesFromSavedList, ...customTypesFromSlots]),
+      ).sort((a, b) => getSlotTypeLabel(a).localeCompare(getSlotTypeLabel(b)));
+      setCustomTypes(mergedCustomTypes);
+      setCustomTypeInput("");
 
       // Reset subjects in existing timetable slots to match system settings
       let hasChanges = false;
@@ -112,31 +171,85 @@ const Timetable = () => {
     loadDataForClass();
   }, [selectedClass, schoolId]);
 
+  const setSlotType = (type: string) => {
+    const subject =
+      type === "lesson"
+        ? subjects[0] || ""
+        : DEFAULT_SUBJECT_BY_TYPE[type] || getSlotTypeLabel(type);
+    setNewSlot((prev) => ({ ...prev, type, subject }));
+  };
+
+  const handleAddCustomType = () => {
+    const normalized = normalizeCustomType(customTypeInput);
+    if (!normalized) {
+      showToast("Enter a custom type name first.", { type: "error" });
+      return;
+    }
+    if (BUILT_IN_SLOT_TYPE_SET.has(normalized)) {
+      showToast("That type already exists in built-in options.", {
+        type: "info",
+      });
+      setSlotType(normalized);
+      setCustomTypeInput("");
+      return;
+    }
+    if (customTypes.includes(normalized)) {
+      showToast("Custom type already exists.", { type: "info" });
+      setSlotType(normalized);
+      setCustomTypeInput("");
+      return;
+    }
+
+    const nextCustomTypes = [...customTypes, normalized].sort((a, b) =>
+      getSlotTypeLabel(a).localeCompare(getSlotTypeLabel(b)),
+    );
+    setCustomTypes(nextCustomTypes);
+    setSlotType(normalized);
+    setCustomTypeInput("");
+    showToast(`Added custom type: ${getSlotTypeLabel(normalized)}`, {
+      type: "success",
+    });
+  };
+
+  const getCustomTypeUsageCount = (type: string) =>
+    Object.values(timetable).reduce(
+      (count, daySlots) => count + daySlots.filter((slot) => slot.type === type).length,
+      0,
+    );
+
+  const handleDeleteCustomType = (typeToDelete: string) => {
+    const usageCount = getCustomTypeUsageCount(typeToDelete);
+    if (usageCount > 0) {
+      showToast(
+        `Cannot delete ${getSlotTypeLabel(typeToDelete)}. It is used in ${usageCount} slot${usageCount > 1 ? "s" : ""}.`,
+        { type: "error" },
+      );
+      return;
+    }
+
+    setCustomTypes((prev) => prev.filter((type) => type !== typeToDelete));
+    if (newSlot.type === typeToDelete) {
+      setSlotType("lesson");
+    }
+    showToast(`Removed custom type: ${getSlotTypeLabel(typeToDelete)}`, {
+      type: "success",
+    });
+  };
+
   const handleAddSlot = () => {
     if (!newSlot.startTime || !newSlot.endTime || !newSlot.subject) return;
     if (newSlot.startTime >= newSlot.endTime) {
       showToast("End time must be after start time", { type: "error" });
       return;
     }
+    const slotType = newSlot.type || "lesson";
 
     const slot: TimeSlot = {
       id: Math.random().toString(36).substr(2, 9),
       startTime: newSlot.startTime,
       endTime: newSlot.endTime,
       subject: newSlot.subject,
-      type: newSlot.type as
-        | "lesson"
-        | "break"
-        | "worship"
-        | "closing"
-        | "assembly"
-        | "arrival"
-        | "lunch"
-        | "snack"
-        | "cleaning"
-        | "games"
-        | "nap"
-        | "clubs",
+      type: slotType,
     };
 
     const updatedSchedule = { ...timetable };
@@ -162,6 +275,7 @@ const Timetable = () => {
       schoolId,
       classId: selectedClass,
       schedule: timetable,
+      customTypes,
       updatedAt: Date.now(),
     };
     try {
@@ -381,7 +495,7 @@ const Timetable = () => {
                             <span
                               className={`text-xs uppercase font-bold border px-2 py-0.5 rounded ${styles.badge}`}
                             >
-                              {slot.type}
+                              {getSlotTypeLabel(slot.type)}
                             </span>
                           )}
                         </div>
@@ -440,50 +554,22 @@ const Timetable = () => {
                   <select
                     className="w-full border p-3 rounded text-sm md:text-base"
                     value={newSlot.type}
-                    onChange={(e) => {
-                      const type = e.target.value as
-                        | "lesson"
-                        | "break"
-                        | "worship"
-                        | "closing"
-                        | "assembly"
-                        | "arrival"
-                        | "lunch"
-                        | "snack"
-                        | "cleaning"
-                        | "games"
-                        | "nap"
-                        | "clubs";
-                      let subject = "";
-                      if (type === "break") subject = "Break";
-                      else if (type === "worship") subject = "Worship";
-                      else if (type === "closing") subject = "Closing";
-                      else if (type === "assembly") subject = "Assembly";
-                      else if (type === "arrival")
-                        subject = "Arrival & Free Play";
-                      else if (type === "lunch") subject = "Lunch";
-                      else if (type === "snack") subject = "Snack";
-                      else if (type === "cleaning") subject = "Clean Up";
-                      else if (type === "games") subject = "Games";
-                      else if (type === "nap") subject = "Nap Time";
-                      else if (type === "clubs") subject = "Clubs/Activities";
-                      else subject = subjects[0] || "";
-
-                      setNewSlot({ ...newSlot, type, subject });
-                    }}
+                    onChange={(e) => setSlotType(e.target.value)}
                   >
-                    <option value="arrival">Arrival & Free Play</option>
-                    <option value="assembly">Morning Assembly</option>
-                    <option value="lesson">Lesson</option>
-                    <option value="break">Break</option>
-                    <option value="snack">Snack</option>
-                    <option value="lunch">Lunch</option>
-                    <option value="worship">Worship/Devotion</option>
-                    <option value="games">Games/Sports</option>
-                    <option value="clubs">Clubs/Activities</option>
-                    <option value="cleaning">Clean Up</option>
-                    <option value="nap">Nap Time</option>
-                    <option value="closing">Closing</option>
+                    {BUILT_IN_SLOT_TYPES.map((entry) => (
+                      <option key={entry.value} value={entry.value}>
+                        {entry.label}
+                      </option>
+                    ))}
+                    {customTypes.length > 0 && (
+                      <optgroup label="Custom Types">
+                        {customTypes.map((type) => (
+                          <option key={type} value={type}>
+                            {getSlotTypeLabel(type)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 <div className="sm:col-span-2 lg:col-span-4">
@@ -526,6 +612,78 @@ const Timetable = () => {
                     <Plus size={16} className="inline mr-1" /> Add Slot
                   </button>
                 </div>
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <label className="block text-xs font-semibold text-slate-500 uppercase">
+                  Create Custom Type
+                </label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="text"
+                    className="w-full border p-3 rounded text-sm md:text-base"
+                    value={customTypeInput}
+                    onChange={(e) => setCustomTypeInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddCustomType();
+                      }
+                    }}
+                    placeholder="e.g. remedial, prep_exam, counselling"
+                  />
+                  <button
+                    onClick={handleAddCustomType}
+                    className="whitespace-nowrap rounded bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-700"
+                  >
+                    Add Type
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Added custom types appear in the Type dropdown for this class
+                  timetable.
+                </p>
+                {customTypes.length > 0 && (
+                  <div className="mt-3 border-t border-slate-200 pt-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Manage Custom Types
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {customTypes.map((type) => {
+                        const usageCount = getCustomTypeUsageCount(type);
+                        const inUse = usageCount > 0;
+                        return (
+                          <div
+                            key={type}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm"
+                          >
+                            <span>{getSlotTypeLabel(type)}</span>
+                            {inUse && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                                {usageCount} used
+                              </span>
+                            )}
+                            <button
+                              onClick={() => handleDeleteCustomType(type)}
+                              title={
+                                inUse
+                                  ? "Remove slots using this type before deleting"
+                                  : "Delete custom type"
+                              }
+                              className={`rounded-full p-1 transition-colors ${
+                                inUse
+                                  ? "cursor-not-allowed text-slate-300"
+                                  : "text-rose-500 hover:bg-rose-50 hover:text-rose-600"
+                              }`}
+                              disabled={inUse}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

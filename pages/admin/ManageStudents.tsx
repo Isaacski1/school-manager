@@ -33,6 +33,7 @@ const ManageStudents = () => {
   const { user } = useAuth();
   const schoolId = school?.id || null;
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
   const [filterClass, setFilterClass] = useState("all");
 
   // Edit/Add State
@@ -69,10 +70,27 @@ const ManageStudents = () => {
       setStudents([]);
       return;
     }
-    const data = await db.getStudents(schoolId, undefined);
-    setStudents(data);
+    setStudentsLoading(true);
+    try {
+      const data: Student[] = [];
+      let cursorId: string | null = null;
+      let hasMore = true;
+      let safetyCounter = 0;
 
-    if (schoolId) {
+      while (hasMore && safetyCounter < 500) {
+        const page = await db.getStudentsPage({
+          schoolId,
+          pageSize: 250,
+          cursorId,
+        });
+        data.push(...page.items);
+        cursorId = page.nextCursor;
+        hasMore = page.hasMore && Boolean(cursorId);
+        safetyCounter += 1;
+      }
+
+      setStudents(data);
+
       const missingSchool = data.filter((s) => !s.schoolId);
       if (missingSchool.length > 0) {
         await Promise.all(
@@ -81,6 +99,13 @@ const ManageStudents = () => {
           ),
         );
       }
+    } catch (error) {
+      console.error("Failed to load students", error);
+      showToast("Failed to load students. Please try again.", {
+        type: "error",
+      });
+    } finally {
+      setStudentsLoading(false);
     }
   };
 
@@ -627,6 +652,11 @@ const ManageStudents = () => {
                 <BookOpen className="h-4 w-4" />
                 {classLabel}
               </span>
+              {studentsLoading && (
+                <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700 shadow-sm">
+                  Loading students...
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -668,7 +698,11 @@ const ManageStudents = () => {
 
           {/* Cards */}
           <div className="p-4">
-            {filteredStudents.length === 0 ? (
+            {studentsLoading && students.length === 0 ? (
+              <div className="px-6 py-10 text-center text-slate-400">
+                Loading students...
+              </div>
+            ) : !studentsLoading && filteredStudents.length === 0 ? (
               <div className="px-6 py-10 text-center text-slate-400">
                 No students found.
               </div>

@@ -2,6 +2,7 @@ import { auth, firestore } from "./firebase";
 import {
   collection,
   doc,
+  documentId,
   getCountFromServer,
   getDoc,
   getDocs,
@@ -13,6 +14,8 @@ import {
   where,
   orderBy,
   limit,
+  startAfter,
+  QueryConstraint,
 } from "firebase/firestore";
 import {
   User,
@@ -56,6 +59,12 @@ import {
   primarySubjects,
   jhsSubjects,
 } from "../constants";
+
+type SchoolScopedPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
 
 class FirestoreService {
   private actorRoleCache: { uid: string; role: UserRole | null } | null = null;
@@ -152,6 +161,58 @@ class FirestoreService {
     );
     const snap = await getDocs(q);
     return snap.docs.map((doc) => doc.data() as T);
+  }
+
+  private resolvePageSize(
+    pageSize?: number,
+    fallback = 100,
+    max = 300,
+  ): number {
+    const parsed = Number(pageSize);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(1, Math.min(max, Math.floor(parsed)));
+  }
+
+  private async getCollectionBySchoolIdPage<T>(
+    collectionName: string,
+    schoolId: string,
+    options: {
+      pageSize?: number;
+      cursorId?: string | null;
+      constraints?: QueryConstraint[];
+      mapDoc?: (docSnap: any) => T;
+    } = {},
+  ): Promise<SchoolScopedPage<T>> {
+    const pageSize = this.resolvePageSize(options.pageSize, 100, 300);
+    const cursorId = String(options.cursorId || "").trim();
+    const constraints: QueryConstraint[] = [
+      where("schoolId", "==", schoolId),
+      ...(options.constraints || []),
+      orderBy(documentId()),
+      limit(pageSize + 1),
+    ];
+    if (cursorId) {
+      constraints.push(startAfter(cursorId));
+    }
+
+    const snap = await getDocs(
+      query(collection(firestore, collectionName), ...constraints),
+    );
+    const docs = snap.docs;
+    const hasMore = docs.length > pageSize;
+    const pageDocs = hasMore ? docs.slice(0, pageSize) : docs;
+    const mapDoc =
+      options.mapDoc ||
+      ((docSnap: any) =>
+        ({ id: docSnap.id, ...(docSnap.data() as any) }) as T);
+
+    return {
+      items: pageDocs.map((docSnap) => mapDoc(docSnap)),
+      nextCursor: hasMore
+        ? (pageDocs[pageDocs.length - 1]?.id as string | undefined) || null
+        : null,
+      hasMore,
+    };
   }
 
   private async getCollectionBySchoolIdWithDocId<T>(
@@ -1097,6 +1158,37 @@ class FirestoreService {
   }
 
   // --- Students ---
+  async getStudentsPage(params: {
+    schoolId?: string;
+    classId?: string;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<Student>> {
+    await this.requireFeature(params.schoolId, "student_management");
+    const scopedSchoolId = this.requireSchoolId(
+      params.schoolId,
+      "getStudentsPage",
+    );
+
+    const constraints: QueryConstraint[] = [];
+    if (params.classId) {
+      constraints.push(where("classId", "==", params.classId));
+    }
+
+    return this.getCollectionBySchoolIdPage<Student>("students", scopedSchoolId, {
+      pageSize: params.pageSize,
+      cursorId: params.cursorId,
+      constraints,
+      mapDoc: (docSnap) => {
+        const data = docSnap.data() as Student;
+        return {
+          ...data,
+          id: data.id || docSnap.id,
+        };
+      },
+    });
+  }
+
   async getStudents(schoolId?: string, classId?: string): Promise<Student[]> {
     await this.requireFeature(schoolId, "student_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getStudents");
@@ -1470,6 +1562,53 @@ class FirestoreService {
     );
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as Assessment);
+  }
+
+  async getAssessmentsPage(params: {
+    schoolId?: string;
+    classId?: string;
+    studentId?: string;
+    subject?: string;
+    term?: number;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<Assessment>> {
+    await this.requireFeature(params.schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      params.schoolId,
+      "getAssessmentsPage",
+    );
+
+    const constraints: QueryConstraint[] = [];
+    if (params.classId) {
+      constraints.push(where("classId", "==", params.classId));
+    }
+    if (params.studentId) {
+      constraints.push(where("studentId", "==", params.studentId));
+    }
+    if (params.subject) {
+      constraints.push(where("subject", "==", params.subject));
+    }
+    if (typeof params.term === "number") {
+      constraints.push(where("term", "==", params.term));
+    }
+
+    return this.getCollectionBySchoolIdPage<Assessment>(
+      "assessments",
+      scopedSchoolId,
+      {
+        pageSize: params.pageSize,
+        cursorId: params.cursorId,
+        constraints,
+        mapDoc: (docSnap) => {
+          const data = docSnap.data() as Assessment;
+          return {
+            ...data,
+            id: data.id || docSnap.id,
+          };
+        },
+      },
+    );
   }
 
   async getAllAssessments(schoolId?: string): Promise<Assessment[]> {

@@ -974,6 +974,13 @@ const TeacherDashboard = () => {
     }
   };
 
+  const getSlotTypeLabel = (type: string) =>
+    type
+      .replace(/[_-]+/g, " ")
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
   const todayClassAttendanceRecord = useMemo(() => {
     const todayKey = getLocalDateString();
     return classAttendanceRecords.find((record) => record.date === todayKey);
@@ -1846,7 +1853,7 @@ const TeacherDashboard = () => {
                               <span
                                 className={`text-[10px] font-bold uppercase ${styles.badge}`}
                               >
-                                {slot.type}
+                                {getSlotTypeLabel(slot.type)}
                               </span>
                             </div>
                             <p className={`text-sm ${styles.text}`}>

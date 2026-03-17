@@ -2549,15 +2549,15 @@ const AdminDashboard = () => {
   );
 
   const StudentEnrollCard = () => (
-    <div className="relative overflow-hidden rounded-[28px] border border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,251,235,0.96),rgba(255,255,255,0.94),rgba(255,237,213,0.92))] p-6 shadow-[0_18px_42px_-30px_rgba(217,119,6,0.22)]">
+    <div className="relative overflow-hidden rounded-[28px] border border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,251,235,0.96),rgba(255,255,255,0.94),rgba(255,237,213,0.92))] p-5 sm:p-6 shadow-[0_18px_42px_-30px_rgba(217,119,6,0.22)]">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.28),transparent_50%)]" />
       <div className="relative flex h-full flex-col justify-between">
         <div className="flex items-start justify-between gap-4 min-w-0">
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-700">
               Students Enrolled
             </p>
-            <h3 className="mt-3 text-4xl font-extrabold tracking-tight text-amber-950">
+            <h3 className="mt-3 text-3xl font-extrabold tracking-tight text-amber-950 sm:text-4xl">
               {stats.students}
             </h3>
             <p className="mt-2 text-sm text-amber-800/85">
@@ -2570,7 +2570,7 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-[auto_auto_1fr] sm:items-end">
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end xl:grid-cols-[auto_auto_1fr]">
           <div className="rounded-[22px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
             <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
               Female
@@ -2588,19 +2588,19 @@ const AdminDashboard = () => {
             </div>
           </div>
 
-          <div className="col-span-2 sm:col-span-1">
+          <div className="min-w-0 sm:col-span-2 xl:col-span-1">
             <div className="rounded-[22px] border border-white/80 bg-white/82 px-4 py-3 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                   Class activity
                 </span>
-                <span className="text-[11px] text-slate-500">
+                <span className="hidden text-[11px] text-slate-500 2xl:inline">
                   Top attendance slices
                 </span>
               </div>
-              <div className="flex items-end gap-2 overflow-hidden">
+              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6 xl:grid-cols-8">
                 {stats.classAttendance.slice(0, 8).map((c) => (
-                  <div key={c.id} className="flex-1">
+                  <div key={c.id} className="min-w-0">
                     <div
                       className="w-full rounded-t-[8px]"
                       title={`${c.className}: ${c.percentage}%`}
@@ -2611,10 +2611,10 @@ const AdminDashboard = () => {
                             : c.percentage < 50
                               ? "linear-gradient(180deg,#f97316,#ef4444)"
                               : "linear-gradient(180deg,#facc15,#f59e0b)",
-                        height: `${Math.max(10, Math.round(c.percentage / 2.1))}px`,
+                        height: `${Math.max(12, Math.round(c.percentage / 2.1))}px`,
                       }}
                     />
-                    <div className="mt-1 truncate text-center text-[10px] text-slate-500">
+                    <div className="mt-1 truncate text-center text-[9px] text-slate-500">
                       {c.className
                         .replace("Primary ", "P")
                         .replace("Class ", "P")

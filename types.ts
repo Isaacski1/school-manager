@@ -479,13 +479,15 @@ export interface TimeSlot {
     | "cleaning"
     | "games"
     | "nap"
-    | "clubs";
+    | "clubs"
+    | (string & {});
 }
 
 export interface ClassTimetable {
   schoolId: string;
   classId: string;
   schedule: Record<string, TimeSlot[]>; // Key is Day name (Monday, Tuesday...)
+  customTypes?: string[];
   updatedAt?: number;
 }
 
