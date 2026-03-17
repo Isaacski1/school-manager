@@ -152,6 +152,9 @@ const REQUEST_METRICS_MAX_POINTS = Math.max(
 const REQUEST_METRICS = [];
 let ACTIVE_REQUESTS = 0;
 let lastRequestMetricsPruneAt = 0;
+const HAS_HRTIME_BIGINT = Boolean(
+  process?.hrtime && typeof process.hrtime.bigint === "function",
+);
 
 const normalizeRequestPath = (value) => {
   const pathOnly = String(value || "/").split("?")[0] || "/";
@@ -202,44 +205,76 @@ const recordRequestMetric = (entry) => {
   maybePruneRequestMetrics(entry.timestampMs);
 };
 
-app.use((req, res, next) => {
-  const startedAtMs = Date.now();
-  const startedAtNs = process.hrtime.bigint();
-  const method = String(req.method || "GET").toUpperCase();
-  const path = normalizeRequestPath(req.originalUrl || req.url || "/");
-  ACTIVE_REQUESTS += 1;
-
-  let finalized = false;
-  const finalizeMetric = (statusCode, aborted = false) => {
-    if (finalized) return;
-    finalized = true;
-    ACTIVE_REQUESTS = Math.max(0, ACTIVE_REQUESTS - 1);
-
-    const elapsedNs = process.hrtime.bigint() - startedAtNs;
-    const elapsedMs = Number(elapsedNs) / 1_000_000;
-    recordRequestMetric({
-      timestampMs: startedAtMs,
-      method,
-      path,
-      statusCode: Number(statusCode) || (aborted ? 499 : 0),
-      durationMs: Number.isFinite(elapsedMs) ? elapsedMs : 0,
-      aborted,
-    });
-  };
-
-  res.on("finish", () => {
-    finalizeMetric(res.statusCode, false);
-  });
-
-  res.on("close", () => {
-    if (!res.writableEnded) {
-      finalizeMetric(499, true);
-      return;
+const resolveElapsedMs = ({ startedAtMs, startedAtNs, startedAtHr }) => {
+  try {
+    if (HAS_HRTIME_BIGINT && typeof startedAtNs === "bigint") {
+      const elapsedNs = process.hrtime.bigint() - startedAtNs;
+      const elapsedMs = Number(elapsedNs) / 1_000_000;
+      if (Number.isFinite(elapsedMs) && elapsedMs >= 0) return elapsedMs;
     }
-    finalizeMetric(res.statusCode, false);
-  });
+    if (
+      Array.isArray(startedAtHr) &&
+      process?.hrtime &&
+      typeof process.hrtime === "function"
+    ) {
+      const diff = process.hrtime(startedAtHr);
+      const elapsedMs = (Number(diff[0] || 0) * 1000) + Number(diff[1] || 0) / 1_000_000;
+      if (Number.isFinite(elapsedMs) && elapsedMs >= 0) return elapsedMs;
+    }
+  } catch {
+    // Fall back to Date-based timing below.
+  }
+  return Math.max(0, Date.now() - startedAtMs);
+};
 
-  next();
+app.use((req, res, next) => {
+  try {
+    const startedAtMs = Date.now();
+    const startedAtNs = HAS_HRTIME_BIGINT ? process.hrtime.bigint() : null;
+    const startedAtHr =
+      process?.hrtime && typeof process.hrtime === "function"
+        ? process.hrtime()
+        : null;
+    const method = String(req.method || "GET").toUpperCase();
+    const path = normalizeRequestPath(req.originalUrl || req.url || "/");
+    ACTIVE_REQUESTS += 1;
+
+    let finalized = false;
+    const finalizeMetric = (statusCode, aborted = false) => {
+      if (finalized) return;
+      finalized = true;
+      ACTIVE_REQUESTS = Math.max(0, ACTIVE_REQUESTS - 1);
+      const elapsedMs = resolveElapsedMs({
+        startedAtMs,
+        startedAtNs,
+        startedAtHr,
+      });
+      recordRequestMetric({
+        timestampMs: startedAtMs,
+        method,
+        path,
+        statusCode: Number(statusCode) || (aborted ? 499 : 0),
+        durationMs: Number.isFinite(elapsedMs) ? elapsedMs : 0,
+        aborted,
+      });
+    };
+
+    res.on("finish", () => {
+      finalizeMetric(res.statusCode, false);
+    });
+
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        finalizeMetric(499, true);
+        return;
+      }
+      finalizeMetric(res.statusCode, false);
+    });
+  } catch (error) {
+    console.error("Request metrics middleware error:", error?.message || error);
+  } finally {
+    next();
+  }
 });
 
 const apiLimiter = rateLimit({
