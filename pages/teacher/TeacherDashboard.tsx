@@ -673,37 +673,6 @@ const TeacherDashboard = () => {
           ? new Date(`${config.nextTermBegins}T00:00:00`).getTime()
           : null;
 
-        if (
-          config.nextTermBegins &&
-          nextTermBeginsMs &&
-          todayMs >= nextTermBeginsMs &&
-          config.termTransitionProcessed === false
-        ) {
-          await db.resetForNewTerm(config);
-          const updatedConfig = {
-            ...config,
-            termTransitionProcessed: true,
-          };
-          await db.updateSchoolConfig(updatedConfig);
-          config = updatedConfig;
-          showToast("New term started. Dashboard refreshed.", {
-            type: "success",
-          });
-          triggerRefresh();
-        } else if (
-          config.nextTermBegins &&
-          nextTermBeginsMs &&
-          todayMs < nextTermBeginsMs &&
-          config.termTransitionProcessed === true
-        ) {
-          const resetTransitionFlag = {
-            ...config,
-            termTransitionProcessed: false,
-          };
-          await db.updateSchoolConfig(resetTransitionFlag);
-          config = resetTransitionFlag;
-        }
-
         if (!isMounted) return;
         setSchoolConfig(config);
         setCurrentTerm(config.currentTerm || `Term ${CURRENT_TERM}`);

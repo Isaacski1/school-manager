@@ -105,38 +105,6 @@ const AssessmentPage = () => {
           currentTerm: cfg.currentTerm || `Term ${CURRENT_TERM}`,
           academicYear: cfg.academicYear || ACADEMIC_YEAR,
         });
-
-        // Check if term transition has been processed - reload once to get fresh data
-        if (cfg.termTransitionProcessed) {
-          console.log("Term transition detected, reloading for fresh data...");
-          await db.updateSchoolConfig({
-            ...cfg,
-            termTransitionProcessed: false,
-          });
-          window.location.reload();
-          return;
-        }
-
-        // Check if nextTermBegins date has passed and reset hasn't been triggered yet
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const nextTermDate = cfg.nextTermBegins
-          ? new Date(cfg.nextTermBegins + "T00:00:00")
-          : null;
-
-        if (nextTermDate && today >= nextTermDate) {
-          console.log("New term begins, initiating reset...");
-          await db.resetForNewTerm(cfg);
-          await db.updateSchoolConfig({
-            ...cfg,
-            termTransitionProcessed: true,
-          });
-          showToast("New term started! Assessments have been reset.", {
-            type: "success",
-          });
-          window.location.reload();
-          return;
-        }
       } catch (e) {
         console.error("Failed to load school config", e);
       }

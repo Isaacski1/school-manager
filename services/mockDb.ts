@@ -947,8 +947,12 @@ class FirestoreService {
     if (snap.exists()) {
       const data = snap.data() as SchoolConfig;
       const config = { ...data, schoolId: scopedSchoolId };
+      const actorRole = await this.getCurrentActorRole();
 
-      if (this.shouldRunAutomaticTermTransition(config)) {
+      if (
+        actorRole !== UserRole.TEACHER &&
+        this.shouldRunAutomaticTermTransition(config)
+      ) {
         const resetConfig = {
           ...config,
           schoolReopenDate:
