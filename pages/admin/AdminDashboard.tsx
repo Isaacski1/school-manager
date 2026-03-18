@@ -41,6 +41,11 @@ import {
 } from "lucide-react";
 import { canAccessFeature } from "../../services/featureAccess";
 import {
+  collectHolidayDateKeys,
+  formatSchoolDateKey,
+  getExpectedSchoolDayKeys,
+} from "../../services/schoolCalendar";
+import {
   Notice,
   Student,
   TeacherAttendanceRecord,
@@ -914,11 +919,12 @@ const AdminDashboard = () => {
           wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId), []),
         ]);
 
-        // Check for missed attendance on recent school days (weekdays)
+        // Check for missed attendance from school reopen date through yesterday.
         const missedAlerts: any[] = [];
+        const missedStudentAlerts: any[] = [];
 
-        // Only check if school has reopened and there are attendance records in the database
         const currentDate = new Date();
+        currentDate.setHours(0, 0, 0, 0);
         const reopenDateObj = config.schoolReopenDate
           ? new Date(config.schoolReopenDate + "T00:00:00")
           : null;
@@ -937,219 +943,99 @@ const AdminDashboard = () => {
           nextTermBeginsObj &&
           currentDate >= vacationDateObj &&
           currentDate < nextTermBeginsObj;
+        const yesterday = new Date(currentDate);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const fallbackMissedStart = new Date(currentDate);
+        fallbackMissedStart.setDate(fallbackMissedStart.getDate() - 5);
+        fallbackMissedStart.setHours(0, 0, 0, 0);
+        const missedRangeStart = reopenDateObj || fallbackMissedStart;
+        const shouldCheckMissedAttendance =
+          schoolHasReopened && !isOnVacation && teachers.length > 0 &&
+          yesterday >= missedRangeStart;
 
-        const maxDaysBack = 5; // Check up to 5 previous school days for missed attendance
+        const classAttendanceRange = shouldCheckMissedAttendance
+          ? await wrapCall(
+              () =>
+                db.getAttendanceByDateRange(
+                  schoolId,
+                  formatSchoolDateKey(missedRangeStart),
+                  formatSchoolDateKey(yesterday),
+                ),
+              [],
+            )
+          : [];
 
-        const holidayDates = new Set([
-          ...allTeacherRecords.filter((r) => r.isHoliday).map((r) => r.date),
-          ...(config.holidayDates || []).map((h) => h.date),
+        const holidayDates = collectHolidayDateKeys([
+          ...allTeacherRecords.filter((record) => record.isHoliday).map((record) => record.date),
+          ...classAttendanceRange
+            .filter((record: any) => record.isHoliday)
+            .map((record: any) => record.date),
+          ...(config.holidayDates || []),
         ]);
 
-        if (schoolHasReopened && !isOnVacation && teachers.length > 0) {
-          // Parse dates
-          const parseLocalDate = (dateStr: string): Date | null => {
-            if (!dateStr) return null;
-            let parts: string[] = [];
-            if (dateStr.includes("-")) {
-              parts = dateStr.split("-");
-              if (parts.length === 3) {
-                return new Date(
-                  parseInt(parts[0]),
-                  parseInt(parts[1]) - 1,
-                  parseInt(parts[2]),
-                );
-              }
-            } else if (dateStr.includes("/")) {
-              parts = dateStr.split("/");
-              if (parts.length === 3) {
-                return new Date(
-                  parseInt(parts[2]),
-                  parseInt(parts[0]) - 1,
-                  parseInt(parts[1]),
-                );
-              }
+        const expectedSchoolDays = shouldCheckMissedAttendance
+          ? getExpectedSchoolDayKeys({
+              reopenDate: config.schoolReopenDate,
+              endDate: yesterday,
+              holidayDates: Array.from(holidayDates),
+              vacationDate: config.vacationDate,
+              nextTermBegins: config.nextTermBegins,
+              fallbackStartDate: fallbackMissedStart,
+            })
+          : [];
+
+        const teacherAttendanceKeys = new Set(
+          allTeacherRecords
+            .filter((record) => !record.isHoliday)
+            .map((record) => `${record.teacherId}_${record.date}`),
+        );
+        const classAttendanceKeys = new Set(
+          classAttendanceRange
+            .filter((record: any) => !record.isHoliday)
+            .map((record: any) => `${record.classId}_${record.date}`),
+        );
+        const teacherUsers = teachers.filter(
+          (teacher) => teacher.role === UserRole.TEACHER,
+        );
+
+        teacherUsers.forEach((teacher) => {
+          expectedSchoolDays.forEach((dateKey) => {
+            if (!teacherAttendanceKeys.has(`${teacher.id}_${dateKey}`)) {
+              missedAlerts.push({
+                teacherId: teacher.id,
+                teacherName: teacher.fullName,
+                date: dateKey,
+                classes:
+                  teacher.assignedClassIds
+                    ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                    .join(", ") || "Not Assigned",
+              });
             }
-            return null;
-          };
-          const reopenDateObjLocal = parseLocalDate(config.schoolReopenDate);
-          const vacationDateObjLocal = parseLocalDate(config.vacationDate);
+          });
+        });
 
-          let currentCheckDate = new Date();
-          for (let i = 0; i < maxDaysBack; i++) {
-            // Find next previous weekday
-            let checkDate = new Date(currentCheckDate);
-            let dayOfWeek = checkDate.getDay();
-            do {
-              checkDate.setDate(checkDate.getDate() - 1);
-              dayOfWeek = checkDate.getDay();
-              const isVacationDay =
-                vacationDateObjLocal &&
-                checkDate.toDateString() ===
-                  vacationDateObjLocal.toDateString();
-              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
-                continue;
-              } else {
-                break;
+        teacherUsers
+          .filter(
+            (teacher) =>
+              teacher.assignedClassIds && teacher.assignedClassIds.length > 0,
+          )
+          .forEach((teacher) => {
+            const classId = teacher.assignedClassIds![0];
+            const className =
+              CLASSES_LIST.find((c) => c.id === classId)?.name ||
+              "Unknown Class";
+
+            expectedSchoolDays.forEach((dateKey) => {
+              if (!classAttendanceKeys.has(`${classId}_${dateKey}`)) {
+                missedStudentAlerts.push({
+                  teacherId: teacher.id,
+                  teacherName: teacher.fullName,
+                  date: dateKey,
+                  className,
+                });
               }
-            } while (true);
-
-            const checkDayStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, "0")}-${String(checkDate.getDate()).padStart(2, "0")}`;
-            const checkDayTime = checkDate.getTime();
-            const reopenTime = reopenDateObjLocal
-              ? reopenDateObjLocal.getTime()
-              : 0;
-            const isDuringVacationCheck =
-              vacationDateObjLocal &&
-              nextTermBeginsObj &&
-              checkDate >= vacationDateObjLocal &&
-              checkDate < nextTermBeginsObj;
-
-            if (
-              checkDayTime >= reopenTime &&
-              reopenTime > 0 &&
-              !isDuringVacationCheck &&
-              !holidayDates.has(checkDayStr)
-            ) {
-              for (const teacher of teachers.filter(
-                (t) => t.role === UserRole.TEACHER,
-              )) {
-                const attendanceRecord = await db.getTeacherAttendance(
-                  schoolId,
-                  teacher.id,
-                  checkDayStr,
-                );
-                if (!attendanceRecord || attendanceRecord.isHoliday) {
-                  missedAlerts.push({
-                    teacherId: teacher.id,
-                    teacherName: teacher.fullName,
-                    date: checkDayStr,
-                    classes:
-                      teacher.assignedClassIds
-                        ?.map(
-                          (id) => CLASSES_LIST.find((c) => c.id === id)?.name,
-                        )
-                        .join(", ") || "Not Assigned",
-                  });
-                }
-              }
-            } else {
-              // If this day is before reopen or during vacation, stop checking further back
-              break;
-            }
-            currentCheckDate = checkDate;
-          }
-        }
-
-        // Check for missed STUDENT attendance on recent school days
-        const missedStudentAlerts: any[] = [];
-
-        if (schoolHasReopened && !isOnVacation) {
-          // Parse dates
-          const parseLocalDate = (dateStr: string): Date | null => {
-            if (!dateStr) return null;
-            let parts: string[] = [];
-            if (dateStr.includes("-")) {
-              parts = dateStr.split("-");
-              if (parts.length === 3) {
-                return new Date(
-                  parseInt(parts[0]),
-                  parseInt(parts[1]) - 1,
-                  parseInt(parts[2]),
-                );
-              }
-            } else if (dateStr.includes("/")) {
-              parts = dateStr.split("/");
-              if (parts.length === 3) {
-                return new Date(
-                  parseInt(parts[2]),
-                  parseInt(parts[0]) - 1,
-                  parseInt(parts[1]),
-                );
-              }
-            }
-            return null;
-          };
-          const reopenDateObjLocal = parseLocalDate(config.schoolReopenDate);
-          const vacationDateObjLocal = parseLocalDate(config.vacationDate);
-
-          let currentCheckDate = new Date();
-          for (let i = 0; i < maxDaysBack; i++) {
-            // Find next previous weekday
-            let checkDate = new Date(currentCheckDate);
-            let dayOfWeek = checkDate.getDay();
-            do {
-              checkDate.setDate(checkDate.getDate() - 1);
-              dayOfWeek = checkDate.getDay();
-              const isVacationDay =
-                vacationDateObjLocal &&
-                checkDate.toDateString() ===
-                  vacationDateObjLocal.toDateString();
-              if (dayOfWeek === 0 || dayOfWeek === 6 || isVacationDay) {
-                continue;
-              } else {
-                break;
-              }
-            } while (true);
-
-            const checkDayStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, "0")}-${String(checkDate.getDate()).padStart(2, "0")}`;
-            const checkDayTime = checkDate.getTime();
-            const reopenTime = reopenDateObjLocal
-              ? reopenDateObjLocal.getTime()
-              : 0;
-            const isDuringVacationCheck =
-              vacationDateObjLocal &&
-              nextTermBeginsObj &&
-              checkDate >= vacationDateObjLocal &&
-              checkDate < nextTermBeginsObj;
-
-            const holidayRecords = await db.getAttendanceByDate(
-              schoolId,
-              checkDayStr,
-            );
-            const isHolidayDate =
-              holidayRecords.some((r) => r.isHoliday) ||
-              (config.holidayDates || []).some((h) => h.date === checkDayStr);
-
-            if (
-              checkDayTime >= reopenTime &&
-              reopenTime > 0 &&
-              !isDuringVacationCheck &&
-              !isHolidayDate
-            ) {
-              for (const teacher of teachers.filter(
-                (t) =>
-                  t.role === UserRole.TEACHER &&
-                  t.assignedClassIds &&
-                  t.assignedClassIds.length > 0,
-              )) {
-                const classId = teacher.assignedClassIds![0];
-                const className =
-                  CLASSES_LIST.find((c) => c.id === classId)?.name ||
-                  "Unknown Class";
-                const studentAttendanceRecord = await db.getAttendance(
-                  schoolId,
-                  classId,
-                  checkDayStr,
-                );
-                if (
-                  !studentAttendanceRecord ||
-                  studentAttendanceRecord.isHoliday
-                ) {
-                  missedStudentAlerts.push({
-                    teacherId: teacher.id,
-                    teacherName: teacher.fullName,
-                    date: checkDayStr,
-                    className: className,
-                  });
-                }
-              }
-            } else {
-              // If this day is before reopen or during vacation, stop checking further back
-              break;
-            }
-            currentCheckDate = checkDate;
-          }
-        }
+            });
+          });
 
         // Helper function to count weekdays between two dates (inclusive)
         const countWeekdays = (startDate: string, endDate: string): number => {
@@ -3871,7 +3757,7 @@ const AdminDashboard = () => {
                     <p className="text-red-700 text-sm">
                       {missedAttendanceAlerts.length} teacher
                       {missedAttendanceAlerts.length !== 1 ? "s" : ""} need to
-                      mark attendance for recent days.
+                      mark attendance for school days since reopening.
                     </p>
                   </div>
                 </div>
@@ -3955,7 +3841,7 @@ const AdminDashboard = () => {
                       {missedStudentAttendanceAlerts.length !== 1
                         ? "s"
                         : ""}{" "}
-                      still need to mark student attendance.
+                      still need to mark student attendance since reopening.
                     </p>
                   </div>
                 </div>

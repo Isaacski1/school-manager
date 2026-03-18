@@ -1539,6 +1539,39 @@ class FirestoreService {
     return snap.docs.map((d) => d.data() as AttendanceRecord);
   }
 
+  async getAttendanceByDateRange(
+    schoolId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAttendanceByDateRange",
+    );
+    if (!startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      return rangedSnap.docs.map((docSnap) => docSnap.data() as AttendanceRecord);
+    } catch (error) {
+      const fallbackQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+      );
+      const fallbackSnap = await getDocs(fallbackQuery);
+      return fallbackSnap.docs
+        .map((docSnap) => docSnap.data() as AttendanceRecord)
+        .filter((record) => record.date >= startDate && record.date <= endDate);
+    }
+  }
+
   async saveAttendance(record: AttendanceRecord): Promise<void> {
     await this.requireFeature(record.schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(

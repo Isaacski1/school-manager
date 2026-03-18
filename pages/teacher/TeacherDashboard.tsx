@@ -13,6 +13,11 @@ import {
 import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
 import {
+  collectHolidayDateKeys,
+  getExpectedSchoolDayKeys,
+  parseSchoolDate,
+} from "../../services/schoolCalendar";
+import {
   AttendanceRecord,
   Notice,
   PlatformBroadcast,
@@ -483,15 +488,8 @@ const TeacherDashboard = () => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const reopenDateObj = config.schoolReopenDate
-          ? new Date(`${config.schoolReopenDate}T00:00:00`)
-          : null;
-        if (reopenDateObj) reopenDateObj.setHours(0, 0, 0, 0);
-
-        const nextTermBeginsObj = config.nextTermBegins
-          ? new Date(`${config.nextTermBegins}T00:00:00`)
-          : null;
-        if (nextTermBeginsObj) nextTermBeginsObj.setHours(0, 0, 0, 0);
+        const reopenDateObj = parseSchoolDate(config.schoolReopenDate);
+        const nextTermBeginsObj = parseSchoolDate(config.nextTermBegins);
 
         if (
           nextTermBeginsObj &&
@@ -502,17 +500,14 @@ const TeacherDashboard = () => {
           return;
         }
 
-        const vacationDateObj = config.vacationDate
-          ? new Date(`${config.vacationDate}T00:00:00`)
-          : null;
-        if (vacationDateObj) vacationDateObj.setHours(0, 0, 0, 0);
+        const vacationDateObj = parseSchoolDate(config.vacationDate);
 
         const schoolHasReopened = !reopenDateObj || today >= reopenDateObj;
-        const isOnVacation =
+        const isOnVacation = Boolean(
           vacationDateObj &&
-          nextTermBeginsObj &&
-          today >= vacationDateObj &&
-          today < nextTermBeginsObj;
+            today >= vacationDateObj &&
+            (!nextTermBeginsObj || today < nextTermBeginsObj),
+        );
 
         if (!schoolHasReopened || isOnVacation) {
           setMissedAttendanceModal({ show: false, dates: [] });
@@ -520,23 +515,20 @@ const TeacherDashboard = () => {
           return;
         }
 
-        const lookbackDate = new Date(today);
-        lookbackDate.setDate(lookbackDate.getDate() - 10);
-        lookbackDate.setHours(0, 0, 0, 0);
-        const startDate =
-          reopenDateObj && reopenDateObj > lookbackDate
-            ? reopenDateObj
-            : lookbackDate;
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
+        const fallbackStartDate = new Date(today);
+        fallbackStartDate.setDate(fallbackStartDate.getDate() - 10);
+        fallbackStartDate.setHours(0, 0, 0, 0);
+        const rangeStartDate = reopenDateObj || fallbackStartDate;
 
-        if (yesterday < startDate) {
+        if (yesterday < rangeStartDate) {
           setMissedAttendanceModal({ show: false, dates: [] });
           setMissedStudentAttendanceModal({ show: false, dates: [] });
           return;
         }
 
-        const startDateStr = getLocalDateString(startDate);
+        const startDateStr = getLocalDateString(rangeStartDate);
         const endDateStr = getLocalDateString(yesterday);
 
         const [teacherRecords, classRecords] = await Promise.all([
@@ -557,28 +549,41 @@ const TeacherDashboard = () => {
         ]);
 
         if (!isMounted) return;
-        const teacherByDate = new Set(teacherRecords.map((record) => record.date));
-        const classByDate = new Set(classRecords.map((record) => record.date));
+        const holidayKeys = collectHolidayDateKeys([
+          ...teacherRecords.filter((record) => record.isHoliday).map((record) => record.date),
+          ...classRecords.filter((record) => record.isHoliday).map((record) => record.date),
+          ...(config.holidayDates || []),
+        ]);
+        const expectedSchoolDays = getExpectedSchoolDayKeys({
+          reopenDate: config.schoolReopenDate,
+          endDate: yesterday,
+          holidayDates: Array.from(holidayKeys),
+          vacationDate: config.vacationDate,
+          nextTermBegins: config.nextTermBegins,
+          fallbackStartDate,
+        });
+
+        const teacherByDate = new Set(
+          teacherRecords
+            .filter((record) => !record.isHoliday)
+            .map((record) => record.date),
+        );
+        const classByDate = new Set(
+          classRecords
+            .filter((record) => !record.isHoliday)
+            .map((record) => record.date),
+        );
         const missedTeacherDates: string[] = [];
         const missedStudentDates: string[] = [];
 
-        const cursor = new Date(yesterday);
-        while (cursor >= startDate) {
-          const dayOfWeek = cursor.getDay();
-          const isVacationDay =
-            vacationDateObj &&
-            cursor.toDateString() === vacationDateObj.toDateString();
-          if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isVacationDay) {
-            const dateKey = getLocalDateString(cursor);
-            if (!teacherByDate.has(dateKey)) {
-              missedTeacherDates.push(dateKey);
-            }
-            if (selectedClassId && !classByDate.has(dateKey)) {
-              missedStudentDates.push(dateKey);
-            }
+        expectedSchoolDays.forEach((dateKey) => {
+          if (!teacherByDate.has(dateKey)) {
+            missedTeacherDates.push(dateKey);
           }
-          cursor.setDate(cursor.getDate() - 1);
-        }
+          if (selectedClassId && !classByDate.has(dateKey)) {
+            missedStudentDates.push(dateKey);
+          }
+        });
 
         setMissedAttendanceModal({
           show: missedTeacherDates.length > 0,
@@ -1857,7 +1862,8 @@ const TeacherDashboard = () => {
                     Attendance Reminder
                   </h3>
                   <p className="text-sm text-slate-500">
-                    You missed marking attendance for a previous school day
+                    You missed marking attendance for earlier school days
+                    since reopening.
                   </p>
                 </div>
               </div>
@@ -1925,7 +1931,8 @@ const TeacherDashboard = () => {
                     Student Attendance Reminder
                   </h3>
                   <p className="text-sm text-slate-500">
-                    You missed marking student attendance for your class.
+                    You missed marking student attendance for your class since
+                    reopening.
                   </p>
                 </div>
               </div>
