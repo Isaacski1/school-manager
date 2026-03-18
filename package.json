@@ -13,7 +13,11 @@
     "start": "node server/server.js",
     "server:dev": "nodemon server/server.js",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "npm run deploy:prod",
+    "deploy:prod": "npm run env:prod && npm run build && firebase deploy --project school-manager-gh --only hosting",
+    "deploy:prod:firestore": "firebase deploy --project school-manager-gh --only firestore",
+    "deploy:staging": "npm run env:test && npm run build && firebase deploy --project noble-care-management-system --only hosting",
+    "deploy:staging:firestore": "firebase deploy --project noble-care-management-system --only firestore"
   },
   "dependencies": {
     "cors": "^2.8.5",
