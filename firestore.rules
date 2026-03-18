@@ -347,6 +347,9 @@ service cloud.firestore {
 
       // School admin can read/write their school's settings
       allow read, write: if isSchoolAdmin() && userSchoolId() == document;
+
+      // Teachers need read access to load term/session settings on their dashboard.
+      allow read: if isTeacher() && userSchoolId() == document;
     }
 
     // Field whitelisting helpers
