@@ -23,7 +23,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
       <div className="absolute -top-32 -right-20 w-72 h-72 bg-white/10 rounded-full blur-3xl" />
       <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-emerald-200/10 rounded-full blur-3xl" />
 
-      <div className="relative flex flex-col items-center">
+      <div className="relative flex w-full max-w-sm flex-col items-center px-6 text-center">
         <div className="w-24 h-24 rounded-3xl bg-white/15 border border-white/20 flex items-center justify-center shadow-2xl animate-pulse">
           {displayLogo ? (
             <img src={displayLogo} alt={displayName} className="w-16 h-16" />
@@ -32,11 +32,11 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
           )}
         </div>
         {displayName ? (
-          <h1 className="mt-6 text-2xl font-bold tracking-wide">
+          <h1 className="mt-6 w-full text-2xl font-bold leading-tight tracking-wide text-center">
             {displayName}
           </h1>
         ) : null}
-        <p className="mt-2 text-sm text-white/80">
+        <p className="mt-2 text-sm text-white/80 text-center">
           {roleLabel
             ? `Welcome back, ${roleLabel}.`
             : "Preparing your dashboard..."}
