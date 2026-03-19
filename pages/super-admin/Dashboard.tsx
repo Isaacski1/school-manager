@@ -1974,6 +1974,12 @@ const sortAiConversations = (items: AiConversationEntry[]) =>
       b.updatedAt - a.updatedAt,
   );
 
+const getAiModeLabel = (mode?: AiConversationMessage["mode"]) => {
+  if (mode === "openai") return "OpenAI";
+  if (mode === "local") return "Limited mode";
+  return "";
+};
+
 const buildApiMessages = (
   messages: AiConversationMessage[],
 ): AiChatMessage[] => {
@@ -3552,7 +3558,9 @@ const Dashboard: React.FC = () => {
                                 <>
                                   {(message.responseMs || message.mode) && (
                                     <span className="text-[10px] text-slate-400">
-                                      {message.mode ? `${message.mode} • ` : ""}
+                                      {message.mode
+                                        ? `${getAiModeLabel(message.mode)} • `
+                                        : ""}
                                       {message.responseMs
                                         ? `${message.responseMs} ms`
                                         : ""}

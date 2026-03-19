@@ -522,13 +522,13 @@ const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const SUPER_ADMIN_ASSISTANT_NAME = "Isaacski AI";
 const SUPERADMIN_AI_MODE = (
-  process.env.SUPERADMIN_AI_MODE || "local_first"
+  process.env.SUPERADMIN_AI_MODE || "openai_first"
 ).toLowerCase();
 const SUPERADMIN_OPENAI_TIMEOUT_MS = Number(
-  process.env.SUPERADMIN_OPENAI_TIMEOUT_MS || 3200,
+  process.env.SUPERADMIN_OPENAI_TIMEOUT_MS || 12000,
 );
 const AI_CONTEXT_CACHE_TTL_MS = Number(
   process.env.SUPERADMIN_AI_CACHE_TTL_MS || 45000,
@@ -553,11 +553,16 @@ const SUPERADMIN_VIEW_CACHE = new Map();
 
 const buildAiSystemPrompt = (dataContext) => {
   const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
+You are a precise operations copilot for the platform owner.
+Answer directly, concretely, and accurately from DATA_CONTEXT only.
+If the user asks for analysis, summarize with real numbers, names, IDs, dates, and notable exceptions when relevant.
+If the user asks for an action and you have enough information, propose one action.
+If fields are missing, ask only for the missing fields and do not invent values.
 You can propose admin actions, but you must NEVER execute them yourself.
 When you want an action, return JSON with {"reply": "...", "action": {"type": "...", "description": "...", "payload": {...}}}.
-If no action, return JSON with {"reply": "..."}.
+If no action is needed, return JSON with {"reply": "..."}.
 Allowed action types:
-- create_school: payload { name, plan, phone?, address?, logoUrl? }
+- create_school: payload { name, plan, phone?, address?, logoUrl?, featurePlan?, billingStartType? }
 - create_school_admin: payload { schoolId, fullName, email, password? }
 - update_school_admin_email: payload { adminUid, newEmail, fullName? }
 - reset_school_admin_password: payload { adminUid }
@@ -568,13 +573,206 @@ Allowed action types:
 - upsert_plan: payload { id, name, maxStudents }
 - delete_plan: payload { id }
 - assign_school_subscription_plan: payload { schoolId, planId }
+- create_platform_broadcast: payload { title, message, type?, priority?, targetType?, targetSchoolIds?, publishNow?, publishAt?, expiresAt? }
 Use clear, short descriptions in "description".
-Never include secrets or API keys. Do not fabricate data. If data is missing, ask for it in reply.
-Do not claim 100% certainty when information is missing or ambiguous.
+Never include secrets or API keys.
+Do not fabricate data. If data is missing, say so plainly.
+Do not claim certainty when information is missing or ambiguous.
+Never say an action is already completed.
 Always respond in JSON only.`;
 
   if (!dataContext) return base;
   return `${base}\n\nDATA_CONTEXT:\n${JSON.stringify(dataContext)}`;
+};
+
+const limitContextRows = (rows = [], limit = 20) =>
+  Array.isArray(rows) ? rows.slice(0, Math.max(0, Number(limit) || 0)) : [];
+
+const buildAiModelContext = (dataContext = {}) => {
+  const schools = limitContextRows(dataContext.schools, 120).map((school) => ({
+    id: school.id,
+    name: trimToString(school.name, 120),
+    code: trimToString(school.code, 40),
+    status: trimToString(school.status, 24) || "active",
+    plan: trimToString(school.plan, 24) || null,
+    featurePlan: trimToString(school.featurePlan, 24) || null,
+    subscriptionPlanId: trimToString(school?.subscription?.planId, 80) || null,
+    studentsCount: Number(school.studentsCount || 0) || 0,
+    maxStudents: Number(school?.limits?.maxStudents || 0) || 0,
+    billingStartType: trimToString(school?.billing?.startType, 24) || null,
+    createdAt: toMillisValue(school.createdAt),
+    updatedAt: toMillisValue(school.updatedAt),
+  }));
+
+  const schoolAdmins = limitContextRows(dataContext.schoolAdmins, 120).map(
+    (adminUser) => ({
+      id: adminUser.id,
+      fullName: trimToString(adminUser.fullName, 120),
+      email: trimToString(adminUser.email, 120).toLowerCase(),
+      schoolId: normalizeSchoolId(adminUser.schoolId),
+      status: trimToString(adminUser.status, 24) || "active",
+      createdAt: toMillisValue(adminUser.createdAt),
+      lastLogin: toMillisValue(adminUser.lastLogin || adminUser.lastLoginAt),
+    }),
+  );
+
+  const plans = limitContextRows(dataContext.plans, 80).map((planDoc) => ({
+    id: trimToString(planDoc.id, 80).toLowerCase(),
+    name: trimToString(planDoc.name, 120),
+    maxStudents: Number(planDoc.maxStudents || 0) || 0,
+    updatedAt: toMillisValue(planDoc.updatedAt),
+  }));
+
+  const payments = limitContextRows(dataContext.payments, 120);
+  const successfulPayments = payments.filter(
+    (payment) =>
+      normalizePaymentStatus(
+        payment?.status || payment?.billingStatus || payment?.paymentStatus,
+      ) === "success",
+  );
+  const pendingPayments = payments.filter(
+    (payment) =>
+      normalizePaymentStatus(
+        payment?.status || payment?.billingStatus || payment?.paymentStatus,
+      ) === "pending",
+  );
+  const failedPayments = payments.filter(
+    (payment) =>
+      normalizePaymentStatus(
+        payment?.status || payment?.billingStatus || payment?.paymentStatus,
+      ) === "failed",
+  );
+
+  const paymentSummary = {
+    totalLoaded: payments.length,
+    successfulCount: successfulPayments.length,
+    pendingCount: pendingPayments.length,
+    failedCount: failedPayments.length,
+    successfulRevenueGhs: Number(
+      successfulPayments
+        .reduce(
+          (sum, payment) =>
+            sum + normalizeAmount(payment?.amount ?? payment?.amountPaid),
+          0,
+        )
+        .toFixed(2),
+    ),
+  };
+
+  const recentPayments = successfulPayments.slice(0, 40).map((payment) => ({
+    id: trimToString(payment.id, 80),
+    schoolId: normalizeSchoolId(payment.schoolId),
+    schoolName: trimToString(payment.schoolName || payment.studentSchoolName, 120),
+    amountGhs: Number(
+      normalizeAmount(payment?.amount ?? payment?.amountPaid).toFixed(2),
+    ),
+    status: trimToString(
+      normalizePaymentStatus(
+        payment?.status || payment?.billingStatus || payment?.paymentStatus,
+      ),
+      24,
+    ),
+    createdAt: toMillisValue(
+      payment?.createdAt ||
+        payment?.paidAt ||
+        payment?.verifiedAt ||
+        payment?.timestamp,
+    ),
+  }));
+
+  const broadcasts = limitContextRows(dataContext.broadcasts, 60).map(
+    (broadcast) => ({
+      id: trimToString(broadcast.id, 80),
+      title: trimToString(broadcast.title, 120),
+      type: trimToString(broadcast.type, 40) || "GENERAL",
+      priority: trimToString(broadcast.priority, 40) || "NORMAL",
+      status: trimToString(broadcast.status, 40) || "DRAFT",
+      targetType: trimToString(broadcast.targetType, 40) || "ALL",
+      targetSchoolIds: Array.isArray(broadcast.targetSchoolIds)
+        ? broadcast.targetSchoolIds.slice(0, 20)
+        : [],
+      createdAt: toMillisValue(broadcast.createdAt),
+      publishAt: toMillisValue(broadcast.publishAt),
+      expiresAt: toMillisValue(broadcast.expiresAt),
+    }),
+  );
+
+  const recentActivity = limitContextRows(dataContext.recentActivity, 80).map(
+    (item) => ({
+      id: trimToString(item.id, 80),
+      eventType: trimToString(item.eventType, 80),
+      schoolId: normalizeSchoolId(item.schoolId),
+      actorRole: trimToString(item.actorRole, 40) || null,
+      createdAt: toMillisValue(item.createdAt || item.timestamp || item.timestampMs),
+      meta: item?.meta && typeof item.meta === "object" ? item.meta : null,
+    }),
+  );
+
+  const backups = limitContextRows(dataContext.backups, 40).map((entry) => ({
+    id: trimToString(entry.id, 80),
+    schoolId: normalizeSchoolId(entry.schoolId),
+    term: trimToString(entry.term, 40),
+    academicYear: trimToString(entry.academicYear, 40),
+    backupType: trimToString(entry.backupType, 40) || "manual",
+    createdAt: toMillisValue(entry.createdAt || entry.timestamp),
+    recordCount: Number(entry?.recoveryMeta?.recordCount || entry.recordCount || 0) || 0,
+  }));
+
+  const securityLoginLogs = limitContextRows(dataContext.securityLoginLogs, 60);
+  const suspiciousEvents = limitContextRows(dataContext.suspiciousEvents, 60);
+  const auditLogs = limitContextRows(dataContext.auditLogs, 60);
+
+  return {
+    generatedAt: dataContext.generatedAt || Date.now(),
+    totals: dataContext.totals || {},
+    usersByRole:
+      dataContext.usersByRole && typeof dataContext.usersByRole === "object"
+        ? dataContext.usersByRole
+        : {},
+    schools,
+    schoolAdmins,
+    plans,
+    paymentSummary,
+    recentPayments,
+    broadcasts,
+    recentActivity,
+    backups,
+    security: {
+      failedLogins: securityLoginLogs.filter(
+        (log) => String(log?.status || "").toUpperCase() === "FAILED",
+      ).length,
+      recentFailedLogins: securityLoginLogs
+        .filter((log) => String(log?.status || "").toUpperCase() === "FAILED")
+        .slice(0, 20)
+        .map((log) => ({
+          id: trimToString(log.id, 80),
+          email: trimToString(log.email, 120).toLowerCase(),
+          role: trimToString(log.role, 40) || null,
+          schoolId: normalizeSchoolId(log.schoolId),
+          schoolName: trimToString(log.schoolName, 120) || null,
+          timestamp: toMillisValue(log.timestamp),
+        })),
+      openSuspiciousEvents: suspiciousEvents.filter(
+        (eventRow) => String(eventRow?.status || "").toUpperCase() === "OPEN",
+      ).length,
+      suspiciousEvents: suspiciousEvents.map((eventRow) => ({
+        id: trimToString(eventRow.id, 80),
+        schoolId: normalizeSchoolId(eventRow.schoolId),
+        schoolName: trimToString(eventRow.schoolName, 120) || null,
+        type: trimToString(eventRow.type, 80) || null,
+        severity: trimToString(eventRow.severity, 40) || null,
+        status: trimToString(eventRow.status, 40) || null,
+        createdAt: toMillisValue(eventRow.createdAt || eventRow.timestamp),
+      })),
+      auditLogs: auditLogs.map((log) => ({
+        id: trimToString(log.id, 80),
+        action: trimToString(log.action || log.eventType, 120),
+        actorUid: trimToString(log.actorUid, 120) || null,
+        entityId: trimToString(log.entityId, 120) || null,
+        createdAt: toMillisValue(log.createdAt || log.timestamp),
+      })),
+    },
+  };
 };
 
 const fetchCollectionRows = async ({
@@ -1492,16 +1690,103 @@ const resolvePeriodRange = (prompt = "") => {
   return { label: "all time", start: null };
 };
 
+const extractJsonObjectFromText = (rawText = "") => {
+  const text = String(rawText || "").trim();
+  if (!text) return "";
+
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1);
+  }
+
+  return text;
+};
+
 const parseAiResponse = (rawText) => {
   if (!rawText) {
     return { reply: "I could not generate a response." };
   }
   try {
-    const parsed = JSON.parse(rawText);
-    if (parsed && typeof parsed.reply === "string") return parsed;
+    const parsed = JSON.parse(extractJsonObjectFromText(rawText));
+    if (parsed && typeof parsed.reply === "string") {
+      const action =
+        parsed.action &&
+        typeof parsed.action === "object" &&
+        typeof parsed.action.type === "string"
+          ? {
+              type: String(parsed.action.type || "").trim(),
+              ...(parsed.action.description
+                ? { description: trimToString(parsed.action.description, 220) }
+                : {}),
+              ...(parsed.action.payload &&
+              typeof parsed.action.payload === "object" &&
+              !Array.isArray(parsed.action.payload)
+                ? { payload: parsed.action.payload }
+                : {}),
+            }
+          : null;
+      return {
+        reply: String(parsed.reply || "").trim(),
+        ...(action ? { action } : {}),
+      };
+    }
     return { reply: rawText };
-  } catch (error) {
+  } catch {
     return { reply: rawText };
+  }
+};
+
+const callSuperAdminOpenAi = async ({ messages = [], dataContext = {} }) => {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OpenAI API key is not configured");
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    Math.max(2500, SUPERADMIN_OPENAI_TIMEOUT_MS),
+  );
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        temperature: 0.15,
+        messages: [
+          {
+            role: "system",
+            content: buildAiSystemPrompt(buildAiModelContext(dataContext)),
+          },
+          ...messages,
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error?.message || "OpenAI request failed");
+    }
+
+    const content = data?.choices?.[0]?.message?.content || "";
+    const parsed = parseAiResponse(content);
+    if (!parsed?.reply) {
+      throw new Error("OpenAI returned an empty reply");
+    }
+    return parsed;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -1523,6 +1808,11 @@ const extractQuotedText = (text = "") => {
   const quoteMatch = String(text).match(/["']([^"']{2,80})["']/);
   return quoteMatch ? quoteMatch[1].trim() : "";
 };
+
+const extractQuotedSegments = (text = "") =>
+  Array.from(String(text).matchAll(/["']([^"']{2,240})["']/g)).map((match) =>
+    String(match?.[1] || "").trim(),
+  );
 
 const extractAdminNameFromText = (text = "", email = "") => {
   const normalized = String(text).replace(/\s+/g, " ").trim();
@@ -1614,6 +1904,60 @@ const extractMaxStudentsFromText = (text = "") => {
   const fallbackMatch = String(text).match(/\b(\d{1,7})\s*(?:students?|learners?)\b/i);
   if (fallbackMatch?.[1]) return Number(fallbackMatch[1]);
   return Number.NaN;
+};
+
+const extractBroadcastTypeFromText = (text = "") => {
+  const lower = String(text).toLowerCase();
+  if (/\b(maintenance|downtime|outage|service window)\b/.test(lower)) {
+    return "MAINTENANCE";
+  }
+  if (/\b(update|upgrade|release|version|patch)\b/.test(lower)) {
+    return "SYSTEM_UPDATE";
+  }
+  return "GENERAL";
+};
+
+const extractBroadcastPriorityFromText = (text = "") => {
+  const lower = String(text).toLowerCase();
+  if (/\b(critical|urgent|emergency)\b/.test(lower)) return "CRITICAL";
+  if (/\b(important|priority|attention)\b/.test(lower)) return "IMPORTANT";
+  return "NORMAL";
+};
+
+const extractBroadcastTitleAndMessage = (text = "") => {
+  const quotedSegments = extractQuotedSegments(text);
+  const titleMatch = String(text).match(
+    /\btitle\b\s*(?:is|=|:)?\s*["']?([^"'.,\n]{3,120})/i,
+  );
+  const messageMatch = String(text).match(
+    /\b(?:message|body|content|saying|say|that)\b\s*(?:is|=|:)?\s*["']?([\s\S]{8,280})/i,
+  );
+
+  const titleFromMatch = titleMatch?.[1]
+    ? titleMatch[1]
+        .replace(/\b(message|body|content|publish|broadcast|to all|to schools)\b.*$/i, "")
+        .trim()
+    : "";
+  const messageFromMatch = messageMatch?.[1]
+    ? messageMatch[1]
+        .replace(/\b(?:publish now|send now|to all schools|to all|for all schools)\b.*$/i, "")
+        .trim()
+    : "";
+
+  const title =
+    titleFromMatch ||
+    (quotedSegments.length >= 2 ? quotedSegments[0] : "") ||
+    extractQuotedText(text) ||
+    "";
+  const message =
+    messageFromMatch ||
+    (quotedSegments.length >= 2 ? quotedSegments[1] : "") ||
+    "";
+
+  return {
+    title: trimToString(title, 120),
+    message: trimToString(message, 600),
+  };
 };
 
 const buildActionClarificationQuestion = (prompt = "", schools = []) => {
@@ -1844,7 +2188,7 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   if (asksCapabilities) {
     return {
       reply:
-        "I can read Super Admin data across schools, users, plans, payments, activity, security, backups, and broadcasts. I can also prepare and execute actions like creating schools/admins, updating admin emails, resetting passwords, provisioning users, changing school status/plans/feature plans, and managing configured plans.",
+        "I can read Super Admin data across schools, users, plans, payments, activity, security, backups, and broadcasts. I can also prepare confirmable actions like creating schools, creating school admins, updating admin emails, resetting passwords, changing school status or plans, managing configured plans, and drafting platform broadcasts.",
       action: null,
     };
   }
@@ -1873,6 +2217,64 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     ).length;
     return {
       reply: `Current snapshot: ${totals.schools} schools (${totals.activeSchools} active, ${totals.inactiveSchools} inactive), ${schoolAdmins.length} school admin accounts (${activeAdmins} active), ${teachersCount} teachers, and ${plans.length} configured plans.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksSchoolList =
+    /\bschool|schools\b/i.test(prompt) &&
+    /\b(list|show|which|inactive|active|trial|monthly|termly|yearly|free|starter|standard)\b/i.test(
+      prompt,
+    ) &&
+    !hasActionVerb;
+  if (asksSchoolList) {
+    let filteredSchools = [...schools];
+    if (/\binactive\b/i.test(prompt)) {
+      filteredSchools = filteredSchools.filter(
+        (school) => String(school?.status || "").toLowerCase() === "inactive",
+      );
+    } else if (/\bactive\b/i.test(prompt)) {
+      filteredSchools = filteredSchools.filter(
+        (school) => String(school?.status || "").toLowerCase() === "active",
+      );
+    }
+
+    const planMatch = ["trial", "monthly", "termly", "yearly", "free"].find(
+      (planValue) => new RegExp(`\\b${planValue}\\b`, "i").test(prompt),
+    );
+    if (planMatch) {
+      filteredSchools = filteredSchools.filter(
+        (school) => String(school?.plan || "").toLowerCase() === planMatch,
+      );
+    }
+
+    const featurePlanMatch = ["starter", "standard"].find((planValue) =>
+      new RegExp(`\\b${planValue}\\b`, "i").test(prompt),
+    );
+    if (featurePlanMatch) {
+      filteredSchools = filteredSchools.filter(
+        (school) =>
+          String(school?.featurePlan || "").toLowerCase() === featurePlanMatch,
+      );
+    }
+
+    if (!filteredSchools.length) {
+      return {
+        reply: `I did not find schools matching that filter.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+        action: null,
+      };
+    }
+
+    const preview = filteredSchools
+      .slice(0, 8)
+      .map((school) => {
+        const studentCount = Number(school?.studentsCount || 0) || 0;
+        return `${school.name} (${school.code || school.id}) - ${school.status || "active"}, ${school.plan || "trial"}, ${school.featurePlan || "starter"}, ${studentCount} students`;
+      })
+      .join("; ");
+
+    return {
+      reply: `Matching schools (${filteredSchools.length}): ${preview}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
       action: null,
     };
   }
@@ -1954,6 +2356,52 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     };
   }
 
+  const asksRecentSecurityEntries =
+    /\b(failed login|suspicious|audit)\b/i.test(prompt) &&
+    /\b(show|list|recent|latest)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksRecentSecurityEntries) {
+    if (/\bfailed login\b/i.test(prompt)) {
+      const failedEntries = securityLoginLogs
+        .filter((row) => String(row?.status || "").toUpperCase() === "FAILED")
+        .slice(0, 8)
+        .map((row) => {
+          const when = parseFlexibleDate(row?.timestamp);
+          return `${row?.email || "unknown email"}${row?.schoolName ? ` (${row.schoolName})` : ""}${when ? ` at ${when.toLocaleString()}` : ""}`;
+        });
+      return {
+        reply: failedEntries.length
+          ? `Recent failed logins: ${failedEntries.join("; ")}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`
+          : "No recent failed logins were loaded.",
+        action: null,
+      };
+    }
+
+    if (/\bsuspicious\b/i.test(prompt)) {
+      const recentSuspicious = suspiciousEvents.slice(0, 8).map((row) => {
+        const when = parseFlexibleDate(row?.createdAt || row?.timestamp);
+        return `${row?.type || "event"}${row?.schoolName ? ` at ${row.schoolName}` : ""} - ${row?.status || "OPEN"}${when ? ` (${when.toLocaleString()})` : ""}`;
+      });
+      return {
+        reply: recentSuspicious.length
+          ? `Recent suspicious events: ${recentSuspicious.join("; ")}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`
+          : "No suspicious events were loaded.",
+        action: null,
+      };
+    }
+
+    const recentAuditLogs = auditLogs.slice(0, 8).map((row) => {
+      const when = parseFlexibleDate(row?.createdAt || row?.timestamp);
+      return `${row?.eventType || row?.action || "activity"}${row?.entityId ? ` (${row.entityId})` : ""}${when ? ` at ${when.toLocaleString()}` : ""}`;
+    });
+    return {
+      reply: recentAuditLogs.length
+        ? `Recent audit logs: ${recentAuditLogs.join("; ")}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`
+        : "No audit log entries were loaded.",
+      action: null,
+    };
+  }
+
   const asksBackupsOverview =
     /\b(backup|backups|restore)\b/i.test(prompt) &&
     /\b(list|count|summary|overview|recent|status)\b/i.test(prompt) &&
@@ -1972,6 +2420,25 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   if (asksBroadcastsOverview) {
     return {
       reply: `Broadcast snapshot: ${broadcasts.length} recent platform broadcast records loaded.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksRecentBroadcasts =
+    /\b(broadcast|announcement|platform message)\b/i.test(prompt) &&
+    /\b(show|list|recent|latest)\b/i.test(prompt) &&
+    !hasActionVerb;
+  if (asksRecentBroadcasts) {
+    const recentBroadcasts = broadcasts.slice(0, 8).map((broadcast) => {
+      const when = parseFlexibleDate(
+        broadcast?.publishAt || broadcast?.createdAt || null,
+      );
+      return `${broadcast?.title || "Untitled"} - ${broadcast?.status || "DRAFT"}${broadcast?.type ? ` (${broadcast.type})` : ""}${when ? ` at ${when.toLocaleString()}` : ""}`;
+    });
+    return {
+      reply: recentBroadcasts.length
+        ? `Recent broadcasts: ${recentBroadcasts.join("; ")}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`
+        : "No platform broadcasts were loaded.",
       action: null,
     };
   }
@@ -2061,6 +2528,51 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     return {
       reply: `For ${periodLabel}, recorded successful billing revenue is ${formatGhsCurrency(grossRevenue)} from ${successful.length} successful payments. Pending: ${pending.length}, failed: ${failed.length}. True profit (net profit) cannot be computed yet because operating expenses are not tracked in this dashboard.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
       action: null,
+    };
+  }
+
+  const wantsCreateBroadcast =
+    /\b(create|draft|write|send|publish|post)\b/i.test(prompt) &&
+    /\b(broadcast|announcement|platform message)\b/i.test(prompt);
+  if (wantsCreateBroadcast) {
+    const { title, message } = extractBroadcastTitleAndMessage(prompt);
+    const targetSchool = findSchoolFromText(prompt, schools);
+    const publishNow = !/\b(draft|later|save only)\b/i.test(prompt);
+    const missingFields = [];
+    if (!title) missingFields.push("broadcast title");
+    if (!message) missingFields.push("broadcast message");
+
+    if (missingFields.length) {
+      return {
+        reply: `I can prepare a platform broadcast, but I still need: ${missingFields.join(", ")}. Example: create broadcast title "Maintenance Notice" message "The platform will be offline tonight from 10 PM to 11 PM."`,
+        action: null,
+      };
+    }
+
+    const targetAllSchools = /\b(all schools|everyone|all users|entire platform)\b/i.test(
+      prompt,
+    );
+    const targetType = targetSchool && !targetAllSchools ? "SCHOOLS" : "ALL";
+    const broadcastType = extractBroadcastTypeFromText(prompt);
+    const priority = extractBroadcastPriorityFromText(prompt);
+
+    return {
+      reply: `I prepared a ${publishNow ? "publish-ready" : "draft"} broadcast${targetType === "SCHOOLS" && targetSchool ? ` for ${targetSchool.name}` : " for all schools"}. Confirm to apply it.`,
+      action: {
+        type: "create_platform_broadcast",
+        description: `Create ${publishNow ? "published" : "draft"} platform broadcast "${title}"`,
+        payload: {
+          title,
+          message,
+          type: broadcastType,
+          priority,
+          targetType,
+          ...(targetType === "SCHOOLS" && targetSchool
+            ? { targetSchoolIds: [targetSchool.id] }
+            : {}),
+          publishNow,
+        },
+      },
     };
   }
 
@@ -2751,6 +3263,63 @@ const validateAiActionPayload = (action = {}) => {
       normalizedPayload = { schoolId, planId };
       if (!description) {
         description = `Assign configured plan ${planId || "plan"} to school ${schoolId || "unknown"}`;
+      }
+      canUndo = true;
+      break;
+    }
+    case "create_platform_broadcast": {
+      const title = trimToString(payload?.title, 120);
+      const message = trimToString(payload?.message, 2000);
+      const type = trimToString(payload?.type || "GENERAL", 40).toUpperCase();
+      const priority = trimToString(
+        payload?.priority || "NORMAL",
+        40,
+      ).toUpperCase();
+      const targetType = trimToString(
+        payload?.targetType || "ALL",
+        40,
+      ).toUpperCase();
+      const publishNow = Boolean(
+        payload?.publishNow === undefined ? true : payload?.publishNow,
+      );
+      const validTypes = ["GENERAL", "SYSTEM_UPDATE", "MAINTENANCE"];
+      const validPriorities = ["NORMAL", "IMPORTANT", "CRITICAL"];
+      const validTargetTypes = ["ALL", "SCHOOLS"];
+      const targetSchoolIds = Array.isArray(payload?.targetSchoolIds)
+        ? payload.targetSchoolIds
+            .map((value) => trimToString(value, 80))
+            .filter(Boolean)
+            .slice(0, 50)
+        : [];
+      const publishAt = payload?.publishAt
+        ? toMillisValue(payload.publishAt)
+        : null;
+      const expiresAt = payload?.expiresAt
+        ? toMillisValue(payload.expiresAt)
+        : null;
+
+      if (!title) missingFields.push("title");
+      if (!message) missingFields.push("message");
+      if (!validTypes.includes(type)) missingFields.push("type");
+      if (!validPriorities.includes(priority)) missingFields.push("priority");
+      if (!validTargetTypes.includes(targetType)) missingFields.push("targetType");
+      if (targetType === "SCHOOLS" && targetSchoolIds.length === 0) {
+        missingFields.push("targetSchoolIds");
+      }
+
+      normalizedPayload = {
+        title,
+        message,
+        type: validTypes.includes(type) ? type : "GENERAL",
+        priority: validPriorities.includes(priority) ? priority : "NORMAL",
+        targetType: validTargetTypes.includes(targetType) ? targetType : "ALL",
+        ...(targetSchoolIds.length ? { targetSchoolIds } : {}),
+        publishNow,
+        ...(publishAt ? { publishAt } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+      };
+      if (!description) {
+        description = `Create platform broadcast ${title || "broadcast"}`;
       }
       canUndo = true;
       break;
@@ -4559,8 +5128,10 @@ app.post(
         .find((message) => message?.role === "user")?.content;
       const latestPrompt = String(latestUserMessage || "");
       const promptIntent = detectAiPromptIntents(latestPrompt);
-      const openAiFirstMode =
-        Boolean(OPENAI_API_KEY) && SUPERADMIN_AI_MODE === "openai_first";
+      const openAiEnabled =
+        Boolean(OPENAI_API_KEY) && SUPERADMIN_AI_MODE !== "local_only";
+      const openAiPreferred =
+        openAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
       const shouldSkipContext =
         promptIntent.isSmallTalk || promptIntent.asksCapabilities;
 
@@ -4619,74 +5190,72 @@ app.post(
             auditLogsLimit: 260,
             forceRefresh: promptIntent.asksFreshData,
           });
-      let parsed = buildLocalAiResponse({
+      const localParsed = buildLocalAiResponse({
         messages,
         dataContext,
       });
+      let parsed = localParsed;
       let aiMode = "local";
-      const shouldEscalateToOpenAi =
-        openAiFirstMode &&
-        !parsed?.action &&
+      const shouldTryOpenAi =
+        openAiEnabled &&
         !promptIntent.isSmallTalk &&
-        !promptIntent.asksCapabilities &&
-        isGenericLocalFallbackReply(parsed?.reply);
+        !promptIntent.asksCapabilities;
+      const promptLooksActionOrComplex =
+        /\b(create|add|new|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|delete|remove|assign|apply|provision|publish|broadcast|announcement|compare|analyze|why|which|best|worst|top|recent)\b/i.test(
+          latestPrompt,
+        );
+      const shouldUseOpenAi =
+        shouldTryOpenAi &&
+        (openAiPreferred ||
+          isGenericLocalFallbackReply(localParsed?.reply) ||
+          (!localParsed?.action && promptLooksActionOrComplex));
 
-      if (shouldEscalateToOpenAi) {
+      if (shouldUseOpenAi) {
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            Math.max(1200, SUPERADMIN_OPENAI_TIMEOUT_MS),
-          );
-          try {
-            const systemPrompt = buildAiSystemPrompt(dataContext);
-            const payload = {
-              model: OPENAI_MODEL,
-              temperature: 0.2,
-              messages: [{ role: "system", content: systemPrompt }, ...messages],
-            };
-
-            const response = await fetch(
-              "https://api.openai.com/v1/chat/completions",
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${OPENAI_API_KEY}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-              },
-            );
-
-            const data = await response.json();
-            if (response.ok) {
-              const content = data?.choices?.[0]?.message?.content || "";
-              const parsedOpenAi = parseAiResponse(content);
-              if (parsedOpenAi?.reply) {
-                parsed = parsedOpenAi;
-                aiMode = "openai";
-              }
-            } else {
-              console.warn(
-                "OpenAI request failed, switching to local assistant mode:",
-                data?.error?.message || "unknown error",
-              );
-            }
-          } finally {
-            clearTimeout(timeoutId);
+          const parsedOpenAi = await callSuperAdminOpenAi({
+            messages,
+            dataContext,
+          });
+          if (parsedOpenAi?.reply) {
+            const openAiReply = String(parsedOpenAi.reply || "").trim();
+            const shouldMergeLocalAction =
+              !parsedOpenAi.action && Boolean(localParsed?.action);
+            parsed = shouldMergeLocalAction
+              ? {
+                  reply: /\bconfirm\b/i.test(openAiReply)
+                    ? openAiReply
+                    : `${openAiReply}${/[.!?]$/.test(openAiReply) ? "" : "."} I also prepared the matching action. Confirm when ready.`,
+                  action: localParsed.action,
+                }
+              : parsedOpenAi;
+            aiMode = "openai";
           }
         } catch (openAiError) {
           console.warn(
             "OpenAI chat failed, switching to local assistant mode:",
             openAiError?.message || openAiError,
           );
+          if (!localParsed?.reply) {
+            parsed = {
+              reply:
+                "I could not complete that request right now. Please try again.",
+              action: null,
+            };
+          } else {
+            parsed = localParsed;
+          }
         }
+      } else if (!parsed?.reply) {
+        parsed = {
+          reply:
+            "I didn't fully catch that. Please rephrase with one clear goal.",
+          action: null,
+        };
       }
 
       const responseMs = Date.now() - responseStart;
       const fallbackUsed =
-        Boolean(OPENAI_API_KEY) && shouldEscalateToOpenAi && aiMode !== "openai";
+        openAiEnabled && shouldUseOpenAi && aiMode !== "openai";
 
       void logActivity({
         eventType: "superadmin_ai_chat",
@@ -5392,6 +5961,83 @@ app.post(
           };
           break;
         }
+        case "create_platform_broadcast": {
+          const {
+            title,
+            message,
+            type,
+            priority,
+            targetType,
+            targetSchoolIds = [],
+            publishNow = true,
+            publishAt = null,
+            expiresAt = null,
+          } = payload;
+          const broadcastRef = admin
+            .firestore()
+            .collection("platformBroadcasts")
+            .doc();
+          const now = Date.now();
+          const scheduledPublishAt = publishNow
+            ? now
+            : Number(publishAt || 0) || null;
+          const status = publishNow
+            ? "PUBLISHED"
+            : scheduledPublishAt
+              ? "SCHEDULED"
+              : "DRAFT";
+
+          await broadcastRef.set({
+            title: trimToString(title, 120),
+            message: trimToString(message, 2000),
+            type: trimToString(type || "GENERAL", 40).toUpperCase(),
+            priority: trimToString(priority || "NORMAL", 40).toUpperCase(),
+            targetType: trimToString(targetType || "ALL", 40).toUpperCase(),
+            targetSchoolIds:
+              targetType === "SCHOOLS" && Array.isArray(targetSchoolIds)
+                ? targetSchoolIds
+                    .map((value) => trimToString(value, 80))
+                    .filter(Boolean)
+                : [],
+            createdAt: now,
+            createdBy: req.user.uid,
+            publishAt: scheduledPublishAt,
+            expiresAt: Number(expiresAt || 0) || null,
+            status,
+          });
+
+          entityId = broadcastRef.id;
+          schoolId =
+            targetType === "SCHOOLS" && Array.isArray(targetSchoolIds)
+              ? trimToString(targetSchoolIds[0], 80) || null
+              : null;
+
+          await logActivity({
+            eventType: "platform_broadcast_created",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "super_admin",
+            entityId,
+            meta: {
+              title: trimToString(title, 120),
+              type: trimToString(type || "GENERAL", 40).toUpperCase(),
+              priority: trimToString(priority || "NORMAL", 40).toUpperCase(),
+              status,
+              targetType: trimToString(targetType || "ALL", 40).toUpperCase(),
+            },
+          });
+
+          actionResult = {
+            broadcastId: broadcastRef.id,
+            title: trimToString(title, 120),
+            status,
+            targetType: trimToString(targetType || "ALL", 40).toUpperCase(),
+            publishAt: scheduledPublishAt,
+            expiresAt: Number(expiresAt || 0) || null,
+            message: "Platform broadcast created successfully",
+          };
+          break;
+        }
         default: {
           return res.status(400).json({ error: "Unknown action type" });
         }
@@ -5416,6 +6062,7 @@ app.post(
         schoolId,
         canUndo: validation.canUndo,
       });
+      clearSuperAdminViewCache();
 
       void recordAiTelemetry({
         type: "action_confirm",
@@ -5693,6 +6340,23 @@ app.post(
             );
           break;
         }
+        case "create_platform_broadcast": {
+          const broadcastId = trimToString(
+            result.broadcastId || payload.broadcastId || result.id,
+            120,
+          );
+          if (!broadcastId) {
+            return res
+              .status(400)
+              .json({ error: "Missing broadcastId for undo operation" });
+          }
+          await admin
+            .firestore()
+            .collection("platformBroadcasts")
+            .doc(broadcastId)
+            .delete();
+          break;
+        }
         default:
           return res
             .status(400)
@@ -5707,6 +6371,7 @@ app.post(
         },
         { merge: true },
       );
+      clearSuperAdminViewCache();
 
       await logActivity({
         eventType: "superadmin_ai_action_undone",

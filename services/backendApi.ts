@@ -577,7 +577,8 @@ export type AiChatAction = {
     | "set_school_feature_plan"
     | "upsert_plan"
     | "delete_plan"
-    | "assign_school_subscription_plan";
+    | "assign_school_subscription_plan"
+    | "create_platform_broadcast";
   description?: string;
   payload?: Record<string, any>;
 };
