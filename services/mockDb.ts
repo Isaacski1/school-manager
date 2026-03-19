@@ -2954,10 +2954,8 @@ class FirestoreService {
       )
         .map(([month, data]) => {
           const [year, monthNum] = month.split("-");
-          const attendanceRate = Math.min(
-            100,
-            data.total > 0 ? Math.round((data.present / data.total) * 100) : 0,
-          );
+          const attendanceRate =
+            data.total > 0 ? Math.round((data.present / data.total) * 100) : 0;
 
           return {
             teacherId: teacher.id,
@@ -2995,10 +2993,8 @@ class FirestoreService {
         (sum, month) => sum + month.presentDays,
         0,
       );
-      const overallAttendance = Math.min(
-        100,
-        totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0,
-      );
+      const overallAttendance =
+        totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
 
       analytics.push({
         teacherId: teacher.id,
