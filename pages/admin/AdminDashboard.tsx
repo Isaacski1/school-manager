@@ -205,7 +205,9 @@ const RelativeTimeText: React.FC<{
   }, [timestamp?.getTime()]);
 
   if (!timestamp) return <>{fallback}</>;
-  return <>{Math.max(0, Math.floor((now - timestamp.getTime()) / 1000))}s ago</>;
+  return (
+    <>{Math.max(0, Math.floor((now - timestamp.getTime()) / 1000))}s ago</>
+  );
 });
 
 const LiveCountdownText: React.FC<{
@@ -626,7 +628,9 @@ const AdminDashboard = () => {
     if ((school as any)?.plan === "free") return null;
     if ((school as any)?.plan === "trial") return null;
     if (!resolvedPlanEndsAt) return null;
-    return resolvedPlanEndsAt.getTime() > Date.now() ? resolvedPlanEndsAt : null;
+    return resolvedPlanEndsAt.getTime() > Date.now()
+      ? resolvedPlanEndsAt
+      : null;
   }, [resolvedPlanEndsAt, school?.plan]);
 
   const trialPlanEndsAt = useMemo(() => {
@@ -762,8 +766,7 @@ const AdminDashboard = () => {
     [pendingTeacherAttendance],
   );
   const visibleTeacherAttendance = useMemo(
-    () =>
-      teacherAttendance.slice(0, DASHBOARD_RENDER_LIMITS.teacherAttendance),
+    () => teacherAttendance.slice(0, DASHBOARD_RENDER_LIMITS.teacherAttendance),
     [teacherAttendance],
   );
   const visibleTeacherTermStats = useMemo(
@@ -966,7 +969,9 @@ const AdminDashboard = () => {
         fallbackMissedStart.setHours(0, 0, 0, 0);
         const missedRangeStart = reopenDateObj || fallbackMissedStart;
         const shouldCheckMissedAttendance =
-          schoolHasReopened && !isOnVacation && teachers.length > 0 &&
+          schoolHasReopened &&
+          !isOnVacation &&
+          teachers.length > 0 &&
           yesterday >= missedRangeStart;
 
         const classAttendanceRange = shouldCheckMissedAttendance
@@ -982,7 +987,9 @@ const AdminDashboard = () => {
           : [];
 
         const holidayDates = collectHolidayDateKeys([
-          ...allTeacherRecords.filter((record) => record.isHoliday).map((record) => record.date),
+          ...allTeacherRecords
+            .filter((record) => record.isHoliday)
+            .map((record) => record.date),
           ...classAttendanceRange
             .filter((record: any) => record.isHoliday)
             .map((record: any) => record.date),
@@ -1147,8 +1154,15 @@ const AdminDashboard = () => {
               (r) => r.status === "present",
             ).length;
             const totalDays = totalSchoolDaySummary.days;
+            // Ensure presentDays never exceeds totalDays to prevent data inconsistency
+            const adjustedPresentDays = Math.min(presentDays, totalDays);
             const attendanceRate =
-              totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+              totalDays > 0
+                ? Math.min(
+                    Math.round((adjustedPresentDays / totalDays) * 100),
+                    100,
+                  )
+                : 0;
 
             return {
               id: teacher.id,
@@ -2595,8 +2609,7 @@ const AdminDashboard = () => {
 
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
           <div className={DASHBOARD_INFO_PILL}>
-            Updated{" "}
-            <RelativeTimeText timestamp={lastUpdated} fallback="—" />
+            Updated <RelativeTimeText timestamp={lastUpdated} fallback="—" />
           </div>
           <div className="hidden sm:block text-[11px] uppercase tracking-[0.18em] text-amber-700/80">
             Modern / responsive / structured
@@ -2651,8 +2664,7 @@ const AdminDashboard = () => {
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
             <div className={DASHBOARD_INFO_PILL}>
-              Updated{" "}
-              <RelativeTimeText timestamp={lastUpdated} fallback="—" />
+              Updated <RelativeTimeText timestamp={lastUpdated} fallback="—" />
             </div>
             {hasFeature("teacher_management") && (
               <Link to="/admin/teachers" className={DASHBOARD_BUTTON_SECONDARY}>
@@ -3453,10 +3465,10 @@ const AdminDashboard = () => {
                       : "Data up to date"}
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
-                    {(totalSchoolDays ?? fallbackSchoolDays.days)} school days
+                    {totalSchoolDays ?? fallbackSchoolDays.days} school days
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
-                    {(totalSchoolWeeks ?? fallbackSchoolDays.weeks)} teaching
+                    {totalSchoolWeeks ?? fallbackSchoolDays.weeks} teaching
                     weeks
                   </span>
                 </div>
@@ -4678,9 +4690,7 @@ const AdminDashboard = () => {
                         ))}
                         <div className="text-center mt-3 pt-2 border-t border-[#E6F0FA]">
                           <p className="text-[10px] text-[#0B4A82] font-medium">
-                            Average attendance:{" "}
-                            {averageTeacherAttendanceRate}
-                            %
+                            Average attendance: {averageTeacherAttendanceRate}%
                           </p>
                           {teacherTermStats.length >
                             visibleTeacherTermStats.length && (

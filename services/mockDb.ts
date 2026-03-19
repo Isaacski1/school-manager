@@ -574,15 +574,13 @@ class FirestoreService {
     rows: T[] = [],
     resolveId: (row: T) => string,
   ): Promise<void> {
-    const operations = rows
-      .filter(Boolean)
-      .map(
-        (row) => (batch: ReturnType<typeof writeBatch>) =>
-          batch.set(doc(firestore, collectionName, resolveId(row)), {
-            ...row,
-            schoolId,
-          } as T),
-      );
+    const operations = rows.filter(Boolean).map(
+      (row) => (batch: ReturnType<typeof writeBatch>) =>
+        batch.set(doc(firestore, collectionName, resolveId(row)), {
+          ...row,
+          schoolId,
+        } as T),
+    );
     await this.commitChunkedOperations(operations);
   }
 
@@ -2945,12 +2943,15 @@ class FirestoreService {
 
     for (const teacher of teacherUsers) {
       const teacherRecords = allRecords.filter(
-        (r) => r.teacherId === teacher.id && r.approvalStatus !== "pending",
+        (r) =>
+          r.teacherId === teacher.id &&
+          r.date >= startDate &&
+          r.date <= endDate &&
+          !r.isHoliday &&
+          r.approvalStatus !== "pending",
       );
 
-      const recordsInRange = teacherRecords.filter((r) => {
-        return r.date >= startDate && r.date <= endDate && !r.isHoliday;
-      });
+      const recordsInRange = teacherRecords; // Already filtered above
 
       const monthlyData: Record<string, { total: number; present: number }> =
         {};
