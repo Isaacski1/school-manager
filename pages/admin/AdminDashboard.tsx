@@ -283,6 +283,45 @@ const parseLocalDate = (dateStr?: string | null): Date | null => {
   return date;
 };
 
+type SchoolHolidayInput =
+  | string
+  | {
+      date?: string | null;
+      reason?: string;
+    }
+  | null
+  | undefined;
+
+const getSchoolDaySummary = (params: {
+  config: Partial<SchoolConfig>;
+  endDate?: Date;
+  extraHolidayDates?: SchoolHolidayInput[];
+  fallbackStartDate?: string | Date | null;
+}) => {
+  const summaryEndDate = params.endDate ? new Date(params.endDate) : new Date();
+  summaryEndDate.setHours(0, 0, 0, 0);
+
+  const dayKeys = getExpectedSchoolDayKeys({
+    reopenDate: params.config.schoolReopenDate,
+    endDate: summaryEndDate,
+    holidayDates: [
+      ...((params.config.holidayDates || []) as SchoolHolidayInput[]),
+      ...(params.extraHolidayDates || []),
+    ],
+    vacationDate: params.config.vacationDate,
+    nextTermBegins: params.config.nextTermBegins,
+    fallbackStartDate:
+      params.fallbackStartDate ?? formatSchoolDateKey(summaryEndDate),
+  });
+  const days = dayKeys.length;
+
+  return {
+    dayKeys,
+    days,
+    weeks: Math.max(0, Math.ceil(days / 5)),
+  };
+};
+
 const getStudentCreatedAtMs = (student: Student): number => {
   const rawCreatedAt = (student as any)?.createdAt;
   if (!rawCreatedAt) return 0;
@@ -412,6 +451,8 @@ const AdminDashboard = () => {
   const [pendingTeacherAttendance, setPendingTeacherAttendance] = useState<
     any[]
   >([]);
+  const [isApprovingAllTeacherAttendance, setIsApprovingAllTeacherAttendance] =
+    useState(false);
   const [teacherTermStats, setTeacherTermStats] = useState<any[]>([]);
   const [missedAttendanceAlerts, setMissedAttendanceAlerts] = useState<any[]>(
     [],
@@ -472,6 +513,7 @@ const AdminDashboard = () => {
     headTeacherRemark: "",
     termEndDate: "",
     vacationDate: "",
+    holidayDates: [],
     nextTermBegins: "",
     termTransitionProcessed: false,
   });
@@ -490,40 +532,14 @@ const AdminDashboard = () => {
     Record<string, { id: string; name: string; class: string; avg: number }[]>
   >({ A: [], B: [], C: [], D: [], F: [] });
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
-  const [totalSchoolDays, setTotalSchoolDays] = useState<number>(0);
-  const [totalSchoolWeeks, setTotalSchoolWeeks] = useState<number>(0);
-  const countWeekdaysRange = useCallback(
-    (startDate?: string, endDate?: string) => {
-      if (!startDate || !endDate) return 0;
-      const start = new Date(startDate + "T00:00:00");
-      const end = new Date(endDate + "T00:00:00");
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()))
-        return 0;
-      if (start > end) return 0;
-      let count = 0;
-      const current = new Date(start);
-      while (current <= end) {
-        const day = current.getDay();
-        if (day !== 0 && day !== 6) count++;
-        current.setDate(current.getDate() + 1);
-      }
-      return count;
-    },
-    [],
-  );
+  const [totalSchoolDays, setTotalSchoolDays] = useState<number | null>(null);
+  const [totalSchoolWeeks, setTotalSchoolWeeks] = useState<number | null>(null);
   const fallbackSchoolDays = useMemo(() => {
-    const reopen = schoolConfig.schoolReopenDate;
-    const todayStr = new Date().toISOString().split("T")[0];
-    const end = schoolConfig.vacationDate || todayStr;
-    const effectiveEnd = end < todayStr ? end : todayStr;
-    const total = countWeekdaysRange(reopen, effectiveEnd);
-    const holidays = schoolConfig.holidayDates?.length || 0;
-    const days = Math.max(0, total - holidays);
-    return {
-      days,
-      weeks: Math.max(0, Math.ceil(days / 5)),
-    };
-  }, [schoolConfig, countWeekdaysRange]);
+    return getSchoolDaySummary({
+      config: schoolConfig,
+      endDate: new Date(),
+    });
+  }, [schoolConfig]);
 
   const vacationBanner = useMemo(() => {
     const vacationDate = parseLocalDate(schoolConfig.vacationDate || "");
@@ -1037,28 +1053,6 @@ const AdminDashboard = () => {
             });
           });
 
-        // Helper function to count weekdays between two dates (inclusive)
-        const countWeekdays = (startDate: string, endDate: string): number => {
-          if (!startDate || !endDate) return 0;
-          const start = new Date(startDate + "T00:00:00");
-          const end = new Date(endDate + "T00:00:00");
-          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-            return 0;
-          }
-          if (start > end) return 0;
-          let count = 0;
-          const current = new Date(start);
-          while (current <= end) {
-            const dayOfWeek = current.getDay();
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-              // Not Sunday or Saturday
-              count++;
-            }
-            current.setDate(current.getDate() + 1);
-          }
-          return count;
-        };
-
         const parseLocalDateForStats = (dateStr: string): Date | null => {
           if (!dateStr) return null;
           if (dateStr.includes("-")) {
@@ -1126,22 +1120,16 @@ const AdminDashboard = () => {
         const normalizedStart = safeStart <= safeEnd ? startLabel : endLabel;
         const normalizedEnd = safeStart <= safeEnd ? endLabel : startLabel;
 
-        // Calculate total possible school days in the term
-        const teacherHolidayDates = new Set([
-          ...allTeacherRecords.filter((r) => r.isHoliday).map((r) => r.date),
-          ...(config.holidayDates || []).map((h) => h.date),
-        ]);
-        const totalPossibleDays = countWeekdays(normalizedStart, normalizedEnd);
-        const totalPossibleDaysWithoutHolidays = Math.max(
-          0,
-          totalPossibleDays - teacherHolidayDates.size,
-        );
-        const computedWeeks = Math.max(
-          0,
-          Math.ceil(totalPossibleDaysWithoutHolidays / 5),
-        );
-        setTotalSchoolDays(totalPossibleDaysWithoutHolidays);
-        setTotalSchoolWeeks(computedWeeks);
+        const totalSchoolDaySummary = getSchoolDaySummary({
+          config,
+          endDate: parsedToday,
+          extraHolidayDates: allTeacherRecords
+            .filter((record) => record.isHoliday)
+            .map((record) => record.date),
+          fallbackStartDate: earliestRecordDate || todayStr,
+        });
+        setTotalSchoolDays(totalSchoolDaySummary.days);
+        setTotalSchoolWeeks(totalSchoolDaySummary.weeks);
 
         // Calculate term statistics for each teacher (only from school reopen date to vacation date)
         const teacherTermStats = teachers
@@ -1158,7 +1146,7 @@ const AdminDashboard = () => {
             const presentDays = teacherRecords.filter(
               (r) => r.status === "present",
             ).length;
-            const totalDays = totalPossibleDaysWithoutHolidays; // Total possible school days in the term
+            const totalDays = totalSchoolDaySummary.days;
             const attendanceRate =
               totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
@@ -1258,6 +1246,9 @@ const AdminDashboard = () => {
           academicYear: config.academicYear,
           currentTerm: config.currentTerm,
           schoolReopenDate: config.schoolReopenDate || "",
+          vacationDate: config.vacationDate || "",
+          nextTermBegins: config.nextTermBegins || "",
+          holidayDates: config.holidayDates || [],
         }));
 
         // Check for automatic term transition
@@ -1571,6 +1562,7 @@ const AdminDashboard = () => {
               headTeacherRemark: config.headTeacherRemark,
               termEndDate: config.termEndDate,
               vacationDate: config.vacationDate,
+              holidayDates: config.holidayDates || [],
               nextTermBegins: config.nextTermBegins,
               termTransitionProcessed: config.termTransitionProcessed,
             },
@@ -1689,23 +1681,104 @@ const AdminDashboard = () => {
       setPendingTeacherAttendance((prev) =>
         prev.filter((item) => item.id !== recordId),
       );
-      setTeacherAttendance((prev) => [
-        ...prev,
-        {
-          ...record,
-          approvalStatus: "approved",
-          approvedBy: user.id,
-          date: record.date || todayStr,
-          id: recordId,
-        },
-      ]);
+      if ((record.date || todayStr) === todayStr) {
+        setTeacherAttendance((prev) => [
+          ...prev.filter((item) => item.id !== recordId),
+          {
+            ...record,
+            approvalStatus: "approved",
+            approvedBy: user.id,
+            date: record.date || todayStr,
+            id: recordId,
+          },
+        ]);
+      }
       if (heavyCacheKey) {
         sessionStorage.removeItem(heavyCacheKey);
         localStorage.removeItem(heavyCacheKey);
       }
+      scheduleHeavyRefresh();
     } catch (error) {
       console.error("Failed to approve attendance", error);
       showToast("Failed to approve attendance.", { type: "error" });
+    }
+  };
+
+  const handleApproveAllTeacherAttendance = async () => {
+    if (
+      !schoolId ||
+      !user?.id ||
+      !pendingTeacherAttendance.length ||
+      isApprovingAllTeacherAttendance
+    ) {
+      return;
+    }
+
+    setIsApprovingAllTeacherAttendance(true);
+    try {
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const recordsToApprove = pendingTeacherAttendance.map((record) => {
+        const resolvedId =
+          record.id ||
+          `${schoolId}_${record.teacherId}_${record.date || todayStr}`;
+        return {
+          ...record,
+          id: resolvedId,
+          date: record.date || todayStr,
+        };
+      });
+
+      await db.approveTeacherAttendanceBulk(
+        schoolId,
+        recordsToApprove.map((record) => ({
+          recordId: record.id,
+          teacherId: record.teacherId,
+          date: record.date,
+        })),
+        user.id,
+      );
+
+      const approvedIds = new Set(recordsToApprove.map((record) => record.id));
+      const approvedTodayRecords = recordsToApprove
+        .filter((record) => record.date === todayStr)
+        .map((record) => ({
+          ...record,
+          approvalStatus: "approved",
+          approvedBy: user.id,
+        }));
+
+      setPendingTeacherAttendance((prev) =>
+        prev.filter((item) => !approvedIds.has(item.id)),
+      );
+      if (approvedTodayRecords.length > 0) {
+        setTeacherAttendance((prev) => {
+          const approvedTodayIds = new Set(
+            approvedTodayRecords.map((record) => record.id),
+          );
+          return [
+            ...prev.filter((item) => !approvedTodayIds.has(item.id)),
+            ...approvedTodayRecords,
+          ];
+        });
+      }
+
+      if (heavyCacheKey) {
+        sessionStorage.removeItem(heavyCacheKey);
+        localStorage.removeItem(heavyCacheKey);
+      }
+      showToast(
+        `Approved ${recordsToApprove.length} teacher attendance record${recordsToApprove.length === 1 ? "" : "s"}.`,
+        { type: "success" },
+      );
+      scheduleHeavyRefresh();
+    } catch (error) {
+      console.error("Failed to approve all teacher attendance", error);
+      showToast("Failed to approve all teacher attendance.", {
+        type: "error",
+      });
+    } finally {
+      setIsApprovingAllTeacherAttendance(false);
     }
   };
 
@@ -1727,21 +1800,24 @@ const AdminDashboard = () => {
       setPendingTeacherAttendance((prev) =>
         prev.filter((item) => item.id !== recordId),
       );
-      setTeacherAttendance((prev) => [
-        ...prev,
-        {
-          ...record,
-          approvalStatus: "rejected",
-          status: "absent",
-          approvedBy: user.id,
-          date: record.date || todayStr,
-          id: recordId,
-        },
-      ]);
+      if ((record.date || todayStr) === todayStr) {
+        setTeacherAttendance((prev) => [
+          ...prev.filter((item) => item.id !== recordId),
+          {
+            ...record,
+            approvalStatus: "rejected",
+            status: "absent",
+            approvedBy: user.id,
+            date: record.date || todayStr,
+            id: recordId,
+          },
+        ]);
+      }
       if (heavyCacheKey) {
         sessionStorage.removeItem(heavyCacheKey);
         localStorage.removeItem(heavyCacheKey);
       }
+      scheduleHeavyRefresh();
     } catch (error) {
       console.error("Failed to reject attendance", error);
       showToast("Failed to reject attendance.", { type: "error" });
@@ -2035,6 +2111,9 @@ const AdminDashboard = () => {
           academicYear: data.academicYear || ACADEMIC_YEAR,
           currentTerm: data.currentTerm || `Term ${CURRENT_TERM}`,
           schoolReopenDate: data.schoolReopenDate || "",
+          vacationDate: data.vacationDate || "",
+          nextTermBegins: data.nextTermBegins || "",
+          holidayDates: data.holidayDates || [],
         }));
       }
     });
@@ -3374,10 +3453,10 @@ const AdminDashboard = () => {
                       : "Data up to date"}
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
-                    {totalSchoolDays || fallbackSchoolDays.days} school days
+                    {(totalSchoolDays ?? fallbackSchoolDays.days)} school days
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
-                    {totalSchoolWeeks || fallbackSchoolDays.weeks} teaching
+                    {(totalSchoolWeeks ?? fallbackSchoolDays.weeks)} teaching
                     weeks
                   </span>
                 </div>
@@ -3453,7 +3532,7 @@ const AdminDashboard = () => {
                       School days
                     </p>
                     <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {totalSchoolDays || fallbackSchoolDays.days}
+                      {totalSchoolDays ?? fallbackSchoolDays.days}
                     </p>
                   </div>
                   <div className="rounded-[22px] border border-white/80 bg-white/84 px-4 py-4 shadow-sm">
@@ -3461,7 +3540,7 @@ const AdminDashboard = () => {
                       Total weeks
                     </p>
                     <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {totalSchoolWeeks || fallbackSchoolDays.weeks}
+                      {totalSchoolWeeks ?? fallbackSchoolDays.weeks}
                     </p>
                   </div>
                   <div className="rounded-[22px] border border-white/80 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-4 py-4 shadow-sm">
@@ -4312,9 +4391,28 @@ const AdminDashboard = () => {
                         <p className="text-xs font-semibold text-amber-800">
                           Pending approvals ({pendingTeacherAttendance.length})
                         </p>
-                        <span className="text-[10px] text-amber-700">
-                          Approve to confirm attendance
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-amber-700">
+                            Approve to confirm attendance
+                          </span>
+                          <button
+                            onClick={handleApproveAllTeacherAttendance}
+                            disabled={isApprovingAllTeacherAttendance}
+                            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <RefreshCw
+                              size={11}
+                              className={
+                                isApprovingAllTeacherAttendance
+                                  ? "animate-spin"
+                                  : ""
+                              }
+                            />
+                            {isApprovingAllTeacherAttendance
+                              ? "Approving..."
+                              : "Approve All"}
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         {visiblePendingTeacherAttendance.map((record) => (
@@ -4343,7 +4441,8 @@ const AdminDashboard = () => {
                                 onClick={() =>
                                   handleApproveTeacherAttendance(record)
                                 }
-                                className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700"
+                                disabled={isApprovingAllTeacherAttendance}
+                                className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 Yes
                               </button>
@@ -4351,7 +4450,8 @@ const AdminDashboard = () => {
                                 onClick={() =>
                                   handleRejectTeacherAttendance(record)
                                 }
-                                className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-rose-700"
+                                disabled={isApprovingAllTeacherAttendance}
+                                className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-3 py-1 text-[10px] font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 No
                               </button>

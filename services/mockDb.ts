@@ -2412,6 +2412,69 @@ class FirestoreService {
     );
   }
 
+  async approveTeacherAttendanceBulk(
+    schoolId: string,
+    records: Array<{ recordId?: string; teacherId?: string; date?: string }>,
+    adminId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "approveTeacherAttendanceBulk",
+    );
+    if (!records.length) return;
+
+    const updatePayload = {
+      schoolId: scopedSchoolId,
+      approvalStatus: "approved" as const,
+      approvedBy: adminId,
+      approvedAt: Date.now(),
+      rejectedBy: null,
+      rejectedAt: null,
+    };
+
+    const batch = writeBatch(firestore);
+    let hasUpdates = false;
+    const processedKeys = new Set<string>();
+
+    for (const record of records) {
+      const dedupeKey =
+        record.teacherId && record.date
+          ? `${record.teacherId}_${record.date}`
+          : record.recordId || "";
+      if (!dedupeKey || processedKeys.has(dedupeKey)) continue;
+      processedKeys.add(dedupeKey);
+
+      if (record.teacherId && record.date) {
+        const q = query(
+          collection(firestore, "teacher_attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("teacherId", "==", record.teacherId),
+          where("date", "==", record.date),
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          snap.docs.forEach((docSnap) => {
+            batch.update(docSnap.ref, updatePayload);
+            hasUpdates = true;
+          });
+          continue;
+        }
+      }
+
+      if (record.recordId) {
+        batch.update(
+          doc(firestore, "teacher_attendance", record.recordId),
+          updatePayload,
+        );
+        hasUpdates = true;
+      }
+    }
+
+    if (!hasUpdates) return;
+    await batch.commit();
+  }
+
   async rejectTeacherAttendance(
     schoolId: string,
     recordId: string,

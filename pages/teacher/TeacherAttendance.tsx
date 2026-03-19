@@ -2,6 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
+import {
+  getExpectedSchoolDayKeys,
+  parseSchoolDate,
+} from "../../services/schoolCalendar";
 import { TeacherAttendanceRecord } from "../../types";
 import { logActivity } from "../../services/activityLog";
 import {
@@ -16,21 +20,7 @@ import {
    ✅ FIX: MOVE THIS TO TOP
 ======================= */
 const parseLocalDate = (dateString: string): Date => {
-  const parts = dateString.split("-");
-  if (parts.length === 3) {
-    const date = new Date(
-      parseInt(parts[0]),
-      parseInt(parts[1]) - 1,
-      parseInt(parts[2]),
-    );
-    if (!isNaN(date.getTime())) return date;
-  }
-
-  const fallback = new Date(dateString);
-  if (!isNaN(fallback.getTime())) return fallback;
-
-  console.error("Invalid date string:", dateString);
-  return new Date();
+  return parseSchoolDate(dateString) || new Date(dateString);
 };
 /* ======================= */
 
@@ -72,57 +62,19 @@ const TeacherAttendance = () => {
   const todayDate = useMemo(() => getLocalTodayDate(), []);
   const todayString = useMemo(() => toYYYYMMDD(todayDate), [todayDate]);
 
-  const getSchoolDatesBetween = (startDate: Date, endDate: Date) => {
-    const dates: string[] = [];
-    const current = new Date(startDate);
-    current.setHours(0, 0, 0, 0);
-    const end = new Date(endDate);
-    end.setHours(0, 0, 0, 0);
-
-    while (current <= end) {
-      if (current.getDay() !== 0 && current.getDay() !== 6) {
-        dates.push(toYYYYMMDD(current));
-      }
-      current.setDate(current.getDate() + 1);
-    }
-    return dates;
-  };
-
   const weekDates = useMemo(() => {
-    const reopenObj = schoolConfig?.schoolReopenDate
-      ? parseLocalDate(schoolConfig.schoolReopenDate)
-      : null;
-    const vacationObj = schoolConfig?.vacationDate
-      ? parseLocalDate(schoolConfig.vacationDate)
-      : null;
+    const fallbackStartDate = new Date(todayDate);
+    fallbackStartDate.setDate(fallbackStartDate.getDate() - 10);
+    fallbackStartDate.setHours(0, 0, 0, 0);
 
-    const lookbackDate = new Date(todayDate);
-    lookbackDate.setDate(lookbackDate.getDate() - 10);
-    let startDate = lookbackDate;
-    if (reopenObj && reopenObj > lookbackDate) {
-      startDate = reopenObj;
-    }
-    if (startDate > todayDate) {
-      startDate = new Date(todayDate);
-    }
-    const endDate = new Date(todayDate);
-    const generatedDates = getSchoolDatesBetween(startDate, endDate);
-
-    return generatedDates
-      .filter((dateString) => {
-        const currentDate = parseLocalDate(dateString);
-        const nextTermObj = schoolConfig?.nextTermBegins
-          ? parseLocalDate(schoolConfig.nextTermBegins)
-          : null;
-
-        // If nextTermBegins is set and currentDate >= nextTermBegins, include for new term
-        if (nextTermObj && currentDate >= nextTermObj) return true;
-
-        const isAfterReopen = !reopenObj || currentDate >= reopenObj;
-        const isBeforeVacation = !vacationObj || currentDate <= vacationObj;
-        return isAfterReopen && isBeforeVacation;
-      })
-      .sort(); // Sort dates chronologically
+    return getExpectedSchoolDayKeys({
+      reopenDate: schoolConfig?.schoolReopenDate,
+      endDate: todayDate,
+      holidayDates: schoolConfig?.holidayDates || [],
+      vacationDate: schoolConfig?.vacationDate,
+      nextTermBegins: schoolConfig?.nextTermBegins,
+      fallbackStartDate,
+    }).sort();
   }, [todayDate, schoolConfig]);
 
   const getPreviousSchoolDay = (date: Date) => {
@@ -219,7 +171,7 @@ const TeacherAttendance = () => {
     };
 
     fetchAttendance();
-  }, [user?.id, weekDates, schoolConfig?.schoolReopenDate, schoolId]);
+  }, [user?.id, schoolId, weekDates, schoolConfig]);
 
   useEffect(() => {
     if (!user?.id || !schoolId || !schoolConfig) return;
