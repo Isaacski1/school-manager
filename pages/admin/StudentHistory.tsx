@@ -431,7 +431,7 @@ const StudentHistory = () => {
                 />
               </div>
 
-              <div className="relative flex items-start justify-between gap-4">
+              <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex items-center gap-3">
                   <div
                     className={`h-12 w-12 rounded-2xl bg-white shadow-sm ring-1 ${accentStyles.ring} flex items-center justify-center text-lg font-bold text-slate-700`}
@@ -454,7 +454,7 @@ const StudentHistory = () => {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2 sm:justify-start">
                   <span
                     className={`inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide ${statusStyles}`}
                   >
