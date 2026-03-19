@@ -342,7 +342,7 @@ export interface ClassRoom {
   id: string;
   schoolId: string;
   name: string; // e.g., "Primary 4", "JHS 1"
-  level: "NURSERY" | "KG" | "PRIMARY" | "JHS";
+  level: "CRECHE" | "NURSERY" | "KG" | "PRIMARY" | "JHS";
 }
 
 export interface Student {

@@ -2810,6 +2810,15 @@ const createAiActionAudit = async ({
 };
 
 const DEFAULT_CLASS_SUBJECTS = {
+  c_creche: [
+    "Language & Literacy",
+    "Numeracy",
+    "Environmental Studies",
+    "Creative Arts",
+    "Physical Development",
+    "Social & Emotional Development",
+    "Rhymes, Songs & Storytelling",
+  ],
   c_n1: [
     "Language & Literacy",
     "Numeracy",

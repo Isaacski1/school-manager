@@ -54,6 +54,7 @@ import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
   CLASSES_LIST,
+  crecheSubjects,
   nurserySubjects,
   kgSubjects,
   primarySubjects,
@@ -1323,7 +1324,21 @@ class FirestoreService {
     if (!snap.empty) {
       return (snap.docs[0].data() as ClassSubjectConfig).subjects;
     }
-    return [];
+    const selectedClass = CLASSES_LIST.find((cls) => cls.id === classId);
+    switch (selectedClass?.level) {
+      case "CRECHE":
+        return crecheSubjects;
+      case "NURSERY":
+        return nurserySubjects;
+      case "KG":
+        return kgSubjects;
+      case "PRIMARY":
+        return primarySubjects;
+      case "JHS":
+        return jhsSubjects;
+      default:
+        return [];
+    }
   }
 
   async addSubject(

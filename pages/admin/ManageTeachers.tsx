@@ -29,7 +29,8 @@ import {
 
 // Firebase imports
 import { deleteDoc, doc } from "firebase/firestore";
-import { firestore } from "../../services/firebase";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth, firestore } from "../../services/firebase";
 import { repairUserSchoolId } from "../../services/functions";
 
 type TeacherWithClasses = User & { assignedClassIds?: string[] };
@@ -55,6 +56,8 @@ const ManageTeachers = () => {
     email: string;
     fullName: string;
     adminProvidedPassword?: boolean;
+    resetEmailSent?: boolean;
+    resetEmailError?: string;
   } | null>(null);
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -97,6 +100,35 @@ const ManageTeachers = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId]);
 
+  const normalizeEmail = (value: string) =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const wait = (ms: number) =>
+    new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const sendTeacherSetupEmail = async (email: string) => {
+    const normalizedEmail = normalizeEmail(email);
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await sendPasswordResetEmail(auth, normalizedEmail);
+        return;
+      } catch (error: any) {
+        lastError = error;
+        const shouldRetry = error?.code === "auth/user-not-found";
+        if (!shouldRetry || attempt === 2) {
+          throw error;
+        }
+        await wait(1000 * (attempt + 1));
+      }
+    }
+
+    throw lastError || new Error("Failed to send password setup email.");
+  };
+
   const handleCopy = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
     setCopiedField(field);
@@ -118,6 +150,7 @@ const ManageTeachers = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedEmail = normalizeEmail(formData.email || "");
 
     if (!schoolId) {
       showToast("School ID is not available. Please refresh and try again.", {
@@ -126,7 +159,7 @@ const ManageTeachers = () => {
       return;
     }
 
-    if (!formData.fullName || !formData.email) {
+    if (!formData.fullName || !normalizedEmail) {
       showToast("Please fill in all fields (full name and email).", {
         type: "error",
       });
@@ -139,17 +172,43 @@ const ManageTeachers = () => {
       // ✅ ALWAYS send schoolId to backend so teacher gets aligned
       await createTeacher({
         fullName: formData.fullName,
-        email: formData.email,
+        email: normalizedEmail,
         password: formData.password || undefined,
         assignedClassIds: formData.assignedClassIds || [],
         schoolId, // ✅ critical
       } as any);
 
+      let resetEmailSent = false;
+      let resetEmailError = "";
+      if (!formData.password) {
+        try {
+          await sendTeacherSetupEmail(normalizedEmail);
+          resetEmailSent = true;
+        } catch (error: any) {
+          console.error("Failed to send teacher setup email:", error);
+          resetEmailError =
+            error?.code === "auth/invalid-email"
+              ? "The teacher account was created, but Firebase rejected the email address for password reset delivery."
+              : error?.message ||
+                "The teacher account was created, but the password setup email could not be sent automatically.";
+
+          showToast(
+            "Teacher account created, but the password setup email could not be sent automatically. The teacher can use Forgot Password on the login page.",
+            {
+              type: "error",
+              duration: 9000,
+            },
+          );
+        }
+      }
+
       setSuccessData({
         tempPassword: formData.password || undefined,
-        email: formData.email,
+        email: normalizedEmail,
         fullName: formData.fullName,
         adminProvidedPassword: Boolean(formData.password),
+        resetEmailSent,
+        resetEmailError,
       });
       setShowSuccessModal(true);
 
@@ -168,13 +227,19 @@ const ManageTeachers = () => {
         actorUid: user?.id || null,
         actorRole: user?.role || null,
         eventType: "teacher_created",
-        entityId: formData.email || "",
+        entityId: normalizedEmail,
         meta: {
           status: "success",
           module: "Teachers",
           teacherName: formData.fullName || "",
-          email: formData.email || "",
+          email: normalizedEmail,
           assignedClasses: formData.assignedClassIds || [],
+          passwordSetup:
+            formData.password
+              ? "admin_password"
+              : resetEmailSent
+                ? "reset_email_sent"
+                : "reset_email_failed",
           actorName: user?.fullName || "",
         },
       });
@@ -815,7 +880,11 @@ const ManageTeachers = () => {
               </h3>
 
               <p className="text-sm text-slate-500 mb-4">
-                Share these credentials with the teacher.
+                {successData.adminProvidedPassword
+                  ? "Share these credentials with the teacher."
+                  : successData.resetEmailSent
+                    ? "The teacher should check email to set a password."
+                    : "The teacher account was created, but the email step needs attention."}
               </p>
             </div>
 
@@ -886,13 +955,29 @@ const ManageTeachers = () => {
                     ✅ Teacher can log in immediately with the password above.
                   </p>
                 </div>
-              ) : (
+              ) : successData.resetEmailSent ? (
                 <div className="bg-blue-50 border border-blue-200 rounded p-3">
                   <p className="text-xs text-blue-700">
                     📧 A password reset link has been sent to their email inbox.
                   </p>
                 </div>
-              )}
+              ) : null}
+
+              {!successData.adminProvidedPassword &&
+                !successData.resetEmailSent && (
+                  <div className="bg-amber-50 border border-amber-200 rounded p-3">
+                    <p className="text-xs text-amber-700">
+                      No reset email was sent automatically. Ask the teacher to
+                      use Forgot Password on the login page with this email
+                      address.
+                    </p>
+                    {successData.resetEmailError ? (
+                      <p className="text-[11px] text-amber-700 mt-2">
+                        {successData.resetEmailError}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
             </div>
 
             <button

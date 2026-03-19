@@ -172,6 +172,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               </div>
               <span className="text-[10px] text-slate-400 mt-2 font-medium truncate w-full text-center">
                 {item.className
+                  .replace("Creche", "Cr")
                   .replace("Nursery ", "N")
                   .replace("Class ", "P")
                   .replace("Primary ", "P")

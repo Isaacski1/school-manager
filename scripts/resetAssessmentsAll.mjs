@@ -14,6 +14,7 @@ initializeApp(firebaseConfig);
 const firestore = getFirestore();
 
 const CLASSES_LIST = [
+  { id: 'c_creche', name: 'Creche' },
   { id: 'c_n1', name: 'Nursery 1' },
   { id: 'c_n2', name: 'Nursery 2' },
   { id: 'c_kg1', name: 'KG 1' },

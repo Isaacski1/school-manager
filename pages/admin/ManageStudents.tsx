@@ -32,6 +32,7 @@ const ManageStudents = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || null;
+  const defaultClassId = CLASSES_LIST[0]?.id || "c_creche";
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [filterClass, setFilterClass] = useState("all");
@@ -41,7 +42,7 @@ const ManageStudents = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<Student>>({
     gender: "Male",
-    classId: "c_p1",
+    classId: defaultClassId,
     dob: "",
   });
 
@@ -56,7 +57,7 @@ const ManageStudents = () => {
   // Bulk Promotion State
   const [showPromotionModal, setShowPromotionModal] = useState(false);
   const [isPromoting, setIsPromoting] = useState(false);
-  const [promotionClassId, setPromotionClassId] = useState("c_p1");
+  const [promotionClassId, setPromotionClassId] = useState(defaultClassId);
   const [promotionScores, setPromotionScores] = useState<
     Record<string, number>
   >({});
@@ -166,7 +167,7 @@ const ManageStudents = () => {
 
   const handleOpenAdd = () => {
     setPerformanceData(null);
-    const selectedClass = filterClass !== "all" ? filterClass : "c_p1";
+    const selectedClass = filterClass !== "all" ? filterClass : defaultClassId;
     setFormData({ gender: "Male", classId: selectedClass, dob: "" });
     setEditingId(null);
     setShowModal(true);
@@ -174,7 +175,7 @@ const ManageStudents = () => {
 
   const handleOpenPromotion = () => {
     const initialClassId =
-      filterClass !== "all" ? filterClass : CLASSES_LIST[0]?.id || "c_p1";
+      filterClass !== "all" ? filterClass : defaultClassId;
     setPromotionClassId(initialClassId);
     setShowPromotionModal(true);
   };
@@ -196,7 +197,7 @@ const ManageStudents = () => {
 
   const handleClose = () => {
     setShowModal(false);
-    setFormData({ gender: "Male", classId: "c_p1", dob: "" });
+    setFormData({ gender: "Male", classId: defaultClassId, dob: "" });
     setEditingId(null);
     setPerformanceData(null);
   };

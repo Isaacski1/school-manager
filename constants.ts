@@ -4,6 +4,7 @@ export const ACADEMIC_YEAR = "2023-2024";
 export const CURRENT_TERM = 1;
 
 export const CLASSES_LIST = [
+  { id: "c_creche", name: "Creche", level: "CRECHE" },
   { id: "c_n1", name: "Nursery 1", level: "NURSERY" },
   { id: "c_n2", name: "Nursery 2", level: "NURSERY" },
   { id: "c_kg1", name: "KG 1", level: "KG" },
@@ -20,6 +21,7 @@ export const CLASSES_LIST = [
 ];
 
 export const CLASS_PROMOTION_MAP: Record<string, string | null> = {
+  c_creche: "c_n1",
   c_n1: "c_n2",
   c_n2: "c_kg1",
   c_kg1: "c_kg2",
@@ -44,6 +46,16 @@ export const DEFAULT_SUBJECTS = [
   "RME",
   "Ghanaian Language",
   "Creative Arts",
+];
+
+export const crecheSubjects = [
+  "Language & Literacy",
+  "Numeracy",
+  "Environmental Studies",
+  "Creative Arts",
+  "Physical Development",
+  "Social & Emotional Development",
+  "Rhymes, Songs & Storytelling",
 ];
 
 export const nurserySubjects = [

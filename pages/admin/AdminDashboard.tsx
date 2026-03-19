@@ -2502,6 +2502,7 @@ const AdminDashboard = () => {
                     />
                     <div className="mt-1 truncate text-center text-[9px] text-slate-500">
                       {c.className
+                        .replace("Creche", "Cr")
                         .replace("Primary ", "P")
                         .replace("Class ", "P")
                         .replace("Nursery ", "N")}

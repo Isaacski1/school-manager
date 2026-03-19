@@ -10,6 +10,7 @@ import {
   calculateGrade,
   getGradeColor,
   calculateTotalScore,
+  crecheSubjects,
   nurserySubjects,
   kgSubjects,
   primarySubjects,
@@ -60,6 +61,9 @@ const Reports = () => {
       let currentSubjects = await db.getSubjects(schoolId, selectedClass);
       if (!currentSubjects.length && selectedClassInfo) {
         switch (selectedClassInfo.level) {
+          case "CRECHE":
+            currentSubjects = crecheSubjects;
+            break;
           case "NURSERY":
             currentSubjects = nurserySubjects;
             break;

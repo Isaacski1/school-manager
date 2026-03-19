@@ -47,6 +47,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 const getClassGroupKey = (name: string) => {
   const normalized = name.toLowerCase();
+  if (normalized.includes("creche")) return "Creche";
   if (normalized.includes("nursery")) return "Nursery";
   if (normalized.startsWith("kg") || normalized.includes("kg")) return "KG";
   if (/class\s*[1-3]\b/i.test(name)) return "Class 1-3";
@@ -123,6 +124,7 @@ const SystemSettings = () => {
 
   const classGroups = React.useMemo(() => {
     const groups: Record<string, ClassRoom[]> = {
+      Creche: [],
       Nursery: [],
       KG: [],
       "Class 1-3": [],
@@ -1223,6 +1225,7 @@ const SystemSettings = () => {
                 >
                   {(
                     [
+                      "Creche",
                       "Nursery",
                       "KG",
                       "Class 1-3",
