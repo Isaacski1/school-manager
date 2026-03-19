@@ -204,8 +204,7 @@ class FirestoreService {
     const pageDocs = hasMore ? docs.slice(0, pageSize) : docs;
     const mapDoc =
       options.mapDoc ||
-      ((docSnap: any) =>
-        ({ id: docSnap.id, ...(docSnap.data() as any) }) as T);
+      ((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) }) as T);
 
     return {
       items: pageDocs.map((docSnap) => mapDoc(docSnap)),
@@ -277,8 +276,10 @@ class FirestoreService {
       v2Payments,
       financeSettingsSnap,
     ] = await Promise.all([
-      this.getCollectionBySchoolIdWithDocId<FeeDefinition>("fees", schoolId)
-        .catch(() => []),
+      this.getCollectionBySchoolIdWithDocId<FeeDefinition>(
+        "fees",
+        schoolId,
+      ).catch(() => []),
       this.getCollectionAtPathWithDocId<FeeDefinition>([
         "schools",
         schoolId,
@@ -302,8 +303,9 @@ class FirestoreService {
         schoolId,
         "payments",
       ]).catch(() => []),
-      getDoc(doc(firestore, "schools", schoolId, "financeSettings", "main"))
-        .catch(() => null),
+      getDoc(
+        doc(firestore, "schools", schoolId, "financeSettings", "main"),
+      ).catch(() => null),
     ]);
 
     const fees = this.dedupeRowsByKey<FeeDefinition>(
@@ -331,11 +333,13 @@ class FirestoreService {
       Boolean((row as any)?.studentId),
     ) as unknown as StudentFeePayment[];
     const billingPayments = allPayments.filter(
-      (row) => !((row as any)?.studentId),
+      (row) => !(row as any)?.studentId,
     );
 
     const financeSettings =
-      financeSettingsSnap && "exists" in financeSettingsSnap && financeSettingsSnap.exists()
+      financeSettingsSnap &&
+      "exists" in financeSettingsSnap &&
+      financeSettingsSnap.exists()
         ? ({
             schoolId,
             ...(financeSettingsSnap.data() as FinanceSettings),
@@ -441,9 +445,13 @@ class FirestoreService {
   ): Promise<void> {
     const scopedRows = rows.filter(Boolean);
     const existing = await getDocs(
-      query(collection(firestore, collectionName), where("schoolId", "==", schoolId)),
+      query(
+        collection(firestore, collectionName),
+        where("schoolId", "==", schoolId),
+      ),
     );
-    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+      [];
 
     existing.docs.forEach((docSnap) => {
       operations.push((batch) => batch.delete(docSnap.ref));
@@ -452,7 +460,10 @@ class FirestoreService {
     scopedRows.forEach((row) => {
       const normalizedRow = { ...row, schoolId } as T;
       operations.push((batch) =>
-        batch.set(doc(firestore, collectionName, resolveId(normalizedRow)), normalizedRow),
+        batch.set(
+          doc(firestore, collectionName, resolveId(normalizedRow)),
+          normalizedRow,
+        ),
       );
     });
 
@@ -466,7 +477,8 @@ class FirestoreService {
   ): Promise<void> {
     const collectionRef = collection(firestore, collectionPath.join("/"));
     const existing = await getDocs(collectionRef);
-    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+      [];
 
     existing.docs.forEach((docSnap) => {
       operations.push((batch) => batch.delete(docSnap.ref));
@@ -487,15 +499,13 @@ class FirestoreService {
   ): Promise<void> {
     await this.replaceCollectionAtPath(
       ["schools", schoolId, "activityLogs"],
-      rows
-        .filter(Boolean)
-        .map((row, index) => ({
-          ...row,
-          id:
-            row?.id ||
-            `${row?.actionType || row?.eventType || "activity"}_${row?.entityId || "entry"}_${index}`,
-          schoolId,
-        })),
+      rows.filter(Boolean).map((row, index) => ({
+        ...row,
+        id:
+          row?.id ||
+          `${row?.actionType || row?.eventType || "activity"}_${row?.entityId || "entry"}_${index}`,
+        schoolId,
+      })),
       (row: any) => row.id,
     );
   }
@@ -564,13 +574,15 @@ class FirestoreService {
     rows: T[] = [],
     resolveId: (row: T) => string,
   ): Promise<void> {
-    const operations = rows.filter(Boolean).map(
-      (row) => (batch: ReturnType<typeof writeBatch>) =>
-        batch.set(
-          doc(firestore, collectionName, resolveId(row)),
-          { ...row, schoolId } as T,
-        ),
-    );
+    const operations = rows
+      .filter(Boolean)
+      .map(
+        (row) => (batch: ReturnType<typeof writeBatch>) =>
+          batch.set(doc(firestore, collectionName, resolveId(row)), {
+            ...row,
+            schoolId,
+          } as T),
+      );
     await this.commitChunkedOperations(operations);
   }
 
@@ -580,10 +592,12 @@ class FirestoreService {
     resolveId: (row: T) => string,
   ): Promise<void> {
     const collectionRef = collection(firestore, collectionPath.join("/"));
-    const operations = rows.filter(Boolean).map(
-      (row) => (batch: ReturnType<typeof writeBatch>) =>
-        batch.set(doc(collectionRef, resolveId(row)), row as any),
-    );
+    const operations = rows
+      .filter(Boolean)
+      .map(
+        (row) => (batch: ReturnType<typeof writeBatch>) =>
+          batch.set(doc(collectionRef, resolveId(row)), row as any),
+      );
     await this.commitChunkedOperations(operations);
   }
 
@@ -743,10 +757,11 @@ class FirestoreService {
           );
           break;
         case "class_subjects":
-          snapshot.classSubjects = await this.getRecordsByIds<ClassSubjectConfig>(
-            "class_subjects",
-            scope.recordIds,
-          );
+          snapshot.classSubjects =
+            await this.getRecordsByIds<ClassSubjectConfig>(
+              "class_subjects",
+              scope.recordIds,
+            );
           break;
         case "notices":
           snapshot.notices = await this.getRecordsByIds<Notice>(
@@ -1180,18 +1195,22 @@ class FirestoreService {
       constraints.push(where("classId", "==", params.classId));
     }
 
-    return this.getCollectionBySchoolIdPage<Student>("students", scopedSchoolId, {
-      pageSize: params.pageSize,
-      cursorId: params.cursorId,
-      constraints,
-      mapDoc: (docSnap) => {
-        const data = docSnap.data() as Student;
-        return {
-          ...data,
-          id: data.id || docSnap.id,
-        };
+    return this.getCollectionBySchoolIdPage<Student>(
+      "students",
+      scopedSchoolId,
+      {
+        pageSize: params.pageSize,
+        cursorId: params.cursorId,
+        constraints,
+        mapDoc: (docSnap) => {
+          const data = docSnap.data() as Student;
+          return {
+            ...data,
+            id: data.id || docSnap.id,
+          };
+        },
       },
-    });
+    );
   }
 
   async getStudents(schoolId?: string, classId?: string): Promise<Student[]> {
@@ -1574,7 +1593,9 @@ class FirestoreService {
         where("date", "<=", endDate),
       );
       const rangedSnap = await getDocs(rangedQuery);
-      return rangedSnap.docs.map((docSnap) => docSnap.data() as AttendanceRecord);
+      return rangedSnap.docs.map(
+        (docSnap) => docSnap.data() as AttendanceRecord,
+      );
     } catch (error) {
       const fallbackQuery = query(
         collection(firestore, "attendance"),
@@ -2650,7 +2671,10 @@ class FirestoreService {
           const key =
             entry?.id ||
             `${entry?.actionType || entry?.eventType || "activity"}_${entry?.entityId || "entry"}_${entry?.timestamp || index}`;
-          dedupedActivityLogs.set(key, entry?.id ? entry : { ...entry, id: key });
+          dedupedActivityLogs.set(
+            key,
+            entry?.id ? entry : { ...entry, id: key },
+          );
         });
         activityLogs = Array.from(dedupedActivityLogs.values());
       } catch (activityLogError) {
@@ -2749,8 +2773,7 @@ class FirestoreService {
       await logActivity({
         schoolId,
         actorUid: auth.currentUser?.uid || null,
-        actorRole:
-          (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+        actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
         eventType: "backup_created",
         entityId: backup.id,
         meta: {
@@ -2955,7 +2978,9 @@ class FirestoreService {
         .map(([month, data]) => {
           const [year, monthNum] = month.split("-");
           const attendanceRate =
-            data.total > 0 ? Math.round((data.present / data.total) * 100) : 0;
+            data.total > 0
+              ? Math.min(Math.round((data.present / data.total) * 100), 100)
+              : 0;
 
           return {
             teacherId: teacher.id,
@@ -2994,7 +3019,9 @@ class FirestoreService {
         0,
       );
       const overallAttendance =
-        totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
+        totalDays > 0
+          ? Math.min(Math.round((totalPresent / totalDays) * 100), 100)
+          : 0;
 
       analytics.push({
         teacherId: teacher.id,
@@ -3016,7 +3043,10 @@ class FirestoreService {
     schoolId: string,
   ): Promise<Partial<Backup>[]> {
     const snap = await getDocs(
-      query(collection(firestore, "backups"), where("schoolId", "==", schoolId)),
+      query(
+        collection(firestore, "backups"),
+        where("schoolId", "==", schoolId),
+      ),
     );
     return snap.docs
       .map((docSnap) => docSnap.data() as Partial<Backup>)
@@ -3039,7 +3069,9 @@ class FirestoreService {
       }
       if (
         filters.backupTypes?.length &&
-        !filters.backupTypes.includes((row.backupType || "manual") as BackupType)
+        !filters.backupTypes.includes(
+          (row.backupType || "manual") as BackupType,
+        )
       ) {
         return false;
       }
@@ -3131,7 +3163,9 @@ class FirestoreService {
     );
 
     const restoredSettings = {
-      ...(backup.data.schoolSettings || backup.data.schoolConfig || currentConfig),
+      ...(backup.data.schoolSettings ||
+        backup.data.schoolConfig ||
+        currentConfig),
       schoolId: scopedSchoolId,
     } as SchoolConfig;
 
@@ -3227,9 +3261,14 @@ class FirestoreService {
         );
       } else {
         const paymentSnap = await getDocs(
-          query(collection(firestore, "payments"), where("schoolId", "==", scopedSchoolId)),
+          query(
+            collection(firestore, "payments"),
+            where("schoolId", "==", scopedSchoolId),
+          ),
         );
-        const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+        const operations: Array<
+          (batch: ReturnType<typeof writeBatch>) => void
+        > = [];
 
         paymentSnap.docs.forEach((docSnap) => {
           if (docSnap.data()?.studentId) {
@@ -3343,8 +3382,7 @@ class FirestoreService {
     await logActivity({
       schoolId: scopedSchoolId,
       actorUid: auth.currentUser?.uid || null,
-      actorRole:
-        (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
       eventType: "backup_restored",
       entityId: id,
       meta: {
@@ -3414,8 +3452,7 @@ class FirestoreService {
     await logActivity({
       schoolId: scopedSchoolId,
       actorUid: auth.currentUser?.uid || null,
-      actorRole:
-        (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
       eventType:
         snapshot.backupType === "recycle-bin"
           ? "recycle_bin_restored"
