@@ -709,10 +709,7 @@ service cloud.firestore {
 
     // System notifications collection
     match /admin_notifications/{notificationId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() ||
-          (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId) &&
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
           "schoolId",

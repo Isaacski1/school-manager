@@ -260,6 +260,62 @@ class FirestoreService {
     return Array.from(deduped.values());
   }
 
+  private selectPreferredTeacherAttendanceRecord(
+    records: TeacherAttendanceRecord[] = [],
+  ): TeacherAttendanceRecord | undefined {
+    if (!records.length) return undefined;
+
+    const approvalRank = (status?: string) => {
+      switch (status) {
+        case "approved":
+          return 0;
+        case "rejected":
+          return 1;
+        case "pending":
+          return 2;
+        default:
+          return 3;
+      }
+    };
+
+    return [...records].sort((a, b) => {
+      const rankDiff =
+        approvalRank(a.approvalStatus) - approvalRank(b.approvalStatus);
+      if (rankDiff !== 0) return rankDiff;
+
+      const aTime =
+        (a as any).approvedAt ||
+        (a as any).rejectedAt ||
+        (a as any).createdAt ||
+        0;
+      const bTime =
+        (b as any).approvedAt ||
+        (b as any).rejectedAt ||
+        (b as any).createdAt ||
+        0;
+
+      return bTime - aTime;
+    })[0];
+  }
+
+  private dedupeTeacherAttendanceRecords(
+    records: TeacherAttendanceRecord[] = [],
+  ): TeacherAttendanceRecord[] {
+    const recordsByDate = new Map<string, TeacherAttendanceRecord[]>();
+
+    records.filter(Boolean).forEach((record) => {
+      const dateKey = String(record.date || "").trim();
+      if (!dateKey) return;
+      const existing = recordsByDate.get(dateKey) || [];
+      existing.push(record);
+      recordsByDate.set(dateKey, existing);
+    });
+
+    return Array.from(recordsByDate.values())
+      .map((group) => this.selectPreferredTeacherAttendanceRecord(group))
+      .filter(Boolean) as TeacherAttendanceRecord[];
+  }
+
   private async getSchoolFinanceSnapshot(schoolId: string): Promise<{
     fees: FeeDefinition[];
     studentLedgers: StudentFeeLedger[];
@@ -1969,7 +2025,11 @@ class FirestoreService {
       isRead: false,
       type,
     };
-    await setDoc(doc(firestore, "admin_notifications", id), notification);
+    try {
+      await setDoc(doc(firestore, "admin_notifications", id), notification);
+    } catch (error) {
+      console.warn("Failed to create system notification", error);
+    }
   }
 
   async getSystemNotifications(
@@ -2250,39 +2310,7 @@ class FirestoreService {
       const data = docSnap.data() as TeacherAttendanceRecord;
       return { ...data, id: data.id || docSnap.id };
     });
-    if (records.length === 1) return records[0];
-
-    const approvalRank = (status?: string) => {
-      switch (status) {
-        case "approved":
-          return 0;
-        case "rejected":
-          return 1;
-        case "pending":
-          return 2;
-        default:
-          return 3;
-      }
-    };
-
-    records.sort((a, b) => {
-      const rankDiff =
-        approvalRank(a.approvalStatus) - approvalRank(b.approvalStatus);
-      if (rankDiff !== 0) return rankDiff;
-      const aTime =
-        (a as any).approvedAt ||
-        (a as any).rejectedAt ||
-        (a as any).createdAt ||
-        0;
-      const bTime =
-        (b as any).approvedAt ||
-        (b as any).rejectedAt ||
-        (b as any).createdAt ||
-        0;
-      return bTime - aTime;
-    });
-
-    return records[0];
+    return this.selectPreferredTeacherAttendanceRecord(records);
   }
 
   async getTeacherAttendanceByDateRange(
@@ -2307,10 +2335,12 @@ class FirestoreService {
         where("date", "<=", endDate),
       );
       const rangedSnap = await getDocs(rangedQuery);
-      return rangedSnap.docs.map((docSnap) => {
-        const data = docSnap.data() as TeacherAttendanceRecord;
-        return { ...data, id: data.id || docSnap.id };
-      });
+      return this.dedupeTeacherAttendanceRecords(
+        rangedSnap.docs.map((docSnap) => {
+          const data = docSnap.data() as TeacherAttendanceRecord;
+          return { ...data, id: data.id || docSnap.id };
+        }),
+      );
     } catch (error) {
       // Fallback for environments missing composite indexes.
       const fallbackQuery = query(
@@ -2319,12 +2349,14 @@ class FirestoreService {
         where("teacherId", "==", teacherId),
       );
       const fallbackSnap = await getDocs(fallbackQuery);
-      return fallbackSnap.docs
-        .map((docSnap) => {
-          const data = docSnap.data() as TeacherAttendanceRecord;
-          return { ...data, id: data.id || docSnap.id };
-        })
-        .filter((record) => record.date >= startDate && record.date <= endDate);
+      return this.dedupeTeacherAttendanceRecords(
+        fallbackSnap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as TeacherAttendanceRecord;
+            return { ...data, id: data.id || docSnap.id };
+          })
+          .filter((record) => record.date >= startDate && record.date <= endDate),
+      );
     }
   }
 

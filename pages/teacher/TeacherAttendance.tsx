@@ -25,7 +25,7 @@ const parseLocalDate = (dateString: string): Date => {
 /* ======================= */
 
 const TeacherAttendance = () => {
-  const { user } = useAuth();
+  const { user, authLoading } = useAuth();
   const schoolId = user?.schoolId || null;
 
   const [attendanceRecords, setAttendanceRecords] = useState<
@@ -142,39 +142,81 @@ const TeacherAttendance = () => {
   }, [schoolId]);
 
   useEffect(() => {
-    if (!user?.id || !schoolId || weekDates.length === 0) {
+    if (authLoading) {
+      return;
+    }
+
+    if (!user?.id || !schoolId) {
+      setAttendanceRecords({});
       setLoading(false);
       return;
     }
 
-    const fetchAttendance = async () => {
-      setLoading(true);
-      const records: Record<string, TeacherAttendanceRecord> = {};
+    if (weekDates.length === 0) {
+      setAttendanceRecords({});
+      setLoading(false);
+      return;
+    }
 
-      for (const date of weekDates) {
-        if (
+    let isMounted = true;
+
+    const fetchAttendance = async () => {
+      try {
+        setLoading(true);
+        const validDates = weekDates.filter((date) =>
           isValidAttendanceDate(
             date,
             schoolConfig?.schoolReopenDate,
             schoolConfig?.vacationDate,
             schoolConfig?.nextTermBegins,
             schoolConfig?.holidayDates,
-          )
-        ) {
-          const record = await db.getTeacherAttendance(schoolId, user.id, date);
-          if (record) records[date] = record;
+          ),
+        );
+
+        if (!validDates.length) {
+          if (isMounted) {
+            setAttendanceRecords({});
+          }
+          return;
+        }
+
+        const fetchedRecords = await db.getTeacherAttendanceByDateRange(
+          schoolId,
+          user.id,
+          validDates[0],
+          validDates[validDates.length - 1],
+        );
+
+        if (!isMounted) return;
+
+        const validDateSet = new Set(validDates);
+        const records = fetchedRecords.reduce(
+          (acc, record) => {
+            if (validDateSet.has(record.date)) {
+              acc[record.date] = record;
+            }
+            return acc;
+          },
+          {} as Record<string, TeacherAttendanceRecord>,
+        );
+
+        setAttendanceRecords(records);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
         }
       }
-
-      setAttendanceRecords(records);
-      setLoading(false);
     };
 
     fetchAttendance();
-  }, [user?.id, schoolId, weekDates, schoolConfig]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authLoading, user?.id, schoolId, weekDates, schoolConfig]);
 
   useEffect(() => {
-    if (!user?.id || !schoolId || !schoolConfig) return;
+    if (authLoading || !user?.id || !schoolId || !schoolConfig) return;
 
     const checkMissed = async () => {
       const reopen = schoolConfig.schoolReopenDate;
@@ -205,7 +247,14 @@ const TeacherAttendance = () => {
     };
 
     checkMissed();
-  }, [user?.id, schoolConfig, previousSchoolDay, isValidAttendanceDate]);
+  }, [
+    authLoading,
+    user?.id,
+    schoolId,
+    schoolConfig,
+    previousSchoolDay,
+    isValidAttendanceDate,
+  ]);
 
   /* =======================
      Actions
