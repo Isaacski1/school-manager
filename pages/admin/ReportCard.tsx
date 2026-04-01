@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { Student, SchoolConfig, AdminRemark } from "../../types";
@@ -13,7 +13,7 @@ import { logActivity } from "../../services/activityLog";
 // No global placeholder logo for report cards (use school-specific logo only)
 const DEFAULT_SCHOOL_LOGO = "";
 
-// ✅ More reliable: convert an image URL to base64 using Canvas
+// More reliable: convert an image URL to base64 using Canvas
 const urlToBase64 = (url: string): Promise<string> =>
   new Promise((resolve, reject) => {
     const img = new Image();
@@ -56,6 +56,9 @@ const parseTermNumber = (termString: string): 1 | 2 | 3 => {
 
 const PASS_THRESHOLD = 500;
 
+const normalizeSubjectName = (value: string | null | undefined) =>
+  String(value || "").trim().toLowerCase();
+
 const ReportCard = () => {
   const { school } = useSchool();
   const { user } = useAuth();
@@ -97,7 +100,7 @@ const ReportCard = () => {
 
       const schoolConfig: SchoolConfig = await db.getSchoolConfig(schoolId);
 
-      // ✅ SUPER ADMIN logo first (from settings)
+      // SUPER ADMIN logo first (from settings)
       const configLogo =
         (schoolConfig as any)?.logoUrl?.trim?.() ||
         (schoolConfig as any)?.logo?.trim?.() ||
@@ -110,7 +113,7 @@ const ReportCard = () => {
         (school as any)?.logo?.trim?.() ||
         "";
 
-      // ✅ final (prefer config)
+      // final (prefer config)
       const finalLogo = configLogo || sidebarLogo || "";
 
       // Convert to base64 for PDF (only if remote URL)
@@ -126,6 +129,11 @@ const ReportCard = () => {
       }
 
       const termNumber = parseTermNumber(schoolConfig.currentTerm);
+      const currentClassSubjects = await db.getSubjects(schoolId, selectedClass);
+      const normalizedCurrentSubjects = new Set(
+        currentClassSubjects.map((subject) => normalizeSubjectName(subject)),
+      );
+      const shouldFilterToCurrentSubjects = normalizedCurrentSubjects.size > 0;
 
       const academicYear = schoolConfig.academicYear;
       const adminRemarkId = `${selectedStudent}_term${termNumber}_${academicYear}`;
@@ -144,18 +152,24 @@ const ReportCard = () => {
           (acc, assessment) => {
             const subjectKey = assessment.subject;
             if (!subjectKey) return acc;
-            const current = acc[subjectKey];
+            const normalizedSubjectKey = normalizeSubjectName(subjectKey);
+            if (
+              shouldFilterToCurrentSubjects &&
+              !normalizedCurrentSubjects.has(normalizedSubjectKey)
+            ) {
+              return acc;
+            }
+            const current = acc[normalizedSubjectKey];
             const currentTotal = current?.total ?? 0;
             const nextTotal = assessment.total ?? 0;
             if (!current || nextTotal >= currentTotal) {
-              acc[subjectKey] = assessment;
+              acc[normalizedSubjectKey] = assessment;
             }
             return acc;
           },
           {} as Record<string, any>,
         ),
       );
-
       const remarks = await db
         .getStudentRemarks(schoolId, selectedClass)
         .then((all) => all.find((r) => r.studentId === selectedStudent));
@@ -246,6 +260,13 @@ const ReportCard = () => {
           (acc, assessment) => {
             const subjectKey = assessment.subject || "";
             if (!subjectKey) return acc;
+            const normalizedSubjectKey = normalizeSubjectName(subjectKey);
+            if (
+              shouldFilterToCurrentSubjects &&
+              !normalizedCurrentSubjects.has(normalizedSubjectKey)
+            ) {
+              return acc;
+            }
             const computedTotal =
               Number(assessment.testScore || 0) +
               Number(assessment.homeworkScore || 0) +
@@ -256,7 +277,7 @@ const ReportCard = () => {
               typeof rawTotal === "number"
                 ? rawTotal
                 : Number(rawTotal ?? computedTotal) || computedTotal;
-            const key = `${assessment.studentId}_${subjectKey}`;
+            const key = `${assessment.studentId}_${normalizedSubjectKey}`;
             const current = acc[key] as any;
             if (!current || normalizedTotal >= (current.total || 0)) {
               acc[key] = { ...assessment, total: normalizedTotal };
@@ -266,7 +287,6 @@ const ReportCard = () => {
           {} as Record<string, any>,
         ),
       );
-
       const allStudentsTotalScores = students.map((s) => {
         const studentAssessments = allStudentsAssessmentsForClass.filter(
           (a) => a.studentId === s.id,
@@ -326,7 +346,7 @@ const ReportCard = () => {
       const data = {
         schoolInfo: {
           name: school?.name || schoolConfig.schoolName || "School Manager GH",
-          logoUrl: finalLogo, // ✅ PDF-safe logo
+          logoUrl: finalLogo, // PDF-safe logo
           address: school?.address || schoolConfig.address || "",
           phone: school?.phone || schoolConfig.phone || "",
           email: schoolConfig.email || "",

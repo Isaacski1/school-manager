@@ -1445,7 +1445,9 @@ class FirestoreService {
     const current = await this.getSubjects(scopedSchoolId, classId);
     const idx = current.indexOf(oldName);
     if (idx !== -1) {
-      current[idx] = newName;
+      const trimmedNewName = newName.trim();
+      if (!trimmedNewName) return;
+      current[idx] = trimmedNewName;
       await setDoc(
         doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
         {
@@ -1454,9 +1456,25 @@ class FirestoreService {
           subjects: current,
         },
       );
+
+      const assessmentsSnap = await getDocs(
+        query(
+          collection(firestore, "assessments"),
+          where("schoolId", "==", scopedSchoolId),
+          where("classId", "==", classId),
+          where("subject", "==", oldName),
+        ),
+      );
+
+      for (let index = 0; index < assessmentsSnap.docs.length; index += 400) {
+        const batch = writeBatch(firestore);
+        assessmentsSnap.docs.slice(index, index + 400).forEach((docSnap) => {
+          batch.update(docSnap.ref, { subject: trimmedNewName });
+        });
+        await batch.commit();
+      }
     }
   }
-
   async deleteSubject(
     classId: string,
     name: string,
