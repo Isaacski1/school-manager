@@ -1709,6 +1709,27 @@ class FirestoreService {
     return snap.docs.map((d) => d.data() as Assessment);
   }
 
+  async getAssessmentsByClassAndTerm(
+    schoolId?: string,
+    classId?: string,
+    term?: number,
+  ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAssessmentsByClassAndTerm",
+    );
+    if (!classId || typeof term !== "number") return [];
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+      where("term", "==", term),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as Assessment);
+  }
+
   async getAssessmentsPage(params: {
     schoolId?: string;
     classId?: string;

@@ -4,6 +4,10 @@ import { db } from "../../services/mockDb";
 import { CLASSES_LIST } from "../../constants";
 import { AlertTriangle, CheckCircle, HelpCircle } from "lucide-react";
 import { useSchool } from "../../context/SchoolContext";
+import {
+  collectHolidayDateKeys,
+  getExpectedSchoolDayKeys,
+} from "../../services/schoolCalendar";
 
 interface StudentAttendanceStats {
   id: string;
@@ -38,55 +42,61 @@ const AttendanceStats = () => {
         // 2. Get School Config to calculate total school days
         const config = await db.getSchoolConfig(schoolId);
 
-        // 3. Calculate total school days from reopen date up to today (or vacation date if earlier)
-        let totalSchoolDays = 0;
+        // 3. Calculate expected school days from reopen date up to vacation end (zipped with admin holidays, weekends, and leave days).
         const attendanceRecords = await db.getClassAttendance(
           schoolId,
           selectedClass,
         );
-        const holidayDates = new Set([
+
+        const holidayKeys = collectHolidayDateKeys([
           ...attendanceRecords.filter((r) => r.isHoliday).map((r) => r.date),
-          ...(config.holidayDates || []).map((h) => h.date),
+          ...(config.holidayDates || []),
         ]);
 
-        if (config.schoolReopenDate) {
-          const reopen = new Date(`${config.schoolReopenDate}T00:00:00`);
-          const vacation = config.vacationDate
-            ? new Date(`${config.vacationDate}T00:00:00`)
-            : null;
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const endDate = vacation && vacation < today ? vacation : today;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const vacationDate = config.vacationDate
+          ? new Date(`${config.vacationDate}T00:00:00`)
+          : null;
+        const endDate =
+          vacationDate && vacationDate < today ? vacationDate : today;
 
-          const current = new Date(reopen);
-          while (current <= endDate) {
-            const day = current.getDay();
-            const isWeekend = day === 0 || day === 6;
-            if (!isWeekend) {
-              const dateKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`;
-              if (!holidayDates.has(dateKey)) {
-                totalSchoolDays++;
-              }
-            }
-            current.setDate(current.getDate() + 1);
-          }
-        } else {
-          // Fallback: count existing attendance records
-          const nonHoliday = attendanceRecords.filter((r) => !r.isHoliday);
-          totalSchoolDays = nonHoliday.length;
-        }
+        const expectedSchoolDays = getExpectedSchoolDayKeys({
+          reopenDate: config.schoolReopenDate,
+          endDate,
+          holidayDates: Array.from(holidayKeys),
+          vacationDate: config.vacationDate,
+          nextTermBegins: config.nextTermBegins,
+        });
+
+        const expectedSchoolDaySet = new Set(expectedSchoolDays);
+        const totalSchoolDays = expectedSchoolDays.length;
 
         setTermTotalDays(totalSchoolDays);
 
-        // 4. Get All Attendance Records for this class
+        // 4. Get all attendance records for this class
         const attendanceRecordsForStats = attendanceRecords;
+
+        // 5. Build a lookup per student by expected school day date (dedupe by date)
+        const studentDatePresent = new Map<string, Set<string>>();
+
+        for (const record of attendanceRecordsForStats) {
+          if (record.isHoliday) continue;
+          if (!expectedSchoolDaySet.has(record.date)) continue;
+
+          const presentStudentIds = record.presentStudentIds || [];
+
+          for (const studentId of presentStudentIds) {
+            if (!studentDatePresent.has(studentId)) {
+              studentDatePresent.set(studentId, new Set());
+            }
+            studentDatePresent.get(studentId)?.add(record.date);
+          }
+        }
 
         // 5. Calculate Stats for each student
         const calculatedStats = students.map((student) => {
-          // Count how many records have this student's ID in 'presentStudentIds'
-          const presentCount = attendanceRecordsForStats.filter(
-            (r) => !r.isHoliday && r.presentStudentIds.includes(student.id),
-          ).length;
+          const presentCount = studentDatePresent.get(student.id)?.size || 0;
 
           const pct =
             totalSchoolDays === 0
@@ -185,7 +195,10 @@ const AttendanceStats = () => {
                 <tbody className="divide-y divide-slate-100">
                   {stats.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-8 text-center text-slate-400">
+                      <td
+                        colSpan={4}
+                        className="p-8 text-center text-slate-400"
+                      >
                         No students found in this class.
                       </td>
                     </tr>
@@ -246,7 +259,9 @@ const AttendanceStats = () => {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-center">
-                            <span className="text-slate-500">{s.totalDays}</span>
+                            <span className="text-slate-500">
+                              {s.totalDays}
+                            </span>
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">

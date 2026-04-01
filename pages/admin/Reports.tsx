@@ -105,48 +105,61 @@ const Reports = () => {
       const students = await db.getStudents(schoolId, selectedClass);
       const remarks = await db.getStudentRemarks(schoolId, selectedClass);
 
-      const data = await Promise.all(
-        students.map(async (student) => {
-          let totalScore = 0;
-          let subjectCount = 0;
-          const scores: any = {};
-
-          for (const subject of currentSubjects) {
-            const assessments = await db.getAssessments(
-              schoolId,
-              selectedClass,
-              subject,
-            );
-            const assessment = assessments.find(
-              (a) => a.studentId === student.id && a.term === dynamicTerm,
-            );
-
-            if (assessment) {
-              const currentTotal =
-                assessment.total ?? calculateTotalScore(assessment);
-              scores[subject] = currentTotal;
-              totalScore += currentTotal;
-              subjectCount++;
-            } else {
-              scores[subject] = "-";
-            }
-          }
-
-          const average =
-            subjectCount > 0 ? (totalScore / subjectCount).toFixed(1) : "0";
-          const studentRemark = remarks.find(
-            (r) => r.studentId === student.id && Number(r.term) === dynamicTerm,
-          );
-
-          return {
-            student,
-            scores,
-            totalScore,
-            average,
-            remark: studentRemark ? studentRemark.remark : "N/A",
-          };
-        }),
+      const assessmentsForClass = await db.getAssessmentsByClassAndTerm(
+        schoolId,
+        selectedClass,
+        dynamicTerm,
       );
+
+      const assessmentMap = new Map<string, Record<string, Assessment>>();
+      assessmentsForClass.forEach((assessment) => {
+        if (!assessment.studentId || !assessment.subject) return;
+
+        if (!assessmentMap.has(assessment.studentId)) {
+          assessmentMap.set(assessment.studentId, {});
+        }
+
+        const studentAssessments = assessmentMap.get(assessment.studentId);
+        if (studentAssessments) {
+          studentAssessments[assessment.subject] = assessment;
+        }
+      });
+
+      const data = students.map((student) => {
+        let totalScore = 0;
+        let subjectCount = 0;
+        const scores: Record<string, number | string> = {};
+
+        const studentAssessments = assessmentMap.get(student.id) || {};
+
+        for (const subject of currentSubjects) {
+          const assessment = studentAssessments[subject];
+
+          if (assessment) {
+            const currentTotal =
+              assessment.total ?? calculateTotalScore(assessment);
+            scores[subject] = currentTotal;
+            totalScore += currentTotal;
+            subjectCount++;
+          } else {
+            scores[subject] = "-";
+          }
+        }
+
+        const average =
+          subjectCount > 0 ? (totalScore / subjectCount).toFixed(1) : "0";
+        const studentRemark = remarks.find(
+          (r) => r.studentId === student.id && Number(r.term) === dynamicTerm,
+        );
+
+        return {
+          student,
+          scores,
+          totalScore,
+          average,
+          remark: studentRemark ? studentRemark.remark : "N/A",
+        };
+      });
 
       // Sort by total score
       data.sort((a, b) => b.totalScore - a.totalScore);
