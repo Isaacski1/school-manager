@@ -2128,7 +2128,11 @@ class FirestoreService {
         : null;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const endDate = vacation && vacation < today ? vacation : today;
+      // Use the configured vacation date as the term end when present so
+      // holidays set by admin between reopen and vacate are included in
+      // the total school days calculation. Fall back to today when no
+      // vacation date is configured.
+      const endDate = vacation ? vacation : today;
 
       if (!Number.isNaN(reopen.getTime())) {
         const current = new Date(reopen);
@@ -2373,7 +2377,9 @@ class FirestoreService {
             const data = docSnap.data() as TeacherAttendanceRecord;
             return { ...data, id: data.id || docSnap.id };
           })
-          .filter((record) => record.date >= startDate && record.date <= endDate),
+          .filter(
+            (record) => record.date >= startDate && record.date <= endDate,
+          ),
       );
     }
   }
