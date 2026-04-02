@@ -1193,21 +1193,30 @@ const ReportCard = () => {
           </select>
         </div>
 
-        <button
-          onClick={generateReport}
-          disabled={!selectedStudent || loading}
-          className="px-6 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] disabled:opacity-50"
-        >
-          {loading ? "Generating..." : "Generate Report"}
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            onClick={generateReport}
+            disabled={!selectedStudent || loading}
+            className="px-6 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] disabled:opacity-50"
+          >
+            {loading ? "Generating..." : "Generate Report"}
+          </button>
 
-        <button
-          onClick={handleBulkDownload}
-          disabled={!selectedClass || bulkDownloading}
-          className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 ml-4"
-        >
-          {bulkDownloading ? "Downloading..." : "Download All Report Cards"}
-        </button>
+          <button
+            onClick={handleBulkDownload}
+            disabled={!selectedClass || bulkDownloading}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+          >
+            {bulkDownloading ? "Downloading..." : "Download All Report Cards"}
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          To download all student report cards at once, select the class and
+          click <span className="font-semibold">Download All Report Cards</span>.
+          The system will generate one PDF per student and save them together in
+          a ZIP file.
+        </div>
       </div>
 
       {reportCardData && (
