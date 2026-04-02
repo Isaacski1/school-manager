@@ -3,11 +3,12 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   collection,
-  getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
   Timestamp,
+  where,
 } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useSchool } from "../context/SchoolContext";
@@ -57,7 +58,12 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const { user, logout } = useAuth();
   const { school } = useSchool();
-  const schoolId = school?.id || null;
+  const activeSchoolId =
+    school?.id ||
+    user?.schoolId ||
+    localStorage.getItem("activeSchoolId") ||
+    localStorage.getItem("lastSchoolId") ||
+    null;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const isBillingRoute = location.pathname.startsWith("/admin/billing");
@@ -191,26 +197,40 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   // Fetch Notifications for Admin / Super Admin
   useEffect(() => {
     if (isAdmin || isSuperAdmin) {
-      let intervalId: ReturnType<typeof setInterval> | null = null;
       notificationsPollRef.current = true;
-      const fetchNotifications = async () => {
-        try {
-          if (!schoolId && !isSuperAdmin) return;
-          console.info("[Notifications] fetch", {
-            isSuperAdmin,
-            schoolId: schoolId || null,
-            path: "admin_notifications",
-          });
+      if (!activeSchoolId && !isSuperAdmin) {
+        setNotifications([]);
+        setUnreadCount(0);
+        return;
+      }
+
+      console.info("[Notifications] subscribe", {
+        isSuperAdmin,
+        schoolId: activeSchoolId || null,
+        path: "admin_notifications",
+      });
+
+      const notificationsQuery = isSuperAdmin
+        ? query(
+            collection(firestore, "admin_notifications"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          )
+        : query(
+            collection(firestore, "admin_notifications"),
+            where("schoolId", "==", activeSchoolId),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          );
+
+      const unsubscribe = onSnapshot(
+        notificationsQuery,
+        (snap) => {
+          if (!notificationsPollRef.current) return;
 
           if (isSuperAdmin) {
             const dismissedIds = new Set(loadSuperAdminDismissed());
             const readIds = new Set(loadSuperAdminRead());
-            const superAdminQuery = query(
-              collection(firestore, "admin_notifications"),
-              orderBy("createdAt", "desc"),
-              limit(20),
-            );
-            const snap = await getDocs(superAdminQuery);
             const notes: SystemNotification[] = snap.docs
               .filter((doc) => !dismissedIds.has(doc.id))
               .map((doc) => {
@@ -229,33 +249,40 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             return;
           }
 
-          const notes = await db.getSystemNotifications(schoolId);
+          const notes: SystemNotification[] = snap.docs.map((docSnap) => {
+            const notice = docSnap.data() as Partial<SystemNotification> & {
+              createdAt?: unknown;
+            };
+            return {
+              id: notice.id || docSnap.id,
+              schoolId: notice.schoolId || activeSchoolId || "",
+              message: notice.message || "System notification",
+              createdAt: toTimestamp(notice.createdAt),
+              isRead: Boolean(notice.isRead),
+              type: notice.type || "system",
+            };
+          });
           setNotifications(notes);
           setUnreadCount(notes.filter((n) => !n.isRead).length);
-        } catch (e: any) {
-          console.error("Failed to fetch notifications", e);
+        },
+        (e: any) => {
+          console.error("Failed to subscribe to notifications", e);
           const message = String(e?.message || "").toLowerCase();
           if (
             message.includes("permission") ||
             message.includes("insufficient")
           ) {
             notificationsPollRef.current = false;
-            if (intervalId) clearInterval(intervalId);
           }
-        }
-      };
-      fetchNotifications();
+        },
+      );
 
-      // Poll every 30 seconds for simplicity in this MVP
-      intervalId = setInterval(() => {
-        if (!notificationsPollRef.current) return;
-        fetchNotifications();
-      }, 30000);
       return () => {
-        if (intervalId) clearInterval(intervalId);
+        notificationsPollRef.current = false;
+        unsubscribe();
       };
     }
-  }, [isAdmin, isSuperAdmin, schoolId]);
+  }, [isAdmin, isSuperAdmin, activeSchoolId]);
 
   const handleMarkRead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
