@@ -20,6 +20,7 @@
     "deploy:staging:firestore": "firebase deploy --project noble-care-management-system --only firestore"
   },
   "dependencies": {
+    "@types/jszip": "^3.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -27,6 +28,7 @@
     "firebase-admin": "^12.0.0",
     "framer-motion": "^12.0.0",
     "html2pdf.js": "^0.12.1",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

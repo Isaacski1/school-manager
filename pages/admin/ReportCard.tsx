@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { Student, SchoolConfig, AdminRemark } from "../../types";
-import { CLASSES_LIST } from "../../constants";
+import { CLASSES_LIST, calculateGrade } from "../../constants";
 import ReportCardLayout from "../../components/ReportCardLayout";
 import { Save, Edit2, X, MessageSquare } from "lucide-react";
 import { showToast } from "../../services/toast";
@@ -13,6 +17,7 @@ import {
   collectHolidayDateKeys,
   getExpectedSchoolDayKeys,
 } from "../../services/schoolCalendar";
+import JSZip from "jszip";
 
 // No global placeholder logo for report cards (use school-specific logo only)
 const DEFAULT_SCHOOL_LOGO = "";
@@ -59,11 +64,67 @@ const parseTermNumber = (termString: string): 1 | 2 | 3 => {
 };
 
 const PASS_THRESHOLD = 500;
+const REPORT_CARD_PDF_WIDTH_PX = 794;
+const REPORT_CARD_PDF_HEIGHT_PX = 1123;
+const BULK_EXPORT_SCALE = 1.35;
+const BULK_EXPORT_QUALITY = 0.72;
 
 const normalizeSubjectName = (value: string | null | undefined) =>
   String(value || "")
     .trim()
     .toLowerCase();
+
+const waitForNextPaint = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+
+const generateSinglePagePdfBlob = async (
+  reportCardElement: HTMLElement,
+): Promise<Blob> => {
+  const canvas = await html2canvas(reportCardElement, {
+    scale: BULK_EXPORT_SCALE,
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: "#ffffff",
+    logging: false,
+    scrollX: 0,
+    scrollY: 0,
+    windowWidth: reportCardElement.scrollWidth,
+    windowHeight: reportCardElement.scrollHeight,
+  });
+
+  const imgData = canvas.toDataURL("image/jpeg", BULK_EXPORT_QUALITY);
+  const pdf = new jsPDF({
+    orientation: "portrait",
+    unit: "px",
+    format: [REPORT_CARD_PDF_WIDTH_PX, REPORT_CARD_PDF_HEIGHT_PX],
+    compress: true,
+  });
+
+  const scale = Math.min(
+    REPORT_CARD_PDF_WIDTH_PX / canvas.width,
+    REPORT_CARD_PDF_HEIGHT_PX / canvas.height,
+  );
+  const imgWidth = canvas.width * scale;
+  const imgHeight = canvas.height * scale;
+  const xOffset = Math.max(0, (REPORT_CARD_PDF_WIDTH_PX - imgWidth) / 2);
+
+  pdf.addImage(
+    imgData,
+    "JPEG",
+    xOffset,
+    0,
+    imgWidth,
+    imgHeight,
+    undefined,
+    "MEDIUM",
+  );
+
+  return pdf.output("blob");
+};
 
 const ReportCard = () => {
   const { school } = useSchool();
@@ -80,6 +141,9 @@ const ReportCard = () => {
   const [adminRemark, setAdminRemark] = useState("");
   const [editingAdminRemark, setEditingAdminRemark] = useState(false);
   const [savingRemark, setSavingRemark] = useState(false);
+
+  // Bulk download state
+  const [bulkDownloading, setBulkDownloading] = useState(false);
 
   const handleClassChange = async (classId: string) => {
     if (!schoolId) {
@@ -185,18 +249,48 @@ const ReportCard = () => {
 
       const adminRemarkData = await db.getAdminRemark(schoolId, adminRemarkId);
 
-      const attendance = await db.getClassAttendance(schoolId, selectedClass);
-      const holidayKeys = collectHolidayDateKeys([
-        ...attendance.filter((r) => r.isHoliday).map((r) => r.date),
-        ...(schoolConfig.holidayDates || []),
-      ]);
-      const nonHolidayAttendance = attendance.filter((r) => !r.isHoliday);
+      let attendance: any[] = [];
+      let holidayKeys = collectHolidayDateKeys(schoolConfig.holidayDates || []);
+      let nonHolidayAttendance: any[] = [];
+      try {
+        attendance = await db.getClassAttendance(schoolId, selectedClass);
+        holidayKeys = collectHolidayDateKeys([
+          ...attendance.filter((r) => r.isHoliday).map((r) => r.date),
+          ...(schoolConfig.holidayDates || []),
+        ]);
+        nonHolidayAttendance = attendance.filter((r) => !r.isHoliday);
+      } catch (err) {
+        console.warn(
+          "Attendance data not available (missing attendance feature), using calendar defaults:",
+          err,
+        );
+      }
 
-      const skills = await db
-        .getStudentSkills(schoolId, selectedClass)
-        .then((all) => all.find((s) => s.studentId === selectedStudent));
+      let skills: any = undefined;
+      try {
+        skills = await db
+          .getStudentSkills(schoolId, selectedClass)
+          .then((all) => all.find((s) => s.studentId === selectedStudent));
+      } catch (err) {
+        console.warn(
+          "Student skills not available (missing basic_exam_reports), continuing without skills:",
+          err,
+        );
+      }
 
-      const users = await db.getUsers(schoolId);
+      let classTeacher;
+      try {
+        const users = await db.getUsers(schoolId);
+        classTeacher = users.find((u) =>
+          u.assignedClassIds?.includes(selectedClass),
+        );
+      } catch (err) {
+        console.warn(
+          "Teacher data not available (missing teacher_management), continuing without teacher info:",
+          err,
+        );
+        classTeacher = undefined;
+      }
 
       // total school days (weekdays only, from restart to vacation/today), minus holidays.
       const today = new Date();
@@ -233,10 +327,6 @@ const ReportCard = () => {
         totalSchoolDays > 0
           ? Math.round((presentDays / totalSchoolDays) * 100)
           : 0;
-
-      const classTeacher = users.find((u) =>
-        u.assignedClassIds?.includes(selectedClass),
-      );
 
       const calculateOverallGrade = (avg: number) => {
         if (avg >= 80) return "A";
@@ -434,6 +524,570 @@ const ReportCard = () => {
     }
   };
 
+  const waitForImages = async (container: HTMLElement) => {
+    const images = Array.from(
+      container.querySelectorAll("img"),
+    ) as HTMLImageElement[];
+
+    await Promise.all(
+      images.map((img) => {
+        img.setAttribute("crossorigin", "anonymous");
+        img.setAttribute("referrerpolicy", "no-referrer");
+
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+
+        return new Promise<void>((resolve) => {
+          const done = () => resolve();
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+        });
+      }),
+    );
+  };
+
+  const handleBulkDownload = async () => {
+    if (!schoolId || !selectedClass) return;
+
+    console.log("Starting bulk download for class:", selectedClass);
+    setBulkDownloading(true);
+    try {
+      const studentsInClass = await db.getStudents(schoolId, selectedClass);
+      console.log("Found students:", studentsInClass.length);
+      if (studentsInClass.length === 0) {
+        showToast("No students found in this class.", { type: "error" });
+        return;
+      }
+
+      const schoolConfig: SchoolConfig = await db.getSchoolConfig(schoolId);
+      const termNumber = parseTermNumber(schoolConfig.currentTerm);
+      const currentClassSubjects = await db.getSubjects(
+        schoolId,
+        selectedClass,
+      );
+      const normalizedCurrentSubjects = new Set(
+        currentClassSubjects.map((subject) => normalizeSubjectName(subject)),
+      );
+      const shouldFilterToCurrentSubjects = normalizedCurrentSubjects.size > 0;
+
+      // SUPER ADMIN logo first (from settings)
+      const configLogo =
+        (schoolConfig as any)?.logoUrl?.trim?.() ||
+        (schoolConfig as any)?.logo?.trim?.() ||
+        (schoolConfig as any)?.schoolLogo?.trim?.() ||
+        "";
+
+      // fallback: sidebar logo
+      const sidebarLogo =
+        (school as any)?.logoUrl?.trim?.() ||
+        (school as any)?.logo?.trim?.() ||
+        "";
+
+      // final (prefer config)
+      const finalLogo = configLogo || sidebarLogo || "";
+
+      // Convert to base64 for PDF (only if remote URL)
+      let printableLogo = finalLogo;
+      if (finalLogo && finalLogo.startsWith("http")) {
+        try {
+          printableLogo = await urlToBase64(finalLogo);
+        } catch (e) {
+          console.warn("Base64 conversion failed, using original URL:", e);
+          printableLogo = finalLogo;
+        }
+      }
+
+      const academicYear = schoolConfig.academicYear;
+      let classTeacher: any = undefined;
+      try {
+        const users = await db.getUsers(schoolId);
+        classTeacher = users.find((u) =>
+          u.assignedClassIds?.includes(selectedClass),
+        );
+      } catch (err) {
+        console.warn(
+          "Teacher data not available (missing teacher_management), continuing without teacher info:",
+          err,
+        );
+      }
+
+      let allRemarks: any[] = [];
+      try {
+        allRemarks = await db.getStudentRemarks(schoolId, selectedClass);
+      } catch (err) {
+        console.warn(
+          "Student remarks not available (missing basic_exam_reports), continuing without remarks:",
+          err,
+        );
+      }
+
+      let allSkills: any[] = [];
+      try {
+        allSkills = await db.getStudentSkills(schoolId, selectedClass);
+      } catch (err) {
+        console.warn(
+          "Student skills not available (missing basic_exam_reports), continuing without skills:",
+          err,
+        );
+      }
+
+      // Fetch all assessments for the class and term
+      const allStudentsAssessmentsForClassRaw = await db
+        .getAllAssessments(schoolId)
+        .then((all) =>
+          all.filter(
+            (a) =>
+              a.classId === selectedClass &&
+              a.term === termNumber &&
+              String(a.academicYear || "") ===
+                String(schoolConfig.academicYear),
+          ),
+        );
+
+      const allStudentsAssessmentsForClass = Object.values(
+        allStudentsAssessmentsForClassRaw.reduce(
+          (acc, assessment) => {
+            const subjectKey = assessment.subject || "";
+            if (!subjectKey) return acc;
+            const normalizedSubjectKey = normalizeSubjectName(subjectKey);
+            if (
+              shouldFilterToCurrentSubjects &&
+              !normalizedCurrentSubjects.has(normalizedSubjectKey)
+            ) {
+              return acc;
+            }
+            const computedTotal =
+              Number(assessment.testScore || 0) +
+              Number(assessment.homeworkScore || 0) +
+              Number(assessment.projectScore || 0) +
+              Number(assessment.examScore || 0);
+            const rawTotal = (assessment as any).total;
+            const normalizedTotal =
+              typeof rawTotal === "number"
+                ? rawTotal
+                : Number(rawTotal ?? computedTotal) || computedTotal;
+            const key = `${assessment.studentId}_${normalizedSubjectKey}`;
+            if (!acc[key]) {
+              acc[key] = {
+                studentId: assessment.studentId,
+                subject: normalizedSubjectKey,
+                testScore: Number(assessment.testScore || 0),
+                homeworkScore: Number(assessment.homeworkScore || 0),
+                projectScore: Number(assessment.projectScore || 0),
+                examScore: Number(assessment.examScore || 0),
+                total: normalizedTotal,
+                grade: calculateGrade(normalizedTotal).grade,
+                position: 0, // Will be calculated later
+              };
+            }
+            return acc;
+          },
+          {} as Record<string, any>,
+        ),
+      );
+
+      // Calculate positions
+      const subjectGroups = allStudentsAssessmentsForClass.reduce(
+        (acc, assessment) => {
+          if (!acc[assessment.subject]) acc[assessment.subject] = [];
+          acc[assessment.subject].push(assessment);
+          return acc;
+        },
+        {} as Record<string, any[]>,
+      );
+
+      Object.values(subjectGroups).forEach((assessments: any[]) => {
+        (assessments as any[]).sort((a, b) => b.total - a.total);
+        (assessments as any[]).forEach((assessment, index) => {
+          assessment.position = index + 1;
+        });
+      });
+
+      // Create ZIP file
+      const zip = new JSZip();
+
+      // Generate individual PDFs for each student
+      for (let i = 0; i < studentsInClass.length; i++) {
+        const student = studentsInClass[i];
+        console.log(
+          `Generating PDF ${i + 1}/${studentsInClass.length} for student: ${student.name}`,
+        );
+
+        const studentAssessments = allStudentsAssessmentsForClass.filter(
+          (a) => a.studentId === student.id,
+        );
+
+        const totalScoreForStudent = studentAssessments.reduce(
+          (sum, a) => sum + (a.total || 0),
+          0,
+        );
+        const averageScore =
+          studentAssessments.length > 0
+            ? (totalScoreForStudent / studentAssessments.length).toFixed(1)
+            : "0.0";
+
+        const studentRemark = allRemarks.find(
+          (r) => r.studentId === student.id && Number(r.term) === termNumber,
+        );
+
+        const adminRemarkId = `${student.id}_term${termNumber}_${academicYear}`;
+        let adminRemarkData: any = undefined;
+        try {
+          adminRemarkData = await db.getAdminRemark(schoolId, adminRemarkId);
+        } catch (err) {
+          console.warn(
+            "Admin remark not available (missing basic_exam_reports), continuing without admin remark:",
+            err,
+          );
+          adminRemarkData = undefined;
+        }
+
+        const skills = allSkills.find((s) => s.studentId === student.id);
+
+        // Calculate attendance
+        let attendance: any[] = [];
+        let holidayKeys = new Set<string>();
+        let nonHolidayAttendance: any[] = [];
+
+        try {
+          attendance = await db.getClassAttendance(schoolId, selectedClass);
+          holidayKeys = collectHolidayDateKeys([
+            ...attendance.filter((r) => r.isHoliday).map((r) => r.date),
+            ...(schoolConfig.holidayDates || []),
+          ]);
+          nonHolidayAttendance = attendance.filter((r) => !r.isHoliday);
+        } catch (error) {
+          console.warn(
+            "Attendance feature not available, using default values:",
+            error,
+          );
+          // Use config holidays only
+          holidayKeys = collectHolidayDateKeys(schoolConfig.holidayDates || []);
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const vacationDate = schoolConfig.vacationDate
+          ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
+          : null;
+        const endDate =
+          vacationDate && vacationDate < today ? vacationDate : today;
+
+        const expectedSchoolDays = getExpectedSchoolDayKeys({
+          reopenDate: schoolConfig.schoolReopenDate,
+          endDate,
+          holidayDates: Array.from(holidayKeys),
+          vacationDate: schoolConfig.vacationDate,
+          nextTermBegins: schoolConfig.nextTermBegins,
+        });
+
+        const expectedSchoolDaySet = new Set(expectedSchoolDays);
+        const totalSchoolDays = expectedSchoolDays.length;
+
+        const studentPresentDates = new Set<string>();
+        if (nonHolidayAttendance.length > 0) {
+          for (const record of nonHolidayAttendance) {
+            if (!expectedSchoolDaySet.has(record.date)) continue;
+            if (record.presentStudentIds.includes(student.id)) {
+              studentPresentDates.add(record.date);
+            }
+          }
+        }
+        const presentDays = studentPresentDates.size;
+        const absentDays = Math.max(0, totalSchoolDays - presentDays);
+        const attendancePercentage =
+          totalSchoolDays > 0
+            ? Math.round((presentDays / totalSchoolDays) * 100)
+            : 0;
+
+        // Calculate rank and promotion status
+        const allStudentsTotalScores = studentsInClass.map((s) => {
+          const assessments = allStudentsAssessmentsForClass.filter(
+            (a) => a.studentId === s.id,
+          );
+          const totalScore = assessments.reduce(
+            (acc, a) => acc + (a.total || 0),
+            0,
+          );
+          return { studentId: s.id, totalScore };
+        });
+
+        allStudentsTotalScores.sort((a, b) => {
+          if (b.totalScore !== a.totalScore) {
+            return b.totalScore - a.totalScore;
+          }
+          return a.studentId.localeCompare(b.studentId);
+        });
+
+        const rank =
+          allStudentsTotalScores.findIndex((s) => s.studentId === student.id) +
+          1;
+
+        const currentClassIndex = CLASSES_LIST.findIndex(
+          (c) => c.id === student?.classId,
+        );
+        const nextClassName =
+          currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
+            ? CLASSES_LIST[currentClassIndex + 1].name
+            : "";
+
+        const isPromotionalTerm = schoolConfig.isPromotionalTerm ?? true;
+        const promotionStatus = isPromotionalTerm
+          ? totalScoreForStudent >= PASS_THRESHOLD
+            ? nextClassName
+              ? `Promoted to ${nextClassName}`
+              : "Promoted"
+            : "Fail"
+          : "N/A";
+
+        // Build data in the correct format for ReportCardLayout
+        const data = {
+          schoolInfo: {
+            name:
+              school?.name || schoolConfig.schoolName || "School Manager GH",
+            logoUrl: printableLogo,
+            address: school?.address || schoolConfig.address || "",
+            phone: school?.phone || schoolConfig.phone || "",
+            email: schoolConfig.email || "",
+            academicYear: schoolConfig.academicYear || "",
+            term: schoolConfig.currentTerm || "",
+          },
+          studentInfo: {
+            name: student?.name || "",
+            gender: student?.gender || "",
+            dob: student?.dob || "",
+            class:
+              CLASSES_LIST.find((c) => c.id === student?.classId)?.name || "",
+            classTeacher: classTeacher?.fullName || "N/A",
+          },
+          attendance: {
+            totalDays: totalSchoolDays || 0,
+            presentDays: presentDays || 0,
+            absentDays: absentDays || 0,
+            attendancePercentage: attendancePercentage || 0,
+          },
+          performance: studentAssessments || [],
+          positionRule: schoolConfig.positionRule || "subject",
+          gradingScale: schoolConfig.gradingScale,
+          summary: {
+            totalScore: totalScoreForStudent || 0,
+            averageScore: averageScore,
+            overallGrade: calculateGrade(Number(averageScore)).grade,
+            classPosition: `${rank}${["st", "nd", "rd"][rank - 1] || "th"}`,
+            totalStudents: studentsInClass.length || 0,
+          },
+          skills: {
+            punctuality: skills?.punctuality || "N/A",
+            neatness: skills?.neatness || "N/A",
+            conduct: skills?.conduct || "N/A",
+            attitudeToWork: skills?.attitudeToWork || "N/A",
+            classParticipation: skills?.classParticipation || "N/A",
+            homeworkCompletion: skills?.homeworkCompletion || "N/A",
+          },
+          remarks: {
+            teacher: studentRemark?.remark || "N/A",
+            classTeacher: studentRemark?.remark || "N/A",
+            headTeacher:
+              adminRemarkData?.remark ||
+              schoolConfig.headTeacherRemark ||
+              "An outstanding performance. The school is proud of you.",
+          },
+          promotion: {
+            status: promotionStatus,
+          },
+          termDates: {
+            endDate: schoolConfig.termEndDate || "",
+            reopeningDate: schoolConfig.nextTermBegins || "",
+            vacationDate: schoolConfig.vacationDate || "",
+          },
+          allStudentsAssessments: allStudentsAssessmentsForClass,
+        };
+
+        // Create a temporary container for this student's report card
+        const studentContainer = document.createElement("div");
+        studentContainer.style.position = "fixed";
+        studentContainer.style.left = "0";
+        studentContainer.style.top = "0";
+        studentContainer.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
+        studentContainer.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
+        studentContainer.style.background = "white";
+        studentContainer.style.padding = "0";
+        studentContainer.style.boxSizing = "border-box";
+        studentContainer.style.visibility = "visible";
+        studentContainer.style.pointerEvents = "none";
+        studentContainer.style.zIndex = "2147483647";
+        studentContainer.style.overflow = "hidden";
+        document.body.appendChild(studentContainer);
+
+        // Render the report card
+        const root = createRoot(studentContainer);
+
+        // Add error boundary by wrapping in try-catch during render
+        try {
+          console.log(`Rendering PDF data for student: ${student.name}`, {
+            hasSchoolInfo: !!data.schoolInfo,
+            hasStudentInfo: !!data.studentInfo,
+            hasAttendance: !!data.attendance,
+            hasPerformance: !!data.performance,
+          });
+
+          flushSync(() => {
+            root.render(React.createElement(ReportCardLayout, { data }));
+          });
+          await waitForNextPaint();
+
+          // Wait for rendering with increased timeout and check for content
+          let attempts = 0;
+          const maxAttempts = 10;
+          while (attempts < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (
+              studentContainer.children.length > 0 &&
+              studentContainer.textContent?.trim()
+            ) {
+              console.log(
+                `Container has content after ${attempts + 1} seconds for ${student.name}`,
+              );
+              break;
+            }
+            attempts++;
+          }
+
+          if (attempts >= maxAttempts) {
+            console.warn(
+              `Container still empty after ${maxAttempts} seconds for ${student.name}`,
+            );
+            console.log(
+              `Container HTML:`,
+              studentContainer.innerHTML.substring(0, 500),
+            );
+          }
+
+          const reportCardElement = studentContainer.querySelector(
+            "#report-card",
+          ) as HTMLElement | null;
+
+          if (!reportCardElement) {
+            throw new Error(
+              `Bulk export could not find #report-card for ${student.name}`,
+            );
+          }
+
+          reportCardElement.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
+          reportCardElement.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
+          reportCardElement.style.margin = "0";
+          reportCardElement.style.borderRadius = "0";
+          reportCardElement.style.boxShadow = "none";
+
+          // Wait for images to load
+          try {
+            await waitForImages(reportCardElement);
+            console.log(`Images loaded for ${student.name}`);
+          } catch (imgError) {
+            console.warn(
+              `Error waiting for images for ${student.name}:`,
+              imgError,
+            );
+          }
+        } catch (renderError) {
+          console.error(
+            `Error rendering PDF for student ${student.name}:`,
+            renderError,
+          );
+          root.unmount();
+          document.body.removeChild(studentContainer);
+          // Continue with next student even if this one fails
+          continue;
+        }
+
+        // Generate PDF for this student
+        try {
+          const reportCardElement = studentContainer.querySelector(
+            "#report-card",
+          ) as HTMLElement | null;
+
+          if (!reportCardElement) {
+            throw new Error(
+              `Bulk export could not find rendered report card for ${student.name}`,
+            );
+          }
+
+          console.log(
+            `Starting PDF generation for ${student.name}, container children: ${studentContainer.children.length}, text length: ${studentContainer.textContent?.length || 0}`,
+          );
+
+          let pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
+
+          console.log(
+            `PDF generated successfully for ${student.name}`,
+            `(${(pdfBlob.size / 1024 / 1024).toFixed(2)} MB)`,
+            `Blob type: ${pdfBlob.type}`,
+          );
+
+          if (pdfBlob.size < 1024) {
+            console.warn(
+              `PDF blob for ${student.name} is very small (${pdfBlob.size} bytes) - retrying export`,
+            );
+            pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
+          }
+
+          // Add PDF to ZIP
+          const sanitizedName = student.name
+            .replace(/[^a-z0-9]/gi, "_")
+            .toLowerCase();
+          zip.file(`${sanitizedName}_${i + 1}.pdf`, pdfBlob);
+        } catch (pdfError) {
+          console.error(
+            `Failed to generate PDF for student ${student.name}:`,
+            pdfError,
+          );
+          // Continue with next student even if PDF generation fails
+        } finally {
+          // Clean up
+          try {
+            root.unmount();
+          } catch (e) {
+            console.warn("Error unmounting root:", e);
+          }
+          try {
+            document.body.removeChild(studentContainer);
+          } catch (e) {
+            console.warn("Error removing container:", e);
+          }
+        }
+      }
+
+      // Generate ZIP file
+      console.log("Creating ZIP file...");
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+
+      // Create download link
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const zipLink = document.createElement("a");
+      zipLink.href = zipUrl;
+      zipLink.download = `${selectedClass}_ReportCards_${schoolConfig.academicYear}_Term${termNumber}.zip`;
+      document.body.appendChild(zipLink);
+      zipLink.click();
+      document.body.removeChild(zipLink);
+      URL.revokeObjectURL(zipUrl);
+
+      console.log("ZIP file downloaded successfully");
+      showToast(
+        `Downloaded ${studentsInClass.length} report cards as ZIP file successfully!`,
+        {
+          type: "success",
+        },
+      );
+    } catch (error: any) {
+      console.error("Error generating bulk report cards:", error);
+      showToast(
+        `Failed to generate report cards: ${error.message || "An unknown error occurred."}`,
+        { type: "error" },
+      );
+    } finally {
+      setBulkDownloading(false);
+    }
+  };
+
   const handleSaveAdminRemark = async () => {
     if (!selectedStudent || !adminRemark.trim() || !schoolId) return;
 
@@ -545,6 +1199,14 @@ const ReportCard = () => {
           className="px-6 py-2 bg-[#1160A8] text-white rounded-lg hover:bg-[#0B4A82] disabled:opacity-50"
         >
           {loading ? "Generating..." : "Generate Report"}
+        </button>
+
+        <button
+          onClick={handleBulkDownload}
+          disabled={!selectedClass || bulkDownloading}
+          className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 ml-4"
+        >
+          {bulkDownloading ? "Downloading..." : "Download All Report Cards"}
         </button>
       </div>
 

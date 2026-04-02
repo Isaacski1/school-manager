@@ -62,6 +62,21 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     termDates,
   } = data;
 
+  // Defensive check for required data
+  if (!schoolInfo || !studentInfo || !attendance || !performance) {
+    console.warn("Missing required report card data:", {
+      schoolInfo,
+      studentInfo,
+      attendance,
+      performance,
+    });
+    return (
+      <div className="p-8 text-center text-red-600">
+        <p>Error: Unable to generate report card. Missing required data.</p>
+      </div>
+    );
+  }
+
   const waitForImages = async (container: HTMLElement) => {
     const images = Array.from(
       container.querySelectorAll("img"),
