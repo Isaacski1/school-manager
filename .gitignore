@@ -27,3 +27,6 @@ dist-ssr
 
 # PWA
 public/sw.js
+
+# Firebase
+.firebase/
