@@ -4563,6 +4563,35 @@ app.get(
   },
 );
 
+const normalizeSpecialPricingRequest = (value) => {
+  if (!value || typeof value !== "object") return null;
+
+  const enabled = Boolean(value.enabled);
+  const rawAmount = Number(value.amount);
+  const amount =
+    Number.isFinite(rawAmount) && rawAmount > 0
+      ? Number(rawAmount.toFixed(2))
+      : null;
+  const cycle = String(value.cycle || "")
+    .trim()
+    .toLowerCase();
+  const note = String(value.note || "").trim().slice(0, 240);
+  const validCycle = ["monthly", "termly", "yearly"].includes(cycle)
+    ? cycle
+    : null;
+
+  if (!enabled && amount === null && !validCycle && !note) {
+    return null;
+  }
+
+  return {
+    enabled,
+    amount,
+    cycle: validCycle,
+    note,
+  };
+};
+
 /**
  * Create School
  * POST /api/superadmin/create-school
@@ -4589,6 +4618,7 @@ app.post(
         planId,
         featurePlan,
         billingStartType,
+        specialPricing,
       } = req.body;
 
       if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -4605,6 +4635,21 @@ app.post(
       const validFeaturePlans = ["starter", "standard"];
       if (featurePlan && !validFeaturePlans.includes(featurePlan)) {
         return res.status(400).json({ error: "Invalid feature plan type" });
+      }
+
+      const normalizedSpecialPricing =
+        normalizeSpecialPricingRequest(specialPricing);
+      if (normalizedSpecialPricing?.enabled) {
+        if (normalizedSpecialPricing.amount === null) {
+          return res.status(400).json({
+            error: "Special pricing amount must be greater than 0",
+          });
+        }
+        if (!normalizedSpecialPricing.cycle) {
+          return res.status(400).json({
+            error: "Special pricing cycle must be monthly, termly, or yearly",
+          });
+        }
       }
 
       // Generate unique school code
@@ -4653,6 +4698,20 @@ app.post(
         billing: {
           startType:
             billingStartType === "mid_term" ? "mid_term" : "term_start",
+          ...(normalizedSpecialPricing
+            ? {
+                specialPricing: {
+                  enabled: normalizedSpecialPricing.enabled,
+                  amount: normalizedSpecialPricing.amount,
+                  cycle: normalizedSpecialPricing.cycle,
+                  note: normalizedSpecialPricing.note,
+                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                  createdBy: req.user.uid,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  updatedBy: req.user.uid,
+                },
+              }
+            : {}),
         },
         subscription: planId ? { planId: String(planId) } : {},
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -4788,6 +4847,14 @@ app.post(
         meta: {
           name: name.trim(),
           plan,
+          ...(normalizedSpecialPricing?.enabled
+            ? {
+                specialPricing: {
+                  amount: normalizedSpecialPricing.amount,
+                  cycle: normalizedSpecialPricing.cycle,
+                },
+              }
+            : {}),
           ...(clonedFrom ? { clonedFrom } : {}),
         },
       });
@@ -7322,6 +7389,152 @@ app.post(
 /**
  * Health check endpoint
  */
+/**
+ * Public Marketing Endpoints
+ */
+app.post("/api/public/book-demo", async (req, res) => {
+  try {
+    const {
+      fullName,
+      schoolName,
+      role,
+      phone,
+      email,
+      studentCount,
+      schoolType,
+      preferredDate,
+      preferredTime,
+      message,
+      source,
+    } = req.body;
+
+    const demoDoc = {
+      fullName: String(fullName || "").trim(),
+      schoolName: String(schoolName || "").trim(),
+      role: String(role || "").trim(),
+      phone: String(phone || "").trim(),
+      email: String(email || "").trim().toLowerCase(),
+      studentCount: Number(studentCount) || 0,
+      schoolType: String(schoolType || "").trim(),
+      preferredDate: String(preferredDate || "").trim(),
+      preferredTime: String(preferredTime || "").trim(),
+      message: String(message || "").trim(),
+      source: String(source || "").trim(),
+      status: "new",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await admin.firestore().collection("demo_requests").add(demoDoc);
+
+    res.json({ success: true, message: "Demo request received" });
+  } catch (error) {
+    console.error("Error booking demo:", error);
+    res.status(500).json({ error: error.message || "Failed to book demo" });
+  }
+});
+
+app.post("/api/public/start-trial", async (req, res) => {
+  try {
+    const {
+      schoolName,
+      schoolPhone,
+      schoolEmail,
+      address,
+      schoolType,
+      studentEstimate,
+      adminFullName,
+      adminEmail,
+      password,
+      academicYear,
+      currentTerm,
+      onboardingTemplate,
+    } = req.body;
+
+    const safeEmail = String(adminEmail || "").trim().toLowerCase();
+    if (!safeEmail) {
+      return res.status(400).json({ error: "Admin email is required" });
+    }
+
+    try {
+      await admin.auth().getUserByEmail(safeEmail);
+      return res.status(400).json({ error: "A user with this email already exists" });
+    } catch (error) {
+      if (error.code !== "auth/user-not-found") {
+        throw error;
+      }
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long" });
+    }
+
+    const schoolRef = admin.firestore().collection("schools").doc();
+    const schoolId = schoolRef.id;
+
+    const schoolDoc = {
+      name: String(schoolName || "").trim(),
+      phone: String(schoolPhone || "").trim(),
+      email: String(schoolEmail || "").trim().toLowerCase(),
+      address: String(address || "").trim(),
+      schoolType: String(schoolType || "").trim(),
+      studentsCount: 0,
+      limits: { maxStudents: Number(studentEstimate) || 100 },
+      status: "trial_active",
+      plan: "trial",
+      onboardingTemplate: String(onboardingTemplate || "default"),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const settingsDoc = {
+      academicYear: String(academicYear || "").trim(),
+      currentTerm: String(currentTerm || "").trim(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const userRecord = await admin.auth().createUser({
+      email: safeEmail,
+      password: password,
+      displayName: String(adminFullName || "").trim(),
+    });
+
+    const userDoc = {
+      fullName: String(adminFullName || "").trim(),
+      email: safeEmail,
+      role: "school_admin",
+      schoolId: schoolId,
+      status: "active",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const batch = admin.firestore().batch();
+    batch.set(schoolRef, schoolDoc);
+    batch.set(admin.firestore().collection("settings").doc(schoolId), settingsDoc);
+    batch.set(admin.firestore().collection("users").doc(userRecord.uid), userDoc);
+
+    const onboardingRef = admin.firestore().collection("onboarding_sessions").doc();
+    batch.set(onboardingRef, {
+      schoolId,
+      adminUid: userRecord.uid,
+      source: "start_free_trial",
+      step: "completed",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+
+    res.json({
+      success: true,
+      schoolId: schoolId,
+      adminUid: userRecord.uid,
+      message: "School trial started successfully"
+    });
+  } catch (error) {
+    console.error("Error starting trial:", error);
+    res.status(500).json({ error: error.message || "Failed to start school setup" });
+  }
+});
+
 app.get("/", (req, res) => {
   res.send("School Manager GH Backend is running ✅");
 });

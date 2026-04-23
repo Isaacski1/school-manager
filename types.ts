@@ -46,6 +46,17 @@ export interface School {
   };
   billing?: {
     startType?: "term_start" | "mid_term";
+    status?: string;
+    specialPricing?: {
+      enabled?: boolean;
+      amount?: number | null;
+      cycle?: "monthly" | "termly" | "yearly" | null;
+      note?: string;
+      createdAt?: Date | number | null;
+      createdBy?: string | null;
+      updatedAt?: Date | number | null;
+      updatedBy?: string | null;
+    };
   };
   limits?: {
     maxStudents?: number;

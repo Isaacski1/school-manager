@@ -648,6 +648,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                       label="Assessment"
                     />
                   )}
+                  {hasFeature("basic_exam_reports") && (
+                    <NavItem
+                      href="/teacher/student-performance"
+                      icon={FileText}
+                      label="Student Performance"
+                    />
+                  )}
                 </>
               )}
             </>

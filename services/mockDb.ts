@@ -1065,9 +1065,19 @@ class FirestoreService {
   }
 
   async updateSchoolConfig(config: SchoolConfig): Promise<void> {
-    await this.requireFeature(config.schoolId, "academic_year");
-    const docId = this.requireSchoolId(config.schoolId, "updateSchoolConfig");
-    await setDoc(doc(firestore, "settings", docId), config);
+    const { schoolId, ...data } = config;
+    await this.requireFeature(schoolId, "academic_year");
+    // Update private settings
+    await setDoc(doc(firestore, "settings", schoolId), config);
+    
+    // Also sync logo and name to the public 'schools' profile for the marketing site
+    if (data.logoUrl || data.schoolName) {
+      await setDoc(doc(firestore, "schools", schoolId), {
+        ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
+        ...(data.schoolName ? { name: data.schoolName } : {}),
+        updatedAt: Date.now()
+      }, { merge: true });
+    }
   }
 
   async saveFinanceSettings(settings: FinanceSettings): Promise<void> {
@@ -3750,6 +3760,33 @@ class FirestoreService {
           ? "Part-paid"
           : "Paid";
     return { totalDue, totalPaid: totalPaidIncludingOpening, balance, status };
+  }
+
+  async getPublicSchools(): Promise<Array<{ id: string; name: string; logoUrl: string }>> {
+    try {
+      // Fetch schools from the main collection
+      const q = query(
+        collection(firestore, "schools"),
+        limit(24)
+      );
+      const snap = await getDocs(q);
+      const schools = snap.docs.map((docSnap) => ({ 
+        id: docSnap.id, 
+        ...(docSnap.data() as any) 
+      }));
+
+      // Filter for those with logos and map to standard format
+      return schools
+        .filter((s) => s.logoUrl && s.logoUrl.length > 0)
+        .map((s) => ({ 
+          id: s.id, 
+          name: s.name || s.schoolName || "Partner School", 
+          logoUrl: s.logoUrl 
+        }));
+    } catch (error) {
+      console.error("Failed to fetch public schools:", error);
+      return [];
+    }
   }
 }
 

@@ -123,17 +123,17 @@ service cloud.firestore {
 
     // Schools collection
     match /schools/{schoolId} {
-      // Super admin can read/write all schools
-      allow read, write: if isSuperAdmin();
+      // Allow public read for marketing site "Trusted By" section
+      allow read: if true;
 
-      // School admin can read their own school
+      // Super admin can read/write all schools
+      allow write: if isSuperAdmin();
+
+      // School admin can read their own school (redundant but kept for clarity)
       allow read: if isSchoolAdmin() && userSchoolId() == schoolId;
 
       // Teachers can read their own school (needed for dashboard/profile loading)
       allow read: if isTeacher() && userSchoolId() == schoolId;
-
-      // No write for school admins on schools
-      allow write: if false;
     }
 
     // Finance v2 subcollections (scoped by school)

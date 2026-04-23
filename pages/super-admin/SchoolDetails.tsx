@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
 import { firestore } from "../../services/firebase";
+import { useAuth } from "../../context/AuthContext";
+import { clearClientCache } from "../../services/clientCache";
 import {
   collection,
   doc,
@@ -41,6 +43,15 @@ import {
   X,
 } from "lucide-react";
 
+type SpecialPricingCycle = "monthly" | "termly" | "yearly";
+
+type SpecialPricingFormState = {
+  enabled: boolean;
+  amount: string;
+  cycle: SpecialPricingCycle;
+  note: string;
+};
+
 type SchoolFormState = {
   name: string;
   code: string;
@@ -51,6 +62,7 @@ type SchoolFormState = {
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: string;
   notes: string;
+  specialPricing: SpecialPricingFormState;
 };
 
 type PaidPlan = Extract<
@@ -97,6 +109,11 @@ const INPUT_CLASS =
   "mt-2 w-full rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100";
 
 const TEXTAREA_CLASS = `${INPUT_CLASS} min-h-[132px] resize-y`;
+
+const SPECIAL_PRICING_SOFT_LIMIT = 5;
+const SCHOOLS_CACHE_KEY = "super_admin_schools_page_1_v1";
+const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
+const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
 
 const PLAN_META: Record<
   SchoolFormState["plan"],
@@ -159,7 +176,24 @@ const STATUS_META = {
   },
 } as const;
 
+const normalizeSpecialPricingState = (
+  schoolData?: Partial<School> | null,
+): SpecialPricingFormState => {
+  const specialPricing = schoolData?.billing?.specialPricing;
+  const amount = Number(specialPricing?.amount || 0);
+  const cycle = String(specialPricing?.cycle || "").toLowerCase();
+  return {
+    enabled: Boolean(specialPricing?.enabled),
+    amount:
+      Number.isFinite(amount) && amount > 0 ? amount.toFixed(2) : "",
+    cycle:
+      cycle === "termly" || cycle === "yearly" ? cycle : "monthly",
+    note: String(specialPricing?.note || ""),
+  };
+};
+
 const SchoolDetails = () => {
+  const { user } = useAuth();
   const { schoolId } = useParams<{ schoolId: string }>();
   const navigate = useNavigate();
   const [school, setSchool] = useState<School | null>(null);
@@ -193,6 +227,7 @@ const SchoolDetails = () => {
   const [logoOffset, setLogoOffset] = useState({ x: 0, y: 0 });
   const [logoNatural, setLogoNatural] = useState({ width: 0, height: 0 });
   const [planUpdating, setPlanUpdating] = useState<PaidPlan | null>(null);
+  const [activeSpecialPricingCount, setActiveSpecialPricingCount] = useState(0);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
   const formatPlanEndsAt = (value: any) => {
@@ -216,6 +251,23 @@ const SchoolDetails = () => {
   const formatPlanLabel = (plan: SchoolFormState["plan"]) =>
     plan.charAt(0).toUpperCase() + plan.slice(1);
 
+  const formatCurrency = (amount?: number | null) => {
+    const value = Number(amount || 0);
+    if (!Number.isFinite(value) || value <= 0) return "GHS 0.00";
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency: "GHS",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  };
+
+  const formatCycleLabel = (cycle?: string | null) => {
+    if (cycle === "termly") return "term";
+    if (cycle === "yearly") return "year";
+    return "month";
+  };
+
   const calculatePlanEndDate = (plan: PaidPlan) => {
     const monthsToAdd =
       PAID_PLAN_OPTIONS.find((option) => option.value === plan)?.months || 1;
@@ -228,6 +280,26 @@ const SchoolDetails = () => {
   const CROP_PREVIEW_SIZE = 180;
   const OUTPUT_SIZE = 512;
   const MAX_OFFSET = CROP_PREVIEW_SIZE / 2;
+
+  const clearSuperAdminCaches = () => {
+    clearClientCache(SCHOOLS_CACHE_KEY);
+    clearClientCache(DASHBOARD_CACHE_KEY);
+    clearClientCache(ANALYTICS_CACHE_KEY);
+  };
+
+  const loadSpecialPricingCount = async () => {
+    try {
+      const promoSnap = await getDocs(
+        query(
+          collection(firestore, "schools"),
+          where("billing.specialPricing.enabled", "==", true),
+        ),
+      );
+      setActiveSpecialPricingCount(promoSnap.size);
+    } catch (error) {
+      console.error("Failed to load special pricing count", error);
+    }
+  };
 
   const fetchSchoolAdmins = async (targetSchoolId: string) => {
     const adminQuery = query(
@@ -286,6 +358,7 @@ const SchoolDetails = () => {
           plan: schoolData.plan || "trial",
           planEndsAt: formatPlanEndsAt(schoolData.planEndsAt),
           notes: schoolData.notes || "",
+          specialPricing: normalizeSpecialPricingState(schoolData),
         });
 
         await fetchSchoolAdmins(schoolData.id);
@@ -322,6 +395,7 @@ const SchoolDetails = () => {
     };
 
     fetchSchool();
+    void loadSpecialPricingCount();
   }, [schoolId, navigate]);
 
   const createdAtLabel = useMemo(() => {
@@ -369,6 +443,28 @@ const SchoolDetails = () => {
     };
   }, [adminUsers]);
 
+  const currentSpecialPricing = school?.billing?.specialPricing;
+  const currentSchoolHasSpecialPricing = Boolean(currentSpecialPricing?.enabled);
+  const projectedSpecialPricingCount = formState?.specialPricing.enabled
+    ? activeSpecialPricingCount + (currentSchoolHasSpecialPricing ? 0 : 1)
+    : Math.max(
+        0,
+        activeSpecialPricingCount - (currentSchoolHasSpecialPricing ? 1 : 0),
+      );
+  const exceedsSpecialPricingSoftLimit =
+    Boolean(formState?.specialPricing.enabled) &&
+    projectedSpecialPricingCount > SPECIAL_PRICING_SOFT_LIMIT;
+  const specialPricingSummary = useMemo(() => {
+    if (!formState?.specialPricing.enabled) return "Not applied";
+    const amountValue = Number(formState.specialPricing.amount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      return "Amount not set";
+    }
+    return `${formatCurrency(amountValue)} / ${formatCycleLabel(
+      formState.specialPricing.cycle,
+    )}`;
+  }, [formState?.specialPricing, school?.id]);
+
   const handleFormChange = (field: keyof SchoolFormState, value: string) => {
     if (!formState) return;
     setFormState({ ...formState, [field]: value });
@@ -387,6 +483,7 @@ const SchoolDetails = () => {
         status: "active",
         "billing.status": "active",
       });
+      clearSuperAdminCaches();
 
       setSchool((prev) =>
         prev
@@ -420,6 +517,7 @@ const SchoolDetails = () => {
           type: "success",
         },
       );
+      await loadSpecialPricingCount();
     } catch (error: any) {
       console.error("Failed to update school plan", error);
       showToast(error.message || "Failed to update subscription plan.", {
@@ -466,6 +564,15 @@ const SchoolDetails = () => {
         return false;
       }
     }
+    if (formState.specialPricing.enabled) {
+      const amount = Number(formState.specialPricing.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        showToast("Special pricing amount must be greater than 0.", {
+          type: "error",
+        });
+        return false;
+      }
+    }
     return true;
   };
 
@@ -507,6 +614,19 @@ const SchoolDetails = () => {
     try {
       const croppedLogo = getCroppedLogoDataUrl();
       const nextLogoUrl = croppedLogo || formState.logoUrl.trim();
+      const specialPricingPayload = {
+        enabled: formState.specialPricing.enabled,
+        amount: formState.specialPricing.enabled
+          ? Number(Number(formState.specialPricing.amount).toFixed(2))
+          : currentSpecialPricing?.amount || null,
+        cycle: formState.specialPricing.cycle,
+        note: formState.specialPricing.note.trim(),
+        createdAt: currentSpecialPricing?.createdAt || new Date(),
+        createdBy: currentSpecialPricing?.createdBy || user?.id || null,
+        updatedAt: new Date(),
+        updatedBy: user?.id || null,
+      };
+
       await setDoc(
         doc(firestore, "schools", resolvedSchoolId),
         {
@@ -521,19 +641,34 @@ const SchoolDetails = () => {
             ? new Date(formState.planEndsAt)
             : null,
           notes: formState.notes.trim(),
+          billing: {
+            ...(school?.billing || {}),
+            specialPricing: specialPricingPayload,
+          },
         },
         { merge: true },
       );
+      clearSuperAdminCaches();
       showToast("School updated successfully.", { type: "success" });
       setSchool((prev) =>
         prev
           ? {
               ...prev,
-              ...formState,
+              name: formState.name.trim(),
+              code: formState.code.trim(),
+              phone: formState.phone.trim(),
+              address: formState.address.trim(),
               logoUrl: nextLogoUrl,
+              status: formState.status,
+              plan: formState.plan,
               planEndsAt: formState.planEndsAt
                 ? new Date(formState.planEndsAt)
                 : null,
+              notes: formState.notes.trim(),
+              billing: {
+                ...(prev.billing || {}),
+                specialPricing: specialPricingPayload,
+              },
             }
           : prev,
       );
@@ -542,6 +677,7 @@ const SchoolDetails = () => {
       setLogoZoom(1);
       setLogoOffset({ x: 0, y: 0 });
       setLogoNatural({ width: 0, height: 0 });
+      await loadSpecialPricingCount();
     } catch (error: any) {
       console.error("Failed to update school", error);
       showToast(error.message || "Failed to update school.", {
@@ -564,6 +700,7 @@ const SchoolDetails = () => {
       plan: school.plan || "trial",
       planEndsAt: formatPlanEndsAt(school.planEndsAt),
       notes: school.notes || "",
+      specialPricing: normalizeSpecialPricingState(school),
     });
   };
 
@@ -650,6 +787,7 @@ const SchoolDetails = () => {
     setIsDeleting(true);
     try {
       await deleteSchool({ schoolId: school.id });
+      clearSuperAdminCaches();
       showToast("School deleted successfully.", { type: "success" });
       setShowDeleteModal(false);
       navigate("/super-admin/schools");
@@ -804,6 +942,9 @@ const SchoolDetails = () => {
                   </div>
                   <div className="mt-2 text-sm text-sky-50/75">
                     Managed renewal date: {currentPlanEndsLabel}
+                  </div>
+                  <div className="mt-2 text-sm text-sky-50/75">
+                    Special price: {specialPricingSummary}
                   </div>
                 </div>
               </div>
@@ -1460,6 +1601,160 @@ const SchoolDetails = () => {
                               <CreditCard size={18} />
                             </span>
                           </div>
+                        </div>
+
+                        <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className={LABEL_CLASS}>Special Pricing</p>
+                              <p className="mt-2 text-base font-semibold text-slate-900">
+                                {specialPricingSummary}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                Optional promo pricing for launch schools and
+                                negotiated billing.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setFormState((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        specialPricing: {
+                                          ...prev.specialPricing,
+                                          enabled: !prev.specialPricing.enabled,
+                                        },
+                                      }
+                                    : prev,
+                                )
+                              }
+                              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                                formState.specialPricing.enabled
+                                  ? "bg-emerald-500"
+                                  : "bg-slate-300"
+                              }`}
+                              aria-pressed={formState.specialPricing.enabled}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                  formState.specialPricing.enabled
+                                    ? "translate-x-6"
+                                    : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <div
+                            className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                              exceedsSpecialPricingSoftLimit
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : "border-slate-200 bg-white text-slate-600"
+                            }`}
+                          >
+                            {formState.specialPricing.enabled ? (
+                              <>
+                                This school will count as promo school #
+                                {projectedSpecialPricingCount}. {activeSpecialPricingCount}{" "}
+                                school
+                                {activeSpecialPricingCount === 1 ? "" : "s"}{" "}
+                                currently use special pricing.
+                              </>
+                            ) : (
+                              <>
+                                {activeSpecialPricingCount} school
+                                {activeSpecialPricingCount === 1 ? "" : "s"}{" "}
+                                currently use special pricing. Recommended cap:
+                                first {SPECIAL_PRICING_SOFT_LIMIT} schools.
+                              </>
+                            )}
+                          </div>
+
+                          {formState.specialPricing.enabled && (
+                            <div className="mt-4 space-y-4">
+                              <div className="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                  <label className={LABEL_CLASS}>
+                                    Custom Amount (GHS)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={formState.specialPricing.amount}
+                                    onChange={(e) =>
+                                      setFormState((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              specialPricing: {
+                                                ...prev.specialPricing,
+                                                amount: e.target.value,
+                                              },
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                    className={INPUT_CLASS}
+                                    placeholder="80.00"
+                                  />
+                                </div>
+                                <div>
+                                  <label className={LABEL_CLASS}>
+                                    Charge Cycle
+                                  </label>
+                                  <select
+                                    value={formState.specialPricing.cycle}
+                                    onChange={(e) =>
+                                      setFormState((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              specialPricing: {
+                                                ...prev.specialPricing,
+                                                cycle: e.target.value as SpecialPricingCycle,
+                                              },
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                    className={INPUT_CLASS}
+                                  >
+                                    <option value="monthly">Monthly</option>
+                                    <option value="termly">Termly</option>
+                                    <option value="yearly">Yearly</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className={LABEL_CLASS}>
+                                  Promo Note
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={formState.specialPricing.note}
+                                  onChange={(e) =>
+                                    setFormState((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            specialPricing: {
+                                              ...prev.specialPricing,
+                                              note: e.target.value,
+                                            },
+                                          }
+                                        : prev,
+                                    )
+                                  }
+                                  className={`${INPUT_CLASS} min-h-[110px] resize-y`}
+                                  placeholder="Launch partner, founding school discount, referral promo..."
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

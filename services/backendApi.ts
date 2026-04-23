@@ -143,6 +143,12 @@ export async function createSchool(payload: {
   templateType?: "default" | "school";
   templateSchoolId?: string;
   planId?: string;
+  specialPricing?: {
+    enabled: boolean;
+    amount: number;
+    cycle: "monthly" | "termly" | "yearly";
+    note?: string;
+  };
 }): Promise<{
   success: boolean;
   schoolId: string;
@@ -666,6 +672,18 @@ export async function getSuperAdminAiMetrics(): Promise<{
   negativeFeedback: number;
 }> {
   return apiRequest("/api/superadmin/ai-metrics", { method: "GET" });
+}
+
+export async function submitBookDemoRequest(payload: any): Promise<any> {
+  return apiRequest("/api/public/book-demo", {
+    body: payload,
+  });
+}
+
+export async function startPublicSchoolSetup(payload: any): Promise<any> {
+  return apiRequest("/api/public/start-trial", {
+    body: payload,
+  });
 }
 
 export { BACKEND_URL };

@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import {
   HashRouter as Router,
   Routes,
@@ -34,6 +34,7 @@ import TeacherAttendance from "./pages/teacher/TeacherAttendance";
 import Assessment from "./pages/teacher/Assessment";
 import WriteRemarks from "./pages/teacher/WriteRemarks";
 import EditSkills from "./pages/teacher/EditSkills";
+import StudentPerformance from "./pages/teacher/StudentPerformance";
 import Schools from "./pages/super-admin/Schools";
 import SchoolDetails from "./pages/super-admin/SchoolDetails";
 import Dashboard from "./pages/super-admin/Dashboard";
@@ -50,6 +51,12 @@ import SecuritySettings from "./pages/super-admin/security/SecuritySettings";
 import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
 import InstallPrompt from "./components/InstallPrompt";
+
+// Public Marketing Pages
+import MarketingHome from "./pages/public/MarketingHome";
+import Pricing from "./pages/public/Pricing";
+import BookDemo from "./pages/public/BookDemo";
+import GetStarted from "./pages/public/GetStarted";
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
@@ -302,19 +309,28 @@ const RoleBasedHome = () => {
 };
 
 const AppRoutes = () => {
+  const { isAuthenticated } = useAuth();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
 
+      {/* Public Marketing Pages */}
+      <Route path="/pricing" element={<Pricing />} />
+      <Route path="/book-demo" element={<BookDemo />} />
+      <Route path="/get-started" element={<GetStarted />} />
+
       {/* Root redirects based on role */}
       <Route
         path="/"
+        element={isAuthenticated ? <ProtectedRoute><RoleBasedHome /></ProtectedRoute> : <MarketingHome />}
+      />
+      {/*
         element={
           <ProtectedRoute>
             <RoleBasedHome />
           </ProtectedRoute>
         }
-      />
+      */}
 
       {/* Admin Routes */}
       <Route
@@ -639,6 +655,17 @@ const AppRoutes = () => {
             requiredFeature="basic_exam_reports"
           >
             <EditSkills />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/teacher/student-performance"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="basic_exam_reports"
+          >
+            <StudentPerformance />
           </ProtectedRoute>
         }
       />

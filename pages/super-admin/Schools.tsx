@@ -52,6 +52,10 @@ const Schools = () => {
     plan: "trial" as "free" | "trial" | "monthly" | "termly" | "yearly",
     featurePlan: "starter" as "starter" | "standard",
     billingStartType: "term_start" as "term_start" | "mid_term",
+    specialPricingEnabled: false,
+    specialPricingAmount: "",
+    specialPricingCycle: "monthly" as "monthly" | "termly" | "yearly",
+    specialPricingNote: "",
   });
   const [cloneFromTemplate, setCloneFromTemplate] = useState(false);
   const [templateType, setTemplateType] = useState<"default" | "school">(
@@ -75,6 +79,7 @@ const Schools = () => {
   const [isDeletingSchool, setIsDeletingSchool] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null);
+  const [activeSpecialPricingCount, setActiveSpecialPricingCount] = useState(0);
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [logoZoom, setLogoZoom] = useState(1);
   const [logoOffset, setLogoOffset] = useState({ x: 0, y: 0 });
@@ -84,6 +89,7 @@ const Schools = () => {
   const CROP_PREVIEW_SIZE = 180;
   const OUTPUT_SIZE = 512;
   const MAX_OFFSET = CROP_PREVIEW_SIZE / 2;
+  const SPECIAL_PRICING_SOFT_LIMIT = 5;
 
   const formatCreatedAt = (createdAt: School["createdAt"] | undefined) => {
     if (!createdAt) return "N/A";
@@ -98,6 +104,48 @@ const Schools = () => {
             : null;
     if (!date || Number.isNaN(date.getTime())) return "N/A";
     return date.toLocaleDateString();
+  };
+
+  const formatCurrency = (amount?: number | null) => {
+    const value = Number(amount || 0);
+    if (!Number.isFinite(value) || value <= 0) return "GHS 0.00";
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency: "GHS",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  };
+
+  const formatCycleLabel = (cycle?: string | null) => {
+    if (cycle === "termly") return "term";
+    if (cycle === "yearly") return "year";
+    return "month";
+  };
+
+  const getSpecialPricingSummary = (school: School) => {
+    const specialPricing = school.billing?.specialPricing;
+    const amount = Number(specialPricing?.amount || 0);
+    if (!specialPricing?.enabled || !Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+    return `${formatCurrency(amount)} / ${formatCycleLabel(
+      specialPricing.cycle,
+    )}`;
+  };
+
+  const loadSpecialPricingCount = async () => {
+    try {
+      const promoSnap = await getDocs(
+        query(
+          collection(firestore, "schools"),
+          where("billing.specialPricing.enabled", "==", true),
+        ),
+      );
+      setActiveSpecialPricingCount(promoSnap.size);
+    } catch (error) {
+      console.error("Failed to load special pricing count", error);
+    }
   };
 
   const loadPlans = async () => {
@@ -124,7 +172,22 @@ const Schools = () => {
   };
 
   const SCHOOLS_CACHE_KEY = "super_admin_schools_page_1_v1";
+  const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
+  const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
   const SCHOOLS_PAGE_SIZE = 60;
+
+  const clearSuperAdminCaches = () => {
+    clearClientCache(SCHOOLS_CACHE_KEY);
+    clearClientCache(DASHBOARD_CACHE_KEY);
+    clearClientCache(ANALYTICS_CACHE_KEY);
+  };
+
+  const projectedSpecialPricingCount = formData.specialPricingEnabled
+    ? activeSpecialPricingCount + 1
+    : activeSpecialPricingCount;
+  const exceedsSpecialPricingSoftLimit =
+    formData.specialPricingEnabled &&
+    projectedSpecialPricingCount > SPECIAL_PRICING_SOFT_LIMIT;
 
   const loadUserRole = async () => {
     if (!user?.id) return;
@@ -142,7 +205,7 @@ const Schools = () => {
     setLoading(true);
     try {
       if (forceRefresh) {
-        clearClientCache(SCHOOLS_CACHE_KEY);
+        clearSuperAdminCaches();
       }
       const firstPage = await resolveClientCache(
         SCHOOLS_CACHE_KEY,
@@ -190,7 +253,12 @@ const Schools = () => {
 
   useEffect(() => {
     const loadInitial = async () => {
-      await Promise.all([loadPlans(), loadUserRole(), loadFirstSchoolsPage(false)]);
+      await Promise.all([
+        loadPlans(),
+        loadUserRole(),
+        loadFirstSchoolsPage(false),
+        loadSpecialPricingCount(),
+      ]);
     };
     void loadInitial();
   }, []);
@@ -231,6 +299,31 @@ const Schools = () => {
 
     setIsCreatingSchool(true);
     try {
+      let specialPricing:
+        | {
+            enabled: boolean;
+            amount: number;
+            cycle: "monthly" | "termly" | "yearly";
+            note?: string;
+          }
+        | undefined;
+      if (formData.specialPricingEnabled) {
+        const amountValue = Number(formData.specialPricingAmount);
+        if (!Number.isFinite(amountValue) || amountValue <= 0) {
+          showToast("Special pricing amount must be greater than 0.", {
+            type: "error",
+          });
+          setIsCreatingSchool(false);
+          return;
+        }
+        specialPricing = {
+          enabled: true,
+          amount: Number(amountValue.toFixed(2)),
+          cycle: formData.specialPricingCycle,
+          note: formData.specialPricingNote.trim() || undefined,
+        };
+      }
+
       const croppedLogo = getCroppedLogoDataUrl();
       await createSchool({
         name: formData.name.trim(),
@@ -244,6 +337,7 @@ const Schools = () => {
         templateType,
         templateSchoolId:
           templateType === "school" ? templateSchoolId : undefined,
+        ...(specialPricing ? { specialPricing } : {}),
       });
 
       setFormData({
@@ -254,6 +348,10 @@ const Schools = () => {
         plan: "trial",
         featurePlan: "starter",
         billingStartType: "term_start",
+        specialPricingEnabled: false,
+        specialPricingAmount: "",
+        specialPricingCycle: "monthly",
+        specialPricingNote: "",
       });
       setCloneFromTemplate(false);
       setTemplateType("default");
@@ -263,7 +361,9 @@ const Schools = () => {
       setLogoOffset({ x: 0, y: 0 });
       setLogoNatural({ width: 0, height: 0 });
       setShowCreateModal(false);
+      clearSuperAdminCaches();
       showToast("School created successfully!", { type: "success" });
+      await loadSpecialPricingCount();
       await loadFirstSchoolsPage(true);
     } catch (error: any) {
       console.error("Error creating school:", error);
@@ -304,7 +404,7 @@ const Schools = () => {
           school.id === schoolId ? { ...school, status: newStatus } : school,
         ),
       );
-      clearClientCache(SCHOOLS_CACHE_KEY);
+      clearSuperAdminCaches();
       showToast(
         `School ${newStatus === "active" ? "activated" : "deactivated"}`,
         { type: "success" },
@@ -417,8 +517,10 @@ const Schools = () => {
         `School deleted successfully! Removed ${deletedUsers} users and ${totalDocsDeleted} data records.`,
         { type: "success" },
       );
+      clearSuperAdminCaches();
       setShowDeleteModal(false);
       setSchoolToDelete(null);
+      await loadSpecialPricingCount();
       await loadFirstSchoolsPage(true);
     } catch (error: any) {
       console.error("Error deleting school:", error);
@@ -516,7 +618,7 @@ const Schools = () => {
               : school,
           ),
         );
-        clearClientCache(SCHOOLS_CACHE_KEY);
+        clearSuperAdminCaches();
         showToast("Feature plan updated successfully.", { type: "success" });
         return;
       }
@@ -532,7 +634,7 @@ const Schools = () => {
             : school,
         ),
       );
-      clearClientCache(SCHOOLS_CACHE_KEY);
+      clearSuperAdminCaches();
       showToast("Plan assigned successfully.", { type: "success" });
     } catch (error: any) {
       console.error("Plan assignment failed", error);
@@ -623,6 +725,11 @@ const Schools = () => {
             <p className="text-slate-500 mt-1">
               Manage all schools in the system
             </p>
+            <p className="text-xs text-slate-400 mt-2">
+              {activeSpecialPricingCount} school
+              {activeSpecialPricingCount === 1 ? "" : "s"} currently on special
+              pricing. Soft target: first {SPECIAL_PRICING_SOFT_LIMIT} schools.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button
@@ -709,6 +816,11 @@ const Schools = () => {
                           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
                             {resolvePlanName(school)}
                           </span>
+                          {getSpecialPricingSummary(school) ? (
+                            <div className="text-xs font-medium text-emerald-700">
+                              Special price: {getSpecialPricingSummary(school)}
+                            </div>
+                          ) : null}
                           <select
                             className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white"
                             value={school.featurePlan || "starter"}
@@ -1053,6 +1165,138 @@ const Schools = () => {
                   <option value="term_start">Beginning of Term</option>
                   <option value="mid_term">Mid-term Signup</option>
                 </select>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-sm font-semibold text-slate-800">
+                      Special Pricing
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        specialPricingEnabled: !prev.specialPricingEnabled,
+                      }))
+                    }
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                      formData.specialPricingEnabled
+                        ? "bg-emerald-500"
+                        : "bg-slate-200"
+                    }`}
+                    aria-pressed={formData.specialPricingEnabled}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.specialPricingEnabled
+                          ? "translate-x-6"
+                          : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  Set a custom amount for promotional schools without changing
+                  the main plan type.
+                </p>
+
+                <div
+                  className={`rounded-lg border px-3 py-2 text-xs ${
+                    exceedsSpecialPricingSoftLimit
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-slate-200 bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  {formData.specialPricingEnabled ? (
+                    <>
+                      This school will be promo school #
+                      {projectedSpecialPricingCount}. {activeSpecialPricingCount}{" "}
+                      school
+                      {activeSpecialPricingCount === 1 ? "" : "s"} already use
+                      special pricing.
+                    </>
+                  ) : (
+                    <>
+                      {activeSpecialPricingCount} school
+                      {activeSpecialPricingCount === 1 ? "" : "s"} currently use
+                      special pricing. Recommended cap: first{" "}
+                      {SPECIAL_PRICING_SOFT_LIMIT} schools.
+                    </>
+                  )}
+                </div>
+
+                {formData.specialPricingEnabled && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Custom Amount (GHS)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          disabled={isCreatingSchool}
+                          className="w-full border border-slate-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          value={formData.specialPricingAmount}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              specialPricingAmount: e.target.value,
+                            }))
+                          }
+                          placeholder="80.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Charge Cycle
+                        </label>
+                        <select
+                          disabled={isCreatingSchool}
+                          className="w-full border border-slate-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          value={formData.specialPricingCycle}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              specialPricingCycle: e.target.value as
+                                | "monthly"
+                                | "termly"
+                                | "yearly",
+                            }))
+                          }
+                        >
+                          <option value="monthly">Monthly</option>
+                          <option value="termly">Termly</option>
+                          <option value="yearly">Yearly</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        Promo Note (Optional)
+                      </label>
+                      <textarea
+                        rows={3}
+                        disabled={isCreatingSchool}
+                        className="w-full border border-slate-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                        value={formData.specialPricingNote}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            specialPricingNote: e.target.value,
+                          }))
+                        }
+                        placeholder="Founding school promo, launch partner, referral incentive..."
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="border border-slate-200 rounded-lg p-4 space-y-3">

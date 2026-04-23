@@ -341,9 +341,9 @@ const ManageBackups = () => {
         return;
       }
       setSelectedEntry(details);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load details", err);
-      showToast("Failed to load details.", { type: "error" });
+      showToast(`Failed to load details: ${err?.message || "Unknown error"}`, { type: "error" });
     }
   };
 
