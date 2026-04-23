@@ -40,6 +40,7 @@ class ApiError extends Error {
 async function apiRequest<T>(
   endpoint: string,
   options: {
+    requiresAuth?: boolean;
     method?: "GET" | "POST" | "PUT" | "DELETE";
     body?: Record<string, any>;
   } = {},
@@ -49,13 +50,16 @@ async function apiRequest<T>(
 
   while (retries <= maxRetries) {
     try {
-      const token = await getIdTokenWithRetry();
+      let token: string | undefined;
+      if (options.requiresAuth !== false) {
+        token = await getIdTokenWithRetry();
+      }
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: options.method || "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: options.body ? JSON.stringify(options.body) : undefined,
       });
@@ -677,13 +681,17 @@ export async function getSuperAdminAiMetrics(): Promise<{
 export async function submitBookDemoRequest(payload: any): Promise<any> {
   return apiRequest("/api/public/book-demo", {
     body: payload,
+    requiresAuth: false,
   });
 }
+
 
 export async function startPublicSchoolSetup(payload: any): Promise<any> {
   return apiRequest("/api/public/start-trial", {
     body: payload,
+    requiresAuth: false,
   });
 }
+
 
 export { BACKEND_URL };

@@ -151,7 +151,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             // Improved Error Handling
             const errorMessage = err.message || err.toString();
 
-            if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
+            if (errorMessage === "EMAIL_NOT_VERIFIED") {
+              setError("Please verify your email to access the system.");
+              await signOut(auth);
+            } else if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
               setError(
                 "Your account is not set up yet. Please contact your administrator for access.",
               );

@@ -57,6 +57,7 @@ import MarketingHome from "./pages/public/MarketingHome";
 import Pricing from "./pages/public/Pricing";
 import BookDemo from "./pages/public/BookDemo";
 import GetStarted from "./pages/public/GetStarted";
+import VerifyEmail from "./pages/public/VerifyEmail";
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
@@ -318,6 +319,7 @@ const AppRoutes = () => {
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/book-demo" element={<BookDemo />} />
       <Route path="/get-started" element={<GetStarted />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
 
       {/* Root redirects based on role */}
       <Route

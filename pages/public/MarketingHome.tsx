@@ -179,8 +179,10 @@ const MarketingHome = () => {
             </motion.div>
 
             <motion.div variants={fadeUp} className="hero-badges" style={{ display: "flex", gap: 24, marginTop: 40, flexWrap: "wrap" }}>
-              {[["✅ No credit card needed", ""], ["⚡ Setup in under 5 minutes", ""], ["🏫 Built for Ghanaian schools", ""]].map(([label]) => (
-                <span key={label} style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", fontWeight: 600 }}>{label}</span>
+              {[[CreditCard, "No credit card needed"], [Sparkles, "Setup in under 5 minutes"], [ShieldCheck, "Built for Ghanaian schools"]].map(([Icon, label]: any) => (
+                <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "rgba(255,255,255,0.75)", fontWeight: 600 }}>
+                  <Icon size={14} /> {label}
+                </span>
               ))}
             </motion.div>
           </motion.div>
@@ -281,9 +283,7 @@ const MarketingHome = () => {
                       <img
                         src={school.logoUrl}
                         alt={school.name}
-                        style={{ width: "100%", height: "100%", objectFit: "contain", filter: "grayscale(100%)", opacity: 0.7, transition: "all 0.3s ease" }}
-                        onMouseEnter={e => { e.currentTarget.style.filter = "grayscale(0%)"; e.currentTarget.style.opacity = "1"; }}
-                        onMouseLeave={e => { e.currentTarget.style.filter = "grayscale(100%)"; e.currentTarget.style.opacity = "0.7"; }}
+                        style={{ width: "100%", height: "100%", objectFit: "contain", transition: "all 0.3s ease" }}
                       />
                     </div>
                     <span style={{ fontWeight: 600, color: "#475569", fontSize: 15, whiteSpace: "nowrap" }}>

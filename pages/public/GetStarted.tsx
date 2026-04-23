@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, CheckCircle2, Loader2, ShieldCheck } from "lucide-react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, sendEmailVerification, signOut } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { auth } from "../../services/firebase";
 import { showToast } from "../../services/toast";
@@ -60,8 +60,17 @@ const GetStarted = () => {
         currentTerm: formData.currentTerm, onboardingTemplate: formData.onboardingTemplate,
       });
       await signInWithEmailAndPassword(auth, formData.adminEmail.trim().toLowerCase(), formData.password);
-      showToast("Welcome to School Manager GH! Your school is ready.", { type: "success" });
-      navigate("/", { replace: true });
+      
+      // 2. Send verification email
+      if (auth.currentUser) {
+        await sendEmailVerification(auth.currentUser);
+      }
+
+      // 3. Sign out immediately (force verification before next login)
+      await signOut(auth);
+
+      showToast("School created! Please verify your email to continue.", { type: "success" });
+      navigate("/verify-email", { replace: true });
     } catch (err: any) {
       showToast(err?.message || "Failed to start school setup.", { type: "error" });
     } finally {
@@ -200,7 +209,7 @@ const GetStarted = () => {
                               <option>Primary School</option>
                               <option>Junior High School</option>
                               <option>Senior High School</option>
-                              <option>Basic School (K-9)</option>
+                              <option>Basic School (Nursery to JHS)</option>
                               <option>Nursery/Kindergarten</option>
                             </select>
                           </div>

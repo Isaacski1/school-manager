@@ -13,6 +13,11 @@ export interface UserProfile extends User {
 export async function loadUserProfile(
   firebaseUser: FirebaseUser,
 ): Promise<UserProfile> {
+  // Check for email verification
+  if (!firebaseUser.emailVerified) {
+    throw new Error("EMAIL_NOT_VERIFIED");
+  }
+
   const userDocRef = doc(firestore, "users", firebaseUser.uid);
   const userDoc = await getDoc(userDocRef);
 

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { auth } from "../services/firebase";
@@ -147,7 +147,16 @@ const Login = () => {
     }
 
     try {
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      
+      // Check for email verification
+      if (userCredential.user && !userCredential.user.emailVerified) {
+        await signOut(auth);
+        setFormError("Please verify your email before logging in. Check your inbox for the verification link.");
+        setLoading(false);
+        return;
+      }
+
       firstFactorSignedIn = true;
       try {
         await evaluateAdminMfaPolicy();
