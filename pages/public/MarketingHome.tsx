@@ -419,7 +419,7 @@ const MarketingHome = () => {
               </div>
             </div>
             <div className="teacher-card-img" style={{ height: "100%", minHeight: "500px", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px" }}>
-              <img src="public/img-teacher-2.PNG" alt="Happy Teacher" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "24px" }} />
+              <img src="/img-teacher-2.PNG" alt="Happy Teacher" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "24px" }} />
             </div>
           </div>
         </div>
