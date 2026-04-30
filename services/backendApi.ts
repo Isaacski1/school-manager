@@ -180,6 +180,18 @@ export async function updateSchoolPlan(payload: {
   return apiRequest("/api/superadmin/update-school-plan", { body: payload });
 }
 
+export async function deleteSchool(payload: {
+  schoolId: string;
+}): Promise<{
+  success: boolean;
+  deletedUsers: number;
+  deletedDocs: Record<string, number>;
+  deletionErrors?: Record<string, string>;
+  message: string;
+}> {
+  return apiRequest("/api/superadmin/delete-school", { body: payload });
+}
+
 /**
  * Create a school admin via backend
  * REQUIRES: Caller must be super_admin
@@ -310,6 +322,22 @@ export type SuperAdminDashboardOverview = {
   schools: Array<Record<string, any>>;
   activity: Array<Record<string, any>>;
   payments: Array<Record<string, any>>;
+  totals?: {
+    totalSchools?: number;
+    schools?: number;
+    activeSchools?: number;
+    active?: number;
+    inactiveSchools?: number;
+    inactive?: number;
+    freeSchools?: number;
+    free?: number;
+    trialSchools?: number;
+    trial?: number;
+    paidSchools?: number;
+    paid?: number;
+    newSchoolsLast30?: number;
+    newSchools?: number;
+  };
   dailyChecklist?: {
     summary: Record<string, { completed: number; total: number }>;
     perSchool: Record<

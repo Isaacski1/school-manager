@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const app = express();
 app.disable("x-powered-by");
@@ -523,6 +524,16 @@ const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+const DEMO_NOTIFY_EMAIL =
+  process.env.DEMO_NOTIFY_EMAIL || "isaacskiwebdev@gmail.com";
+const DEMO_NOTIFY_WHATSAPP =
+  process.env.DEMO_NOTIFY_WHATSAPP || "+233549175604";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
+const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "School Manager GH";
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
+const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "";
 const SUPER_ADMIN_ASSISTANT_NAME = "Isaacski AI";
 const SUPERADMIN_AI_MODE = (
   process.env.SUPERADMIN_AI_MODE || "openai_first"
@@ -550,6 +561,177 @@ const SUPERADMIN_VIEW_CACHE_MAX_ENTRIES = Math.max(
   ),
 );
 const SUPERADMIN_VIEW_CACHE = new Map();
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const normalizeWhatsappAddress = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("whatsapp:") ? raw : `whatsapp:${raw}`;
+};
+
+const formatDemoRequestText = (demoDoc) => {
+  const lines = [
+    "New Book a Demo request",
+    "",
+    `School: ${demoDoc.schoolName || "Not provided"}`,
+    `Contact: ${demoDoc.fullName || "Not provided"}`,
+    `Role: ${demoDoc.role || "Not provided"}`,
+    `Phone: ${demoDoc.phone || "Not provided"}`,
+    `Email: ${demoDoc.email || "Not provided"}`,
+    `Students: ${demoDoc.studentCount || "Not provided"}`,
+    `School type: ${demoDoc.schoolType || "Not provided"}`,
+    `Preferred date: ${demoDoc.preferredDate || "Not provided"}`,
+    `Preferred time: ${demoDoc.preferredTime || "Not provided"}`,
+  ];
+  if (demoDoc.message) {
+    lines.push("", `Message: ${demoDoc.message}`);
+  }
+  return lines.join("\n");
+};
+
+const formatDemoRequestHtml = (demoDoc) => {
+  const rows = [
+    ["School", demoDoc.schoolName],
+    ["Contact", demoDoc.fullName],
+    ["Role", demoDoc.role],
+    ["Phone", demoDoc.phone],
+    ["Email", demoDoc.email],
+    ["Students", demoDoc.studentCount],
+    ["School type", demoDoc.schoolType],
+    ["Preferred date", demoDoc.preferredDate],
+    ["Preferred time", demoDoc.preferredTime],
+    ["Message", demoDoc.message],
+  ];
+
+  return `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+      <h2 style="margin:0 0 16px">New Book a Demo request</h2>
+      <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:640px">
+        ${rows
+          .map(
+            ([label, value]) => `
+              <tr>
+                <td style="border:1px solid #e2e8f0;font-weight:700;background:#f8fafc;width:160px">${escapeHtml(label)}</td>
+                <td style="border:1px solid #e2e8f0">${escapeHtml(value || "Not provided")}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </table>
+    </div>
+  `;
+};
+
+const sendDemoEmailNotification = async (demoDoc) => {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL || !DEMO_NOTIFY_EMAIL) {
+    return {
+      sent: false,
+      skipped: true,
+      reason:
+        "Missing RESEND_API_KEY, RESEND_FROM_EMAIL, or DEMO_NOTIFY_EMAIL.",
+    };
+  }
+
+  const from = RESEND_FROM_NAME
+    ? `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`
+    : RESEND_FROM_EMAIL;
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [DEMO_NOTIFY_EMAIL],
+      reply_to: demoDoc.email || undefined,
+      subject: `Book a Demo: ${demoDoc.schoolName || "New school"}`,
+      text: formatDemoRequestText(demoDoc),
+      html: formatDemoRequestHtml(demoDoc),
+    }),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.message || `Resend failed with ${response.status}`);
+  }
+  return { sent: true, provider: "resend", id: body?.id || null };
+};
+
+const sendDemoWhatsappNotification = async (demoDoc) => {
+  if (
+    !TWILIO_ACCOUNT_SID ||
+    !TWILIO_AUTH_TOKEN ||
+    !TWILIO_WHATSAPP_FROM ||
+    !DEMO_NOTIFY_WHATSAPP
+  ) {
+    return {
+      sent: false,
+      skipped: true,
+      reason:
+        "Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, or DEMO_NOTIFY_WHATSAPP.",
+    };
+  }
+
+  const form = new URLSearchParams();
+  form.set("From", normalizeWhatsappAddress(TWILIO_WHATSAPP_FROM));
+  form.set("To", normalizeWhatsappAddress(DEMO_NOTIFY_WHATSAPP));
+  form.set("Body", formatDemoRequestText(demoDoc));
+
+  const auth = Buffer.from(
+    `${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`,
+  ).toString("base64");
+  const response = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
+      TWILIO_ACCOUNT_SID,
+    )}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form,
+    },
+  );
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.message || `Twilio failed with ${response.status}`);
+  }
+  return { sent: true, provider: "twilio", sid: body?.sid || null };
+};
+
+const sendDemoNotifications = async (demoDoc) => {
+  const [emailResult, whatsappResult] = await Promise.allSettled([
+    sendDemoEmailNotification(demoDoc),
+    sendDemoWhatsappNotification(demoDoc),
+  ]);
+
+  const normalizeResult = (result) =>
+    result.status === "fulfilled"
+      ? result.value
+      : {
+          sent: false,
+          skipped: false,
+          error: result.reason?.message || String(result.reason),
+        };
+
+  const notifications = {
+    email: normalizeResult(emailResult),
+    whatsapp: normalizeResult(whatsappResult),
+  };
+
+  console.info("[BookDemo] notification results", notifications);
+  return notifications;
+};
 
 const buildAiSystemPrompt = (dataContext) => {
   const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
@@ -1113,6 +1295,181 @@ const normalizeSchoolForView = (docId, data = {}) => {
     limits: data.limits || {},
     billing: data.billing || {},
     subscription: data.subscription || {},
+  };
+};
+
+const deleteBackendSchoolScopedCollection = async (
+  db,
+  collectionName,
+  schoolId,
+  batchSize = 400,
+) => {
+  const scopedSchoolId = normalizeSchoolId(schoolId);
+  if (!scopedSchoolId) return 0;
+
+  let deletedCount = 0;
+  while (true) {
+    const snap = await db
+      .collection(collectionName)
+      .where("schoolId", "==", scopedSchoolId)
+      .limit(batchSize)
+      .get();
+
+    if (snap.empty) break;
+
+    const batch = db.batch();
+    snap.docs.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    deletedCount += snap.size;
+
+    if (snap.size < batchSize) break;
+  }
+
+  return deletedCount;
+};
+
+const deleteBackendSchoolDocumentTree = async (db, schoolId) => {
+  const schoolRef = db.collection("schools").doc(schoolId);
+  if (typeof db.recursiveDelete === "function") {
+    await db.recursiveDelete(schoolRef);
+    return;
+  }
+
+  const deleteDescendants = async (docRef) => {
+    const childCollections = await docRef.listCollections();
+    for (const childCollection of childCollections) {
+      while (true) {
+        const snap = await childCollection.limit(400).get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.docs.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
+        if (snap.size < 400) break;
+      }
+    }
+  };
+
+  await deleteDescendants(schoolRef);
+  await schoolRef.delete();
+};
+
+const getAggregateCount = async (queryRef) => {
+  const snap = await queryRef.count().get();
+  return Number(snap.data()?.count || 0) || 0;
+};
+
+const buildSchoolTotals = async ({
+  db,
+  schoolRows = [],
+  timeoutMs = 2500,
+} = {}) => {
+  const schoolsRef = db.collection("schools");
+  const rows = Array.isArray(schoolRows) ? schoolRows : [];
+  const rowTotals = rows.reduce(
+    (acc, row) => {
+      const normalized = normalizeSchoolForView(row.id, row);
+      acc.totalSchools += 1;
+      if (normalized.status === "inactive") {
+        acc.inactiveSchools += 1;
+      } else {
+        acc.activeSchools += 1;
+      }
+      if (normalized.plan === "free") acc.freeSchools += 1;
+      if (normalized.plan === "trial") acc.trialSchools += 1;
+      if (["monthly", "termly", "yearly"].includes(normalized.plan)) {
+        acc.paidSchools += 1;
+      }
+      const createdAt = parseFlexibleDate(normalized.createdAt);
+      if (createdAt && createdAt >= acc.thirtyDaysAgo) {
+        acc.newSchoolsLast30 += 1;
+      }
+      return acc;
+    },
+    {
+      totalSchools: 0,
+      activeSchools: 0,
+      inactiveSchools: 0,
+      freeSchools: 0,
+      trialSchools: 0,
+      paidSchools: 0,
+      newSchoolsLast30: 0,
+      thirtyDaysAgo: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    },
+  );
+
+  const countOrNull = (queryRef) =>
+    withTimeoutFallback(getAggregateCount(queryRef), timeoutMs, null);
+
+  const thirtyDaysAgoTimestamp = admin.firestore.Timestamp.fromMillis(
+    rowTotals.thirtyDaysAgo.getTime(),
+  );
+
+  const [
+    totalCount,
+    activeCount,
+    inactiveCount,
+    freeCount,
+    trialCount,
+    monthlyCount,
+    termlyCount,
+    yearlyCount,
+    newSchoolsCount,
+  ] = await Promise.all([
+    countOrNull(schoolsRef),
+    countOrNull(schoolsRef.where("status", "==", "active")),
+    countOrNull(schoolsRef.where("status", "==", "inactive")),
+    countOrNull(schoolsRef.where("plan", "==", "free")),
+    countOrNull(schoolsRef.where("plan", "==", "trial")),
+    countOrNull(schoolsRef.where("plan", "==", "monthly")),
+    countOrNull(schoolsRef.where("plan", "==", "termly")),
+    countOrNull(schoolsRef.where("plan", "==", "yearly")),
+    countOrNull(schoolsRef.where("createdAt", ">=", thirtyDaysAgoTimestamp)),
+  ]);
+
+  const totalSchools =
+    totalCount === null ? rowTotals.totalSchools : Number(totalCount) || 0;
+  const inactiveSchools =
+    inactiveCount === null ? rowTotals.inactiveSchools : Number(inactiveCount) || 0;
+  const exactActiveSchools =
+    activeCount === null ? rowTotals.activeSchools : Number(activeCount) || 0;
+  const activeSchools = Math.max(
+    exactActiveSchools,
+    totalSchools - inactiveSchools,
+  );
+  const freeSchools =
+    freeCount === null ? rowTotals.freeSchools : Number(freeCount) || 0;
+  const exactTrialSchools =
+    trialCount === null ? rowTotals.trialSchools : Number(trialCount) || 0;
+  const paidSchools =
+    monthlyCount === null || termlyCount === null || yearlyCount === null
+      ? rowTotals.paidSchools
+      : (Number(monthlyCount) || 0) +
+        (Number(termlyCount) || 0) +
+        (Number(yearlyCount) || 0);
+  const trialSchools = Math.max(
+    exactTrialSchools,
+    totalSchools - freeSchools - paidSchools,
+  );
+  const newSchoolsLast30 =
+    newSchoolsCount === null
+      ? rowTotals.newSchoolsLast30
+      : Math.max(Number(newSchoolsCount) || 0, rowTotals.newSchoolsLast30);
+
+  return {
+    totalSchools,
+    schools: totalSchools,
+    activeSchools,
+    active: activeSchools,
+    inactiveSchools,
+    inactive: inactiveSchools,
+    freeSchools,
+    free: freeSchools,
+    trialSchools,
+    trial: trialSchools,
+    paidSchools,
+    paid: paidSchools,
+    newSchoolsLast30,
+    newSchools: newSchoolsLast30,
   };
 };
 
@@ -3556,8 +3913,8 @@ app.get(
         100,
         100000,
       );
-      const DASHBOARD_QUERY_TIMEOUT_MS = 2800;
-      const CHECKLIST_QUERY_TIMEOUT_MS = 2200;
+      const DASHBOARD_QUERY_TIMEOUT_MS = 1500; // Reduced from 2800
+      const CHECKLIST_QUERY_TIMEOUT_MS = 1200; // Reduced from 2200
 
       const cacheKey = buildSuperAdminViewCacheKey(
         "dashboard-overview",
@@ -3591,31 +3948,78 @@ app.get(
         return Array.isArray(rows) ? rows : [];
       };
 
+      // Smart schools fetcher with fast fallback for better reliability
+      const safeGetSchools = async () => {
+        try {
+          // Try ordered query first with timeout
+          const orderedRows = await withTimeoutFallback(
+            fetchCollectionRows({
+              collectionName: "schools",
+              limitCount: schoolsLimit,
+              orderField: "createdAt",
+              selectFields: [
+                "name",
+                "code",
+                "logoUrl",
+                "phone",
+                "address",
+                "plan",
+                "status",
+                "featurePlan",
+                "createdBy",
+                "createdAt",
+                "planEndsAt",
+                "studentsCount",
+                "limits",
+                "billing",
+                "subscription",
+              ],
+            }),
+            Math.max(500, DASHBOARD_QUERY_TIMEOUT_MS - 500),
+            null,
+          );
+
+          if (Array.isArray(orderedRows) && orderedRows.length > 0) {
+            return orderedRows;
+          }
+
+          // If ordered query fails/times out, use unordered query as fallback
+          const unorderedRows = await withTimeoutFallback(
+            fetchCollectionRows({
+              collectionName: "schools",
+              limitCount: schoolsLimit,
+              orderField: "", // No ordering for faster response
+              selectFields: [
+                "name",
+                "code",
+                "logoUrl",
+                "phone",
+                "address",
+                "plan",
+                "status",
+                "featurePlan",
+                "createdBy",
+                "createdAt",
+                "planEndsAt",
+                "studentsCount",
+                "limits",
+                "billing",
+                "subscription",
+              ],
+            }),
+            1000,
+            [],
+          );
+
+          return Array.isArray(unorderedRows) ? unorderedRows : [];
+        } catch (err) {
+          console.error("Error fetching schools:", err?.message);
+          return [];
+        }
+      };
+
       const [schoolRows, activityRows, paymentRows] = await Promise.all([
-        safeGetRows(() =>
-          fetchCollectionRows({
-            collectionName: "schools",
-            limitCount: schoolsLimit,
-            orderField: "createdAt",
-            selectFields: [
-              "name",
-              "code",
-              "logoUrl",
-              "phone",
-              "address",
-              "plan",
-              "status",
-              "featurePlan",
-              "createdBy",
-              "createdAt",
-              "planEndsAt",
-              "studentsCount",
-              "limits",
-              "billing",
-              "subscription",
-            ],
-          }),
-        ),
+        safeGetSchools(),
         safeGetRows(() =>
           fetchCollectionRows({
             collectionName: "activity_logs",
@@ -3663,6 +4067,11 @@ app.get(
       ]);
 
       const schools = schoolRows.map((row) => normalizeSchoolForView(row.id, row));
+      const schoolTotals = await buildSchoolTotals({
+        db,
+        schoolRows,
+        timeoutMs: 2500,
+      });
       const activity = activityRows.map((row) => ({
         id: row.id,
         schoolId: normalizeSchoolId(row.schoolId),
@@ -3761,7 +4170,7 @@ app.get(
       const timetableSchools = extractUniqueSchoolIds(getRowsFromSnap(timetablesSnap));
       const noticeSchools = extractUniqueSchoolIds(getRowsFromSnap(noticesSnap));
 
-      const totalSchools = schools.length;
+      const totalSchools = schoolTotals.totalSchools;
       const dailyChecklistSummary = {
         attendance: { completed: 0, total: totalSchools },
         teacherAttendance: { completed: 0, total: totalSchools },
@@ -3798,6 +4207,7 @@ app.get(
         schools,
         activity,
         payments,
+        totals: schoolTotals,
         dailyChecklist: {
           summary: dailyChecklistSummary,
           perSchool: dailyChecklistPerSchool,
@@ -3885,31 +4295,78 @@ app.get(
         return Array.isArray(rows) ? rows : [];
       };
 
+      // Smart schools fetcher with fast fallback for better reliability
+      const safeGetSchools = async () => {
+        try {
+          // Try ordered query first with timeout
+          const orderedRows = await withTimeoutFallback(
+            fetchCollectionRows({
+              collectionName: "schools",
+              limitCount: schoolsLimit,
+              orderField: "createdAt",
+              selectFields: [
+                "name",
+                "code",
+                "logoUrl",
+                "phone",
+                "address",
+                "plan",
+                "status",
+                "featurePlan",
+                "createdBy",
+                "createdAt",
+                "planEndsAt",
+                "studentsCount",
+                "limits",
+                "billing",
+                "subscription",
+              ],
+            }),
+            Math.max(500, ANALYTICS_QUERY_TIMEOUT_MS - 1000),
+            null,
+          );
+
+          if (Array.isArray(orderedRows) && orderedRows.length > 0) {
+            return orderedRows;
+          }
+
+          // If ordered query fails/times out, use unordered query as fallback
+          const unorderedRows = await withTimeoutFallback(
+            fetchCollectionRows({
+              collectionName: "schools",
+              limitCount: schoolsLimit,
+              orderField: "", // No ordering for faster response
+              selectFields: [
+                "name",
+                "code",
+                "logoUrl",
+                "phone",
+                "address",
+                "plan",
+                "status",
+                "featurePlan",
+                "createdBy",
+                "createdAt",
+                "planEndsAt",
+                "studentsCount",
+                "limits",
+                "billing",
+                "subscription",
+              ],
+            }),
+            1500,
+            [],
+          );
+
+          return Array.isArray(unorderedRows) ? unorderedRows : [];
+        } catch (err) {
+          console.error("Error fetching schools for analytics:", err?.message);
+          return [];
+        }
+      };
+
       const [schoolRows, paymentRows, eventRows, activityRows] = await Promise.all([
-        safeGetRows(() =>
-          fetchCollectionRows({
-            collectionName: "schools",
-            limitCount: schoolsLimit,
-            orderField: "createdAt",
-            selectFields: [
-              "name",
-              "code",
-              "logoUrl",
-              "phone",
-              "address",
-              "plan",
-              "status",
-              "featurePlan",
-              "createdBy",
-              "createdAt",
-              "planEndsAt",
-              "studentsCount",
-              "limits",
-              "billing",
-              "subscription",
-            ],
-          }),
-        ),
+        safeGetSchools(),
         safeGetRows(() =>
           fetchCollectionRows({
             collectionName: "payments",
@@ -3955,6 +4412,11 @@ app.get(
       ]);
 
       const schools = schoolRows.map((row) => normalizeSchoolForView(row.id, row));
+      const schoolTotals = await buildSchoolTotals({
+        db: admin.firestore(),
+        schoolRows,
+        timeoutMs: 2500,
+      });
       const payments = paymentRows.map((row) => normalizePaymentForView(row.id, row));
       const events = eventRows.map((row) => ({
         id: row.id,
@@ -4061,8 +4523,8 @@ app.get(
         schools.map((school) => [school.id, Number(school.studentsCount || 0) || 0]),
       );
 
-      const totalSchools = schools.length;
-      const activeSchools = schools.filter((school) => school.status === "active").length;
+      const totalSchools = schoolTotals.totalSchools;
+      const activeSchools = schoolTotals.activeSchools;
       const totalStudents = Object.values(studentCounts).reduce(
         (sum, value) => sum + Number(value || 0),
         0,
@@ -4293,6 +4755,150 @@ app.get(
       console.error("Schools page error:", error.message || error);
       return res.status(500).json({
         error: error.message || "Failed to load schools page",
+      });
+    }
+  },
+);
+
+/**
+ * Delete a school and its scoped data through the backend admin SDK.
+ * POST /api/superadmin/delete-school
+ */
+app.post(
+  "/api/superadmin/delete-school",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    const db = admin.firestore();
+    const schoolId = normalizeSchoolId(req.body?.schoolId);
+
+    if (!schoolId) {
+      return res.status(400).json({ error: "schoolId is required." });
+    }
+
+    const schoolRef = db.collection("schools").doc(schoolId);
+    const schoolSnap = await schoolRef.get();
+    if (!schoolSnap.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
+
+    const schoolData = schoolSnap.data() || {};
+    const deletedDocs = {};
+    const deletionErrors = {};
+    let deletedUsers = 0;
+
+    try {
+      const usersSnap = await db
+        .collection("users")
+        .where("schoolId", "==", schoolId)
+        .get();
+
+      const authDeleteResults = await Promise.allSettled(
+        usersSnap.docs
+          .filter((userDoc) =>
+            ["school_admin", "teacher"].includes(
+              String(userDoc.data()?.role || ""),
+            ),
+          )
+          .map((userDoc) => admin.auth().deleteUser(userDoc.id)),
+      );
+      const authFailures = authDeleteResults.filter((result) => {
+        if (result.status !== "rejected") return false;
+        return result.reason?.code !== "auth/user-not-found";
+      });
+      if (authFailures.length) {
+        deletionErrors.authUsers = `${authFailures.length} Auth user(s) could not be deleted.`;
+      }
+
+      for (let i = 0; i < usersSnap.docs.length; i += 400) {
+        const batch = db.batch();
+        usersSnap.docs.slice(i, i + 400).forEach((userDoc) => {
+          batch.delete(userDoc.ref);
+        });
+        await batch.commit();
+      }
+      deletedUsers = usersSnap.size;
+
+      const rootCollectionsToDelete = [
+        "students",
+        "classes",
+        "attendance",
+        "assessments",
+        "teacher_attendance",
+        "notices",
+        "student_remarks",
+        "student_skills",
+        "admin_remarks",
+        "admin_notifications",
+        "timetables",
+        "class_subjects",
+        "fees",
+        "student_ledgers",
+        "payments",
+        "backups",
+        "activity_logs",
+        "activityLogs",
+        "analyticsEvents",
+      ];
+
+      for (const collectionName of rootCollectionsToDelete) {
+        try {
+          deletedDocs[collectionName] = await deleteBackendSchoolScopedCollection(
+            db,
+            collectionName,
+            schoolId,
+          );
+        } catch (error) {
+          deletedDocs[collectionName] = 0;
+          deletionErrors[collectionName] = error.message || String(error);
+          console.error(`Failed to delete ${collectionName}:`, error);
+        }
+      }
+
+      try {
+        const settingsRef = db.collection("settings").doc(schoolId);
+        const settingsSnap = await settingsRef.get();
+        if (settingsSnap.exists) {
+          await settingsRef.delete();
+          deletedDocs.settings = 1;
+        } else {
+          deletedDocs.settings = 0;
+        }
+      } catch (error) {
+        deletedDocs.settings = 0;
+        deletionErrors.settings = error.message || String(error);
+      }
+
+      await deleteBackendSchoolDocumentTree(db, schoolId);
+
+      await logActivity({
+        eventType: "school_deleted",
+        schoolId: null,
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: schoolId,
+        meta: {
+          schoolName: schoolData.name || null,
+          deletedUsers,
+          deletedDocs,
+          deletionErrors,
+        },
+      });
+
+      clearSuperAdminViewCache();
+      return res.json({
+        success: true,
+        deletedUsers,
+        deletedDocs,
+        deletionErrors,
+        message: "School deleted successfully.",
+      });
+    } catch (error) {
+      console.error("Delete school error:", error);
+      return res.status(500).json({
+        error: error.message || "Failed to delete school.",
+        deletionErrors,
       });
     }
   },
@@ -7424,9 +8030,21 @@ app.post("/api/public/book-demo", async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    await admin.firestore().collection("demo_requests").add(demoDoc);
+    const demoRef = await admin.firestore().collection("demo_requests").add(demoDoc);
+    const notifications = await sendDemoNotifications(demoDoc);
+    await demoRef.set(
+      {
+        notifications,
+        notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
 
-    res.json({ success: true, message: "Demo request received" });
+    res.json({
+      success: true,
+      message: "Demo request received",
+      notifications,
+    });
   } catch (error) {
     console.error("Error booking demo:", error);
     res.status(500).json({ error: error.message || "Failed to book demo" });

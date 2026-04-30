@@ -149,14 +149,6 @@ const Login = () => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       
-      // Check for email verification
-      if (userCredential.user && !userCredential.user.emailVerified) {
-        await signOut(auth);
-        setFormError("Please verify your email before logging in. Check your inbox for the verification link.");
-        setLoading(false);
-        return;
-      }
-
       firstFactorSignedIn = true;
       try {
         await evaluateAdminMfaPolicy();

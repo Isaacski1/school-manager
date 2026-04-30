@@ -1,7 +1,14 @@
 ﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { Timestamp } from "firebase/firestore";
+import {
+  collection,
+  getCountFromServer,
+  query,
+  Timestamp,
+  where,
+} from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
 import { UserRole } from "../../types";
+import { firestore } from "../../services/firebase";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { School } from "../../types";
 import Modal from "../../components/Modal";
@@ -232,7 +239,7 @@ const ChartSurface: React.FC<{
   );
 };
 
-const normalizePaymentStatus = (status?: string) => {
+const normalizePaymentStatus = (status?: string): PaymentStatus => {
   const normalized = String(status || "pending").toLowerCase();
   if (["success", "paid", "active"].includes(normalized)) return "success";
   if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
@@ -338,6 +345,153 @@ const normalizeMethodLabel = (value?: string) => {
 const PLAN_ORDER = ["free", "trial", "monthly", "termly", "yearly"] as const;
 type PlanType = (typeof PLAN_ORDER)[number];
 const PLAN_SET = new Set<PlanType>(PLAN_ORDER);
+type DashboardTotals = {
+  totalSchools?: number;
+  schools?: number;
+  activeSchools?: number;
+  active?: number;
+  inactiveSchools?: number;
+  inactive?: number;
+  freeSchools?: number;
+  free?: number;
+  trialSchools?: number;
+  trial?: number;
+  paidSchools?: number;
+  paid?: number;
+  newSchoolsLast30?: number;
+  newSchools?: number;
+};
+
+const countSchoolsFromFirestore = async (
+  normalizedSchools: School[] = [],
+): Promise<DashboardTotals | null> => {
+  const schoolsRef = collection(firestore, "schools");
+  const countQuery = async (targetQuery: any) => {
+    try {
+      const snap = await getCountFromServer(targetQuery);
+      return Number(snap.data().count || 0) || 0;
+    } catch (error) {
+      console.warn("[SuperAdminDashboard] Firestore count fallback failed", error);
+      return null;
+    }
+  };
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [
+    totalCount,
+    activeCount,
+    inactiveCount,
+    freeCount,
+    trialCount,
+    monthlyCount,
+    termlyCount,
+    yearlyCount,
+    newSchoolsCount,
+  ] = await Promise.all([
+    countQuery(schoolsRef),
+    countQuery(query(schoolsRef, where("status", "==", "active"))),
+    countQuery(query(schoolsRef, where("status", "==", "inactive"))),
+    countQuery(query(schoolsRef, where("plan", "==", "free"))),
+    countQuery(query(schoolsRef, where("plan", "==", "trial"))),
+    countQuery(query(schoolsRef, where("plan", "==", "monthly"))),
+    countQuery(query(schoolsRef, where("plan", "==", "termly"))),
+    countQuery(query(schoolsRef, where("plan", "==", "yearly"))),
+    countQuery(
+      query(
+        schoolsRef,
+        where(
+          "createdAt",
+          ">=",
+          Timestamp.fromMillis(thirtyDaysAgo.getTime()),
+        ),
+      ),
+    ),
+  ]);
+
+  const rowTotals = normalizedSchools.reduce(
+    (acc, school) => {
+      acc.totalSchools += 1;
+      if (normalizeStatus(school.status) === "inactive") {
+        acc.inactiveSchools += 1;
+      } else {
+        acc.activeSchools += 1;
+      }
+      const plan = normalizePlan(school.plan);
+      if (plan === "free") acc.freeSchools += 1;
+      if (plan === "trial") acc.trialSchools += 1;
+      if (plan !== "free" && plan !== "trial") acc.paidSchools += 1;
+      const created =
+        school.createdAt instanceof Timestamp
+          ? school.createdAt.toDate()
+          : school.createdAt
+            ? new Date(school.createdAt as any)
+            : null;
+      if (created && !Number.isNaN(created.getTime()) && created >= thirtyDaysAgo) {
+        acc.newSchoolsLast30 += 1;
+      }
+      return acc;
+    },
+    {
+      totalSchools: 0,
+      activeSchools: 0,
+      inactiveSchools: 0,
+      freeSchools: 0,
+      trialSchools: 0,
+      paidSchools: 0,
+      newSchoolsLast30: 0,
+    },
+  );
+
+  const totalSchools = totalCount ?? rowTotals.totalSchools;
+  if (!totalSchools) return rowTotals.totalSchools ? rowTotals : null;
+
+  const inactiveSchools = inactiveCount ?? rowTotals.inactiveSchools;
+  const activeSchools = Math.max(
+    activeCount ?? rowTotals.activeSchools,
+    totalSchools - inactiveSchools,
+  );
+  const freeSchools = freeCount ?? rowTotals.freeSchools;
+  const paidSchools =
+    monthlyCount === null || termlyCount === null || yearlyCount === null
+      ? rowTotals.paidSchools
+      : monthlyCount + termlyCount + yearlyCount;
+  const trialSchools = Math.max(
+    trialCount ?? rowTotals.trialSchools,
+    totalSchools - freeSchools - paidSchools,
+  );
+  const newSchoolsLast30 = Math.max(
+    newSchoolsCount ?? rowTotals.newSchoolsLast30,
+    rowTotals.newSchoolsLast30,
+  );
+
+  return {
+    totalSchools,
+    schools: totalSchools,
+    activeSchools,
+    active: activeSchools,
+    inactiveSchools,
+    inactive: inactiveSchools,
+    freeSchools,
+    free: freeSchools,
+    trialSchools,
+    trial: trialSchools,
+    paidSchools,
+    paid: paidSchools,
+    newSchoolsLast30,
+    newSchools: newSchoolsLast30,
+  };
+};
+
+const resolveDashboardTotals = async (
+  apiTotals: DashboardTotals | null | undefined,
+  normalizedSchools: School[],
+) => {
+  const apiTotal = Number(apiTotals?.totalSchools ?? apiTotals?.schools ?? 0);
+  if (apiTotal > 0 || normalizedSchools.length > 0) {
+    return apiTotals || null;
+  }
+  return (await countSchoolsFromFirestore(normalizedSchools)) || apiTotals || null;
+};
 
 const normalizeText = (value: unknown, fallback = "") => {
   if (typeof value === "string") {
@@ -486,11 +640,14 @@ const ChartTooltip: React.FC<{
   );
 };
 
+type PaymentStatus = "success" | "pending" | "failed";
+
 type PaymentRecord = {
   id: string;
   amount?: number;
   currency?: string;
   status?: string;
+  normalizedStatus?: PaymentStatus;
   module?: string;
   schoolId?: string;
   schoolName?: string;
@@ -694,8 +851,8 @@ const EarningsOverview: React.FC<{
       buckets.map((b) => b.key),
       () => ({ success: 0, pending: 0, failed: 0 }),
     ) as Record<string, { success: number; pending: number; failed: number }>;
-    normalizedPayments.forEach((payment) => {
-      if (!payment.createdAt) return;
+    normalizedBillingPayments.forEach((payment) => {
+      if (!payment.createdAt || !payment.normalizedStatus) return;
       const key = getMonthKey(payment.createdAt);
       if (!totals[key]) return;
       totals[key][payment.normalizedStatus] += 1;
@@ -706,7 +863,7 @@ const EarningsOverview: React.FC<{
       pending: totals[bucket.key]?.pending || 0,
       failed: totals[bucket.key]?.failed || 0,
     }));
-  }, [normalizedPayments]);
+  }, [normalizedBillingPayments]);
 
   const planRevenue = useMemo(() => {
     const totals: Record<PlanType, number> = {
@@ -2120,6 +2277,8 @@ const Dashboard: React.FC = () => {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fullDataLoaded, setFullDataLoaded] = useState(false);
+  const [progressiveLoading, setProgressiveLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [planFilter, setPlanFilter] = useState<string>("");
@@ -2127,6 +2286,9 @@ const Dashboard: React.FC = () => {
     "inactive" | "trials" | "noactivity"
   >("inactive");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [dashboardTotals, setDashboardTotals] = useState<DashboardTotals | null>(
+    null,
+  );
   const [dailyChecklist, setDailyChecklist] = useState<{
     summary: Record<string, { completed: number; total: number }>;
     perSchool: Record<
@@ -2140,7 +2302,13 @@ const Dashboard: React.FC = () => {
       }
     >;
   }>({ summary: {}, perSchool: {} });
-  const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
+  const DASHBOARD_CACHE_KEY = React.useMemo(
+    () =>
+      user?.id
+        ? `super_admin_dashboard_overview_v2_${user.id}`
+        : "super_admin_dashboard_overview_v2",
+    [user?.id],
+  );
   const DASHBOARD_CACHE_TTL_MS = 45_000;
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
@@ -2381,10 +2549,10 @@ const Dashboard: React.FC = () => {
           async () =>
             getSuperAdminDashboardOverview({
               forceRefresh,
-              schoolsLimit: 800,
-              activityLimit: 120,
-              paymentsLimit: 1200,
-              checklistLimit: 12000,
+              schoolsLimit: 200, // Reduced from 800
+              activityLimit: 50,  // Reduced from 120
+              paymentsLimit: 300, // Reduced from 1200
+              checklistLimit: 500, // Much smaller for initial load
             }),
           { forceRefresh },
         );
@@ -2424,17 +2592,37 @@ const Dashboard: React.FC = () => {
             category: row?.category ?? "subscription",
           }),
         );
+        const resolvedTotals = await resolveDashboardTotals(
+          payload?.totals,
+          normalizedSchools,
+        );
 
         setSchools(normalizedSchools);
         setActivity(normalizedActivity);
         setPayments(normalizedPayments);
+        setDashboardTotals(resolvedTotals);
 
         const fallbackDailySummary = {
-          attendance: { completed: 0, total: normalizedSchools.length },
-          teacherAttendance: { completed: 0, total: normalizedSchools.length },
-          assessments: { completed: 0, total: normalizedSchools.length },
-          timetable: { completed: 0, total: normalizedSchools.length },
-          notices: { completed: 0, total: normalizedSchools.length },
+          attendance: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          teacherAttendance: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          assessments: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          timetable: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          notices: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
         };
         setDailyChecklist({
           summary: payload?.dailyChecklist?.summary || fallbackDailySummary,
@@ -2443,6 +2631,7 @@ const Dashboard: React.FC = () => {
         setLastUpdated(
           payload?.generatedAt ? new Date(payload.generatedAt) : new Date(),
         );
+
       } catch (err) {
         console.error(err);
         setPaymentsError("Unable to load payment history.");
@@ -2453,22 +2642,135 @@ const Dashboard: React.FC = () => {
     [DASHBOARD_CACHE_KEY],
   );
 
+  const loadFullDataset = useCallback(
+    async (forceRefresh = false) => {
+      if (fullDataLoaded || progressiveLoading) return;
+
+      setProgressiveLoading(true);
+      try {
+        const payload = await getSuperAdminDashboardOverview({
+          forceRefresh,
+          schoolsLimit: 800,
+          activityLimit: 120,
+          paymentsLimit: 1200,
+          checklistLimit: 5000, // Full dataset but reasonable limit
+        });
+
+        const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
+          ...(row || {}),
+          id: String(row?.id || ""),
+          name: getSchoolName(row?.name),
+          code: getSchoolCode(row?.code, row?.id),
+          logoUrl: normalizeText(row?.logoUrl),
+          plan: normalizePlan(row?.plan),
+          status: normalizeStatus(row?.status),
+          createdAt: row?.createdAt || null,
+        }));
+        const normalizedActivity: ActivityEntry[] = (payload?.activity || []).map(
+          (row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            createdAt: row?.createdAt || null,
+            schoolId: row?.schoolId || "",
+            eventType: row?.eventType || "activity",
+          }),
+        );
+        const normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
+          (row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            amount: row?.amount ?? row?.amountPaid ?? 0,
+            createdAt: row?.createdAt ?? row?.paidAt ?? row?.verifiedAt ?? null,
+            paymentMethod: row?.paymentMethod ?? row?.method ?? row?.channel,
+            method: row?.method ?? row?.paymentMethod,
+            channel: row?.channel ?? row?.paymentMethod ?? row?.method,
+            provider: row?.provider ?? row?.gateway ?? row?.processor,
+            paymentType: row?.paymentType ?? row?.payment_method ?? row?.type,
+            module: row?.module ?? "billing",
+            type: row?.type ?? "subscription",
+            category: row?.category ?? "subscription",
+          }),
+        );
+        const resolvedTotals = await resolveDashboardTotals(
+          payload?.totals,
+          normalizedSchools,
+        );
+
+        setSchools(normalizedSchools);
+        setActivity(normalizedActivity);
+        setPayments(normalizedPayments);
+        setDashboardTotals(resolvedTotals);
+
+        const fallbackDailySummary = {
+          attendance: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          teacherAttendance: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          assessments: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          timetable: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+          notices: {
+            completed: 0,
+            total: Number(resolvedTotals?.totalSchools ?? normalizedSchools.length),
+          },
+        };
+        setDailyChecklist({
+          summary: payload?.dailyChecklist?.summary || fallbackDailySummary,
+          perSchool: payload?.dailyChecklist?.perSchool || {},
+        });
+        setLastUpdated(
+          payload?.generatedAt ? new Date(payload.generatedAt) : new Date(),
+        );
+        setFullDataLoaded(true);
+
+      } catch (err) {
+        console.error("Failed to load full dataset:", err);
+        // Don't show error for progressive loading failures
+      } finally {
+        setProgressiveLoading(false);
+      }
+    },
+    [fullDataLoaded, progressiveLoading],
+  );
+
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  // KPI calculations (unchanged logic)
+  // KPI calculations prefer backend aggregate counts when row queries are partial.
   const kpis = useMemo(() => {
-    const total = schools.length;
-    const active = schools.filter((s) => s.status === "active").length;
-    const inactive = schools.filter((s) => s.status === "inactive").length;
-    const trial = schools.filter((s) => normalizePlan(s.plan) === "trial").length;
-    const free = schools.filter((s) => normalizePlan(s.plan) === "free").length;
-    const paid = schools.filter((s) => {
+    const readTotal = (keys: Array<keyof DashboardTotals>, fallback: number) => {
+      if (!dashboardTotals) return fallback;
+      for (const key of keys) {
+        const value = Number(dashboardTotals[key]);
+        if (Number.isFinite(value)) return value;
+      }
+      return fallback;
+    };
+
+    const computedTotal = schools.length;
+    const computedActive = schools.filter((s) => s.status === "active").length;
+    const computedInactive = schools.filter((s) => s.status === "inactive").length;
+    const computedTrial = schools.filter(
+      (s) => normalizePlan(s.plan) === "trial",
+    ).length;
+    const computedFree = schools.filter(
+      (s) => normalizePlan(s.plan) === "free",
+    ).length;
+    const computedPaid = schools.filter((s) => {
       const plan = normalizePlan(s.plan);
       return plan !== "trial" && plan !== "free";
     }).length;
-    const newSchools = schools.filter((s) => {
+    const computedNewSchools = schools.filter((s) => {
       if (!s.createdAt) return false;
       const created =
         s.createdAt instanceof Timestamp
@@ -2490,16 +2792,19 @@ const Dashboard: React.FC = () => {
     ).size;
 
     return {
-      total,
-      active,
-      inactive,
-      trial,
-      free,
-      paid,
-      newSchools,
+      total: readTotal(["totalSchools", "schools"], computedTotal),
+      active: readTotal(["activeSchools", "active"], computedActive),
+      inactive: readTotal(["inactiveSchools", "inactive"], computedInactive),
+      trial: readTotal(["trialSchools", "trial"], computedTrial),
+      free: readTotal(["freeSchools", "free"], computedFree),
+      paid: readTotal(["paidSchools", "paid"], computedPaid),
+      newSchools: readTotal(
+        ["newSchoolsLast30", "newSchools"],
+        computedNewSchools,
+      ),
       activeLast7,
     };
-  }, [schools, activity]);
+  }, [schools, activity, dashboardTotals]);
 
   const activityFeed = useMemo(() => {
     if (!activityFilter) return activity;
@@ -2754,15 +3059,12 @@ const Dashboard: React.FC = () => {
     const lastActivityBySchool: Record<string, Date | null> = {};
     activity.forEach((a) => {
       if (!a.schoolId) return;
-      const when =
-        a.createdAt instanceof Timestamp
-          ? a.createdAt.toDate()
-          : new Date(a.createdAt);
-      if (
-        !lastActivityBySchool[a.schoolId] ||
-        lastActivityBySchool[a.schoolId] < when
-      )
+      const when = toSafeDate(a.createdAt);
+      if (!when) return;
+      const previous = lastActivityBySchool[a.schoolId];
+      if (!previous || previous < when) {
         lastActivityBySchool[a.schoolId] = when;
+      }
     });
     return schools.filter((s) => {
       const last = lastActivityBySchool[s.id];

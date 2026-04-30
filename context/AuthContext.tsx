@@ -47,7 +47,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   authLoading: boolean;
-  error: string | null;
+  error: React.ReactNode | null;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -60,7 +60,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<React.ReactNode | null>(null);
 
   useEffect(() => {
     // Listen for Firebase Auth changes
@@ -79,6 +79,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           });
           const userProfile = await loadUserProfile(firebaseUser);
           console.info("[Auth] user profile", userProfile);
+
           setUser(userProfile);
 
           if (userProfile.schoolId) {
@@ -151,10 +152,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             // Improved Error Handling
             const errorMessage = err.message || err.toString();
 
-            if (errorMessage === "EMAIL_NOT_VERIFIED") {
-              setError("Please verify your email to access the system.");
-              await signOut(auth);
-            } else if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
+            if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
               setError(
                 "Your account is not set up yet. Please contact your administrator for access.",
               );

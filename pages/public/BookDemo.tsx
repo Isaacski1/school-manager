@@ -149,7 +149,7 @@ const BookDemo = () => {
                           <option>Primary School</option>
                           <option>Junior High School</option>
                           <option>Senior High School</option>
-                          <option>Basic School (K-9)</option>
+                          <option>Basic School (Nursery - JHS)</option>
                         </select>
                       </div>
                       <div>

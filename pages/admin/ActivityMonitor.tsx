@@ -318,8 +318,8 @@ const ActivityMonitor: React.FC = () => {
         q,
         (snap) => {
           const items = snap.docs.map((docSnap) => ({
+            ...(docSnap.data() as Omit<ActivityLog, "id">),
             id: docSnap.id,
-            ...(docSnap.data() as ActivityLog),
           }));
           setFirstLogs(items);
           hasFetchedRef.current = true;
@@ -338,8 +338,8 @@ const ActivityMonitor: React.FC = () => {
       try {
         const snap = await getDocs(q);
         const items = snap.docs.map((docSnap) => ({
+          ...(docSnap.data() as Omit<ActivityLog, "id">),
           id: docSnap.id,
-          ...(docSnap.data() as ActivityLog),
         }));
         setFirstLogs(items);
         hasFetchedRef.current = true;
@@ -365,8 +365,8 @@ const ActivityMonitor: React.FC = () => {
         ),
       );
       const nextItems = nextSnap.docs.map((docSnap) => ({
+        ...(docSnap.data() as Omit<ActivityLog, "id">),
         id: docSnap.id,
-        ...(docSnap.data() as ActivityLog),
       }));
       setExtraLogs((prev) => mergeUnique(prev, nextItems));
       setCursor(nextSnap.docs[nextSnap.docs.length - 1] || cursor);

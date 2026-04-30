@@ -240,7 +240,7 @@ const LiveCountdownText: React.FC<{
 const AnimatedMetricValue: React.FC<{
   value: number;
   format?: (value: number) => string;
-}> = React.memo(({ value, format = (nextValue) => String(nextValue) }) => {
+}> = React.memo(({ value, format = (nextValue: number) => String(nextValue) }) => {
   const [displayValue, setDisplayValue] = useState(value);
   const previousValueRef = React.useRef(value);
 
@@ -2220,6 +2220,7 @@ const AdminDashboard = () => {
   // --- Action Handlers ---
 
   const handleViewDetails = async (student: Student) => {
+    if (!schoolId || !student.id || !student.classId) return;
     setOpenMenuId(null);
     setViewStudent(student);
     setPerformanceData(null);
@@ -3309,7 +3310,7 @@ const AdminDashboard = () => {
     segments.forEach((s, idx) => {
       const pct = (s.v / total) * 100;
       const next = offset + pct;
-      gradient += `${colors[s.k]} ${offset}% ${next}%, `;
+      gradient += `${colors[s.k as keyof typeof colors]} ${offset}% ${next}%, `;
       offset = next;
     });
     gradient = gradient || "#f3f4f6 0% 100%";
@@ -3328,7 +3329,9 @@ const AdminDashboard = () => {
             <div key={s.k} className="flex items-center gap-2 text-sm">
               <span
                 className="w-3 h-3 rounded-sm"
-                style={{ background: colors[s.k] }}
+                style={{
+                  background: colors[s.k as keyof typeof colors],
+                }}
               />
               <span className="text-slate-700 font-medium">{s.k}</span>
               <span className="text-slate-500 ml-2">{s.v}</span>

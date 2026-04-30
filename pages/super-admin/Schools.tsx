@@ -14,13 +14,13 @@ import {
   where,
   getDocs,
   serverTimestamp,
-  writeBatch,
 } from "firebase/firestore";
 import { PlanConfig, School } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import {
   createOrUpdatePlan,
   createSchool,
+  deleteSchool,
   getSuperAdminSchoolsPage,
   updateSchoolPlan,
 } from "../../services/backendApi";
@@ -421,101 +421,18 @@ const Schools = () => {
     try {
       setIsDeletingSchool(true);
       const schoolId = schoolToDelete.id;
-      const batchSize = 400; // Stay under 500 limit
-
-      // 1. Find and delete all users associated with this school
-      const usersSnapshot = await getDocs(
-        query(
-          collection(firestore, "users"),
-          where("schoolId", "==", schoolId),
-        ),
+      const data = await deleteSchool({ schoolId });
+      const totalDocsDeleted = Object.values(data.deletedDocs || {}).reduce(
+        (sum, value) => sum + Number(value || 0),
+        0,
       );
 
-      let deletedUsers = 0;
-      const userBatches = [];
-
-      // Group users into batches for deletion
-      for (let i = 0; i < usersSnapshot.docs.length; i += batchSize) {
-        const batch = writeBatch(firestore);
-        const batchUsers = usersSnapshot.docs.slice(i, i + batchSize);
-
-        for (const userDoc of batchUsers) {
-          batch.delete(doc(firestore, "users", userDoc.id));
-        }
-
-        userBatches.push(batch.commit());
-        deletedUsers += batchUsers.length;
-      }
-
-      // Execute user deletions
-      if (userBatches.length > 0) {
-        await Promise.all(userBatches);
-        console.log(`Deleted ${deletedUsers} user documents`);
-      }
-
-      // 2. Delete school-scoped collections
-      const collectionsToDelete = [
-        "students",
-        "classes",
-        "attendance",
-        "assessments",
-        "teacher_attendance",
-        "notices",
-        "student_remarks",
-        "student_skills",
-        "admin_remarks",
-        "admin_notifications",
-        "timetables",
-        "class_subjects",
-        "settings", // Special case
-      ];
-
-      let totalDocsDeleted = 0;
-
-      for (const collectionName of collectionsToDelete) {
-        if (collectionName === "settings") {
-          // Settings is stored as settings/{schoolId}
-          try {
-            await deleteDoc(doc(firestore, "settings", schoolId));
-            totalDocsDeleted += 1;
-          } catch (error) {
-            // Document might not exist, continue
-            console.log(
-              `Settings document ${schoolId} not found or already deleted`,
-            );
-          }
-        } else {
-          // Query documents where schoolId == schoolId
-          const q = query(
-            collection(firestore, collectionName),
-            where("schoolId", "==", schoolId),
-          );
-          const snapshot = await getDocs(q);
-          const docIds = snapshot.docs.map((doc) => doc.id);
-
-          if (docIds.length > 0) {
-            // Delete in batches
-            for (let i = 0; i < docIds.length; i += batchSize) {
-              const batch = writeBatch(firestore);
-              const batchDocIds = docIds.slice(i, i + batchSize);
-
-              for (const docId of batchDocIds) {
-                batch.delete(doc(firestore, collectionName, docId));
-              }
-
-              await batch.commit();
-              totalDocsDeleted += batchDocIds.length;
-            }
-          }
-        }
-      }
-
-      // 3. Finally, delete the school document itself
-      await deleteDoc(doc(firestore, "schools", schoolId));
-
+      const cleanupWarnings = Object.keys(data.deletionErrors || {}).length;
       showToast(
-        `School deleted successfully! Removed ${deletedUsers} users and ${totalDocsDeleted} data records.`,
-        { type: "success" },
+        cleanupWarnings
+          ? `School deleted. Removed ${data.deletedUsers || 0} users and ${totalDocsDeleted} data records. ${cleanupWarnings} cleanup step(s) need review.`
+          : `School deleted successfully! Removed ${data.deletedUsers || 0} users and ${totalDocsDeleted} data records.`,
+        { type: cleanupWarnings ? "warning" : "success" },
       );
       clearSuperAdminCaches();
       setShowDeleteModal(false);

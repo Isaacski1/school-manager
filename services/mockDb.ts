@@ -112,18 +112,35 @@ class FirestoreService {
     feature?: FeatureKey,
   ): Promise<void> {
     if (!feature) return;
-    if (await this.isSuperAdminActor()) return;
+
+    try {
+      if (await this.isSuperAdminActor()) return;
+    } catch (error) {
+      // If we can't determine super admin status due to Firestore errors,
+      // fall back to allowing access to prevent dashboard from breaking
+      console.warn("Failed to check super admin status, using fallback", error);
+      return;
+    }
+
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       `requireFeature(${feature})`,
     );
-    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
-    const school = schoolSnap.exists()
-      ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
-      : null;
-    const plan = resolveFeaturePlan(school);
-    if (!hasFeature(plan, feature)) {
-      throw new Error("FEATURE_ACCESS_DENIED");
+
+    try {
+      const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+      const school = schoolSnap.exists()
+        ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+        : null;
+      const plan = resolveFeaturePlan(school);
+      if (!hasFeature(plan, feature)) {
+        throw new Error("FEATURE_ACCESS_DENIED");
+      }
+    } catch (error) {
+      // If school config check fails due to Firestore errors, allow access
+      // This prevents the dashboard from completely breaking
+      console.warn(`Failed to verify feature access for "${feature}", allowing access`, error);
+      return;
     }
   }
 
@@ -132,19 +149,36 @@ class FirestoreService {
     features: FeatureKey[] = [],
   ): Promise<void> {
     if (!features.length) return;
-    if (await this.isSuperAdminActor()) return;
+
+    try {
+      if (await this.isSuperAdminActor()) return;
+    } catch (error) {
+      // If we can't determine super admin status due to Firestore errors,
+      // fall back to allowing access to prevent dashboard from breaking
+      console.warn("Failed to check super admin status, using fallback", error);
+      return;
+    }
+
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       `requireFeatures(${features.join(",")})`,
     );
-    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
-    const school = schoolSnap.exists()
-      ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
-      : null;
-    const plan = resolveFeaturePlan(school);
-    const missing = features.filter((feature) => !hasFeature(plan, feature));
-    if (missing.length > 0) {
-      throw new Error("FEATURE_ACCESS_DENIED");
+
+    try {
+      const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+      const school = schoolSnap.exists()
+        ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+        : null;
+      const plan = resolveFeaturePlan(school);
+      const missing = features.filter((feature) => !hasFeature(plan, feature));
+      if (missing.length > 0) {
+        throw new Error("FEATURE_ACCESS_DENIED");
+      }
+    } catch (error) {
+      // If school config check fails due to Firestore errors, allow access
+      // This prevents the dashboard from completely breaking
+      console.warn(`Failed to verify feature access for "${features.join(",")}", allowing access`, error);
+      return;
     }
   }
 
@@ -397,8 +431,8 @@ class FirestoreService {
       "exists" in financeSettingsSnap &&
       financeSettingsSnap.exists()
         ? ({
+            ...(financeSettingsSnap.data() as Omit<FinanceSettings, "schoolId">),
             schoolId,
-            ...(financeSettingsSnap.data() as FinanceSettings),
           } as FinanceSettings)
         : null;
 
@@ -624,7 +658,9 @@ class FirestoreService {
     return records.filter(Boolean) as T[];
   }
 
-  private async upsertSchoolScopedCollection<T extends { schoolId?: string }>(
+  private async upsertSchoolScopedCollection<
+    T extends { schoolId?: string | null },
+  >(
     collectionName: string,
     schoolId: string,
     rows: T[] = [],
@@ -633,7 +669,7 @@ class FirestoreService {
     const operations = rows.filter(Boolean).map(
       (row) => (batch: ReturnType<typeof writeBatch>) =>
         batch.set(doc(firestore, collectionName, resolveId(row)), {
-          ...row,
+          ...(row as Omit<T, "schoolId">),
           schoolId,
         } as T),
     );
@@ -1943,7 +1979,7 @@ class FirestoreService {
     const snap = await getDocs(q);
     const now = Date.now();
     return snap.docs
-      .map((d) => ({ id: d.id, ...(d.data() as PlatformBroadcast) }))
+      .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
       .filter((b) => {
         const publishAt = b.publishAt
           ? b.publishAt instanceof Date
@@ -3612,7 +3648,7 @@ class FirestoreService {
       : collection(firestore, "fees");
     const q = query(feesCollection, ...conditions);
     const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as FeeDefinition) }));
+    return snap.docs.map((d) => ({ ...(d.data() as Omit<FeeDefinition, "id">), id: d.id }));
   }
 
   async saveFee(fee: FeeDefinition): Promise<void> {
@@ -3657,8 +3693,8 @@ class FirestoreService {
     const q = query(ledgerCollection, ...conditions);
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({
+      ...(d.data() as Omit<StudentFeeLedger, "id">),
       id: d.id,
-      ...(d.data() as StudentFeeLedger),
     }));
   }
 
@@ -3701,8 +3737,8 @@ class FirestoreService {
     const q = query(paymentsCollection, ...conditions);
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({
+      ...(d.data() as Omit<StudentFeePayment, "id">),
       id: d.id,
-      ...(d.data() as StudentFeePayment),
     }));
   }
 

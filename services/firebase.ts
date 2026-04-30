@@ -85,7 +85,8 @@ if (typeof window !== "undefined") {
     (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = appCheckDebugToken;
   }
 
-  if (appCheckSiteKey) {
+  // Only initialize App Check if we have a valid site key and it's not a placeholder
+  if (appCheckSiteKey && appCheckSiteKey !== "YOUR_APP_CHECK_SITE_KEY") {
     initializeAppCheck(app, {
       provider: new ReCaptchaV3Provider(appCheckSiteKey),
       isTokenAutoRefreshEnabled: true,

@@ -48,17 +48,24 @@ async function deleteSchoolScopedCollections(
   batchSize = DEFAULT_BATCH_SIZE,
 ) {
   const deletedDocs = {};
+  const errors = {};
   for (const collectionName of collectionNames) {
-    const deletedCount = await deleteSchoolScopedCollection(
-      db,
-      collectionName,
-      schoolId,
-      batchSize,
-    );
-    deletedDocs[collectionName] = deletedCount;
-    console.log(`Deleted ${deletedCount} documents from ${collectionName}`);
+    try {
+      const deletedCount = await deleteSchoolScopedCollection(
+        db,
+        collectionName,
+        schoolId,
+        batchSize,
+      );
+      deletedDocs[collectionName] = deletedCount;
+      console.log(`Deleted ${deletedCount} documents from ${collectionName}`);
+    } catch (error) {
+      deletedDocs[collectionName] = 0;
+      errors[collectionName] = error.message || String(error);
+      console.error(`Failed to delete ${collectionName}:`, error);
+    }
   }
-  return deletedDocs;
+  return { deletedDocs, errors };
 }
 
 async function deleteSchoolDocumentTree(db, schoolId) {
@@ -379,6 +386,7 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
 
   let deletedUsers = 0;
   const deletedDocs = {};
+  const deletionErrors = {};
   const batchSize = DEFAULT_BATCH_SIZE; // Stay under Firestore batch limit
 
   try {
@@ -407,14 +415,16 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
     // Execute Auth user deletions in parallel (batched)
     if (userDeletions.length > 0) {
       const authDeletionResults = await Promise.allSettled(userDeletions);
-      const failedAuthDeletions = authDeletionResults.filter(
-        (result) => result.status === "rejected",
-      );
+      const failedAuthDeletions = authDeletionResults.filter((result) => {
+        if (result.status !== "rejected") return false;
+        return result.reason?.code !== "auth/user-not-found";
+      });
       console.log(`Deleted ${userDeletions.length} Auth users`);
       if (failedAuthDeletions.length > 0) {
         console.warn(
           `Failed to delete ${failedAuthDeletions.length} Auth users for school ${schoolId}`,
         );
+        deletionErrors.authUsers = `${failedAuthDeletions.length} Auth user(s) could not be deleted.`;
       }
     }
 
@@ -459,48 +469,63 @@ exports.deleteSchool = functions.https.onCall(async (data, context) => {
       "activityLogs",
       "analyticsEvents",
     ];
-    const rootDeletedDocs = await deleteSchoolScopedCollections(
+    const {
+      deletedDocs: rootDeletedDocs,
+      errors: rootDeletionErrors,
+    } = await deleteSchoolScopedCollections(
       db,
       schoolId,
       rootCollectionsToDelete,
       batchSize,
     );
     Object.assign(deletedDocs, rootDeletedDocs);
+    Object.assign(deletionErrors, rootDeletionErrors);
 
     // 3. Delete settings document for this school
-    const settingsRef = db.collection("settings").doc(schoolId);
-    const settingsSnap = await settingsRef.get();
-    if (settingsSnap.exists) {
-      await settingsRef.delete();
-      deletedDocs.settings = 1;
-    } else {
+    try {
+      const settingsRef = db.collection("settings").doc(schoolId);
+      const settingsSnap = await settingsRef.get();
+      if (settingsSnap.exists) {
+        await settingsRef.delete();
+        deletedDocs.settings = 1;
+      } else {
+        deletedDocs.settings = 0;
+      }
+    } catch (error) {
       deletedDocs.settings = 0;
+      deletionErrors.settings = error.message || String(error);
+      console.error(`Failed to delete settings document ${schoolId}:`, error);
     }
     console.log(`Deleted ${deletedDocs.settings} documents from settings`);
 
     // 4. Finally, delete school doc and all nested subcollections
-    await deleteSchoolDocumentTree(db, schoolId);
+    try {
+      await deleteSchoolDocumentTree(db, schoolId);
+    } catch (error) {
+      console.error(`Failed to delete school document tree ${schoolId}:`, error);
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        `Could not delete the school record: ${error.message || "Unknown error"}`,
+      );
+    }
     console.log(`Deleted school document tree: ${schoolId}`);
 
     return {
       success: true,
       deletedUsers,
       deletedDocs,
+      deletionErrors,
       message: `School and all associated data deleted successfully`,
     };
   } catch (error) {
     console.error("Error deleting school:", error);
-    if (
-      error.code === "already-exists" ||
-      error.code === "not-found" ||
-      error.code === "failed-precondition"
-    ) {
+    if (error instanceof functions.https.HttpsError) {
       throw error; // Re-throw specific errors
     }
     throw new functions.https.HttpsError(
-      "internal",
-      "Failed to delete school",
-      error.message,
+      "failed-precondition",
+      error.message || "Failed to delete school",
+      { deletionErrors },
     );
   }
 });
@@ -578,7 +603,10 @@ exports.resetTermData = functions.https.onCall(async (data, context) => {
 
   try {
     // Delete term-related records for this school only
-    const deletedDocs = await deleteSchoolScopedCollections(
+    const {
+      deletedDocs,
+      errors: deletionErrors,
+    } = await deleteSchoolScopedCollections(
       db,
       targetSchoolId,
       collectionsToDelete,
@@ -601,6 +629,7 @@ exports.resetTermData = functions.https.onCall(async (data, context) => {
       success: true,
       schoolId: targetSchoolId,
       deletedDocs,
+      deletionErrors,
       message: "Term data has been successfully reset for the selected school.",
     };
   } catch (error) {
