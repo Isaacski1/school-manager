@@ -11,7 +11,8 @@ export interface User {
   role: UserRole;
   schoolId: string | null;
   assignedClassIds?: string[];
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "trial_active";
+  emailVerified?: boolean;
   createdAt?: Date;
   lastLogin?: Date | number | string | null;
   lastLoginAt?: number | null;
@@ -34,7 +35,7 @@ export interface School {
   logoUrl: string;
   phone: string;
   address: string;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "trial_active";
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: Date | null;
   featurePlan?: "starter" | "standard";

@@ -6,6 +6,7 @@ import {
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
+import { getStorage } from "firebase/storage";
 
 const fallbackFirebaseConfig = {
   apiKey: "AIzaSyCt11AcFi9JbwedTdOGRBNOsG-h_0psGBo",
@@ -71,6 +72,7 @@ const firebaseFunctionsRegion =
 const app = firebaseApp.initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const firestore = getFirestore(app);
+export const storage = getStorage(app);
 export const functions = firebaseFunctionsRegion
   ? getFunctions(app, firebaseFunctionsRegion)
   : getFunctions(app);

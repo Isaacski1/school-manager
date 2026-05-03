@@ -16,6 +16,31 @@ dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
+const escapeHtml = (unsafe) => {
+  return String(unsafe || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
+
+const normalizeWhatsappAddress = (addr) => {
+  if (!addr) return "";
+  let clean = String(addr).trim();
+  // Ensure it starts with whatsapp: prefix and a +
+  if (!clean.startsWith("whatsapp:")) {
+    const phone = clean.startsWith("+") ? clean : "+" + clean;
+    clean = `whatsapp:${phone}`;
+  } else {
+    // If it already has whatsapp: prefix, ensure the phone part has +
+    const parts = clean.split(":");
+    const phone = parts[1].startsWith("+") ? parts[1] : "+" + parts[1];
+    clean = `whatsapp:${phone}`;
+  }
+  return clean;
+};
+
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -122,7 +147,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const REQUEST_LIMIT = process.env.REQUEST_BODY_LIMIT || "1mb";
+const REQUEST_LIMIT = process.env.REQUEST_BODY_LIMIT || "10mb";
 app.use(
   express.json({
     limit: REQUEST_LIMIT,
@@ -561,20 +586,6 @@ const SUPERADMIN_VIEW_CACHE_MAX_ENTRIES = Math.max(
   ),
 );
 const SUPERADMIN_VIEW_CACHE = new Map();
-
-const escapeHtml = (value) =>
-  String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const normalizeWhatsappAddress = (value) => {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  return raw.startsWith("whatsapp:") ? raw : `whatsapp:${raw}`;
-};
 
 const formatDemoRequestText = (demoDoc) => {
   const lines = [
@@ -8066,6 +8077,10 @@ app.post("/api/public/start-trial", async (req, res) => {
       academicYear,
       currentTerm,
       onboardingTemplate,
+      logoData, // New: base64 logo data
+      logoFileName, // New: logo filename
+      plan,
+      featurePlan,
     } = req.body;
 
     const safeEmail = String(adminEmail || "").trim().toLowerCase();
@@ -8089,6 +8104,38 @@ app.post("/api/public/start-trial", async (req, res) => {
     const schoolRef = admin.firestore().collection("schools").doc();
     const schoolId = schoolRef.id;
 
+    // --- NEW: Handle Logo Upload via Admin SDK ---
+    let finalLogoUrl = null;
+    if (logoData && logoData.includes("base64,")) {
+      try {
+        const base64String = logoData.split("base64,")[1];
+        console.log(`[StartTrial] Processing logo: ${logoFileName} (${base64String.length} chars)`);
+        const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "school-manager-gh.firebasestorage.app");
+        const buffer = Buffer.from(base64String, "base64");
+        const ext = logoFileName ? logoFileName.split(".").pop() : "png";
+        const fileName = `schools/${schoolId}/logo/brand.${ext}`;
+        const file = bucket.file(fileName);
+
+        console.log("[StartTrial] Saving file to bucket:", fileName);
+        await file.save(buffer, {
+          metadata: { 
+            contentType: `image/${ext === "jpg" ? "jpeg" : ext}`,
+            cacheControl: 'public, max-age=31536000'
+          },
+          public: true,
+        });
+
+        // Use the standard Firebase Storage API URL which is more reliable
+        finalLogoUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(fileName)}?alt=media`;
+        console.log("[StartTrial] Logo upload successful. URL:", finalLogoUrl);
+      } catch (uploadError) {
+        console.error("[StartTrial] Backend logo upload failed:", uploadError);
+      }
+    }
+
+    const featurePlanSafe = String(featurePlan || "starter").trim().toLowerCase();
+    const maxStudents = featurePlanSafe === "standard" ? 700 : 300;
+
     const schoolDoc = {
       name: String(schoolName || "").trim(),
       phone: String(schoolPhone || "").trim(),
@@ -8096,9 +8143,11 @@ app.post("/api/public/start-trial", async (req, res) => {
       address: String(address || "").trim(),
       schoolType: String(schoolType || "").trim(),
       studentsCount: 0,
-      limits: { maxStudents: Number(studentEstimate) || 100 },
+      limits: { maxStudents }, // Enforce hard limits based on plan
       status: "trial_active",
-      plan: "trial",
+      plan: String(plan || "trial").trim(),
+      featurePlan: featurePlanSafe,
+      logoUrl: finalLogoUrl, // Store the URL immediately
       onboardingTemplate: String(onboardingTemplate || "default"),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8141,17 +8190,192 @@ app.post("/api/public/start-trial", async (req, res) => {
 
     await batch.commit();
 
+    // --- Notifications (fire-and-forget, don't block response) ---
+    const safeSchoolName = String(schoolName || "").trim() || "Unknown School";
+    const safeAdminName  = String(adminFullName || "").trim() || "Unknown";
+    const safeSchoolType = String(schoolType || "").trim() || "Not specified";
+    const safeSchoolPhone = String(schoolPhone || "").trim() || "Not provided";
+
+    // 1. WhatsApp alert to super admin via Twilio
+    const sendTrialWhatsapp = async () => {
+      console.log("[StartTrial] Sending WhatsApp...");
+      const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM;
+      const whatsappTo = process.env.TRIAL_NOTIFY_WHATSAPP || process.env.DEMO_NOTIFY_WHATSAPP;
+
+      if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !whatsappFrom || !whatsappTo) {
+        console.warn("[StartTrial] WhatsApp skipped: missing Twilio env vars", {
+          sid: !!process.env.TWILIO_ACCOUNT_SID,
+          token: !!process.env.TWILIO_AUTH_TOKEN,
+          from: !!whatsappFrom,
+          to: !!whatsappTo
+        });
+        return { sent: false, skipped: true };
+      }
+      const body = [
+        "🎉 *New Free Trial Registration*",
+        "",
+        `🏫 School: ${safeSchoolName}`,
+        `📍 Address: ${String(address || "").trim() || "Not provided"}`,
+        `📞 Phone: ${safeSchoolPhone}`,
+        `🏷️ Type: ${safeSchoolType}`,
+        `👥 Est. Students: ${studentEstimate || "Not provided"}`,
+        "",
+        `👤 Admin: ${safeAdminName}`,
+        `📧 Email: ${safeEmail}`,
+        "",
+        `💎 Feature Plan: ${String(featurePlan || "starter").toUpperCase()}`,
+        `💳 Billing Cycle: ${String(plan || "trial").toUpperCase()}`,
+        "",
+        `📅 Academic Year: ${String(academicYear || "").trim() || "N/A"}`,
+        `📚 Term: ${String(currentTerm || "").trim() || "N/A"}`,
+        `🆔 School ID: ${schoolId}`,
+      ].join("\n");
+
+      const form = new URLSearchParams();
+      form.set("From", normalizeWhatsappAddress(whatsappFrom));
+      form.set("To", normalizeWhatsappAddress(whatsappTo));
+      form.set("Body", body);
+
+      const authHeader = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64");
+      const response = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(process.env.TWILIO_ACCOUNT_SID)}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${authHeader}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: form,
+        },
+      );
+      const resBody = await response.json().catch(() => ({}));
+      console.log("[StartTrial] Twilio status:", response.status);
+      if (!response.ok) {
+        console.error("[StartTrial] Twilio error:", resBody);
+        throw new Error(resBody?.message || `Twilio failed with ${response.status}`);
+      }
+      console.log("[StartTrial] WhatsApp sent:", resBody?.sid);
+      return { sent: true, provider: "twilio", sid: resBody?.sid || null };
+    };
+
+    // 2. Welcome + verification guidance email to the new school admin via Resend
+    const sendTrialWelcomeEmail = async () => {
+      const resendKey = process.env.RESEND_API_KEY;
+      const resendFrom = process.env.RESEND_FROM_EMAIL;
+      if (!resendKey || !resendFrom) {
+        console.warn("[StartTrial] Welcome email skipped: missing Resend env vars");
+        return { sent: false, skipped: true };
+      }
+      const from = process.env.RESEND_FROM_NAME ? `${process.env.RESEND_FROM_NAME} <${resendFrom}>` : resendFrom;
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0f172a">
+          <div style="background:linear-gradient(135deg,#0B4A82,#1160A8);padding:40px 32px;border-radius:16px 16px 0 0;text-align:center">
+            <h1 style="color:white;margin:0;font-size:24px">Welcome to School Manager GH 🇬🇭</h1>
+            <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:15px">Your free trial workspace is ready</p>
+          </div>
+          <div style="background:white;padding:32px;border:1px solid #DBEAFE;border-top:none">
+            <p style="font-size:16px;margin:0 0 16px">Hi <strong>${escapeHtml(safeAdminName)}</strong>,</p>
+            <p style="color:#475569;line-height:1.7;margin:0 0 24px">
+              Your school workspace for <strong>${escapeHtml(safeSchoolName)}</strong> has been created successfully on School Manager GH.
+            </p>
+
+            <div style="background:#EFF6FF;border-radius:12px;padding:20px;border:1px solid #BFDBFE;margin-bottom:24px">
+              <h3 style="margin:0 0 12px;color:#0B4A82;font-size:15px">✅ Next Step: Verify your email</h3>
+              <p style="color:#374151;font-size:14px;line-height:1.7;margin:0">
+                You should receive a separate <strong>verification email from Firebase</strong> shortly.
+                Please click the link in that email to activate your account and gain access to your dashboard.
+              </p>
+            </div>
+
+            <div style="background:#F8FAFC;border-radius:12px;padding:20px;border:1px solid #E2E8F0;margin-bottom:24px">
+              <h3 style="margin:0 0 12px;color:#0f172a;font-size:15px">Your Account Details</h3>
+              <table cellpadding="6" cellspacing="0" style="width:100%;font-size:14px">
+                <tr><td style="color:#64748B;width:140px">School Name</td><td><strong>${escapeHtml(safeSchoolName)}</strong></td></tr>
+                <tr><td style="color:#64748B">Your Email</td><td><strong>${escapeHtml(safeEmail)}</strong></td></tr>
+                <tr><td style="color:#64748B">School Type</td><td>${escapeHtml(safeSchoolType)}</td></tr>
+                <tr><td style="color:#64748B">Academic Year</td><td>${escapeHtml(String(academicYear || "").trim() || "N/A")}</td></tr>
+                <tr><td style="color:#64748B">Current Term</td><td>${escapeHtml(String(currentTerm || "").trim() || "N/A")}</td></tr>
+              </table>
+            </div>
+
+            <p style="color:#64748B;font-size:13px;line-height:1.7;margin:0">
+              Once verified, you can log in at <a href="https://school-manager-gh.web.app" style="color:#0B4A82">school-manager-gh.web.app</a> 
+              and start managing your school — add teachers, enrol students, configure classes and more.
+            </p>
+          </div>
+          <div style="background:#F8FAFC;padding:16px 32px;border-radius:0 0 16px 16px;border:1px solid #DBEAFE;border-top:none;text-align:center">
+            <p style="color:#94A3B8;font-size:12px;margin:0">School Manager GH &bull; Powering Ghanaian Schools 🇬🇭</p>
+          </div>
+        </div>
+      `;
+
+      const text = [
+        `Hi ${safeAdminName},`,
+        "",
+        `Your school workspace "${safeSchoolName}" has been created on School Manager GH.`,
+        "",
+        "NEXT STEP: Verify your email",
+        "You should receive a separate verification email from Firebase.",
+        "Click the link in that email to activate your account.",
+        "",
+        "Once verified, log in at: https://school-manager-gh.web.app",
+        "",
+        "School Manager GH",
+      ].join("\n");
+
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [safeEmail],
+          subject: `Welcome to School Manager GH — Verify your account, ${safeAdminName}`,
+          text,
+          html,
+        }),
+      });
+      const resBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(resBody?.message || `Resend failed with ${response.status}`);
+      }
+      return { sent: true, provider: "resend", id: resBody?.id || null };
+    };
+
+    // Fire both notifications concurrently but don't let them block the response
+    const [whatsappResult, welcomeEmailResult] = await Promise.allSettled([
+      sendTrialWhatsapp(),
+      sendTrialWelcomeEmail(),
+    ]);
+
+    const normalizeResult = (r) =>
+      r.status === "fulfilled"
+        ? r.value
+        : { sent: false, error: r.reason?.message || String(r.reason) };
+
+    const notifications = {
+      whatsapp: normalizeResult(whatsappResult),
+      welcomeEmail: normalizeResult(welcomeEmailResult),
+    };
+
+    console.info("[StartTrial] notifications", notifications);
+
     res.json({
       success: true,
       schoolId: schoolId,
       adminUid: userRecord.uid,
-      message: "School trial started successfully"
+      message: "School trial started successfully",
+      notifications,
     });
   } catch (error) {
     console.error("Error starting trial:", error);
     res.status(500).json({ error: error.message || "Failed to start school setup" });
   }
 });
+
 
 app.get("/", (req, res) => {
   res.send("School Manager GH Backend is running ✅");

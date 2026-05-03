@@ -1,10 +1,67 @@
-import React from "react";
-import { Link } from "react-router-dom";
+import React, { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Mail, ArrowLeft, ShieldCheck } from "lucide-react";
+import { Mail, ArrowLeft, ShieldCheck, RefreshCw, CheckCircle2 } from "lucide-react";
+import { sendEmailVerification, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
+import { auth } from "../../services/firebase";
+import { useAuth } from "../../context/AuthContext";
+import { showToast } from "../../services/toast";
 
 const VerifyEmail = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+  const state = location.state as { email?: string; password?: string } | null;
+
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
+  const [resendError, setResendError] = useState("");
+
+  const handleResend = async () => {
+    if (!state?.email || !state?.password) {
+      setResendError("Please go back to the registration form and try again.");
+      return;
+    }
+    setResendLoading(true);
+    setResendError("");
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
+      await sendEmailVerification(userCredential.user);
+      setResendSuccess(true);
+    } catch (err: any) {
+      setResendError(err?.message || "Failed to resend. Please try logging in instead.");
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const [checkLoading, setCheckLoading] = useState(false);
+
+  const checkStatus = async () => {
+    setCheckLoading(true);
+    setResendError("");
+    try {
+      if (auth.currentUser) {
+        await auth.currentUser.reload();
+        if (auth.currentUser.emailVerified) {
+          showToast("Email verified! Redirecting to your dashboard...", { type: "success" });
+          window.location.href = "/"; // Force a full reload to refresh AuthContext
+        } else {
+          setResendError("Email not verified yet. Please check your inbox and click the verification link.");
+        }
+      } else {
+        setResendError("No active session found. Redirecting to login...");
+        setTimeout(() => navigate("/login"), 2000);
+      }
+    } catch (err: any) {
+      console.error("Status check failed:", err);
+      setResendError("Failed to check status. Please try logging in again.");
+    } finally {
+      setCheckLoading(false);
+    }
+  };
+
   return (
     <PublicSiteLayout>
       <section style={{ 
@@ -20,7 +77,7 @@ const VerifyEmail = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
           style={{ 
-            maxWidth: 500, 
+            maxWidth: 520, 
             width: "100%", 
             background: "white", 
             borderRadius: 32, 
@@ -30,60 +87,139 @@ const VerifyEmail = () => {
             textAlign: "center"
           }}
         >
+          {/* Icon */}
           <div style={{ 
-            width: 80, 
-            height: 80, 
-            borderRadius: 24, 
-            background: "#EFF6FF", 
+            width: 88, 
+            height: 88, 
+            borderRadius: 28, 
+            background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)", 
             display: "flex", 
             alignItems: "center", 
             justifyContent: "center", 
-            margin: "0 auto 24px"
+            margin: "0 auto 28px",
+            border: "2px solid #BFDBFE"
           }}>
-            <Mail size={40} color="#0B4A82" />
+            <Mail size={44} color="#0B4A82" />
           </div>
 
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: "#0f172a", marginBottom: 16 }}>
-            Verify your email
+          <h1 style={{ fontSize: 30, fontWeight: 800, color: "#0f172a", marginBottom: 12 }}>
+            Check your inbox
           </h1>
-          
-          <p style={{ fontSize: 16, color: "#475569", lineHeight: 1.6, marginBottom: 32 }}>
-            We've sent a verification link to your email address. 
-            Please click the link in that email to activate your school workspace.
+
+          {state?.email ? (
+            <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.7, marginBottom: 8 }}>
+              We sent a verification link to
+            </p>
+          ) : (
+            <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.7, marginBottom: 8 }}>
+              We've sent a verification link to your email address.
+            </p>
+          )}
+
+          {state?.email && (
+            <p style={{
+              fontSize: 16, fontWeight: 700, color: "#0B4A82",
+              background: "#EFF6FF", borderRadius: 12,
+              padding: "10px 20px", marginBottom: 20,
+              border: "1px solid #BFDBFE", display: "inline-block"
+            }}>
+              {state.email}
+            </p>
+          )}
+
+          <p style={{ fontSize: 14, color: "#64748B", lineHeight: 1.7, marginBottom: 28 }}>
+            Click the link in the email to activate your school workspace. Then click the button below to continue.
           </p>
 
+          <button
+            onClick={checkStatus}
+            disabled={checkLoading}
+            style={{
+              width: "100%",
+              padding: "16px",
+              borderRadius: 16,
+              background: "linear-gradient(135deg, #16A34A, #15803D)",
+              color: "white",
+              fontWeight: 700,
+              border: "none",
+              cursor: checkLoading ? "not-allowed" : "pointer",
+              fontSize: 16,
+              marginBottom: 20,
+              boxShadow: "0 4px 12px rgba(22, 163, 74, 0.2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10
+            }}
+          >
+            {checkLoading ? <RefreshCw size={20} className="animate-spin" /> : <CheckCircle2 size={20} />}
+            {checkLoading ? "Checking..." : "I have verified my email"}
+          </button>
+
+          {/* Security note */}
           <div style={{ 
             background: "#F8FAFC", 
-            borderRadius: 20, 
-            padding: "20px", 
+            borderRadius: 16, 
+            padding: "16px 20px", 
             border: "1px solid #E2E8F0",
-            marginBottom: 32,
+            marginBottom: 28,
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 12,
             textAlign: "left"
           }}>
-            <ShieldCheck size={24} color="#16A34A" />
-            <p style={{ fontSize: 14, color: "#64748B", margin: 0 }}>
-              This helps us keep your school data secure and ensures only authorized admins can access the platform.
+            <ShieldCheck size={22} color="#0B4A82" style={{ flexShrink: 0, marginTop: 2 }} />
+            <p style={{ fontSize: 13, color: "#475569", margin: 0, lineHeight: 1.6 }}>
+              Can't find the email? Check your <strong>Spam</strong> or <strong>Promotions</strong> folder.
             </p>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Resend section */}
+          {resendSuccess ? (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              padding: "14px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #BBF7D0",
+              marginBottom: 20
+            }}>
+              <CheckCircle2 size={18} color="#16A34A" />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#15803D" }}>Verification email resent!</span>
+            </div>
+          ) : state?.email && state?.password ? (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 13, color: "#94A3B8", marginBottom: 10 }}>Didn't receive the email?</p>
+              {resendError && (
+                <p style={{ fontSize: 13, color: "#EF4444", marginBottom: 10 }}>{resendError}</p>
+              )}
+              <button
+                onClick={handleResend}
+                disabled={resendLoading}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  padding: "10px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600,
+                  border: "1.5px solid #DBEAFE", background: "white", color: "#0B4A82",
+                  cursor: resendLoading ? "not-allowed" : "pointer",
+                  opacity: resendLoading ? 0.6 : 1
+                }}
+              >
+                <RefreshCw size={15} style={{ animation: resendLoading ? "spin 1s linear infinite" : "none" }} />
+                {resendLoading ? "Resend verification email" : "Resend verification email"}
+              </button>
+            </div>
+          ) : (
+            resendError && <p style={{ fontSize: 13, color: "#EF4444", marginBottom: 10 }}>{resendError}</p>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Link 
               to="/login" 
               style={{ 
-                display: "block", 
-                padding: "14px", 
-                borderRadius: 999, 
-                background: "linear-gradient(135deg, #0B4A82, #1160A8)", 
-                color: "white", 
+                color: "#0B4A82", 
                 fontWeight: 700, 
                 textDecoration: "none",
-                boxShadow: "0 4px 12px rgba(11,74,130,0.2)"
+                fontSize: 15
               }}
             >
-              Go to Login
+              Sign in with a different account
             </Link>
             
             <Link 
@@ -104,8 +240,13 @@ const VerifyEmail = () => {
           </div>
         </motion.div>
       </section>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+      `}</style>
     </PublicSiteLayout>
   );
 };
 
 export default VerifyEmail;
+

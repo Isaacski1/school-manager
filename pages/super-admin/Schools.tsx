@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
@@ -525,13 +525,19 @@ const Schools = () => {
     if (!nextPlanId) return;
     try {
       if (["starter", "standard"].includes(nextPlanId)) {
+        const nextLimit = nextPlanId === "standard" ? 700 : 300;
         await updateDoc(doc(firestore, "schools", schoolId), {
           featurePlan: nextPlanId,
+          "limits.maxStudents": nextLimit,
         });
         setSchools((prev) =>
           prev.map((school) =>
             school.id === schoolId
-              ? { ...school, featurePlan: nextPlanId as "starter" | "standard" }
+              ? { 
+                  ...school, 
+                  featurePlan: nextPlanId as "starter" | "standard",
+                  limits: { ...(school.limits || {}), maxStudents: nextLimit }
+                }
               : school,
           ),
         );

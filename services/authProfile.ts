@@ -59,7 +59,7 @@ export async function loadUserProfile(
       }
 
       const schoolData = schoolDoc.data();
-      if (schoolData?.status !== "active") {
+      if (schoolData?.status !== "active" && schoolData?.status !== "trial_active") {
         throw new Error("SCHOOL_INACTIVE");
       }
     }
@@ -74,7 +74,7 @@ export async function loadUserProfile(
       }
 
       const schoolData = schoolDoc.data();
-      if (schoolData?.status !== "active") {
+      if (schoolData?.status !== "active" && schoolData?.status !== "trial_active") {
         throw new Error("SCHOOL_INACTIVE");
       }
     }
@@ -87,6 +87,7 @@ export async function loadUserProfile(
       schoolId,
       assignedClassIds,
       status: userStatus,
+      emailVerified: firebaseUser.emailVerified,
       createdAt: userData.createdAt?.toDate() || new Date(),
     };
   } else {

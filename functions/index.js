@@ -108,7 +108,7 @@ exports.createSchool = functions.https.onCall(async (data, context) => {
     );
   }
 
-  const { name, phone, address, logoUrl, plan } = data;
+  const { name, phone, address, logoUrl, plan, featurePlan } = data;
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     throw new functions.https.HttpsError(
@@ -125,6 +125,10 @@ exports.createSchool = functions.https.onCall(async (data, context) => {
       "Invalid plan type.",
     );
   }
+
+  // Enforce feature plan limits
+  const featurePlanSafe = String(featurePlan || "starter").trim().toLowerCase();
+  const maxStudents = featurePlanSafe === "standard" ? 700 : 300;
 
   try {
     // Generate unique school code
@@ -162,6 +166,8 @@ exports.createSchool = functions.https.onCall(async (data, context) => {
       logoUrl: logoUrl ? logoUrl.trim() : "",
       status: "active",
       plan,
+      featurePlan: featurePlanSafe,
+      limits: { maxStudents },
       planEndsAt: null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdBy: userId,

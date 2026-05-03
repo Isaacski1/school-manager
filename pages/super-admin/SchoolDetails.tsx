@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
@@ -58,7 +58,7 @@ type SchoolFormState = {
   phone: string;
   address: string;
   logoUrl: string;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "trial_active";
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: string;
   notes: string;
@@ -173,6 +173,12 @@ const STATUS_META = {
     softClass:
       "border-slate-200 bg-gradient-to-br from-slate-100 via-white to-slate-50 text-slate-700",
     dotClass: "bg-slate-500",
+  },
+  trial_active: {
+    badgeClass: "border-amber-200 bg-amber-50/90 text-amber-700",
+    softClass:
+      "border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50 text-amber-700",
+    dotClass: "bg-amber-500",
   },
 } as const;
 
@@ -415,13 +421,13 @@ const SchoolDetails = () => {
   const currentPlanMeta =
     PLAN_META[
       (formState?.plan || school?.plan || "trial") as SchoolFormState["plan"]
-    ];
+    ] || PLAN_META["trial"];
   const currentStatusMeta =
     STATUS_META[
       (formState?.status ||
         school?.status ||
         "inactive") as SchoolFormState["status"]
-    ];
+    ] || STATUS_META["inactive"];
   const adminSummary = useMemo(() => {
     if (!adminUsers.length) {
       return {
@@ -1373,6 +1379,7 @@ const SchoolDetails = () => {
                           >
                             <option value="active">Active</option>
                             <option value="inactive">Inactive</option>
+                            <option value="trial_active">Trial Active</option>
                           </select>
                         </div>
                         <div className="md:col-span-2">

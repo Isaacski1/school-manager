@@ -55,7 +55,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       if (cached) {
         try {
           const parsedSchool = JSON.parse(cached);
-          if (parsedSchool.status === "active") {
+          if (parsedSchool.status === "active" || parsedSchool.status === "trial_active") {
             if (!cancelled) setSchool(parsedSchool);
             if (!cancelled) setCachedSchool(parsedSchool);
           }
@@ -84,7 +84,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
               ...schoolDoc.data(),
             } as School;
 
-            if (schoolData.status !== "active") {
+            if (schoolData.status !== "active" && schoolData.status !== "trial_active") {
               if (!cancelled)
                 setSchoolError(
                   "Your school is currently inactive. Please contact your administrator.",

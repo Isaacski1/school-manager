@@ -17,6 +17,7 @@ import {
 } from "firebase/auth";
 import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 import schoolLogo from "../logo/apple-icon-180x180.png";
+import SplashScreen from "../components/SplashScreen";
 
 const Login = () => {
   const {
@@ -361,13 +362,7 @@ const Login = () => {
   };
 
   if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
-        <div className="text-red-900 animate-pulse font-semibold">
-          Loading School Manager GH...
-        </div>
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   return (

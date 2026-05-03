@@ -4,6 +4,7 @@ import {
   Routes,
   Route,
   Navigate,
+  useLocation,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SchoolProvider, useSchool } from "./context/SchoolContext";
@@ -57,6 +58,7 @@ import MarketingHome from "./pages/public/MarketingHome";
 import Pricing from "./pages/public/Pricing";
 import BookDemo from "./pages/public/BookDemo";
 import GetStarted from "./pages/public/GetStarted";
+import VerifyEmail from "./pages/public/VerifyEmail";
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
@@ -121,29 +123,27 @@ const AppContent = () => {
     };
   };
 
+  const location = useLocation();
+  const isPublicRoute = ["/get-started", "/verify-email", "/login"].includes(location.pathname);
+
+  const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER;
+  const splashSchoolName = school?.name || cachedSchool?.name || "";
+  const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
+
   // Show splash screen while auth is initializing
-  if (authLoading) {
-    const hasSchoolBranding = Boolean(
-      localStorage.getItem("activeSchoolId") &&
-      (cachedSchool?.name || cachedSchool?.logoUrl),
-    );
+  if (authLoading && !isPublicRoute) {
+    const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
     return (
       <SplashScreen
-        hideDefaultBranding={Boolean(
-          localStorage.getItem("activeSchoolId") || cachedSchool,
-        )}
-        schoolName={hasSchoolBranding ? cachedSchool?.name || "" : ""}
-        schoolLogoUrl={hasSchoolBranding ? cachedSchool?.logoUrl || "" : ""}
+        hideDefaultBranding={hasBranding}
+        schoolName={splashSchoolName}
+        schoolLogoUrl={splashSchoolLogo}
       />
     );
   }
 
-  const isSchoolUser =
-    user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER;
-  const splashSchoolName = school?.name || cachedSchool?.name || "";
-  const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
-
   if (
+    !isPublicRoute &&
     user &&
     (isSchoolUser || cachedSchool) &&
     (schoolLoading || (!school && !schoolError))
@@ -159,8 +159,9 @@ const AppContent = () => {
 
   // Show account not provisioned error
   if (
+    !isPublicRoute &&
     error ===
-    "Your account is not set up yet. Please contact your administrator for access."
+      "Your account is not set up yet. Please contact your administrator for access."
   ) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -199,7 +200,7 @@ const AppContent = () => {
   }
 
   // Show school access error (only for non-super-admin users)
-  if (schoolError && user?.role !== UserRole.SUPER_ADMIN) {
+  if (!isPublicRoute && schoolError && user?.role !== UserRole.SUPER_ADMIN) {
     const details = getSchoolErrorDetails(schoolError);
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -275,6 +276,10 @@ const ProtectedRoute = ({
     return <Navigate to="/login" replace />;
   }
 
+  if (user && !user.emailVerified && user.role !== UserRole.SUPER_ADMIN) {
+    return <Navigate to="/verify-email" replace />;
+  }
+
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
     // Redirect based on actual role if they try to access unauthorized pages
     const redirectPath =
@@ -318,6 +323,7 @@ const AppRoutes = () => {
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/book-demo" element={<BookDemo />} />
       <Route path="/get-started" element={<GetStarted />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
 
       {/* Root redirects based on role */}
       <Route
