@@ -392,7 +392,7 @@ const Schools = () => {
 
   const toggleSchoolStatus = async (
     schoolId: string,
-    currentStatus: "active" | "inactive",
+    currentStatus: School["status"],
   ) => {
     try {
       const newStatus = currentStatus === "active" ? "inactive" : "active";

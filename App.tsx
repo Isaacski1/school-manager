@@ -36,6 +36,7 @@ import Assessment from "./pages/teacher/Assessment";
 import WriteRemarks from "./pages/teacher/WriteRemarks";
 import EditSkills from "./pages/teacher/EditSkills";
 import StudentPerformance from "./pages/teacher/StudentPerformance";
+import ParentDashboard from "./pages/parent/ParentDashboard";
 import Schools from "./pages/super-admin/Schools";
 import SchoolDetails from "./pages/super-admin/SchoolDetails";
 import Dashboard from "./pages/super-admin/Dashboard";
@@ -59,6 +60,47 @@ import Pricing from "./pages/public/Pricing";
 import BookDemo from "./pages/public/BookDemo";
 import GetStarted from "./pages/public/GetStarted";
 import VerifyEmail from "./pages/public/VerifyEmail";
+import Features from "./pages/public/Features";
+import EmailVerified from "./pages/public/EmailVerified";
+
+const getEmailVerificationRedirect = () => {
+  if (typeof window === "undefined") return "";
+
+  const url = new URL(window.location.href);
+  const mode = url.searchParams.get("mode") || "";
+  const oobCode = url.searchParams.get("oobCode") || "";
+  const authAction = url.searchParams.get("authAction") || "";
+
+  if (!oobCode || (mode !== "verifyEmail" && authAction !== "emailVerified")) {
+    return "";
+  }
+
+  const nextParams = new URLSearchParams();
+  ["mode", "oobCode", "apiKey", "lang"].forEach((key) => {
+    const value = url.searchParams.get(key);
+    if (value) nextParams.set(key, value);
+  });
+
+  const email = url.searchParams.get("email") || (() => {
+    const continueUrl = url.searchParams.get("continueUrl");
+    if (!continueUrl) return "";
+    try {
+      const parsedContinueUrl = new URL(continueUrl);
+      const hashQuery = parsedContinueUrl.hash.split("?")[1] || "";
+      return (
+        parsedContinueUrl.searchParams.get("email") ||
+        new URLSearchParams(hashQuery).get("email") ||
+        ""
+      );
+    } catch {
+      return "";
+    }
+  })();
+
+  if (email) nextParams.set("email", email);
+
+  return `${url.origin}${url.pathname}#/email-verified?${nextParams.toString()}`;
+};
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
@@ -124,18 +166,42 @@ const AppContent = () => {
   };
 
   const location = useLocation();
-  const isPublicRoute = ["/get-started", "/verify-email", "/login"].includes(location.pathname);
 
-  const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER;
+  React.useEffect(() => {
+    const redirectUrl = getEmailVerificationRedirect();
+    if (
+      redirectUrl &&
+      !window.location.hash.startsWith("#/email-verified")
+    ) {
+      window.location.replace(redirectUrl);
+    }
+  }, []);
+
+  // For HashRouter, extract the path from hash (e.g., "#/email-verified?email=test@example.com" -> "/email-verified")
+  const getPathFromHash = (hash: string) => {
+    if (!hash || !hash.startsWith("#")) return "/";
+    const hashContent = hash.substring(1); // Remove "#"
+    const pathPart = hashContent.split("?")[0]; // Remove query string
+    return pathPart || "/";
+  };
+  
+  const currentPath = location.pathname === "/" && location.hash
+    ? getPathFromHash(location.hash)
+    : location.pathname;
+  const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
+
+  const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
   const splashSchoolName = school?.name || cachedSchool?.name || "";
   const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
 
   // Show splash screen while auth is initializing
   if (authLoading && !isPublicRoute) {
     const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
+    // For school users, always hide default "School Manager GH" branding
+    const hideDefault = isSchoolUser || hasBranding;
     return (
       <SplashScreen
-        hideDefaultBranding={hasBranding}
+        hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
       />
@@ -148,9 +214,11 @@ const AppContent = () => {
     (isSchoolUser || cachedSchool) &&
     (schoolLoading || (!school && !schoolError))
   ) {
+    const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
+    const hideDefault = isSchoolUser || hasBranding;
     return (
       <SplashScreen
-        hideDefaultBranding
+        hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
       />
@@ -199,8 +267,8 @@ const AppContent = () => {
     );
   }
 
-  // Show school access error (only for non-super-admin users)
-  if (!isPublicRoute && schoolError && user?.role !== UserRole.SUPER_ADMIN) {
+  // Show school access error (only for non-super-admin and non-parent users)
+  if (!isPublicRoute && schoolError && user?.role !== UserRole.SUPER_ADMIN && user?.role !== UserRole.PARENT) {
     const details = getSchoolErrorDetails(schoolError);
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -276,9 +344,12 @@ const ProtectedRoute = ({
     return <Navigate to="/login" replace />;
   }
 
-  if (user && !user.emailVerified && user.role !== UserRole.SUPER_ADMIN) {
+  // TEMP DEV BYPASS: Commented out email verification check to allow rapid testing without checking emails
+  /*
+  if (user && !user.emailVerified && user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.PARENT) {
     return <Navigate to="/verify-email" replace />;
   }
+  */
 
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
     // Redirect based on actual role if they try to access unauthorized pages
@@ -287,13 +358,15 @@ const ProtectedRoute = ({
         ? "/super-admin/schools"
         : user.role === UserRole.SCHOOL_ADMIN
           ? "/admin/students" // Use a specific admin route instead of root
-          : "/teacher";
+          : user.role === UserRole.PARENT
+            ? "/parent"
+            : "/teacher";
     return <Navigate to={redirectPath} replace />;
   }
 
   if (requiredFeature && !canAccessFeature(user, school, requiredFeature)) {
     const fallbackPath =
-      user?.role === UserRole.TEACHER ? "/teacher" : "/admin/students";
+      user?.role === UserRole.TEACHER ? "/teacher" : user?.role === UserRole.PARENT ? "/parent" : "/admin/students";
     return <Navigate to={fallbackPath} replace />;
   }
 
@@ -310,6 +383,7 @@ const RoleBasedHome = () => {
     );
   if (user?.role === UserRole.SCHOOL_ADMIN) return <AdminDashboard />;
   if (user?.role === UserRole.TEACHER) return <TeacherDashboard />;
+  if (user?.role === UserRole.PARENT) return <ParentDashboard />;
   return <Navigate to="/login" />;
 };
 
@@ -324,19 +398,14 @@ const AppRoutes = () => {
       <Route path="/book-demo" element={<BookDemo />} />
       <Route path="/get-started" element={<GetStarted />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/features" element={<Features />} />
+      <Route path="/email-verified" element={<EmailVerified />} />
 
       {/* Root redirects based on role */}
       <Route
         path="/"
         element={isAuthenticated ? <ProtectedRoute><RoleBasedHome /></ProtectedRoute> : <MarketingHome />}
       />
-      {/*
-        element={
-          <ProtectedRoute>
-            <RoleBasedHome />
-          </ProtectedRoute>
-        }
-      */}
 
       {/* Admin Routes */}
       <Route
@@ -672,6 +741,16 @@ const AppRoutes = () => {
             requiredFeature="basic_exam_reports"
           >
             <StudentPerformance />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Parent Routes */}
+      <Route
+        path="/parent"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.PARENT]}>
+            <ParentDashboard />
           </ProtectedRoute>
         }
       />

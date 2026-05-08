@@ -27,10 +27,12 @@ export async function loadUserProfile(
 
     // Extract user data
     const role = userData.role as UserRole;
-    const schoolId = userData.schoolId || null;
+    const schoolId = typeof userData.schoolId === "string" ? userData.schoolId.trim() : (userData.schoolId || null);
     const assignedClassIds = Array.isArray(userData.assignedClassIds)
       ? userData.assignedClassIds
       : [];
+
+    const phoneNumber = userData.phoneNumber || undefined;
 
     // For school_admin and teacher, schoolId is required
     if ((role === "school_admin" || role === "teacher") && !schoolId) {
@@ -83,14 +85,34 @@ export async function loadUserProfile(
       id: firebaseUser.uid,
       fullName: userData.fullName || firebaseUser.displayName || "User",
       email: firebaseUser.email || "",
-      role,
+      role: role || UserRole.PARENT,
       schoolId,
+      phoneNumber,
       assignedClassIds,
       status: userStatus,
       emailVerified: firebaseUser.emailVerified,
       createdAt: userData.createdAt?.toDate() || new Date(),
     };
   } else {
+    // If the user signed in with a phone number and doesn't have an explicit user record,
+    // they are considered a Parent automatically.
+    // Check if phoneNumber is set or if UID looks like a phone number (custom token flow)
+    const isPhoneUid = firebaseUser.uid && firebaseUser.uid.startsWith("+") && firebaseUser.uid.length > 8;
+
+    if (firebaseUser.phoneNumber || isPhoneUid) {
+      return {
+        id: firebaseUser.uid,
+        fullName: "Parent / Guardian",
+        email: "",
+        role: UserRole.PARENT,
+        schoolId: null,
+        phoneNumber: firebaseUser.phoneNumber || firebaseUser.uid,
+        assignedClassIds: [],
+        status: "active",
+        emailVerified: false,
+        createdAt: new Date(),
+      };
+    }
     // Account not provisioned - throw error
     throw new Error("ACCOUNT_NOT_PROVISIONED");
   }

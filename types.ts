@@ -2,6 +2,7 @@ export enum UserRole {
   SUPER_ADMIN = "super_admin",
   SCHOOL_ADMIN = "school_admin",
   TEACHER = "teacher",
+  PARENT = "parent",
 }
 
 export interface User {
@@ -10,7 +11,9 @@ export interface User {
   email: string;
   role: UserRole;
   schoolId: string | null;
+  phoneNumber?: string;
   assignedClassIds?: string[];
+  linkedStudentIds?: string[];
   status: "active" | "inactive" | "trial_active";
   emailVerified?: boolean;
   createdAt?: Date;
@@ -366,6 +369,7 @@ export interface Student {
   classId: string;
   guardianName: string;
   guardianPhone: string;
+  parentId?: string;
   studentStatus?: "graduated" | "stopped" | "active";
   createdAt?: Date | number;
 }

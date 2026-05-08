@@ -295,7 +295,7 @@ export async function logSecurityLogin(payload: {
   errorCode?: string | null;
   userAgent?: string | null;
 }): Promise<{ success: boolean }> {
-  return apiRequest("/api/security/log-login", { body: payload });
+  return apiRequest("/api/security/log-login", { body: payload, requiresAuth: false });
 }
 
 export type AdminMfaPolicyStatus = {

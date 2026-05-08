@@ -2,11 +2,23 @@ import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, ArrowLeft, ShieldCheck, RefreshCw, CheckCircle2 } from "lucide-react";
-import { sendEmailVerification, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import {
+  ActionCodeSettings,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { auth } from "../../services/firebase";
 import { useAuth } from "../../context/AuthContext";
 import { showToast } from "../../services/toast";
+
+const buildEmailVerificationUrl = (email: string) => {
+  const params = new URLSearchParams({
+    authAction: "emailVerified",
+    email,
+  });
+  return `${window.location.origin}/?${params.toString()}`;
+};
 
 const VerifyEmail = () => {
   const navigate = useNavigate();
@@ -27,7 +39,11 @@ const VerifyEmail = () => {
     setResendError("");
     try {
       const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
-      await sendEmailVerification(userCredential.user);
+      const actionSettings: ActionCodeSettings = {
+        url: buildEmailVerificationUrl(state.email.trim().toLowerCase()),
+        handleCodeInApp: true,
+      };
+      await sendEmailVerification(userCredential.user, actionSettings);
       setResendSuccess(true);
     } catch (err: any) {
       setResendError(err?.message || "Failed to resend. Please try logging in instead.");
@@ -42,13 +58,32 @@ const VerifyEmail = () => {
     setCheckLoading(true);
     setResendError("");
     try {
+      // First try to use existing auth state
       if (auth.currentUser) {
         await auth.currentUser.reload();
         if (auth.currentUser.emailVerified) {
           showToast("Email verified! Redirecting to your dashboard...", { type: "success" });
-          window.location.href = "/"; // Force a full reload to refresh AuthContext
-        } else {
-          setResendError("Email not verified yet. Please check your inbox and click the verification link.");
+          window.location.href = "/";
+          return;
+        }
+      }
+
+      // If no current user but we have credentials, try to sign in
+      if (state?.email && state?.password) {
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
+          await userCredential.user.reload();
+          if (userCredential.user.emailVerified) {
+            showToast("Email verified! Redirecting to your dashboard...", { type: "success" });
+            window.location.href = "/";
+            return;
+          } else {
+            setResendError("Email not verified yet. Please check your inbox and click the verification link.");
+          }
+        } catch (signInErr: any) {
+          console.error("Sign in failed:", signInErr);
+          setResendError("Session expired. Please log in again.");
+          setTimeout(() => navigate("/login"), 2000);
         }
       } else {
         setResendError("No active session found. Redirecting to login...");
@@ -64,38 +99,38 @@ const VerifyEmail = () => {
 
   return (
     <PublicSiteLayout>
-      <section style={{ 
-        minHeight: "80vh", 
-        display: "flex", 
-        alignItems: "center", 
-        justifyContent: "center", 
+      <section style={{
+        minHeight: "80vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         padding: "80px 24px",
         background: "linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%)"
       }}>
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          style={{ 
-            maxWidth: 520, 
-            width: "100%", 
-            background: "white", 
-            borderRadius: 32, 
-            padding: "48px 40px", 
+          style={{
+            maxWidth: 520,
+            width: "100%",
+            background: "white",
+            borderRadius: 32,
+            padding: "48px 40px",
             boxShadow: "0 20px 50px rgba(11,74,130,0.1)",
             border: "1.5px solid #DBEAFE",
             textAlign: "center"
           }}
         >
           {/* Icon */}
-          <div style={{ 
-            width: 88, 
-            height: 88, 
-            borderRadius: 28, 
-            background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center", 
+          <div style={{
+            width: 88,
+            height: 88,
+            borderRadius: 28,
+            background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             margin: "0 auto 28px",
             border: "2px solid #BFDBFE"
           }}>
@@ -157,10 +192,10 @@ const VerifyEmail = () => {
           </button>
 
           {/* Security note */}
-          <div style={{ 
-            background: "#F8FAFC", 
-            borderRadius: 16, 
-            padding: "16px 20px", 
+          <div style={{
+            background: "#F8FAFC",
+            borderRadius: 16,
+            padding: "16px 20px",
             border: "1px solid #E2E8F0",
             marginBottom: 28,
             display: "flex",
@@ -202,7 +237,7 @@ const VerifyEmail = () => {
                 }}
               >
                 <RefreshCw size={15} style={{ animation: resendLoading ? "spin 1s linear infinite" : "none" }} />
-                {resendLoading ? "Resend verification email" : "Resend verification email"}
+                {resendLoading ? "Resending..." : "Resend verification email"}
               </button>
             </div>
           ) : (
@@ -210,27 +245,27 @@ const VerifyEmail = () => {
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <Link 
-              to="/login" 
-              style={{ 
-                color: "#0B4A82", 
-                fontWeight: 700, 
+            <Link
+              to="/login"
+              style={{
+                color: "#0B4A82",
+                fontWeight: 700,
                 textDecoration: "none",
                 fontSize: 15
               }}
             >
               Sign in with a different account
             </Link>
-            
-            <Link 
-              to="/" 
-              style={{ 
-                display: "inline-flex", 
-                alignItems: "center", 
-                justifyContent: "center", 
-                gap: 8, 
-                color: "#64748B", 
-                fontWeight: 600, 
+
+            <Link
+              to="/"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                color: "#64748B",
+                fontWeight: 600,
                 textDecoration: "none",
                 fontSize: 14
               }}
@@ -249,4 +284,3 @@ const VerifyEmail = () => {
 };
 
 export default VerifyEmail;
-

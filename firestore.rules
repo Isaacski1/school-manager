@@ -37,13 +37,30 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
     }
 
+    function isParent() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'parent' ||
+        request.auth.token.userRole == 'parent' ||
+        request.auth.uid.matches('^\\+') ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'parent'
+        )
+      );
+    }
+
     function userSchoolId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId;
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId
+        : null;
     }
 
     function isActiveUser() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active' ||
-        !get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['status']);
+      return !exists(/databases/$(database)/documents/users/$(request.auth.uid)) || (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active' || 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'trial_active' ||
+        !get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['status'])
+      );
     }
 
     function isActiveSchoolId(schoolId) {
@@ -51,8 +68,31 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/schools/$(schoolId)) &&
         (
           get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active' ||
+          get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'trial_active' ||
           !get(/databases/$(database)/documents/schools/$(schoolId)).data.keys().hasAny(['status'])
         );
+    }
+
+    function isParentOf(guardianPhone) {
+      let uid = request.auth.uid;
+      let core233 = uid.split("\\+233");
+      let corePlus = uid.split("\\+");
+      let core = core233.size() > 1 ? core233[1] : (corePlus.size() > 1 ? corePlus[1] : uid);
+      
+      return isParent() && (
+        guardianPhone == uid ||
+        guardianPhone == core ||
+        guardianPhone == ("0" + core) ||
+        guardianPhone == ("233" + core) ||
+        (
+          exists(/databases/$(database)/documents/users/$(uid)) &&
+          guardianPhone == get(/databases/$(database)/documents/users/$(uid)).data.phoneNumber
+        )
+      );
+    }
+
+    function isParentsStudent(studentId) {
+      return isParentOf(get(/databases/$(database)/documents/students/$(studentId)).data.guardianPhone);
     }
 
     function maxStudentsForSchool(schoolId) {
@@ -214,7 +254,9 @@ service cloud.firestore {
           "openingDate"
         ]);
 
-      allow read: if isSuperAdmin() || schoolScopedRead(schoolId);
+      allow read: if isSuperAdmin() || 
+                     (schoolScopedRead(schoolId) && (isSchoolAdmin() || isTeacher())) || 
+                     isParent();
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -275,7 +317,7 @@ service cloud.firestore {
       allow list: if isSuperAdmin() ||
         (isAuthenticated() && isSchoolAdmin() && userSchoolId() == schoolId);
 
-      allow read: if schoolScopedRead(schoolId);
+      allow read: if schoolScopedRead(schoolId) || isParentsStudent(resource.data.studentId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -365,12 +407,14 @@ service cloud.firestore {
     }
 
     function schoolScopedRead(schoolId) {
-      return isAuthenticated() && isActiveUser() &&
-        (
-          isSuperAdmin() ||
-          (((isSchoolAdmin() || isTeacher()) && userSchoolId() == schoolId) &&
-            isActiveSchoolId(schoolId))
-        );
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        isParent() || 
+        (isActiveUser() && (
+          (isSchoolAdmin() || isTeacher()) && 
+          userSchoolId() == schoolId
+        ) && isActiveSchoolId(schoolId))
+      );
     }
 
     function schoolScopedDelete(schoolId) {
@@ -415,7 +459,9 @@ service cloud.firestore {
           "createdAt"
         ]);
 
-      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || 
+                     schoolScopedRead(resource.data.schoolId) || 
+                     isParentOf(resource.data.guardianPhone);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -481,7 +527,9 @@ service cloud.firestore {
           "total"
         ]);
 
-      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || 
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+                     isParent();
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -584,7 +632,9 @@ service cloud.firestore {
           "dateCreated"
         ]);
 
-      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || 
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+                     isParent();
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -597,6 +647,43 @@ service cloud.firestore {
           "remark",
           "behaviorTag",
           "teacherId",
+          "dateCreated"
+        ]);
+
+      allow delete: if schoolScopedDelete(resource.data.schoolId);
+    }
+
+    // Admin remarks collection
+    match /admin_remarks/{remarkId} {
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "behaviorTag",
+          "adminId",
+          "dateCreated"
+        ]);
+
+      allow read: if isSuperAdmin() || 
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+                     isParent();
+
+      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "studentId",
+          "classId",
+          "term",
+          "academicYear",
+          "remark",
+          "behaviorTag",
+          "adminId",
           "dateCreated"
         ]);
 
@@ -621,7 +708,7 @@ service cloud.firestore {
           "homeworkCompletion"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if schoolScopedRead(resource.data.schoolId) || isParentsStudent(resource.data.studentId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -853,7 +940,9 @@ service cloud.firestore {
           "openingDate"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() || 
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+                     isParent();
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&

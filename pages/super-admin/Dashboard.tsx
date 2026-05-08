@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   collection,
   getCountFromServer,
@@ -356,6 +356,12 @@ type DashboardTotals = {
   free?: number;
   trialSchools?: number;
   trial?: number;
+  monthlySchools?: number;
+  monthly?: number;
+  termlySchools?: number;
+  termly?: number;
+  yearlySchools?: number;
+  yearly?: number;
   paidSchools?: number;
   paid?: number;
   newSchoolsLast30?: number;
@@ -419,6 +425,9 @@ const countSchoolsFromFirestore = async (
       const plan = normalizePlan(school.plan);
       if (plan === "free") acc.freeSchools += 1;
       if (plan === "trial") acc.trialSchools += 1;
+      if (plan === "monthly") acc.monthlySchools += 1;
+      if (plan === "termly") acc.termlySchools += 1;
+      if (plan === "yearly") acc.yearlySchools += 1;
       if (plan !== "free" && plan !== "trial") acc.paidSchools += 1;
       const created =
         school.createdAt instanceof Timestamp
@@ -437,6 +446,9 @@ const countSchoolsFromFirestore = async (
       inactiveSchools: 0,
       freeSchools: 0,
       trialSchools: 0,
+      monthlySchools: 0,
+      termlySchools: 0,
+      yearlySchools: 0,
       paidSchools: 0,
       newSchoolsLast30: 0,
     },
@@ -475,6 +487,12 @@ const countSchoolsFromFirestore = async (
     free: freeSchools,
     trialSchools,
     trial: trialSchools,
+    monthlySchools: monthlyCount ?? rowTotals.monthlySchools,
+    monthly: monthlyCount ?? rowTotals.monthlySchools,
+    termlySchools: termlyCount ?? rowTotals.termlySchools,
+    termly: termlyCount ?? rowTotals.termlySchools,
+    yearlySchools: yearlyCount ?? rowTotals.yearlySchools,
+    yearly: yearlyCount ?? rowTotals.yearlySchools,
     paidSchools,
     paid: paidSchools,
     newSchoolsLast30,
@@ -671,10 +689,10 @@ type ActivityEntry = {
 };
 
 const formatActivityDate = (value?: Timestamp | number | string) => {
-  if (!value) return "—";
+  if (!value) return "�";
   if (value instanceof Timestamp) return value.toDate().toLocaleString();
   const date = new Date(value as any);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "�" : date.toLocaleString();
 };
 
 const formatActivityLabel = (entry: ActivityEntry) => {
@@ -1098,7 +1116,7 @@ const EarningsOverview: React.FC<{
     return [
       {
         title: "Top revenue plan (month)",
-        detail: `${bestPlan.plan.charAt(0).toUpperCase() + bestPlan.plan.slice(1)} • ${formatCurrency(bestPlan.value)}`,
+        detail: `${bestPlan.plan.charAt(0).toUpperCase() + bestPlan.plan.slice(1)} � ${formatCurrency(bestPlan.value)}`,
         tone: "success",
       },
       {
@@ -1110,7 +1128,7 @@ const EarningsOverview: React.FC<{
         title: "Payment failure signal",
         detail:
           failureRate > 18
-            ? `${failureRate.toFixed(1)}% failed payments — review`
+            ? `${failureRate.toFixed(1)}% failed payments � review`
             : `${failureRate.toFixed(1)}% failed payments`,
         tone: failureRate > 18 ? "danger" : "neutral",
       },
@@ -2036,7 +2054,7 @@ const EarningsOverview: React.FC<{
                     <td className="py-3 pr-4 text-xs">
                       {payment.createdAt
                         ? payment.createdAt.toLocaleDateString()
-                        : "—"}
+                        : "�"}
                     </td>
                     <td className="py-3 pr-4 font-medium text-slate-800">
                       {payment.schoolName || "Unknown"}
@@ -2305,8 +2323,8 @@ const Dashboard: React.FC = () => {
   const DASHBOARD_CACHE_KEY = React.useMemo(
     () =>
       user?.id
-        ? `super_admin_dashboard_overview_v2_${user.id}`
-        : "super_admin_dashboard_overview_v2",
+        ? `super_admin_dashboard_overview_v3_${user.id}`
+        : "super_admin_dashboard_overview_v3",
     [user?.id],
   );
   const DASHBOARD_CACHE_TTL_MS = 45_000;
@@ -2543,19 +2561,14 @@ const Dashboard: React.FC = () => {
         if (forceRefresh) {
           clearClientCache(DASHBOARD_CACHE_KEY);
         }
-        const payload = await resolveClientCache(
-          DASHBOARD_CACHE_KEY,
-          DASHBOARD_CACHE_TTL_MS,
-          async () =>
-            getSuperAdminDashboardOverview({
-              forceRefresh,
-              schoolsLimit: 200, // Reduced from 800
-              activityLimit: 50,  // Reduced from 120
-              paymentsLimit: 300, // Reduced from 1200
-              checklistLimit: 500, // Much smaller for initial load
-            }),
-          { forceRefresh },
-        );
+        // Load dashboard data with reasonable limits
+        const payload = await getSuperAdminDashboardOverview({
+          forceRefresh: Boolean(forceRefresh),
+          schoolsLimit: 500, // Reasonable limit with pagination
+          activityLimit: 50, // Recent activity only
+          paymentsLimit: 100, // Recent payments only
+          checklistLimit: 200, // Checklist data
+        });
 
         const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
           ...(row || {}),
@@ -2650,10 +2663,10 @@ const Dashboard: React.FC = () => {
       try {
         const payload = await getSuperAdminDashboardOverview({
           forceRefresh,
-          schoolsLimit: 800,
-          activityLimit: 120,
-          paymentsLimit: 1200,
-          checklistLimit: 5000, // Full dataset but reasonable limit
+          schoolsLimit: 1000, // Reasonable limit
+          activityLimit: 100,
+          paymentsLimit: 200,
+          checklistLimit: 500,
         });
 
         const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
@@ -2766,10 +2779,16 @@ const Dashboard: React.FC = () => {
     const computedFree = schools.filter(
       (s) => normalizePlan(s.plan) === "free",
     ).length;
-    const computedPaid = schools.filter((s) => {
-      const plan = normalizePlan(s.plan);
-      return plan !== "trial" && plan !== "free";
-    }).length;
+    const computedMonthly = schools.filter(
+      (s) => normalizePlan(s.plan) === "monthly",
+    ).length;
+    const computedTermly = schools.filter(
+      (s) => normalizePlan(s.plan) === "termly",
+    ).length;
+    const computedYearly = schools.filter(
+      (s) => normalizePlan(s.plan) === "yearly",
+    ).length;
+    const computedPaid = computedMonthly + computedTermly + computedYearly;
     const computedNewSchools = schools.filter((s) => {
       if (!s.createdAt) return false;
       const created =
@@ -2797,6 +2816,9 @@ const Dashboard: React.FC = () => {
       inactive: readTotal(["inactiveSchools", "inactive"], computedInactive),
       trial: readTotal(["trialSchools", "trial"], computedTrial),
       free: readTotal(["freeSchools", "free"], computedFree),
+      monthly: readTotal(["monthlySchools", "monthly"], computedMonthly),
+      termly: readTotal(["termlySchools", "termly"], computedTermly),
+      yearly: readTotal(["yearlySchools", "yearly"], computedYearly),
       paid: readTotal(["paidSchools", "paid"], computedPaid),
       newSchools: readTotal(
         ["newSchoolsLast30", "newSchools"],
@@ -2983,12 +3005,24 @@ const Dashboard: React.FC = () => {
       termly: 0,
       yearly: 0,
     };
-    schools.forEach((s) => {
-      const p = normalizePlan(s.plan);
-      counts[p] = (counts[p] || 0) + 1;
-    });
+    
+    // Always compute from schools array (most complete and accurate data)
+    if (schools.length > 0) {
+      schools.forEach((s) => {
+        const p = normalizePlan(s.plan);
+        counts[p] = (counts[p] || 0) + 1;
+      });
+    } else {
+      // Fallback to kpis data (backend has individual plan counts)
+      counts.free = kpis?.free || 0;
+      counts.trial = kpis?.trial || 0;
+      counts.monthly = kpis?.monthly || 0;
+      counts.termly = kpis?.termly || 0;
+      counts.yearly = kpis?.yearly || 0;
+    }
+    
     return counts;
-  }, [schools]);
+  }, [schools, kpis]);
 
   const filteredSchools = schools.filter((s) => {
     const schoolName = getSchoolName(s.name);
@@ -3618,11 +3652,11 @@ const Dashboard: React.FC = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
                     <ShieldCheck size={14} />
-                    Super Admin • Secure Assistant Workspace
+                    Super Admin � Secure Assistant Workspace
                   </div>
                   <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/90 px-3 py-1 text-[11px] font-medium text-cyan-700">
                     <Sparkles size={13} />
-                    {AI_ASSISTANT_NAME} • Live Session
+                    {AI_ASSISTANT_NAME} � Live Session
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -3861,7 +3895,7 @@ const Dashboard: React.FC = () => {
                                   {(message.responseMs || message.mode) && (
                                     <span className="text-[10px] text-slate-400">
                                       {message.mode
-                                        ? `${getAiModeLabel(message.mode)} • `
+                                        ? `${getAiModeLabel(message.mode)} � `
                                         : ""}
                                       {message.responseMs
                                         ? `${message.responseMs} ms`
@@ -4312,7 +4346,7 @@ const Dashboard: React.FC = () => {
             icon={<Clock size={18} />}
             title="Expired Subscriptions"
             count={expiredSubscriptions.length}
-            description="Grace period ended — renewal required"
+            description="Grace period ended � renewal required"
             accentColor="border-rose-400 bg-rose-50"
           />
           <InsightCard
@@ -4405,7 +4439,7 @@ const Dashboard: React.FC = () => {
             </p>
           </div>
 
-          {schools.length === 0 ? (
+          {schools.length === 0 && !kpis?.total ? (
             <EmptyState
               icon={<PieChart className="mx-auto text-slate-300" size={48} />}
               title="No Plan Data"
@@ -4415,7 +4449,7 @@ const Dashboard: React.FC = () => {
           ) : (
             <div className="flex flex-col lg:flex-row gap-8 items-center">
               <div className="w-full lg:w-1/3 flex justify-center">
-                <div className="w-40 h-40">
+                <div className="relative w-40 h-40">
                   <svg
                     viewBox="0 0 36 36"
                     className="w-full h-full"
@@ -4429,30 +4463,43 @@ const Dashboard: React.FC = () => {
                       stroke="#f1f5f9"
                       strokeWidth="8"
                     />
-                    {/* Trial */}
-                    <circle
-                      cx="18"
-                      cy="18"
-                      r="15.915"
-                      fill="none"
-                      stroke="#f97316"
-                      strokeWidth="8"
-                      strokeDasharray={`${(planDist.trial / Math.max(1, schools.length)) * 100} 100`}
-                    />
-                    {/* Monthly (offset) */}
-                    <circle
-                      cx="18"
-                      cy="18"
-                      r="15.915"
-                      fill="none"
-                      stroke="#3b82f6"
-                      strokeWidth="8"
-                      strokeDasharray={`${(planDist.monthly / Math.max(1, schools.length)) * 100} 100`}
-                      style={{
-                        strokeDashoffset: `${-((planDist.trial / Math.max(1, schools.length)) * 100)}`,
-                      }}
-                    />
+                    {/* Dynamic segments for all plan types */}
+                    {PLAN_ORDER.map((plan, index) => {
+                      const value = Number(planDist[plan] || 0);
+                      const total = PLAN_ORDER.reduce(
+                        (sum, p) => sum + Number(planDist[p] || 0),
+                        0
+                      );
+                      if (value === 0) return null;
+                      const percentage = total > 0 ? (value / total) * 100 : 0;
+                      const offset = PLAN_ORDER.slice(0, index).reduce(
+                        (sum, p) => sum + (Number(planDist[p] || 0) / total) * 100,
+                        0
+                      );
+                      return (
+                        <circle
+                          key={plan}
+                          cx="18"
+                          cy="18"
+                          r="15.915"
+                          fill="none"
+                          stroke={PLAN_COLORS[plan]}
+                          strokeWidth="8"
+                          strokeLinecap="round"
+                          strokeDasharray={`${percentage} ${100 - percentage}`}
+                          strokeDashoffset={-offset}
+                        />
+                      );
+                    })}
                   </svg>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                    <div className="text-[11px] font-medium uppercase tracking-widest text-slate-400">
+                      Schools
+                    </div>
+                    <div className="mt-1 text-2xl font-bold text-slate-900">
+                      {schools.length}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -4791,10 +4838,10 @@ const Dashboard: React.FC = () => {
               </div>
               <div className="flex gap-1">
                 <button className="px-3 py-1 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                  ← Previous
+                  ? Previous
                 </button>
                 <button className="px-3 py-1 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                  Next →
+                  Next ?
                 </button>
               </div>
             </div>

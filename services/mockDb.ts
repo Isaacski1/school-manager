@@ -1828,7 +1828,30 @@ class FirestoreService {
     return this.getCollectionBySchoolId<Assessment>("assessments", schoolId);
   }
 
+  async getStudentRemarks(schoolId: string, studentId: string): Promise<StudentRemark[]> {
+    await this.requireFeature(schoolId, "student_remarks");
+    const q = query(
+      collection(firestore, "student_remarks"),
+      where("schoolId", "==", schoolId),
+      where("studentId", "==", studentId)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as StudentRemark));
+  }
+
+  async getAdminRemarks(schoolId: string, studentId: string): Promise<AdminRemark[]> {
+    await this.requireFeature(schoolId, "student_remarks");
+    const q = query(
+      collection(firestore, "admin_remarks"),
+      where("schoolId", "==", schoolId),
+      where("studentId", "==", studentId)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as AdminRemark));
+  }
+
   async getStudentAssessmentsByStudent(
+
     schoolId?: string,
     studentId?: string,
   ): Promise<Assessment[]> {
@@ -3674,6 +3697,7 @@ class FirestoreService {
     academicYear?: string;
     term?: FeeTerm;
     classId?: string;
+    studentId?: string;
   }): Promise<StudentFeeLedger[]> {
     await this.requireFeature(filters.schoolId, "fees_payments");
     const scopedSchoolId = this.requireSchoolId(
@@ -3686,6 +3710,8 @@ class FirestoreService {
     if (filters.term) conditions.push(where("term", "==", filters.term));
     if (filters.classId)
       conditions.push(where("classId", "==", filters.classId));
+    if (filters.studentId)
+      conditions.push(where("studentId", "==", filters.studentId));
     const useV2 = await this.useFinanceV2(scopedSchoolId);
     const ledgerCollection = useV2
       ? collection(firestore, "schools", scopedSchoolId, "feeLedgers")

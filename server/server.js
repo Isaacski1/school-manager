@@ -380,6 +380,74 @@ const firebaseProjectId =
   process.env.FIREBASE_PROJECT_ID ||
   process.env.GCLOUD_PROJECT ||
   "";
+
+const normalizeStorageBucketName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^gs:\/\//i, "")
+    .replace(/\/+$/, "");
+
+const getStorageBucketCandidates = () => {
+  const configuredBucket = normalizeStorageBucketName(
+    process.env.FIREBASE_STORAGE_BUCKET ||
+      process.env.GCLOUD_STORAGE_BUCKET ||
+      "",
+  );
+  const appBucket = normalizeStorageBucketName(
+    admin.apps.length ? admin.app().options.storageBucket : "",
+  );
+
+  return [
+    configuredBucket,
+    appBucket,
+    firebaseProjectId ? `${firebaseProjectId}.appspot.com` : "",
+    firebaseProjectId ? `${firebaseProjectId}.firebasestorage.app` : "",
+  ].filter((bucket, index, buckets) => bucket && buckets.indexOf(bucket) === index);
+};
+
+const FIRESTORE_INLINE_LOGO_MAX_BYTES = 700 * 1024;
+
+const isTransientFirebaseAdminNetworkError = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  const code = String(error?.code || error?.errorInfo?.code || "").toLowerCase();
+  return (
+    code === "app/network-error" ||
+    message.includes("enotfound") ||
+    message.includes("etimedout") ||
+    message.includes("econnreset") ||
+    message.includes("eai_again") ||
+    message.includes("socket hang up")
+  );
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retryFirebaseAdminNetworkCall = async (label, operation) => {
+  const delays = [0, 750, 2000];
+  let lastError = null;
+
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt]) {
+      await sleep(delays[attempt]);
+    }
+
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientFirebaseAdminNetworkError(error) || attempt === delays.length - 1) {
+        throw error;
+      }
+      console.warn(
+        `[FirebaseAdmin] ${label} failed due to network issue. Retrying ${attempt + 2}/${delays.length}...`,
+        error?.message || error,
+      );
+    }
+  }
+
+  throw lastError;
+};
+
 if (firebaseProjectId) {
   allowedOrigins.add(`https://${firebaseProjectId}.web.app`);
   allowedOrigins.add(`https://${firebaseProjectId}.firebaseapp.com`);
@@ -388,6 +456,9 @@ if (firebaseProjectId) {
 try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    storageBucket:
+      normalizeStorageBucketName(process.env.FIREBASE_STORAGE_BUCKET) ||
+      (firebaseProjectId ? `${firebaseProjectId}.appspot.com` : undefined),
   });
 
   const cred = admin.app().options.credential;
@@ -541,6 +612,66 @@ app.get(
     }
   },
 );
+
+/**
+ * Free Parent Login using Phone Number + Child's Date of Birth
+ * Bypasses Firebase SMS OTP limitations by minting a Custom Token.
+ * POST /api/auth/parent-login
+ */
+app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
+  try {
+    const { phone, dob } = req.body;
+
+    if (!phone || !dob) {
+      return res.status(400).json({
+        success: false,
+        error: "Phone number and Date of Birth are required."
+      });
+    }
+
+    const normalizedPhone = normalizeWhatsappAddress(phone).replace("whatsapp:", "");
+    console.log(`[Auth] Parent login attempt for phone: ${normalizedPhone}, DOB: ${dob}`);
+
+    const startTime = Date.now();
+    // Check if any student matches this phone and DOB
+    const studentsRef = admin.firestore().collection("students");
+    const snapshot = await studentsRef
+      .where("guardianPhone", "==", normalizedPhone)
+      .where("dob", "==", dob)
+      .get();
+    
+    console.log(`[Auth] Firestore query took ${Date.now() - startTime}ms. Found ${snapshot.size} matches.`);
+
+    if (snapshot.empty) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid login credentials. Please verify the phone number and your child's Date of Birth."
+      });
+    }
+
+    // Match found! Mint a free Custom Token for Firebase
+    const uid = normalizedPhone;
+    const schoolIds = [...new Set(snapshot.docs.map(doc => doc.data().schoolId))].filter(Boolean);
+    const studentIds = snapshot.docs.map(doc => doc.id);
+    const customToken = await admin.auth().createCustomToken(uid, {
+      role: "parent",
+      schoolIds: schoolIds,
+      studentIds: studentIds
+    });
+
+    return res.json({
+      success: true,
+      token: customToken
+    });
+
+  } catch (error) {
+    console.error("Parent Custom Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error during login."
+    });
+  }
+});
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
@@ -1022,7 +1153,7 @@ const fetchCollectionRows = async ({
   }
 };
 
-const toPositiveInt = (value, fallback, min = 1, max = 2000) => {
+const toPositiveInt = (value, fallback, min = 1, max = 100000) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   const normalized = Math.floor(parsed);
@@ -1479,6 +1610,9 @@ const buildSchoolTotals = async ({
     trial: trialSchools,
     paidSchools,
     paid: paidSchools,
+    monthlySchools: monthlyCount !== null ? Number(monthlyCount) || 0 : rowTotals.monthlySchools,
+    termlySchools: termlyCount !== null ? Number(termlyCount) || 0 : rowTotals.termlySchools,
+    yearlySchools: yearlyCount !== null ? Number(yearlyCount) || 0 : rowTotals.yearlySchools,
     newSchoolsLast30,
     newSchools: newSchoolsLast30,
   };
@@ -3541,12 +3675,12 @@ const validateAiActionPayload = (action = {}) => {
     case "set_school_status": {
       const schoolId = trimToString(payload?.schoolId, 80);
       const status = trimToString(payload?.status, 24).toLowerCase();
-      const validStatuses = ["active", "inactive"];
+      const validStatuses = ["active", "inactive", "trial_active"];
       if (!schoolId) missingFields.push("schoolId");
       if (!validStatuses.includes(status)) missingFields.push("status");
       normalizedPayload = {
         schoolId,
-        status: validStatuses.includes(status) ? status : "inactive",
+        status: validStatuses.includes(status) ? status : "active",
       };
       if (!description) {
         description = `Set school ${schoolId || "unknown"} status to ${normalizedPayload.status}`;
@@ -3910,7 +4044,7 @@ app.get(
   async (req, res) => {
     try {
       const forceRefresh = toBooleanFlag(req.query?.forceRefresh);
-      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 800, 25, 5000);
+      const schoolsLimit = toPositiveInt(req.query?.schoolsLimit, 800, 25, 100000);
       const activityLimit = toPositiveInt(req.query?.activityLimit, 120, 10, 500);
       const paymentsLimit = toPositiveInt(
         req.query?.paymentsLimit,
@@ -8089,7 +8223,9 @@ app.post("/api/public/start-trial", async (req, res) => {
     }
 
     try {
-      await admin.auth().getUserByEmail(safeEmail);
+      await retryFirebaseAdminNetworkCall("check trial admin email", () =>
+        admin.auth().getUserByEmail(safeEmail),
+      );
       return res.status(400).json({ error: "A user with this email already exists" });
     } catch (error) {
       if (error.code !== "auth/user-not-found") {
@@ -8104,38 +8240,112 @@ app.post("/api/public/start-trial", async (req, res) => {
     const schoolRef = admin.firestore().collection("schools").doc();
     const schoolId = schoolRef.id;
 
-    // --- NEW: Handle Logo Upload via Admin SDK ---
-    let finalLogoUrl = null;
-    if (logoData && logoData.includes("base64,")) {
+    // Store trial logos as Firebase Storage download URLs so they render
+    // outside the uploader preview, including dashboards and admin lists.
+    let finalLogoUrl = "";
+    if (typeof logoData === "string" && logoData.includes("base64,")) {
       try {
-        const base64String = logoData.split("base64,")[1];
+        const logoDataMatch = String(logoData).match(
+          /^data:(image\/(?:png|jpe?g|webp|gif|svg\+xml));base64,(.+)$/i,
+        );
+        if (!logoDataMatch) {
+          return res.status(400).json({
+            error: "Logo must be a PNG, JPG, WEBP, GIF, or SVG image",
+          });
+        }
+
+        const [, contentType, base64String] = logoDataMatch;
         console.log(`[StartTrial] Processing logo: ${logoFileName} (${base64String.length} chars)`);
-        const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "school-manager-gh.firebasestorage.app");
         const buffer = Buffer.from(base64String, "base64");
-        const ext = logoFileName ? logoFileName.split(".").pop() : "png";
+        if (buffer.length > 2 * 1024 * 1024) {
+          return res.status(400).json({ error: "Logo size must be less than 2MB" });
+        }
+
+        const extensionByType = {
+          "image/png": "png",
+          "image/jpeg": "jpg",
+          "image/jpg": "jpg",
+          "image/webp": "webp",
+          "image/gif": "gif",
+          "image/svg+xml": "svg",
+        };
+        const ext = extensionByType[contentType.toLowerCase()] || "png";
         const fileName = `schools/${schoolId}/logo/brand.${ext}`;
-        const file = bucket.file(fileName);
+        const downloadToken = crypto.randomUUID();
+        const bucketCandidates = getStorageBucketCandidates();
+        if (!bucketCandidates.length) {
+          throw new Error("No Firebase Storage bucket is configured for this project.");
+        }
 
-        console.log("[StartTrial] Saving file to bucket:", fileName);
-        await file.save(buffer, {
-          metadata: { 
-            contentType: `image/${ext === "jpg" ? "jpeg" : ext}`,
-            cacheControl: 'public, max-age=31536000'
-          },
-          public: true,
-        });
+        let uploadedBucketName = "";
+        let lastBucketError = null;
+        for (const bucketName of bucketCandidates) {
+          try {
+            const bucket = admin.storage().bucket(bucketName);
+            const file = bucket.file(fileName);
 
-        // Use the standard Firebase Storage API URL which is more reliable
-        finalLogoUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(fileName)}?alt=media`;
-        console.log("[StartTrial] Logo upload successful. URL:", finalLogoUrl);
+            console.log("[StartTrial] Saving file to bucket:", bucketName, fileName);
+            await file.save(buffer, {
+              metadata: {
+                contentType,
+                cacheControl: "public, max-age=31536000",
+                metadata: {
+                  firebaseStorageDownloadTokens: downloadToken,
+                },
+              },
+            });
+
+            uploadedBucketName = bucket.name;
+            break;
+          } catch (bucketError) {
+            lastBucketError = bucketError;
+            const status = bucketError?.code || bucketError?.status || bucketError?.response?.status;
+            console.warn("[StartTrial] Logo upload failed for bucket:", bucketName, status || bucketError?.message || bucketError);
+          }
+        }
+
+        if (!uploadedBucketName) {
+          if (buffer.length <= FIRESTORE_INLINE_LOGO_MAX_BYTES) {
+            finalLogoUrl = `data:${contentType};base64,${base64String}`;
+            console.warn(
+              "[StartTrial] Storage upload failed for all buckets. Using inline logo data URL fallback.",
+              {
+                bytes: buffer.length,
+                attemptedBuckets: bucketCandidates,
+              },
+            );
+          } else {
+            const attemptedBuckets = bucketCandidates.join(", ");
+            const error = new Error(
+              "Logo upload failed because no configured Firebase Storage bucket exists. " +
+                `Tried: ${attemptedBuckets}. Configure FIREBASE_STORAGE_BUCKET or create a Firebase Storage bucket.`,
+            );
+            error.cause = lastBucketError;
+            throw error;
+          }
+        }
+
+        if (uploadedBucketName) {
+          finalLogoUrl = `https://firebasestorage.googleapis.com/v0/b/${uploadedBucketName}/o/${encodeURIComponent(fileName)}?alt=media&token=${downloadToken}`;
+          console.log("[StartTrial] Logo upload successful. URL:", finalLogoUrl);
+        }
       } catch (uploadError) {
         console.error("[StartTrial] Backend logo upload failed:", uploadError);
+        return res.status(500).json({
+          error:
+            uploadError?.message ||
+            "Logo upload failed. Please try a smaller image or continue without a logo.",
+        });
       }
     }
 
     const featurePlanSafe = String(featurePlan || "starter").trim().toLowerCase();
     const maxStudents = featurePlanSafe === "standard" ? 700 : 300;
 
+    // Calculate trial end date (30 days from now) - store as Firestore Timestamp
+    const trialEndDate = new Date();
+    trialEndDate.setDate(trialEndDate.getDate() + 30);
+    
     const schoolDoc = {
       name: String(schoolName || "").trim(),
       phone: String(schoolPhone || "").trim(),
@@ -8149,6 +8359,7 @@ app.post("/api/public/start-trial", async (req, res) => {
       featurePlan: featurePlanSafe,
       logoUrl: finalLogoUrl, // Store the URL immediately
       onboardingTemplate: String(onboardingTemplate || "default"),
+      planEndsAt: admin.firestore.Timestamp.fromDate(trialEndDate),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -8156,14 +8367,52 @@ app.post("/api/public/start-trial", async (req, res) => {
     const settingsDoc = {
       academicYear: String(academicYear || "").trim(),
       currentTerm: String(currentTerm || "").trim(),
+      logoUrl: finalLogoUrl,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    const userRecord = await admin.auth().createUser({
+    const userRecord = await retryFirebaseAdminNetworkCall(
+      "create trial admin auth user",
+      () =>
+        admin.auth().createUser({
+          email: safeEmail,
+          password: password,
+          displayName: String(adminFullName || "").trim(),
+        }),
+    );
+
+    const requestOrigin = normalizeOriginValue(req.headers.origin || "");
+    const configuredAppOrigin = normalizeOriginValue(
+      process.env.PUBLIC_APP_URL ||
+        process.env.FRONTEND_URL ||
+        process.env.CLIENT_URL ||
+        process.env.APP_URL ||
+        "https://school-manager-gh.web.app",
+    );
+    const appOrigin =
+      requestOrigin && isAllowedOrigin(requestOrigin)
+        ? requestOrigin
+        : configuredAppOrigin;
+    const verificationContinueUrl = `${appOrigin}/?${new URLSearchParams({
+      authAction: "emailVerified",
       email: safeEmail,
-      password: password,
-      displayName: String(adminFullName || "").trim(),
-    });
+    }).toString()}`;
+    let emailVerificationLink = "";
+    try {
+      emailVerificationLink = await retryFirebaseAdminNetworkCall(
+        "generate trial admin email verification link",
+        () =>
+          admin.auth().generateEmailVerificationLink(safeEmail, {
+            url: verificationContinueUrl,
+            handleCodeInApp: true,
+          }),
+      );
+    } catch (verificationLinkError) {
+      console.error(
+        "[StartTrial] Failed to generate email verification link:",
+        verificationLinkError,
+      );
+    }
 
     const userDoc = {
       fullName: String(adminFullName || "").trim(),
@@ -8288,6 +8537,12 @@ app.post("/api/public/start-trial", async (req, res) => {
               </p>
             </div>
 
+            ${
+              emailVerificationLink
+                ? `<p style="margin:-10px 0 24px"><a href="${escapeHtml(emailVerificationLink)}" style="display:inline-block;background:#0B4A82;color:white;text-decoration:none;border-radius:999px;padding:12px 20px;font-size:14px;font-weight:700">Verify Email Address</a></p>`
+                : ""
+            }
+
             <div style="background:#F8FAFC;border-radius:12px;padding:20px;border:1px solid #E2E8F0;margin-bottom:24px">
               <h3 style="margin:0 0 12px;color:#0f172a;font-size:15px">Your Account Details</h3>
               <table cellpadding="6" cellspacing="0" style="width:100%;font-size:14px">
@@ -8316,8 +8571,9 @@ app.post("/api/public/start-trial", async (req, res) => {
         `Your school workspace "${safeSchoolName}" has been created on School Manager GH.`,
         "",
         "NEXT STEP: Verify your email",
-        "You should receive a separate verification email from Firebase.",
-        "Click the link in that email to activate your account.",
+        emailVerificationLink
+          ? `Click this link to activate your account: ${emailVerificationLink}`
+          : "Please log in and request a new verification email.",
         "",
         "Once verified, log in at: https://school-manager-gh.web.app",
         "",
@@ -8367,11 +8623,19 @@ app.post("/api/public/start-trial", async (req, res) => {
       success: true,
       schoolId: schoolId,
       adminUid: userRecord.uid,
+      logoUrl: finalLogoUrl,
       message: "School trial started successfully",
       notifications,
     });
   } catch (error) {
     console.error("Error starting trial:", error);
+    if (isTransientFirebaseAdminNetworkError(error)) {
+      return res.status(503).json({
+        error:
+          "Firebase Auth is unreachable from the backend right now. Check your internet/DNS connection and try again.",
+        code: "FIREBASE_AUTH_UNREACHABLE",
+      });
+    }
     res.status(500).json({ error: error.message || "Failed to start school setup" });
   }
 });

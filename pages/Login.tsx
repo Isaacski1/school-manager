@@ -13,11 +13,13 @@ import {
   RecaptchaVerifier,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signOut,
 } from "firebase/auth";
-import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff, Phone } from "lucide-react";
 import schoolLogo from "../logo/apple-icon-180x180.png";
 import SplashScreen from "../components/SplashScreen";
+import { API_BASE_URL } from "../src/config";
 
 const Login = () => {
   const {
@@ -44,6 +46,20 @@ const Login = () => {
   const [mfaError, setMfaError] = useState("");
   const [mfaLoading, setMfaLoading] = useState(false);
   const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
+
+  // Parent Login State
+  const [isParentLogin, setIsParentLogin] = useState(false);
+  const [parentPhone, setParentPhone] = useState("");
+  const [parentOtp, setParentOtp] = useState("");
+  const [parentDob, setParentDob] = useState("");
+  const [dobDay, setDobDay] = useState("");
+  const [dobMonth, setDobMonth] = useState("");
+  const [dobYear, setDobYear] = useState("");
+  const [parentConfirmationResult, setParentConfirmationResult] = useState<any | null>(null);
+  const [parentLoading, setParentLoading] = useState(false);
+  const [parentError, setParentError] = useState("");
+  const [parentSuccess, setParentSuccess] = useState("");
+  const parentRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
 
   const isMfaFlow = Boolean(mfaResolver);
   const mfaHints = useMemo(() => mfaResolver?.hints || [], [mfaResolver]);
@@ -88,6 +104,42 @@ const Login = () => {
     return verifier;
   };
 
+  const getParentRecaptchaVerifier = () => {
+    // If we already have one, try to clear it to start fresh for this request
+    if (parentRecaptchaRef.current) {
+      try {
+        parentRecaptchaRef.current.clear();
+      } catch (e) {}
+      parentRecaptchaRef.current = null;
+    }
+    
+    // Ensure the DOM container is empty to avoid overlapping iframes
+    const container = document.getElementById("parent-recaptcha-container");
+    if (container) {
+      container.innerHTML = "";
+    }
+
+    const verifier = new RecaptchaVerifier(auth, "parent-recaptcha-container", {
+      size: "invisible",
+      callback: (response: string) => {
+        console.log("reCAPTCHA v2 verified for parent login", response ? "successfully" : "no response");
+      },
+      "expired-callback": () => {
+        console.warn("reCAPTCHA v2 token expired for parent login");
+        if (parentRecaptchaRef.current) {
+          try { parentRecaptchaRef.current.clear(); } catch (e) {}
+          parentRecaptchaRef.current = null;
+        }
+      },
+      "error-callback": (error: any) => {
+        console.error("reCAPTCHA v2 error:", error);
+      }
+    });
+    
+    parentRecaptchaRef.current = verifier;
+    return verifier;
+  };
+
   const evaluateAdminMfaPolicy = async () => {
     const policy = await getAdminMfaPolicyStatus();
     if (!policy.required || policy.compliant) return;
@@ -119,7 +171,6 @@ const Login = () => {
     }
   };
 
-  // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
       navigate("/", { replace: true });
@@ -130,137 +181,105 @@ const Login = () => {
     return () => {
       recaptchaVerifierRef.current?.clear();
       recaptchaVerifierRef.current = null;
+      parentRecaptchaRef.current?.clear();
+      parentRecaptchaRef.current = null;
     };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setFormError("");
-    setMfaError("");
-    let firstFactorSignedIn = false;
-    const normalizedEmail = normalizeEmailInput(email);
-
-    if (!normalizedEmail) {
-      setFormError("Enter a valid email address.");
-      setLoading(false);
+    if (!email.trim() || !password) {
+      setFormError("Please enter both email and password.");
       return;
     }
 
+    setLoading(true);
+    setFormError("");
+
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      
-      firstFactorSignedIn = true;
+      await signInWithEmailAndPassword(auth, normalizeEmailInput(email), password);
+
       try {
         await evaluateAdminMfaPolicy();
-      } catch (policyError: any) {
-        if (isMfaEnrollmentRequiredError(policyError)) {
-          throw policyError;
-        }
-        // Do not block sign-in when backend policy lookup is unreachable.
-        console.warn(
-          "Skipping admin MFA policy check due to backend error",
-          policyError,
-        );
+      } catch (mfaError: any) {
+        await auth.signOut();
+        throw mfaError;
       }
-
+      
       await safeLogSecurityLogin({
         status: "SUCCESS",
-        email: normalizedEmail,
+        email: normalizeEmailInput(email),
         userAgent: navigator.userAgent,
       });
-      // AuthContext listener will handle the redirection via the useEffect above
     } catch (err: any) {
-      console.error(err);
+      console.error("Login failed", err);
+      
+      await safeLogSecurityLogin({
+        status: "FAILED",
+        email: normalizeEmailInput(email),
+        errorCode: err?.code || "unknown",
+        userAgent: navigator.userAgent,
+      });
 
-      if (err?.code === "auth/multi-factor-auth-required") {
-        const resolver = getMultiFactorResolver(auth, err);
-        if (!resolver?.hints?.length) {
-          setFormError(
-            "This account requires MFA, but no enrolled second factor was found.",
-          );
-          setLoading(false);
-          return;
-        }
-
-        setMfaResolver(resolver);
-        setMfaSelectedHintIndex(0);
-        setMfaVerificationId("");
-        setMfaCode("");
-        setMfaError("");
-        setFormError("");
-        setLoading(false);
-        return;
-      }
-
-      let msg = "Failed to sign in.";
-      if (
-        err?.code === "auth/invalid-credential" ||
-        err?.code === "auth/user-not-found" ||
-        err?.code === "auth/wrong-password"
-      ) {
-        msg =
-          "Invalid email or password. If this is production, reset the password or confirm this account exists in the production Firebase project.";
-      } else if (err?.code === "auth/invalid-email") {
-        msg = "Please enter a valid email address.";
+      let msg = "Invalid email or password. Please try again.";
+      
+      if (isMfaEnrollmentRequiredError(err)) {
+        msg = err.message || "Your role requires MFA. Please enroll a second factor.";
       } else if (err?.code === "auth/too-many-requests") {
-        msg = "Too many failed attempts. Please try again later.";
-      } else if (isMfaEnrollmentRequiredError(err)) {
+        msg = "Too many attempts. Please try again later.";
+      } else if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password") {
+        msg = "Invalid email or password.";
+      } else if (err?.code === "auth/invalid-email") {
+        msg = "Invalid email format.";
+      } else if (err?.message) {
         msg = err.message;
       }
 
-      if (firstFactorSignedIn && isMfaEnrollmentRequiredError(err)) {
-        try {
-          await signOut(auth);
-        } catch {
-          // no-op
-        }
+      if (err?.code === "auth/multi-factor-auth-required") {
+        setMfaResolver(getMultiFactorResolver(auth, err));
+        return;
       }
 
-      await safeLogSecurityLogin({
-        status: "FAILED",
-        email: normalizedEmail,
-        errorCode: err?.code || "login_failed",
-        userAgent: navigator.userAgent,
-      });
       setFormError(msg);
+    } finally {
       setLoading(false);
     }
   };
 
   const handleSendMfaCode = async () => {
-    if (!mfaResolver || !selectedMfaHint) {
-      setMfaError("No second factor is available for this login.");
-      return;
-    }
-
-    if (!selectedMfaHintIsPhone) {
-      setMfaError(
-        "This factor type is not supported in this screen yet. Use an SMS factor or Firebase admin tooling.",
-      );
-      return;
-    }
+    const hint = mfaHints[mfaSelectedHintIndex];
+    if (!hint) return;
 
     setMfaLoading(true);
     setMfaError("");
+
     try {
-      const phoneInfoOptions = {
-        multiFactorHint: selectedMfaHint,
-        session: mfaResolver.session,
-      };
       const verifier = getRecaptchaVerifier();
-      const phoneAuthProvider = new PhoneAuthProvider(auth);
-      const verificationId = await phoneAuthProvider.verifyPhoneNumber(
-        phoneInfoOptions as any,
-        verifier,
-      );
+      let verificationId: string;
+
+      if (hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID) {
+        const phoneProvider = new PhoneAuthProvider(auth);
+        verificationId = await phoneProvider.verifyPhoneNumber(
+          {
+            phoneNumber: hint.phoneInfo?.phoneNumber || hint.phoneNumber,
+            session: mfaResolver.session
+          },
+          verifier
+        );
+      } else {
+        throw new Error("Unsupported second factor type.");
+      }
+
       setMfaVerificationId(verificationId);
-      setMfaCode("");
     } catch (err: any) {
       console.error("MFA code send failed", err);
-      setMfaError(
-        err?.message || "Failed to send verification code. Please try again.",
-      );
+      let msg = "Failed to send verification code. Please try again.";
+      if (err?.code === "auth/too-many-requests") {
+        msg = "Too many attempts. Please try again later.";
+      } else if (err?.message) {
+        msg = err.message;
+      }
+      setMfaError(msg);
     } finally {
       setMfaLoading(false);
     }
@@ -269,7 +288,7 @@ const Login = () => {
   const handleVerifyMfaCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mfaResolver || !mfaVerificationId) {
-      setMfaError("Verification session is missing. Please request a new code.");
+      setMfaError("Verification session missing. Please request a new code.");
       return;
     }
     if (!mfaCode.trim()) {
@@ -279,72 +298,121 @@ const Login = () => {
 
     setMfaLoading(true);
     setMfaError("");
+
     try {
+      const phoneAuth = new PhoneAuthProvider(mfaResolver);
       const credential = PhoneAuthProvider.credential(
         mfaVerificationId,
         mfaCode.trim(),
       );
-      const assertion = PhoneMultiFactorGenerator.assertion(credential);
-      await mfaResolver.resolveSignIn(assertion);
+      await mfaResolver.resolveSignIn(credential);
 
-      await logSecurityLogin({
+      await safeLogSecurityLogin({
         status: "SUCCESS",
-        email,
+        email: normalizeEmailInput(email),
         userAgent: navigator.userAgent,
       });
-
-      resetMfaFlow();
     } catch (err: any) {
       console.error("MFA verification failed", err);
-      let msg = "Could not verify the security code.";
-      if (
-        err?.code === "auth/invalid-verification-code" ||
-        err?.code === "auth/code-expired"
-      ) {
-        msg = "Invalid or expired verification code. Request a new one.";
+      let msg = "Invalid verification code. Please try again.";
+      if (err?.code === "auth/too-many-requests") {
+        msg = "Too many attempts. Please try again later.";
       }
       setMfaError(msg);
-      await safeLogSecurityLogin({
-        status: "FAILED",
-        email,
-        errorCode: err?.code || "mfa_verification_failed",
-        userAgent: navigator.userAgent,
-      });
     } finally {
       setMfaLoading(false);
     }
   };
 
-  const cancelMfaFlow = () => {
-    resetMfaFlow();
-    setFormError("");
-    setLoading(false);
+  const handleParentLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Combine day, month, year into YYYY-MM-DD
+    if (!dobDay || !dobMonth || !dobYear) {
+      setParentError("Please enter your child's complete Date of Birth.");
+      return;
+    }
+
+    const formattedDay = dobDay.padStart(2, "0");
+    const formattedMonth = dobMonth.padStart(2, "0");
+    const formattedDob = `${dobYear}-${formattedMonth}-${formattedDay}`;
+
+    if (!parentPhone.trim()) {
+      setParentError("Please enter your registered phone number.");
+      return;
+    }
+
+    let formattedPhone = parentPhone.trim();
+    if (!formattedPhone.startsWith("+")) {
+      if (formattedPhone.startsWith("0")) {
+        formattedPhone = "+233" + formattedPhone.substring(1);
+      } else {
+        formattedPhone = "+233" + formattedPhone;
+      }
+    }
+
+    setParentLoading(true);
+    setParentError("");
+    setParentSuccess("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/parent-login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          phone: formattedPhone,
+          dob: formattedDob,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Invalid login credentials.");
+      }
+
+      await signInWithCustomToken(auth, data.token);
+
+      await safeLogSecurityLogin({
+        status: "SUCCESS",
+        email: formattedPhone || "phone_login",
+        userAgent: navigator.userAgent,
+      });
+    } catch (err: any) {
+      console.error("Parent Custom Login failed", err);
+      let msg = err.message || "Failed to sign in. Please check your credentials and try again.";
+      
+      if (err?.code === "auth/invalid-custom-token") {
+        msg = "Authentication system error. Please contact support.";
+      }
+      
+      setParentError(msg);
+    } finally {
+      setParentLoading(false);
+    }
   };
 
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setFormError("");
-    setResetSuccess("");
-    const normalizedEmail = normalizeEmailInput(email);
-
-    if (!normalizedEmail) {
-      setFormError("Please enter your email address to reset password.");
-      setLoading(false);
+    if (!email.trim()) {
+      setFormError("Enter your email address to reset your password.");
       return;
     }
 
+    setLoading(true);
+    setFormError("");
+    setResetSuccess("");
+
     try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
-      setResetSuccess("Password reset link has been sent to your email.");
-      setFormError("");
+      await sendPasswordResetEmail(auth, normalizeEmailInput(email));
+      setResetSuccess("Password reset email sent! Check your inbox.");
     } catch (err: any) {
-      console.error(err);
-      let msg = "Failed to send reset email.";
-      if (err.code === "auth/user-not-found") {
-        msg = "No account found with this email address.";
-      } else if (err.code === "auth/invalid-email") {
-        msg = "Please enter a valid email address.";
+      console.error("Password reset failed", err);
+      let msg = "Failed to send reset email. Please try again.";
+      if (err?.code === "auth/user-not-found") {
+        msg = "No account found with this email.";
       }
       setFormError(msg);
     } finally {
@@ -356,335 +424,496 @@ const Login = () => {
     setIsResetting(!isResetting);
     setFormError("");
     setResetSuccess("");
-    setMfaError("");
-    // Keep email if typed, clear password
-    setPassword("");
+  };
+
+  const toggleParentLogin = () => {
+    setIsParentLogin(!isParentLogin);
+    setParentPhone("");
+    setParentDob("");
+    setDobDay("");
+    setDobMonth("");
+    setDobYear("");
+    setParentOtp("");
+    setParentConfirmationResult(null);
+    setParentError("");
+    setParentSuccess("");
+    if (parentRecaptchaRef.current) {
+      try {
+        parentRecaptchaRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      parentRecaptchaRef.current = null;
+    }
+  };
+
+  const cancelMfaFlow = () => {
+    resetMfaFlow();
+    if (recaptchaVerifierRef.current) {
+      try {
+        recaptchaVerifierRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      recaptchaVerifierRef.current = null;
+    }
   };
 
   if (authLoading) {
-    return <SplashScreen />;
+    return (
+      <SplashScreen
+        roleLabel=""
+        schoolName=""
+        schoolLogoUrl=""
+      />
+    );
   }
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-[#E6F0FA] via-[#E6F0FA] to-[#E6F0FA] flex items-center justify-center p-4">
+    <>
       <style>{`
-        @keyframes loginGradientShift {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
+        @keyframes blob {
+          0% { transform: translate(0px, 0px) scale(1); }
+          33% { transform: translate(50px, -50px) scale(1.1); }
+          66% { transform: translate(-30px, 20px) scale(0.9); }
+          100% { transform: translate(0px, 0px) scale(1); }
         }
-        @keyframes floatBlob {
-          0% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(20px, -30px, 0) scale(1.08); }
-          100% { transform: translate3d(0, 0, 0) scale(1); }
+        .animate-blob {
+          animation: blob 8s infinite alternate ease-in-out;
         }
-        @keyframes floatBlobReverse {
-          0% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(-25px, 25px, 0) scale(1.05); }
-          100% { transform: translate3d(0, 0, 0) scale(1); }
+        .animation-delay-2000 {
+          animation-delay: 2s;
+        }
+        .animation-delay-4000 {
+          animation-delay: 4s;
         }
       `}</style>
-      <div
-        className="absolute inset-0 opacity-70 pointer-events-none"
-        style={{
-          backgroundImage:
-            "linear-gradient(120deg, rgba(11,143,165,0.14), rgba(216,241,244,0.35), rgba(4,107,126,0.12))",
-          backgroundSize: "200% 200%",
-          animation: "loginGradientShift 18s ease-in-out infinite",
-        }}
-        aria-hidden="true"
-      />
-      <div
-        className="absolute -top-24 -left-24 w-80 h-80 bg-[#E6F0FA]/35 rounded-full blur-3xl pointer-events-none"
-        style={{ animation: "floatBlob 16s ease-in-out infinite" }}
-        aria-hidden="true"
-      />
-      <div
-        className="absolute top-1/3 -right-28 w-96 h-96 bg-[#1160A8]/25 rounded-full blur-3xl pointer-events-none"
-        style={{ animation: "floatBlobReverse 20s ease-in-out infinite" }}
-        aria-hidden="true"
-      />
-      <div
-        className="absolute -bottom-28 left-1/4 w-72 h-72 bg-[#E6F0FA]/60 rounded-full blur-3xl pointer-events-none"
-        style={{ animation: "floatBlob 22s ease-in-out infinite" }}
-        aria-hidden="true"
-      />
-      <div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8 border-t-8 border-[#0B4A82]">
-        <div className="text-center mb-8">
-          <div className="mx-auto w-28 h-28 mb-4 relative p-2 bg-white rounded-full shadow-sm border border-[#E6F0FA]">
-            <img
-              src={schoolLogo}
-              alt="School Manager GH Logo"
-              className="w-full h-full object-contain rounded-full"
-              onError={(e) => {
-                // Fallback if image not found
-                e.currentTarget.style.display = "none";
-                e.currentTarget.parentElement!.innerHTML =
-                  '<div class="w-24 h-24 bg-[#0B4A82] rounded-full flex items-center justify-center text-[#E6F0FA] font-bold border-4 border-[#1160A8] text-xs text-center p-1">School Manager GH</div>';
-              }}
-            />
+      <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative overflow-hidden bg-[#041222]">
+        
+        {/* Animated Glowing Orbs */}
+        <div className="absolute top-[10%] left-[10%] w-[400px] h-[400px] rounded-full bg-blue-600/80 mix-blend-screen filter blur-[100px] opacity-80 animate-blob"></div>
+        <div className="absolute top-[20%] right-[10%] w-[500px] h-[500px] rounded-full bg-emerald-500/80 mix-blend-screen filter blur-[120px] opacity-60 animate-blob animation-delay-2000"></div>
+        <div className="absolute bottom-[0%] left-[30%] w-[600px] h-[600px] rounded-full bg-purple-600/80 mix-blend-screen filter blur-[120px] opacity-60 animate-blob animation-delay-4000"></div>
+
+        {/* Main Card Container */}
+        <div className="w-full max-w-5xl min-h-[600px] flex flex-col md:flex-row bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] overflow-hidden border border-white/20 relative z-10">
+        {/* Left Column: Full Background Image and Content */}
+        <div className="md:w-1/2 relative hidden md:flex flex-col justify-between p-12 overflow-hidden bg-[#0B4A82]">
+          {/* Background Image with Overlay */}
+          <div 
+            className="absolute inset-0 z-0 opacity-50 bg-cover bg-center"
+            style={{ backgroundImage: "url('/img-school.png')" }}
+          />
+          {/* Overlay gradient to ensure text readability */}
+          <div className="absolute inset-0 bg-gradient-to-br from-[#0B4A82]/90 via-[#0B4A82]/70 to-[#0B4A82]/90 z-0" />
+
+          {/* Top Logo */}
+          <div className="relative z-10 flex items-center gap-3">
+            <div className="bg-white/10 p-2 rounded-xl backdrop-blur-md border border-white/20 shadow-xl">
+              <img src={schoolLogo} alt="Logo" className="w-10 h-10 object-contain rounded-lg" />
+            </div>
+            <span className="text-xl font-bold text-white tracking-wide">School Manager GH</span>
           </div>
-          <h1 className="text-2xl font-bold text-[#0B4A82] font-serif">
-            School Manager GH
-          </h1>
-          <p className="text-slate-500 mt-2 text-sm">
-            {isMfaFlow
-              ? "Complete your second-factor verification"
-              : isResetting
-                ? "Reset your password"
-                : "Sign in to manage the system"}
-          </p>
+
+          {/* Middle Content */}
+          <div className="relative z-10 my-auto pt-8">
+            <h2 className="text-4xl font-bold text-white mb-6 leading-tight drop-shadow-md">
+              Manage Your School<br />with Confidence
+            </h2>
+            <p className="text-white/90 text-lg leading-relaxed mb-10 max-w-md">
+              Empowering schools with digital tools for attendance tracking, grade management, fee collection, and more.
+            </p>
+            <div className="space-y-6">
+              <div className="flex items-center text-white">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center backdrop-blur-sm mr-4 border border-emerald-500/30">
+                  <CheckCircle size={20} className="text-emerald-400" />
+                </div>
+                <span className="font-medium text-[17px]">Easy attendance management</span>
+              </div>
+              <div className="flex items-center text-white">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center backdrop-blur-sm mr-4 border border-emerald-500/30">
+                  <CheckCircle size={20} className="text-emerald-400" />
+                </div>
+                <span className="font-medium text-[17px]">Digital report cards</span>
+              </div>
+              <div className="flex items-center text-white">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center backdrop-blur-sm mr-4 border border-emerald-500/30">
+                  <CheckCircle size={20} className="text-emerald-400" />
+                </div>
+                <span className="font-medium text-[17px]">Parent-teacher communication</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Global Configuration Error (Firestore Missing) */}
-        {globalError && (
-          <div className="mb-6 p-4 bg-red-50 text-red-800 text-sm rounded-lg border border-red-200 flex items-start">
-            <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold block mb-1">System Error</span>
-              {globalError}
+        {/* Right Column: Login Form */}
+        <div className="md:w-1/2 p-8 sm:p-12 flex flex-col justify-center bg-white relative">
+          {/* Logo & Header */}
+          <div className="mb-10">
+            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Welcome Back</h1>
+            <p className="text-slate-500 mt-2 text-sm font-medium">
+              {isParentLogin
+                ? "Parent Portal - Login with your phone number"
+                : isResetting
+                ? "Reset your password"
+                : "Please enter your details to sign in."}
+            </p>
+          </div>
+
+          {/* Global Error */}
+          {globalError && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-start">
+              <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-red-500" />
+              <span>{globalError}</span>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Form Error */}
-        {formError && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center">
-            <AlertCircle size={16} className="mr-2 flex-shrink-0" />
-            {formError}
-          </div>
-        )}
+          {isParentLogin ? (
+            <div className="space-y-6">
+              <form onSubmit={handleParentLoginSubmit} className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">
+                      Registered Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={parentPhone}
+                      onChange={(e) => setParentPhone(e.target.value)}
+                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                      placeholder="e.g., +233 24 123 4567"
+                      required
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Enter the exact phone number registered with the school.
+                    </p>
+                  </div>
 
-        {/* MFA Error */}
-        {mfaError && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center">
-            <AlertCircle size={16} className="mr-2 flex-shrink-0" />
-            {mfaError}
-          </div>
-        )}
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">
+                      Child's Date of Birth
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          value={dobDay}
+                          onChange={(e) => setDobDay(e.target.value.replace(/[^0-9]/g, ""))}
+                          className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400 text-center"
+                          placeholder="Day"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <select
+                          value={dobMonth}
+                          onChange={(e) => setDobMonth(e.target.value)}
+                          className="w-full px-2 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                          required
+                        >
+                          <option value="">Month</option>
+                          <option value="01">January</option>
+                          <option value="02">February</option>
+                          <option value="03">March</option>
+                          <option value="04">April</option>
+                          <option value="05">May</option>
+                          <option value="06">June</option>
+                          <option value="07">July</option>
+                          <option value="08">August</option>
+                          <option value="09">September</option>
+                          <option value="10">October</option>
+                          <option value="11">November</option>
+                          <option value="12">December</option>
+                        </select>
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={dobYear}
+                          onChange={(e) => setDobYear(e.target.value.replace(/[^0-9]/g, ""))}
+                          className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400 text-center"
+                          placeholder="Year"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-        {/* Success Message (Reset Link Sent) */}
-        {resetSuccess && (
-          <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 text-sm rounded-lg border border-emerald-100 flex items-center">
-            <CheckCircle size={16} className="mr-2 flex-shrink-0" />
-            {resetSuccess}
-          </div>
-        )}
+                  {parentError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start">
+                      <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-red-500" />
+                      <span>{parentError}</span>
+                    </div>
+                  )}
 
-        {isMfaFlow ? (
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Select Second Factor
-              </label>
-              <select
-                value={mfaSelectedHintIndex}
-                onChange={(e) => {
-                  setMfaSelectedHintIndex(Number(e.target.value));
-                  setMfaVerificationId("");
-                  setMfaCode("");
-                  setMfaError("");
-                }}
-                disabled={mfaLoading}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
-              >
-                {mfaHints.map((hint: any, index: number) => (
-                  <option key={`${hint.uid || index}`} value={index}>
-                    {getMfaHintLabel(hint, index)}
-                  </option>
-                ))}
-              </select>
-            </div>
+                  {parentSuccess && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm flex items-start">
+                      <CheckCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-emerald-500" />
+                      <span>{parentSuccess}</span>
+                    </div>
+                  )}
 
-            {!mfaVerificationId ? (
+                  <button
+                    type="submit"
+                    disabled={parentLoading}
+                    className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${parentLoading ? "opacity-70 cursor-not-allowed" : ""}`}
+                  >
+                    {parentLoading ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                        Verifying...
+                      </>
+                    ) : (
+                      "Sign In"
+                    )}
+                  </button>
+                </form>
+
               <button
                 type="button"
-                onClick={handleSendMfaCode}
-                disabled={mfaLoading || !selectedMfaHintIsPhone}
-                className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
-                  mfaLoading || !selectedMfaHintIsPhone
-                    ? "opacity-70 cursor-not-allowed"
-                    : ""
-                }`}
+                onClick={toggleParentLogin}
+                disabled={parentLoading}
+                className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
               >
-                {mfaLoading ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-                    Sending code...
-                  </>
-                ) : (
-                  "Send Verification Code"
-                )}
+                <ArrowLeft size={16} className="mr-1" /> Back to Sign In
               </button>
-            ) : (
-              <form onSubmit={handleVerifyMfaCode} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">
-                    Verification Code
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={mfaCode}
-                    onChange={(e) =>
-                      setMfaCode(e.target.value.replace(/[^0-9]/g, ""))
-                    }
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
-                    placeholder="Enter code sent to your phone"
-                    required
-                  />
-                </div>
-
-                <button
-                  type="submit"
+            </div>
+          ) : isMfaFlow ? (
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Select Second Factor
+                </label>
+                <select
+                  value={mfaSelectedHintIndex}
+                  onChange={(e) => {
+                    setMfaSelectedHintIndex(Number(e.target.value));
+                    setMfaVerificationId("");
+                    setMfaCode("");
+                    setMfaError("");
+                  }}
                   disabled={mfaLoading}
-                  className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
-                    mfaLoading ? "opacity-70 cursor-not-allowed" : ""
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900"
+                >
+                  {mfaHints.map((hint: any, index: number) => (
+                    <option key={`${hint.uid || index}`} value={index}>
+                      {getMfaHintLabel(hint, index)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {!mfaVerificationId ? (
+                <button
+                  type="button"
+                  onClick={handleSendMfaCode}
+                  disabled={mfaLoading || !selectedMfaHintIsPhone}
+                  className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
+                    mfaLoading || !selectedMfaHintIsPhone
+                      ? "opacity-70 cursor-not-allowed"
+                      : ""
                   }`}
                 >
                   {mfaLoading ? (
                     <>
                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-                      Verifying...
+                      Sending code...
                     </>
                   ) : (
-                    "Verify & Sign In"
+                    "Send Verification Code"
                   )}
                 </button>
+              ) : (
+                <form onSubmit={handleVerifyMfaCode} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">
+                      Verification Code
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={mfaCode}
+                      onChange={(e) =>
+                        setMfaCode(e.target.value.replace(/[^0-9]/g, ""))
+                      }
+                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                      placeholder="Enter code sent to your phone"
+                      required
+                    />
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={handleSendMfaCode}
-                  disabled={mfaLoading || !selectedMfaHintIsPhone}
-                  className="w-full text-center text-sm text-[#1160A8] hover:text-[#0B4A82] font-medium"
-                >
-                  Resend code
-                </button>
-              </form>
-            )}
+                  <button
+                    type="submit"
+                    disabled={mfaLoading}
+                    className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
+                      mfaLoading ? "opacity-70 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    {mfaLoading ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                        Verifying...
+                      </>
+                    ) : (
+                      "Verify & Sign In"
+                    )}
+                  </button>
 
-            <button
-              type="button"
-              onClick={cancelMfaFlow}
-              disabled={mfaLoading}
-              className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
-            >
-              <ArrowLeft size={16} className="mr-1" /> Back to Sign In
-            </button>
-          </div>
-        ) : isResetting ? (
-          // RESET PASSWORD FORM
-          <form onSubmit={handlePasswordReset} className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
-                placeholder="Enter your registered email"
-                required
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                We'll send you a link to reset your password.
-              </p>
+                  <button
+                    type="button"
+                    onClick={handleSendMfaCode}
+                    disabled={mfaLoading || !selectedMfaHintIsPhone}
+                    className="w-full text-center text-sm text-[#1160A8] hover:text-[#0B4A82] font-medium"
+                  >
+                    Resend code
+                  </button>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={cancelMfaFlow}
+                disabled={mfaLoading}
+                className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
+              >
+                <ArrowLeft size={16} className="mr-1" /> Back to Sign In
+              </button>
             </div>
+          ) : isResetting ? (
+            <form onSubmit={handlePasswordReset} className="space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                  placeholder="Enter your email"
+                  required
+                />
+              </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-3 px-4 bg-[#1160A8] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${loading ? "opacity-70 cursor-not-allowed" : ""}`}
-            >
-              {loading ? "Sending..." : "Send Reset Link"}
-            </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${loading ? "opacity-70 cursor-not-allowed" : ""}`}
+              >
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                    Sending...
+                  </>
+                ) : (
+                  "Send Reset Email"
+                )}
+              </button>
 
-            <button
-              type="button"
-              onClick={toggleResetMode}
-              className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
-            >
-              <ArrowLeft size={16} className="mr-1" /> Back to Sign In
-            </button>
-          </form>
-        ) : (
-          // LOGIN FORM
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
-                placeholder="e.g., admin@school.com"
-                required
-              />
-            </div>
+              <button
+                type="button"
+                onClick={toggleResetMode}
+                className="w-full text-center text-sm text-slate-600 hover:text-[#0B4A82] font-medium flex items-center justify-center mt-4"
+              >
+                <ArrowLeft size={16} className="mr-1" /> Back to Sign In
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                  placeholder="Enter your email"
+                  required
+                />
+              </div>
 
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="block text-sm font-semibold text-slate-700">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
                   Password
                 </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400 pr-12"
+                    placeholder="Enter your password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
                 <button
                   type="button"
                   onClick={toggleResetMode}
-                  className="text-xs text-[#1160A8] hover:text-[#0B4A82] font-medium"
+                  className="text-sm font-medium text-[#1160A8] hover:text-[#0B4A82] transition-colors"
                 >
-                  Forgot Password?
+                  Forgot password?
                 </button>
-              </div>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 pr-12 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all"
-                  placeholder="Enter your password"
-                  required
-                />
                 <button
                   type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-slate-500 hover:text-[#0B4A82]"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  onClick={toggleParentLogin}
+                  className="text-sm font-medium text-emerald-600 hover:text-emerald-700 transition-colors"
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  Parent Login
                 </button>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82] text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${loading ? "opacity-70 cursor-not-allowed" : ""}`}
-            >
-              {loading ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-                  Signing in...
-                </>
-              ) : (
-                "Sign In"
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start">
+                  <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-red-500" />
+                  <span>{formError}</span>
+                </div>
               )}
-            </button>
-          </form>
-        )}
 
-        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-400">
-            &copy; {new Date().getFullYear()} School Manager GH &bull;
-            Empowering Excellence
-          </p>
+              {resetSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm flex items-start">
+                  <CheckCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-emerald-500" />
+                  <span>{resetSuccess}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${loading ? "opacity-70 cursor-not-allowed" : ""}`}
+              >
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                    Signing In...
+                  </>
+                ) : (
+                  "Sign In"
+                )}
+              </button>
+            </form>
+          )}
+
+          <div id="parent-recaptcha-container"></div>
+          <div id="mfa-recaptcha-container"></div>
+        </div>
         </div>
       </div>
-
-      <div id="mfa-recaptcha-container" className="hidden" />
-    </div>
+    </>
   );
 };
 

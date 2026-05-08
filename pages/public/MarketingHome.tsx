@@ -171,7 +171,7 @@ const MarketingHome = () => {
 
             <motion.div variants={fadeUp} className="hero-buttons" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               <Link to="/get-started" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "white", color: "#0B4A82", fontWeight: 700, fontSize: 15, textDecoration: "none", boxShadow: "0 8px 32px rgba(0,0,0,0.2)", transition: "all 0.2s" }}>
-                Start Free Trial <ArrowRight size={16} />
+                Register Your School <ArrowRight size={16} />
               </Link>
               <Link to="/book-demo" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "rgba(255,255,255,0.12)", color: "white", fontWeight: 700, fontSize: 15, textDecoration: "none", border: "1.5px solid rgba(255,255,255,0.25)", backdropFilter: "blur(8px)", transition: "all 0.2s" }}>
                 Book a Demo
@@ -429,9 +429,9 @@ const MarketingHome = () => {
       <section style={{ padding: "100px 24px", textAlign: "center", background: "white" }}>
         <div style={{ maxWidth: 800, margin: "0 auto" }}>
           <h2 style={{ fontSize: "clamp(32px, 5vw, 56px)", fontWeight: 800, color: "#0f172a", margin: "0 0 24px 0", lineHeight: 1.1 }}>Ready to modernize your school?</h2>
-          <p style={{ fontSize: 19, color: "#64748B", margin: "0 0 40px 0", lineHeight: 1.6 }}>Join forward-thinking schools across Ghana and start your 14-day free trial today. No credit card required.</p>
+          <p style={{ fontSize: 19, color: "#64748B", margin: "0 0 40px 0", lineHeight: 1.6 }}>Join forward-thinking schools across Ghana, register your school, and start your trial today. No credit card required.</p>
           <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
-            <Link to="/get-started" style={{ padding: "16px 36px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, fontSize: 16, textDecoration: "none", boxShadow: "0 12px 32px rgba(11,74,130,0.25)" }}>Start Free Trial</Link>
+            <Link to="/get-started" style={{ padding: "16px 36px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, fontSize: 16, textDecoration: "none", boxShadow: "0 12px 32px rgba(11,74,130,0.25)" }}>Register Your School</Link>
             <Link to="/book-demo" style={{ padding: "16px 36px", borderRadius: 999, background: "white", color: "#0B4A82", fontWeight: 700, fontSize: 16, textDecoration: "none", border: "2px solid #E2E8F0" }}>Schedule a Demo</Link>
           </div>
         </div>

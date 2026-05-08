@@ -112,9 +112,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           }
 
           try {
-            await updateDoc(doc(firestore, "users", firebaseUser.uid), {
-              lastLoginAt: serverTimestamp(),
-            });
+            // Only update user document if it's not a parent (parents don't have user docs by default)
+            if (userProfile.role !== UserRole.PARENT) {
+              await updateDoc(doc(firestore, "users", firebaseUser.uid), {
+                lastLoginAt: serverTimestamp(),
+              });
+            }
             await safeLogAnalyticsEvent({
               schoolId: userProfile.schoolId || null,
               actionType: "USER_LOGIN",

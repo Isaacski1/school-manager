@@ -8,3 +8,14 @@
     stroke-dashoffset: 0;
   }
 }
+
+/* reCAPTCHA container for MFA - invisible reCAPTCHA doesn't need to be visible */
+.recaptcha-container {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}

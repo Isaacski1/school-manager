@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
@@ -740,13 +740,27 @@ const ManageStudents = () => {
                         </span>
                       </div>
 
-                      <div className="relative mt-4 grid grid-cols-2 gap-3 text-xs text-slate-600">
+                      <div className="relative mt-4 grid grid-cols-3 gap-3 text-xs text-slate-600">
                         <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
                             Gender
                           </p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">
                             {student.gender}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Date of Birth
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                            {student.dob
+                              ? new Date(student.dob).toLocaleDateString("en-GB", {
+                                  day: "2-digit",
+                                  month: "short",
+                                  year: "numeric",
+                                })
+                              : "-"}
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">

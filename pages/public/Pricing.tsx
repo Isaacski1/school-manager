@@ -149,10 +149,10 @@ const Pricing = () => (
     <section style={{ padding: "100px 24px", background: "#F8FAFC" }}>
       <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} style={{ maxWidth: 700, margin: "0 auto", textAlign: "center" }}>
         <h2 style={{ fontSize: "clamp(30px, 4vw, 48px)", fontWeight: 800, color: "#0f172a", margin: "0 0 24px 0", lineHeight: 1.1 }}>Ready to modernize your school?</h2>
-        <p style={{ fontSize: 18, color: "#64748B", margin: "0 0 48px 0", lineHeight: 1.6 }}>Join forward-thinking schools across Ghana and start your 14-day free trial today. No credit card required.</p>
+        <p style={{ fontSize: 18, color: "#64748B", margin: "0 0 48px 0", lineHeight: 1.6 }}>Join forward-thinking schools across Ghana, register your school, and start your trial today. No credit card required.</p>
         <div className="cta-buttons" style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
           <Link to="/get-started" style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "18px 40px", borderRadius: 999, background: "linear-gradient(135deg, #0B4A82, #1E40AF)", color: "white", fontWeight: 700, fontSize: 16, textDecoration: "none", boxShadow: "0 10px 30px rgba(11,74,130,0.3)" }}>
-            Start Free Trial <ArrowRight size={18} />
+            Register Your School <ArrowRight size={18} />
           </Link>
           <Link to="/book-demo" style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "18px 40px", borderRadius: 999, border: "2px solid #0B4A82", color: "#0B4A82", fontWeight: 700, fontSize: 16, textDecoration: "none" }}>
             Book a Demo

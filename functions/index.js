@@ -157,6 +157,14 @@ exports.createSchool = functions.https.onCall(async (data, context) => {
       }
     }
 
+    // Calculate trial end date (30 days from now) if plan is trial
+    let planEndsAt = null;
+    if (plan === "trial") {
+      const trialEndDate = new Date();
+      trialEndDate.setDate(trialEndDate.getDate() + 30);
+      planEndsAt = admin.firestore.Timestamp.fromDate(trialEndDate);
+    }
+    
     // Create school document
     const schoolData = {
       name: name.trim(),
@@ -164,11 +172,11 @@ exports.createSchool = functions.https.onCall(async (data, context) => {
       phone: phone ? phone.trim() : "",
       address: address ? address.trim() : "",
       logoUrl: logoUrl ? logoUrl.trim() : "",
-      status: "active",
+      status: plan === "trial" ? "trial_active" : "active",
       plan,
       featurePlan: featurePlanSafe,
       limits: { maxStudents },
-      planEndsAt: null,
+      planEndsAt,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdBy: userId,
     };

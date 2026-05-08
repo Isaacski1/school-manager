@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Menu, X } from "lucide-react";
+import { ArrowRight, Menu, X, ArrowUp } from "lucide-react";
 import schoolLogo from "../../logo/apple-icon-180x180.png";
 
 type PublicSiteLayoutProps = {
@@ -10,6 +10,7 @@ type PublicSiteLayoutProps = {
 
 const navLinks = [
   { href: "/", label: "Home" },
+  { href: "/features", label: "Features" },
   { href: "/pricing", label: "Pricing" },
   { href: "/book-demo", label: "Book Demo" },
 ];
@@ -18,9 +19,13 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 16);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 16);
+      setShowScrollTop(window.scrollY > 400);
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
@@ -35,7 +40,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
         <p style={{ color: "white", fontSize: "13px", fontWeight: 600, margin: 0 }}>
-          🇬🇭 Built for Ghana's schools — <Link to="/get-started" style={{ color: "#93C5FD", textDecoration: "underline" }}>Start your free trial today</Link>
+          🇬🇭 Built for Ghana's schools — <Link to="/get-started" style={{ color: "#93C5FD", textDecoration: "underline" }}>Register your school today</Link>
         </p>
       </div>
 
@@ -107,7 +112,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(11,74,130,0.4)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(11,74,130,0.3)"; }}
             >
-              Start Free Trial <ArrowRight size={15} />
+              Register Your School <ArrowRight size={15} />
             </Link>
           </div>
 
@@ -161,7 +166,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
                     color: "white", textDecoration: "none", textAlign: "center",
                   }}
                 >
-                  Start Free Trial →
+                  Register Your School →
                 </Link>
               </div>
             </motion.div>
@@ -201,7 +206,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
 
             <div>
               <p style={{ fontWeight: 700, fontSize: 14, marginBottom: 16, color: "rgba(255,255,255,0.9)" }}>Platform</p>
-              {[["Home", "/"], ["Pricing", "/pricing"], ["Book Demo", "/book-demo"], ["Start Free Trial", "/get-started"]].map(([label, href]) => (
+              {[["Home", "/"], ["Pricing", "/pricing"], ["Book Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
                 <Link key={href} to={href} style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10, transition: "color 0.2s" }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "white"}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"}
@@ -229,6 +234,41 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
           </div>
         </div>
       </footer>
+
+      {/* Scroll to Top Button */}
+      <AnimatePresence>
+        {showScrollTop && (
+          <motion.button
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            style={{
+              position: "fixed",
+              bottom: 24,
+              right: 24,
+              width: 56,
+              height: 56,
+              borderRadius: 999,
+              background: "linear-gradient(135deg, #0B4A82, #1E40AF)",
+              color: "white",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 8px 24px rgba(11,74,130,0.3)",
+              transition: "all 0.3s",
+              zIndex: 100,
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1.1)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 32px rgba(11,74,130,0.4)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(11,74,130,0.3)"; }}
+            aria-label="Scroll to top"
+          >
+            <ArrowUp size={24} />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

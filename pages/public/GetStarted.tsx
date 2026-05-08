@@ -2,11 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ArrowRight, CheckCircle2, Lightbulb, Loader2, Rocket, ShieldCheck, UploadCloud, X } from "lucide-react";
-import { signInWithEmailAndPassword, sendEmailVerification, signOut } from "firebase/auth";
-import { doc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
-import { auth, firestore, storage } from "../../services/firebase";
 import { showToast } from "../../services/toast";
 import { startPublicSchoolSetup } from "../../services/backendApi";
 
@@ -118,23 +114,6 @@ const GetStarted = () => {
         throw new Error("Backend did not return a valid schoolId.");
       }
 
-      console.log("[Launch] Signing in to verify account...");
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        formData.adminEmail.trim().toLowerCase(),
-        formData.password
-      );
-
-      if (userCredential.user) {
-        try {
-          console.log("[Launch] Sending verification email...");
-          await sendEmailVerification(userCredential.user);
-        } catch (emailError) {
-          console.error("[Launch] Verification email failed to send:", emailError);
-        }
-
-      }
-
       console.log("[Launch] Showing success popup.");
       setShowSuccessPopup(true);
     } catch (err: any) {
@@ -190,13 +169,28 @@ const GetStarted = () => {
           .get-started-form { padding: 32px 20px !important; border-radius: 24px !important; }
           .progress-card { padding: 20px !important; border-radius: 20px !important; }
           .trust-badge { padding: 16px !important; }
+          .school-profile-card { padding: 18px !important; border-radius: 20px !important; }
+          .school-logo-upload { grid-template-columns: 1fr !important; text-align: center !important; padding: 20px !important; }
+          .school-logo-visual { margin: 0 auto !important; }
+          .school-profile-grid { grid-template-columns: 1fr !important; }
+          .school-profile-header { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
+          .school-profile-header h3 { font-size: 20px !important; }
+          .school-profile-field-full { grid-column: auto !important; }
+        }
+        @media (min-width: 641px) and (max-width: 960px) {
+          .school-profile-grid { grid-template-columns: 1fr 1fr !important; }
+          .school-profile-field-full { grid-column: 1 / -1 !important; }
+        }
+        @media (min-width: 961px) {
+          .school-profile-grid { grid-template-columns: 1.1fr 1fr !important; }
+          .school-profile-field-full { grid-column: 1 / -1 !important; }
         }
       `}</style>
 
       {/* Blue hero header */}
       <section className="get-started-header" style={{ background: "linear-gradient(135deg, #0B4A82 0%, #1160A8 100%)", padding: "72px 24px 100px" }}>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
-          <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", margin: "0 0 12px 0" }}>Start Free Trial</p>
+          <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", margin: "0 0 12px 0" }}>Register Your School</p>
           <h1 style={{ fontSize: "clamp(28px, 5vw, 48px)", fontWeight: 800, color: "white", margin: "0 0 14px 0", lineHeight: 1.15 }}>
             Launch your school workspace today 🇬🇭
           </h1>
@@ -273,44 +267,123 @@ const GetStarted = () => {
                   <motion.div key={currentStep} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
 
                     {currentStep === 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                        <div>
-                          <label style={labelCls}>School Logo</label>
-                          <div style={{
-                            border: "2px dashed #DBEAFE", borderRadius: 16, padding: "24px",
-                            textAlign: "center", background: "#F8FAFC", cursor: "pointer",
-                            position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 8
-                          }}>
-                            <input
-                              type="file" accept="image/*"
-                              onChange={handleLogoChange}
-                              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-                            />
+                      <div
+                        className="school-profile-card"
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 20,
+                          padding: 22,
+                          borderRadius: 24,
+                          background: "linear-gradient(180deg,#ffffff 0%,#f8fbff 100%)",
+                          border: "1px solid #DBEAFE",
+                          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
+                        }}
+                      >
+                        <div
+                          className="school-profile-header"
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 16,
+                          }}
+                        >
+                          <div>
+                            <h3 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: "0 0 6px 0" }}>
+                              Tell us about your school
+                            </h3>
+                            <p style={{ fontSize: 14, color: "#64748B", lineHeight: 1.6, margin: 0 }}>
+                              Add your school details so your workspace starts with the right profile.
+                            </p>
+                          </div>
+                          <span style={{ flexShrink: 0, borderRadius: 999, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#0B4A82", fontSize: 12, fontWeight: 700, padding: "8px 12px" }}>
+                            Step 1
+                          </span>
+                        </div>
+
+                        <label
+                          className="school-logo-upload"
+                          style={{
+                            border: "2px dashed #BFDBFE",
+                            borderRadius: 22,
+                            padding: 24,
+                            background: "linear-gradient(135deg,#EFF6FF 0%,#ffffff 100%)",
+                            cursor: "pointer",
+                            position: "relative",
+                            display: "grid",
+                            gridTemplateColumns: "96px minmax(0,1fr)",
+                            alignItems: "center",
+                            gap: 18,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleLogoChange}
+                            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                          />
+                          <div
+                            className="school-logo-visual"
+                            style={{
+                              width: 96,
+                              height: 96,
+                              borderRadius: 24,
+                              background: "white",
+                              border: "1px solid #DBEAFE",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              boxShadow: "0 14px 30px rgba(11,74,130,0.12)",
+                              position: "relative",
+                              overflow: "hidden",
+                            }}
+                          >
                             {formData.logoPreview ? (
-                              <div style={{ position: "relative" }}>
-                                <img src={formData.logoPreview} alt="Logo preview" style={{ width: 80, height: 80, borderRadius: 16, objectFit: "cover", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
-                                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFormData(p => ({ ...p, logoFile: null, logoPreview: "" })) }} style={{ position: "absolute", top: -8, right: -8, background: "white", border: "1px solid #E2E8F0", borderRadius: "50%", padding: 4, cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
+                              <>
+                                <img src={formData.logoPreview} alt="Logo preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setFormData(p => ({ ...p, logoFile: null, logoPreview: "" }));
+                                  }}
+                                  style={{
+                                    position: "absolute",
+                                    top: 8,
+                                    right: 8,
+                                    background: "rgba(255,255,255,0.95)",
+                                    border: "1px solid #E2E8F0",
+                                    borderRadius: "50%",
+                                    padding: 5,
+                                    cursor: "pointer",
+                                    boxShadow: "0 4px 10px rgba(15,23,42,0.14)",
+                                  }}
+                                >
                                   <X size={14} color="#64748B" />
                                 </button>
-                              </div>
-                            ) : (
-                              <>
-                                <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                  <UploadCloud size={24} color="#0B4A82" />
-                                </div>
-                                <div>
-                                  <p style={{ fontSize: 14, fontWeight: 600, color: "#0B4A82", margin: "0 0 4px 0" }}>Click or drag logo to upload</p>
-                                  <p style={{ fontSize: 12, color: "#64748B", margin: 0 }}>SVG, PNG, JPG (max. 2MB)</p>
-                                </div>
                               </>
+                            ) : (
+                              <UploadCloud size={34} color="#0B4A82" />
                             )}
                           </div>
-                        </div>
-                        <div>
-                          <label style={labelCls}>School Name *</label>
-                          <input style={inputCls} required value={formData.schoolName} onChange={set("schoolName")} placeholder="e.g. Akosombo International School" />
-                        </div>
-                        <div className="form-grid-2" style={gridTwo}>
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ fontSize: 15, fontWeight: 800, color: "#0B4A82", margin: "0 0 5px 0" }}>
+                              {formData.logoPreview ? "Logo selected" : "Upload school logo"}
+                            </p>
+                            <p style={{ fontSize: 13, color: "#64748B", lineHeight: 1.6, margin: 0 }}>
+                              Click this area to choose a PNG, JPG, WEBP, GIF, or SVG logo up to 2MB.
+                            </p>
+                          </div>
+                        </label>
+
+                        <div className="school-profile-grid" style={{ display: "grid", gap: 16 }}>
+                          <div className="school-profile-field-full">
+                            <label style={labelCls}>School Name *</label>
+                            <input style={inputCls} required value={formData.schoolName} onChange={set("schoolName")} placeholder="e.g. Akosombo International School" />
+                          </div>
                           <div>
                             <label style={labelCls}>Phone Number *</label>
                             <input style={inputCls} required value={formData.schoolPhone} onChange={set("schoolPhone")} placeholder="+233 24 000 0000" />
@@ -319,12 +392,10 @@ const GetStarted = () => {
                             <label style={labelCls}>School Email *</label>
                             <input style={inputCls} required type="email" value={formData.schoolEmail} onChange={set("schoolEmail")} placeholder="school@email.com" />
                           </div>
-                        </div>
-                        <div>
-                          <label style={labelCls}>Address</label>
-                          <input style={inputCls} value={formData.address} onChange={set("address")} placeholder="Street, City, Region" />
-                        </div>
-                        <div className="form-grid-2" style={gridTwo}>
+                          <div className="school-profile-field-full">
+                            <label style={labelCls}>Address</label>
+                            <input style={inputCls} value={formData.address} onChange={set("address")} placeholder="Street, City, Region" />
+                          </div>
                           <div>
                             <label style={labelCls}>School Type</label>
                             <select style={inputCls} value={formData.schoolType} onChange={set("schoolType")}>
@@ -509,7 +580,7 @@ const GetStarted = () => {
                     type="button"
                     onClick={() => setCurrentStep(p => Math.max(p - 1, 0))}
                     disabled={currentStep === 0 || loading}
-                    style={{ padding: "11px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, border: "1.5px solid #E2E8F0", background: "white", color: "#64748B", cursor: currentStep === 0 ? "not-allowed" : "pointer", opacity: currentStep === 0 ? 0.4 : 1 }}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap", padding: "11px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, border: "1.5px solid #E2E8F0", background: "white", color: "#64748B", cursor: currentStep === 0 ? "not-allowed" : "pointer", opacity: currentStep === 0 ? 0.4 : 1 }}
                   >
                     <ArrowLeft size={16} /> Back
                   </button>

@@ -5,7 +5,7 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, getDoc } from "firebase/firestore";
 import { firestore } from "../services/firebase";
 import { School } from "../types";
 import { useAuth } from "./AuthContext";
@@ -29,8 +29,10 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+    let retryTimer: NodeJS.Timeout | null = null;
 
-    const loadSchoolData = () => {
+    const loadSchoolData = async () => {
       // reset immediately when user changes
       setSchool(null);
       setSchoolError(null);
@@ -52,6 +54,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       const cached =
         sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
 
+      // Load from cache first for immediate display
       if (cached) {
         try {
           const parsedSchool = JSON.parse(cached);
@@ -66,59 +69,92 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       }
 
       try {
+        // First do a direct get to check if document exists
         const schoolDocRef = doc(firestore, "schools", user.schoolId);
-        const unsubscribe = onSnapshot(
+        const schoolDoc = await getDoc(schoolDocRef);
+
+        if (!schoolDoc.exists()) {
+          // School document doesn't exist yet - this is normal for brand new schools
+          console.info("[SchoolContext] School document not found yet, will retry...", {
+            schoolId: user.schoolId,
+          });
+          if (!cancelled) setSchoolLoading(false);
+          
+          // Retry after a delay
+          retryTimer = setTimeout(() => {
+            if (!cancelled) {
+              loadSchoolData();
+            }
+          }, 3000); // Retry after 3 seconds
+          
+          return;
+        }
+
+        const schoolData = {
+          id: schoolDoc.id,
+          ...schoolDoc.data(),
+        } as School;
+
+        if (schoolData.status !== "active" && schoolData.status !== "trial_active") {
+          if (!cancelled)
+            setSchoolError(
+              "Your school is currently inactive. Please contact your administrator.",
+            );
+          if (!cancelled) setSchool(null);
+          if (!cancelled) setSchoolLoading(false);
+          return;
+        }
+
+        sessionStorage.setItem(cacheKey, JSON.stringify(schoolData));
+        localStorage.removeItem(cacheKey);
+        if (!cancelled) setSchool(schoolData);
+        if (!cancelled) setCachedSchool(schoolData);
+        window.dispatchEvent(new Event("school-branding-updated"));
+        if (!cancelled) setSchoolLoading(false);
+
+        // Now set up the listener for real-time updates
+        unsubscribe = onSnapshot(
           schoolDocRef,
-          (schoolDoc) => {
-            if (!schoolDoc.exists()) {
-              if (!cancelled)
-                setSchoolError(
-                  "School not found. Please contact your administrator.",
-                );
-              if (!cancelled) setSchool(null);
-              return;
+          (docSnap) => {
+            if (!docSnap.exists()) {
+              return; // Document deleted, keep showing cached data
             }
 
-            const schoolData = {
-              id: schoolDoc.id,
-              ...schoolDoc.data(),
+            const updatedSchoolData = {
+              id: docSnap.id,
+              ...docSnap.data(),
             } as School;
 
-            if (schoolData.status !== "active" && schoolData.status !== "trial_active") {
-              if (!cancelled)
-                setSchoolError(
-                  "Your school is currently inactive. Please contact your administrator.",
-                );
-              if (!cancelled) setSchool(null);
-              return;
+            if (updatedSchoolData.status !== "active" && updatedSchoolData.status !== "trial_active") {
+              return; // Keep showing cached data
             }
 
-            sessionStorage.setItem(cacheKey, JSON.stringify(schoolData));
+            sessionStorage.setItem(cacheKey, JSON.stringify(updatedSchoolData));
             localStorage.removeItem(cacheKey);
-            if (!cancelled) setSchool(schoolData);
-            if (!cancelled) setCachedSchool(schoolData);
+            if (!cancelled) setSchool(updatedSchoolData);
+            if (!cancelled) setCachedSchool(updatedSchoolData);
             window.dispatchEvent(new Event("school-branding-updated"));
           },
-          (error) => {
-            console.error("Error loading school data:", error);
-            if (!cancelled)
-              setSchoolError(
-                "Failed to load school information. Please try refreshing the page.",
-              );
-            if (!cancelled) setSchool(null);
+          (error: any) => {
+            console.error("[SchoolContext] Snapshot error:", error);
+            // Don't show error - we already have the data from initial fetch
           },
         );
-
-        return () => unsubscribe();
-      } finally {
+      } catch (err: any) {
+        console.error("Error loading school data:", err);
+        if (!cancelled)
+          setSchoolError("Failed to load school information. Please try refreshing the page.");
+        if (!cancelled) setSchool(null);
         if (!cancelled) setSchoolLoading(false);
       }
     };
 
-    const cleanup = loadSchoolData();
+    loadSchoolData();
+
     return () => {
       cancelled = true;
-      if (cleanup) cleanup();
+      if (unsubscribe) unsubscribe();
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [isAuthenticated, user?.id, user?.schoolId, user?.role]);
 
