@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import {
   HashRouter as Router,
   Routes,
@@ -14,57 +14,58 @@ import { canAccessFeature, FeatureKey } from "./services/featureAccess";
 import { UserRole } from "./types";
 
 // Pages
-import Login from "./pages/Login";
-import AdminDashboard from "./pages/admin/AdminDashboard";
-import ManageStudents from "./pages/admin/ManageStudents";
-import ManageTeachers from "./pages/admin/ManageTeachers";
-import StudentHistory from "./pages/admin/StudentHistory";
-import AttendanceStats from "./pages/admin/AttendanceStats";
-import TeacherAttendanceStats from "./pages/admin/TeacherAttendanceStats";
-import Reports from "./pages/admin/Reports";
-import ReportCard from "./pages/admin/ReportCard";
-import SystemSettings from "./pages/admin/SystemSettings";
-import ManageBackups from "./pages/admin/ManageBackups";
-import Timetable from "./pages/admin/Timetable";
-import Billing from "./pages/admin/Billing";
-import FeesPayments from "./pages/admin/FeesPayments";
-import ActivityMonitor from "./pages/admin/ActivityMonitor";
-import TeacherDashboard from "./pages/teacher/TeacherDashboard";
-import Attendance from "./pages/teacher/Attendance";
-import TeacherAttendance from "./pages/teacher/TeacherAttendance";
-import Assessment from "./pages/teacher/Assessment";
-import WriteRemarks from "./pages/teacher/WriteRemarks";
-import EditSkills from "./pages/teacher/EditSkills";
-import StudentPerformance from "./pages/teacher/StudentPerformance";
-import ParentDashboard from "./pages/parent/ParentDashboard";
-import Schools from "./pages/super-admin/Schools";
-import SchoolDetails from "./pages/super-admin/SchoolDetails";
-import Dashboard from "./pages/super-admin/Dashboard";
-import SuperAdminBackups from "./pages/super-admin/Backups";
-import SuperAdminPayments from "./pages/super-admin/Payments";
-import SuperAdminUsers from "./pages/super-admin/Users";
-import SuperAdminAnalytics from "./pages/super-admin/Analytics";
-import SuperAdminSystemHealth from "./pages/super-admin/SystemHealth";
-import SuperAdminBroadcasts from "./pages/super-admin/Broadcasts";
-import LoginHistory from "./pages/super-admin/security/LoginHistory";
-import SuspiciousEvents from "./pages/super-admin/security/SuspiciousEvents";
-import AuditLogs from "./pages/super-admin/security/AuditLogs";
-import SecuritySettings from "./pages/super-admin/security/SecuritySettings";
+const Login = lazy(() => import("./pages/Login"));
+const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
+const ManageStudents = lazy(() => import("./pages/admin/ManageStudents"));
+const ManageTeachers = lazy(() => import("./pages/admin/ManageTeachers"));
+const StudentHistory = lazy(() => import("./pages/admin/StudentHistory"));
+const AttendanceStats = lazy(() => import("./pages/admin/AttendanceStats"));
+const TeacherAttendanceStats = lazy(() => import("./pages/admin/TeacherAttendanceStats"));
+const Reports = lazy(() => import("./pages/admin/Reports"));
+const ReportCard = lazy(() => import("./pages/admin/ReportCard"));
+const SystemSettings = lazy(() => import("./pages/admin/SystemSettings"));
+const ManageBackups = lazy(() => import("./pages/admin/ManageBackups"));
+const Timetable = lazy(() => import("./pages/admin/Timetable"));
+const Billing = lazy(() => import("./pages/admin/Billing"));
+const FeesPayments = lazy(() => import("./pages/admin/FeesPayments"));
+const ActivityMonitor = lazy(() => import("./pages/admin/ActivityMonitor"));
+const TeacherDashboard = lazy(() => import("./pages/teacher/TeacherDashboard"));
+const Attendance = lazy(() => import("./pages/teacher/Attendance"));
+const TeacherAttendance = lazy(() => import("./pages/teacher/TeacherAttendance"));
+const Assessment = lazy(() => import("./pages/teacher/Assessment"));
+const WriteRemarks = lazy(() => import("./pages/teacher/WriteRemarks"));
+const EditSkills = lazy(() => import("./pages/teacher/EditSkills"));
+const StudentPerformance = lazy(() => import("./pages/teacher/StudentPerformance"));
+const ParentDashboard = lazy(() => import("./pages/parent/ParentDashboard"));
+const Schools = lazy(() => import("./pages/super-admin/Schools"));
+const SchoolDetails = lazy(() => import("./pages/super-admin/SchoolDetails"));
+const Dashboard = lazy(() => import("./pages/super-admin/Dashboard"));
+const SuperAdminBackups = lazy(() => import("./pages/super-admin/Backups"));
+const SuperAdminPayments = lazy(() => import("./pages/super-admin/Payments"));
+const SuperAdminUsers = lazy(() => import("./pages/super-admin/Users"));
+const SuperAdminAnalytics = lazy(() => import("./pages/super-admin/Analytics"));
+const SuperAdminSystemHealth = lazy(() => import("./pages/super-admin/SystemHealth"));
+const SuperAdminBroadcasts = lazy(() => import("./pages/super-admin/Broadcasts"));
+const LoginHistory = lazy(() => import("./pages/super-admin/security/LoginHistory"));
+const SuspiciousEvents = lazy(() => import("./pages/super-admin/security/SuspiciousEvents"));
+const AuditLogs = lazy(() => import("./pages/super-admin/security/AuditLogs"));
+const SecuritySettings = lazy(() => import("./pages/super-admin/security/SecuritySettings"));
+
 import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
 import InstallPrompt from "./components/InstallPrompt";
 
 // Public Marketing Pages
-import MarketingHome from "./pages/public/MarketingHome";
-import Pricing from "./pages/public/Pricing";
-import BookDemo from "./pages/public/BookDemo";
-import GetStarted from "./pages/public/GetStarted";
-import VerifyEmail from "./pages/public/VerifyEmail";
-import Features from "./pages/public/Features";
-import Blog from "./pages/public/Blog";
-import EmailVerified from "./pages/public/EmailVerified";
-import WhatsAppBroadcast from "./pages/admin/WhatsAppBroadcast";
-import PaymentSettingsPage from "./pages/admin/PaymentSettingsPage";
+const MarketingHome = lazy(() => import("./pages/public/MarketingHome"));
+const Pricing = lazy(() => import("./pages/public/Pricing"));
+const BookDemo = lazy(() => import("./pages/public/BookDemo"));
+const GetStarted = lazy(() => import("./pages/public/GetStarted"));
+const VerifyEmail = lazy(() => import("./pages/public/VerifyEmail"));
+const Features = lazy(() => import("./pages/public/Features"));
+const Blog = lazy(() => import("./pages/public/Blog"));
+const EmailVerified = lazy(() => import("./pages/public/EmailVerified"));
+const WhatsAppBroadcast = lazy(() => import("./pages/admin/WhatsAppBroadcast"));
+const PaymentSettingsPage = lazy(() => import("./pages/admin/PaymentSettingsPage"));
 
 const getEmailVerificationRedirect = () => {
   if (typeof window === "undefined") return "";
@@ -313,7 +314,9 @@ const AppContent = () => {
   return (
     <ErrorBoundary>
       <InstallPrompt />
-      <AppRoutes />
+      <Suspense fallback={<SplashScreen />}>
+        <AppRoutes />
+      </Suspense>
     </ErrorBoundary>
   );
 };

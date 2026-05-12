@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, memo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Menu, X, ArrowUp } from "lucide-react";
@@ -15,6 +15,8 @@ const navLinks = [
   { href: "/blog", label: "Blog" },
   { href: "/book-demo", label: "Book Demo" },
 ];
+
+
 
 const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
   const location = useLocation();
@@ -39,9 +41,9 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
     <div className="min-h-screen font-sans relative overflow-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#041222", color: "white" }}>
       
       {/* Animated Glowing Orbs (Fixed background) */}
-      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ backgroundColor: "rgba(37, 99, 235, 0.5)", mixBlendMode: "screen", filter: "blur(80px)", opacity: 0.9, zIndex: 1, willChange: "transform" }}></div>
-      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ backgroundColor: "rgba(16, 185, 129, 0.4)", mixBlendMode: "screen", filter: "blur(100px)", opacity: 0.7, zIndex: 1, willChange: "transform" }}></div>
-      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ backgroundColor: "rgba(147, 51, 234, 0.4)", mixBlendMode: "screen", filter: "blur(100px)", opacity: 0.7, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 1, willChange: "transform" }}></div>
 
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>

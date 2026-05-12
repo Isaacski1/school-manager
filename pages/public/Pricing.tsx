@@ -82,16 +82,29 @@ const Pricing = () => {
           .pricing-grid { 
             grid-template-columns: 1fr !important; 
             gap: 40px !important; 
-            max-width: 400px !important;
+            max-width: 420px !important;
             margin: 0 auto !important;
           }
         }
-        @media (max-width: 480px) {
-          .pricing-header h1 { font-size: 34px !important; }
-          .pricing-card { padding: 40px 24px !important; border-radius: 32px !important; }
+        @media (max-width: 600px) {
+          .pricing-header h1 { font-size: 30px !important; line-height: 1.2 !important; }
+          .pricing-header p { font-size: 15px !important; margin-bottom: 32px !important; }
+          .pricing-card { padding: 32px 24px !important; border-radius: 28px !important; }
+          .pricing-card h3 { font-size: 24px !important; margin-bottom: 4px !important; }
+          .pricing-card .tagline { font-size: 14px !important; margin-bottom: 24px !important; min-height: auto !important; }
+          .pricing-card .price-amount { font-size: 36px !important; }
+          .pricing-card .features-list { margin-bottom: 32px !important; }
+          .pricing-card .feature-item { font-size: 14px !important; margin-bottom: 12px !important; gap: 10px !important; }
+          .pricing-card .feature-icon { width: 18px !important; height: 18px !important; }
+          .pricing-card .cta-link { padding: 14px 20px !important; font-size: 15px !important; }
+          .popular-badge-container { top: -12px !important; }
+          .popular-badge-container div { padding: 4px 16px !important; font-size: 11px !important; }
           .cta-buttons { flex-direction: column; width: 100%; }
           .cta-buttons a { width: 100%; justify-content: center; }
-          .cycle-toggle { flex-direction: column !important; gap: 8px !important; }
+          .scroll-hint { display: flex !important; }
+          .cycle-toggle { flex-direction: column !important; width: 100% !important; max-width: 280px; margin: 0 auto !important; border-radius: 20px !important; padding: 8px !important; }
+          .cycle-toggle button { width: 100% !important; padding: 12px !important; }
+          .pricing-grid-section { margin-top: 0 !important; padding: 40px 20px !important; }
         }
       `}</style>
 
@@ -153,18 +166,18 @@ const Pricing = () => {
                 }}
               >
                 {plan.popular && (
-                  <div style={{ position: "absolute", top: -14, left: "50%", transform: "translateX(-50%)" }}>
+                  <div className="popular-badge-container" style={{ position: "absolute", top: -14, left: "50%", transform: "translateX(-50%)", zIndex: 10, whiteSpace: "nowrap" }}>
                     <div style={{ background: "#0B4A82", color: "white", padding: "6px 20px", borderRadius: "999px", fontSize: "12px", fontWeight: "700", letterSpacing: "0.05em" }}>MOST POPULAR</div>
                   </div>
                 )}
                 <h3 style={{ fontSize: "28px", fontWeight: "800", color: "white", marginBottom: "8px" }}>{plan.name}</h3>
-                <p style={{ fontSize: "15px", color: "rgba(255,255,255,0.7)", marginBottom: "32px", minHeight: "44px" }}>{plan.tagline}</p>
+                <p className="tagline" style={{ fontSize: "15px", color: "rgba(255,255,255,0.7)", marginBottom: "32px", minHeight: "44px" }}>{plan.tagline}</p>
 
                 {/* Price */}
                 <div style={{ marginBottom: "8px" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
                     <span style={{ fontSize: "13px", fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>GH₵</span>
-                    <span style={{ fontSize: "48px", fontWeight: "800", color: "white", lineHeight: 1 }}>{priceInfo.amount.toLocaleString()}</span>
+                    <span className="price-amount" style={{ fontSize: "48px", fontWeight: "800", color: "white", lineHeight: 1 }}>{priceInfo.amount.toLocaleString()}</span>
                   </div>
                   <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.5)", margin: "4px 0 0 0" }}>{priceInfo.label}</p>
                   {cycle !== "monthly" && (
@@ -176,11 +189,11 @@ const Pricing = () => {
 
                 <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "24px 0 32px" }} />
 
-                <div style={{ flex: 1, marginBottom: 48 }}>
+                <div className="features-list" style={{ flex: 1, marginBottom: 48 }}>
                   <p style={{ fontSize: "13px", fontWeight: "700", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "20px" }}>What's included:</p>
                   {plan.bullets.map((feature, idx) => (
-                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: "14px", color: "rgba(255,255,255,0.9)", fontSize: "15px", fontWeight: "500", marginBottom: "18px" }}>
-                      <div style={{ width: "22px", height: "22px", borderRadius: "50%", background: "rgba(147, 197, 253, 0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div key={idx} className="feature-item" style={{ display: "flex", alignItems: "center", gap: "14px", color: "rgba(255,255,255,0.9)", fontSize: "15px", fontWeight: "500", marginBottom: "18px" }}>
+                      <div className="feature-icon" style={{ width: "22px", height: "22px", borderRadius: "50%", background: "rgba(147, 197, 253, 0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <Check size={14} color="#93C5FD" strokeWidth={3} />
                       </div>
                       {feature}
@@ -190,6 +203,7 @@ const Pricing = () => {
 
                 <Link
                   to="/get-started"
+                  className="cta-link"
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
                     padding: "18px 24px", borderRadius: 999, fontSize: 16, fontWeight: 700,
@@ -221,8 +235,12 @@ const Pricing = () => {
           <div style={{ textAlign: "center", marginBottom: 48 }}>
             <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Plan feature comparison</h2>
             <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what's included in each plan.</p>
+            <div className="scroll-hint" style={{ display: "none", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
+              <span>← Scroll to see all plans →</span>
+            </div>
           </div>
-          <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ minWidth: 600, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
             {/* Header */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px", padding: "14px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)", gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Feature</span>
@@ -265,30 +283,36 @@ const Pricing = () => {
             ))}
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
       {/* Comparison table */}
       <section style={{ padding: "100px 24px 0" }}>
         <div style={{ maxWidth: 700, margin: "0 auto", textAlign: "center", marginBottom: 48 }}>
           <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Quick price comparison</h2>
           <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what you'll pay per billing cycle.</p>
-        </div>
-        <div style={{ maxWidth: 700, margin: "0 auto", background: "rgba(255,255,255,0.03)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
-          {/* Header row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Plan</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Monthly</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly <span style={{ fontSize: 10 }}>(-10%)</span></span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly <span style={{ fontSize: 10 }}>(-20%)</span></span>
+          <div className="scroll-hint" style={{ display: "none", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
+            <span>← Scroll to see all cycles →</span>
           </div>
-          {plans.map((plan) => (
-            <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
-              <span style={{ fontSize: 16, fontWeight: 800, color: "white" }}>{plan.name}</span>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>GH₵ {BASE_PRICES[plan.baseKey]}</span>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "termly").amount}</span>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "yearly").amount.toLocaleString()}</span>
+        </div>
+        <div style={{ maxWidth: 700, margin: "0 auto", overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ minWidth: 550, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
+            {/* Header row */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Plan</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Monthly</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly <span style={{ fontSize: 10 }}>(-10%)</span></span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly <span style={{ fontSize: 10 }}>(-20%)</span></span>
             </div>
-          ))}
+            {plans.map((plan) => (
+              <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: "white" }}>{plan.name}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>GH₵ {BASE_PRICES[plan.baseKey]}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "termly").amount}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "yearly").amount.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

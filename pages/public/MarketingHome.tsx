@@ -62,21 +62,21 @@ const reviews = [
     role: "Proprietor, Alpha Preparatory",
     content: "School Manager GH has completely transformed how we handle attendance and reports. The automation saves us hours of manual work every week.",
     rating: 5,
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Kwesi"
+    avatar: "/avatar-kwesi.png"
   },
   {
     name: "Sarah Mensah",
     role: "Administrator, Beacon International",
     content: "The fees and payments module is a game changer. Our fee collection has improved by 40% since we started using the parent portal for payments.",
     rating: 5,
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah"
+    avatar: "/avatar-sarah.png"
   },
   {
     name: "Ebenezer Tetteh",
     role: "Senior Teacher, Delta Schools",
     content: "As a teacher, I love how quickly I can enter assessments. The automated report cards are professional and save me so much stress at the end of term.",
     rating: 5,
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ebenezer"
+    avatar: "/avatar-ebenezer.png"
   }
 ];
 
@@ -182,7 +182,7 @@ const MarketingHome = () => {
               </button>
 
               {/* Left: Image */}
-              <div style={{
+              <div className="popup-image-container" style={{
                 background: "linear-gradient(160deg, #f0f4ff 0%, #dce8ff 100%)",
                 display: "flex", alignItems: "flex-end", justifyContent: "center",
                 minHeight: 420, overflow: "hidden"
@@ -190,12 +190,14 @@ const MarketingHome = () => {
                 <img
                   src="/about-photo.png"
                   alt="School Manager GH offer"
+                  loading="lazy"
+                  decoding="async"
                   style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top" }}
                 />
               </div>
 
               {/* Right: Content */}
-              <div style={{ padding: "48px 40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div className="popup-content-container" style={{ padding: "48px 40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
                 <h2 style={{ fontSize: 26, fontWeight: 800, color: "#CC0000", margin: "0 0 12px 0", lineHeight: 1.3 }}>
                   Wait! — Don't Miss This!<br />
                   <span style={{ color: "#CC0000" }}>Start Free Today!</span>
@@ -255,8 +257,12 @@ const MarketingHome = () => {
 
       <style>{`
         @media (max-width: 640px) {
-          .popup-grid { grid-template-columns: 1fr !important; }
-          .popup-grid > div:first-child { display: none !important; }
+          .popup-grid { grid-template-columns: 1fr !important; max-width: 90vw !important; max-height: 85vh !important; overflow-y: auto !important; }
+          .popup-image-container { min-height: 200px !important; height: 200px !important; }
+          .popup-content-container { padding: 24px 20px !important; }
+          .popup-content-container h2 { font-size: 20px !important; }
+          .popup-content-container p { font-size: 14px !important; }
+          .popup-content-container div { margin-bottom: 20px !important; }
         }
         html, body { max-width: 100%; overflow-x: hidden; }
         @media (max-width: 1024px) { section { padding: 80px 24px !important; } }
@@ -281,11 +287,32 @@ const MarketingHome = () => {
           .responsive-grid { grid-template-columns: 1fr !important; gap: 48px !important; }
           .teacher-card-inner { grid-template-columns: 1fr !important; }
           .teacher-card-img { min-height: 300px !important; order: -1; padding: 0 !important; }
-          .teacher-card-content { padding: 40px 24px !important; }
+          .teacher-card-content { padding: 32px 20px !important; text-align: center; }
+          .teacher-card-content h2 { margin-bottom: 16px !important; }
+          .teacher-card-content p { font-size: 16px !important; margin-bottom: 24px !important; }
         }
         @media (max-width: 640px) {
           .features-header { text-align: center !important; }
           .feature-card { padding: 24px !important; }
+          .about-stats-grid { grid-template-columns: 1fr !important; gap: 32px !important; }
+          .impact-badge { left: auto !important; right: 12px !important; bottom: 12px !important; padding: 8px 12px !important; gap: 8px !important; border-radius: 12px !important; }
+          .impact-badge div:first-child { width: 28px !important; height: 28px !important; }
+          .impact-badge div:first-child svg { width: 16px !important; height: 16px !important; }
+          .impact-badge p:first-of-type { font-size: 14px !important; }
+          .impact-badge p:last-child { font-size: 10px !important; }
+          .testimonial-card { padding: 32px 24px !important; border-radius: 24px !important; text-align: center !important; align-items: center !important; }
+          .testimonial-card .stars-container { justify-content: center !important; }
+          .testimonial-card p { font-size: 16px !important; margin-bottom: 24px !important; }
+          .testimonial-author-container { flex-direction: column !important; text-align: center !important; gap: 12px !important; }
+          .testimonial-quote-icon { top: 20px !important; right: 24px !important; width: 32px !important; height: 32px !important; }
+          .testimonials-grid { grid-template-columns: 1fr !important; max-width: 400px !important; margin: 0 auto !important; }
+          .faq-button { padding: 18px 20px !important; }
+          .faq-button span { font-size: 16px !important; }
+          .faq-answer { padding: 0 20px 18px !important; font-size: 14px !important; }
+          .final-cta-section { padding: 80px 24px !important; }
+          .final-cta-section h2 { font-size: 28px !important; }
+          .final-cta-buttons { flex-direction: column !important; width: 100% !important; max-width: 300px !important; margin: 0 auto !important; gap: 12px !important; }
+          .final-cta-buttons a { width: 100% !important; text-align: center !important; }
         }
         @keyframes ticker {
           0% { transform: translateX(0); }
@@ -303,7 +330,7 @@ const MarketingHome = () => {
 
       {/* ── HERO ── */}
       <section style={{ minHeight: "85vh", display: "flex", alignItems: "center", padding: "120px 24px 80px", position: "relative", overflow: "hidden" }}>
-        <img src="/img-students.png" alt="" aria-hidden="true" loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%", zIndex: 0 }} />
+        <img src="/img-students.png" alt="" aria-hidden="true" fetchPriority="high" decoding="async" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%", zIndex: 0 }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(4,18,34,0.9) 0%, rgba(11,74,130,0.7) 100%)", zIndex: 1 }} />
 
         <div className="hero-grid" style={{ maxWidth: 1280, margin: "0 auto", width: "100%", display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 64, alignItems: "center", position: "relative", zIndex: 2 }}>
@@ -337,9 +364,9 @@ const MarketingHome = () => {
 
           <motion.div className="hero-card-container" style={{ perspective: 1200 }}>
             <motion.div animate={{ y: [0, -12, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ transform: "rotateX(8deg) rotateY(-10deg) translateZ(0)", transformStyle: "preserve-3d", width: "100%", maxWidth: 460, willChange: "transform" }}>
-              <div style={{ background: "rgba(255,255,255,0.96)", borderRadius: 28, padding: 28, boxShadow: "0 40px 100px rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}>
+              <div style={{ background: "rgba(255,255,255,0.98)", borderRadius: 28, padding: 28, boxShadow: "0 40px 100px rgba(0,0,0,0.35)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                  <img src="/logo.png" alt="Logo" style={{ height: 60 }} />
+                  <img src="/logo.png" alt="Logo" loading="lazy" decoding="async" style={{ height: 60 }} />
                   <div style={{ width: 44, height: 44, borderRadius: 14, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <ShieldCheck size={22} color="#0B4A82" />
                   </div>
@@ -373,14 +400,14 @@ const MarketingHome = () => {
               {/* First set of logos */}
               {partnerSchools.map((school) => (
                 <div key={`${school.id}-1`} style={{ display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap" }}>
-                  <img src={school.logoUrl} alt={school.name} style={{ height: 32 }} />
+                  <img src={school.logoUrl} alt={school.name} loading="lazy" decoding="async" style={{ height: 32 }} />
                   <span style={{ fontWeight: 600, color: "white", fontSize: 14 }}>{school.name}</span>
                 </div>
               ))}
               {/* Duplicated set of logos for seamless loop */}
               {partnerSchools.map((school) => (
                 <div key={`${school.id}-2`} style={{ display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap" }}>
-                  <img src={school.logoUrl} alt={school.name} style={{ height: 32 }} />
+                  <img src={school.logoUrl} alt={school.name} loading="lazy" decoding="async" style={{ height: 32 }} />
                   <span style={{ fontWeight: 600, color: "white", fontSize: 14 }}>{school.name}</span>
                 </div>
               ))}
@@ -403,7 +430,7 @@ const MarketingHome = () => {
               <motion.p variants={fadeUp} style={{ fontSize: 18, lineHeight: 1.8, color: "rgba(255,255,255,0.7)", marginBottom: 32 }}>
                 School Manager GH was founded with a single mission: to provide Ghanaian schools with world-class digital tools that are tailored to our local context. We believe that every school, regardless of size, deserves access to technology that simplifies administration and enhances learning.
               </motion.p>
-              <motion.div variants={fadeUp} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+              <motion.div variants={fadeUp} className="about-stats-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                 <div style={{ display: "flex", gap: 16 }}>
                   <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(147, 197, 253, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <ShieldCheck size={24} color="#93C5FD" />
@@ -438,8 +465,10 @@ const MarketingHome = () => {
                   src="/about-photo.png" 
                   alt="Ghanaian students learning with School Manager GH" 
                   style={{ width: "100%", height: "auto", borderRadius: 24, boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }} 
+                  loading="lazy"
+                  decoding="async"
                 />
-                <div style={{ position: "absolute", bottom: 40, left: -40, background: "white", borderRadius: 20, padding: "20px 24px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 16 }}>
+                 <div className="impact-badge" style={{ position: "absolute", bottom: 40, left: -40, background: "white", borderRadius: 20, padding: "20px 24px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 16 }}>
                   <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <Users size={24} color="#0B4A82" />
                   </div>
@@ -466,7 +495,7 @@ const MarketingHome = () => {
             {features.map((f) => {
               const Icon = f.icon;
               return (
-                <div key={f.title} className="feature-card" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 24, border: "1.5px solid rgba(255,255,255,0.1)", padding: 28, backdropFilter: "blur(10px)", position: "relative" }}>
+                <div key={f.title} className="feature-card" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 24, border: "1.5px solid rgba(255,255,255,0.1)", padding: 28, position: "relative" }}>
                   {f.badge && (
                     <div style={{ position: "absolute", top: 16, right: 16, background: "rgba(147,197,253,0.15)", border: "1px solid rgba(147,197,253,0.3)", borderRadius: 999, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.08em" }}>
                       {f.badge}
@@ -488,12 +517,12 @@ const MarketingHome = () => {
         <div style={{ maxWidth: 1160, margin: "0 auto", borderRadius: "40px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(20px)", overflow: "hidden" }}>
           <div className="teacher-card-inner" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))" }}>
             <div className="teacher-card-content" style={{ padding: "60px 50px" }}>
-              <h2 style={{ fontSize: "clamp(32px, 4vw, 48px)", fontWeight: 800, color: "white", marginBottom: 24 }}>Empowering teachers to <span style={{ color: "#93C5FD" }}>focus on teaching.</span></h2>
+              <h2 style={{ fontSize: "clamp(26px, 4vw, 48px)", fontWeight: 800, color: "white", marginBottom: 24, lineHeight: 1.2 }}>Empowering teachers to <span style={{ color: "#93C5FD" }}>focus on teaching.</span></h2>
               <p style={{ fontSize: 18, color: "rgba(255,255,255,0.8)", marginBottom: 32 }}>Automate the boring stuff. From digital attendance to term reports.</p>
               <Link to="/get-started" style={{ display: "inline-flex", padding: "14px 28px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, textDecoration: "none" }}>Get Started</Link>
             </div>
             <div className="teacher-card-img" style={{ minHeight: 400 }}>
-              <img src="/img-teacher-2.PNG" alt="Teacher" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src="/img-teacher-2.PNG" alt="Teacher" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             </div>
           </div>
         </div>
@@ -506,7 +535,7 @@ const MarketingHome = () => {
             <h2 style={{ fontSize: "clamp(28px, 4vw, 44px)", fontWeight: 800, color: "white", margin: 0 }}>Trusted by educators</h2>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 32 }}>
+          <div className="testimonials-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 32, justifyContent: "center" }}>
             {reviews.map((r, idx) => (
               <motion.div 
                 key={idx}
@@ -514,6 +543,7 @@ const MarketingHome = () => {
                 whileInView="show"
                 viewport={{ once: true }}
                 variants={fadeUp}
+                className="testimonial-card"
                 style={{ 
                   background: "rgba(255,255,255,0.03)", 
                   borderRadius: 32, 
@@ -524,11 +554,11 @@ const MarketingHome = () => {
                   flexDirection: "column"
                 }}
               >
-                <div style={{ position: "absolute", top: 32, right: 40, opacity: 0.1 }}>
-                  <Quote size={48} color="white" />
+                <div className="testimonial-quote-icon" style={{ position: "absolute", top: 32, right: 40, opacity: 0.1 }}>
+                  <Quote size={48} color="white" className="testimonial-quote-icon-svg" />
                 </div>
                 
-                <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+                <div className="stars-container" style={{ display: "flex", gap: 4, marginBottom: 20 }}>
                   {[...Array(r.rating)].map((_, i) => (
                     <Star key={i} size={16} fill="#FACC15" color="#FACC15" />
                   ))}
@@ -538,11 +568,13 @@ const MarketingHome = () => {
                   "{r.content}"
                 </p>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div className="testimonial-author-container" style={{ display: "flex", alignItems: "center", gap: 16 }}>
                   <img 
                     src={r.avatar} 
                     alt={r.name} 
                     style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} 
+                    loading="lazy"
+                    decoding="async"
                   />
                   <div>
                     <h4 style={{ fontSize: 17, fontWeight: 700, color: "white", margin: "0 0 4px 0" }}>{r.name}</h4>
@@ -566,6 +598,7 @@ const MarketingHome = () => {
             {faqs.map((faq, idx) => (
               <div 
                 key={idx} 
+                className="faq-item"
                 style={{ 
                   background: "rgba(255,255,255,0.03)", 
                   borderRadius: 20, 
@@ -576,6 +609,7 @@ const MarketingHome = () => {
               >
                 <button 
                   onClick={() => setActiveFaq(activeFaq === idx ? null : idx)}
+                  className="faq-button"
                   style={{ 
                     width: "100%", 
                     padding: "24px 28px", 
@@ -601,7 +635,7 @@ const MarketingHome = () => {
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.3 }}
                     >
-                      <div style={{ padding: "0 28px 24px", fontSize: 16, lineHeight: 1.7, color: "rgba(255,255,255,0.6)" }}>
+                      <div className="faq-answer" style={{ padding: "0 28px 24px", fontSize: 16, lineHeight: 1.7, color: "rgba(255,255,255,0.6)" }}>
                         {faq.a}
                       </div>
                     </motion.div>
@@ -613,9 +647,9 @@ const MarketingHome = () => {
         </div>
       </section>
 
-      <section style={{ padding: "100px 24px", textAlign: "center" }}>
+      <section className="final-cta-section" style={{ padding: "100px 24px", textAlign: "center" }}>
         <h2 style={{ fontSize: "clamp(32px, 5vw, 56px)", fontWeight: 800, color: "white", marginBottom: 24 }}>Ready to modernize your school?</h2>
-        <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
+        <div className="final-cta-buttons" style={{ display: "flex", gap: 16, justifyContent: "center" }}>
           <Link to="/get-started" style={{ padding: "16px 36px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, textDecoration: "none" }}>Register Your School</Link>
           <Link to="/book-demo" style={{ padding: "16px 36px", borderRadius: 999, background: "rgba(255,255,255,0.05)", color: "white", fontWeight: 700, textDecoration: "none", border: "1px solid rgba(255,255,255,0.2)" }}>Schedule a Demo</Link>
         </div>
