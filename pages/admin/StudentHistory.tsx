@@ -17,7 +17,7 @@ import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
-import { CLASSES_LIST, calculateGrade, getGradeColor } from "../../constants";
+import { CLASSES_LIST, calculateGrade, getGradeColor, getFilteredClasses } from "../../constants";
 import { Student } from "../../types";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
@@ -27,6 +27,10 @@ const StudentHistory = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || null;
+
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
   const [students, setStudents] = useState<Student[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
@@ -106,7 +110,7 @@ const StudentHistory = () => {
     if (!normalizedSearch) return students;
     return students.filter((student) => {
       const classLabel =
-        CLASSES_LIST.find((c) => c.id === student.classId)?.name || "";
+        availableClasses.find((c) => c.id === student.classId)?.name || "";
       const searchable = [
         student.name,
         student.guardianName,
@@ -128,7 +132,7 @@ const StudentHistory = () => {
     (student) => student.studentStatus === "stopped",
   );
   const deleteClassName = studentToDelete
-    ? CLASSES_LIST.find((c) => c.id === studentToDelete.classId)?.name ||
+    ? availableClasses.find((c) => c.id === studentToDelete.classId)?.name ||
       studentToDelete.classId
     : "";
   const isDeletePending =
@@ -390,7 +394,7 @@ const StudentHistory = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 p-5">
         {rows.map((student) => {
           const classLabel =
-            CLASSES_LIST.find((c) => c.id === student.classId)?.name ||
+            availableClasses.find((c) => c.id === student.classId)?.name ||
             student.classId;
           const statusLabel = student.studentStatus || "active";
           const statusStyles =
@@ -777,7 +781,7 @@ const StudentHistory = () => {
                         <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
                           <BookOpen size={12} />
                           {
-                            CLASSES_LIST.find(
+                            availableClasses.find(
                               (c) => c.id === viewStudent.classId,
                             )?.name
                           }

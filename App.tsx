@@ -61,7 +61,10 @@ import BookDemo from "./pages/public/BookDemo";
 import GetStarted from "./pages/public/GetStarted";
 import VerifyEmail from "./pages/public/VerifyEmail";
 import Features from "./pages/public/Features";
+import Blog from "./pages/public/Blog";
 import EmailVerified from "./pages/public/EmailVerified";
+import WhatsAppBroadcast from "./pages/admin/WhatsAppBroadcast";
+import PaymentSettingsPage from "./pages/admin/PaymentSettingsPage";
 
 const getEmailVerificationRedirect = () => {
   if (typeof window === "undefined") return "";
@@ -126,12 +129,13 @@ const AppContent = () => {
       "";
     if (!resolvedSchoolId) return null;
     const cacheKey = `school_${resolvedSchoolId}`;
-    const cached = localStorage.getItem(cacheKey);
+    const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
     if (!cached) return null;
     try {
       return JSON.parse(cached) as { name?: string; logoUrl?: string };
     } catch {
       localStorage.removeItem(cacheKey);
+      sessionStorage.removeItem(cacheKey);
       return null;
     }
   }, [user?.schoolId, brandingVersion]);
@@ -188,17 +192,19 @@ const AppContent = () => {
   const currentPath = location.pathname === "/" && location.hash
     ? getPathFromHash(location.hash)
     : location.pathname;
-  const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
+  const isPublicRoute = ["/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
 
   const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
   const splashSchoolName = school?.name || cachedSchool?.name || "";
   const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
+  const lastSchoolId = localStorage.getItem("lastSchoolId") || localStorage.getItem("activeSchoolId");
+  const hasSchoolContext = Boolean(lastSchoolId);
 
   // Show splash screen while auth is initializing
   if (authLoading && !isPublicRoute) {
     const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
-    // For school users, always hide default "School Manager GH" branding
-    const hideDefault = isSchoolUser || hasBranding;
+    // Hide default branding if we have school info OR if this is a returning school user
+    const hideDefault = isSchoolUser || hasBranding || hasSchoolContext;
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
@@ -211,11 +217,12 @@ const AppContent = () => {
   if (
     !isPublicRoute &&
     user &&
-    (isSchoolUser || cachedSchool) &&
-    (schoolLoading || (!school && !schoolError))
+    (isSchoolUser || cachedSchool || hasSchoolContext) &&
+    (schoolLoading || (!school && !schoolError)) &&
+    !(user.role === UserRole.PARENT && !hasSchoolContext)
   ) {
     const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
-    const hideDefault = isSchoolUser || hasBranding;
+    const hideDefault = isSchoolUser || hasBranding || hasSchoolContext;
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
@@ -337,7 +344,37 @@ const ProtectedRoute = ({
 
   // Show splash screen while auth is being determined
   if (authLoading) {
-    return <SplashScreen />;
+    const resolvedSchoolId =
+      localStorage.getItem("activeSchoolId") ||
+      user?.schoolId ||
+      localStorage.getItem("lastSchoolId") ||
+      "";
+    
+    let splashName = school?.name || "";
+    let splashLogo = school?.logoUrl || "";
+
+    if (!splashName && resolvedSchoolId) {
+      const cacheKey = `school_${resolvedSchoolId}`;
+      const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          splashName = parsed.name || "";
+          splashLogo = parsed.logoUrl || "";
+        } catch (e) {}
+      }
+    }
+
+    const hasBranding = Boolean(splashName || splashLogo);
+    const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
+
+    return (
+      <SplashScreen 
+        schoolName={splashName} 
+        schoolLogoUrl={splashLogo} 
+        hideDefaultBranding={isSchoolUser || hasBranding || Boolean(resolvedSchoolId)}
+      />
+    );
   }
 
   if (!isAuthenticated) {
@@ -388,7 +425,7 @@ const RoleBasedHome = () => {
 };
 
 const AppRoutes = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, authLoading } = useAuth();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -399,15 +436,34 @@ const AppRoutes = () => {
       <Route path="/get-started" element={<GetStarted />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/features" element={<Features />} />
+      <Route path="/blog" element={<Blog />} />
       <Route path="/email-verified" element={<EmailVerified />} />
 
       {/* Root redirects based on role */}
       <Route
         path="/"
-        element={isAuthenticated ? <ProtectedRoute><RoleBasedHome /></ProtectedRoute> : <MarketingHome />}
+        element={
+          authLoading ? (
+            <SplashScreen />
+          ) : isAuthenticated ? (
+            <ProtectedRoute>
+              <RoleBasedHome />
+            </ProtectedRoute>
+          ) : (
+            <MarketingHome />
+          )
+        }
       />
 
       {/* Admin Routes */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SCHOOL_ADMIN]}>
+            <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/admin/students"
         element={
@@ -498,6 +554,18 @@ const AppRoutes = () => {
       />
 
       <Route
+        path="/admin/assessment"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="basic_exam_reports"
+          >
+            <Assessment />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path="/admin/settings"
         element={
           <ProtectedRoute
@@ -552,6 +620,27 @@ const AppRoutes = () => {
             requiredFeature="activity_monitor"
           >
             <ActivityMonitor />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/whatsapp"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+          >
+            <WhatsAppBroadcast />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/payment-settings"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+          >
+            <PaymentSettingsPage />
           </ProtectedRoute>
         }
       />
@@ -711,6 +800,7 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+
       <Route
         path="/teacher/write-remarks"
         element={

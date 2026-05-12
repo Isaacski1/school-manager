@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { db } from "../../services/mockDb";
+import { useAuth } from "../../context/AuthContext";
 import { AttendanceRecord, Student } from "../../types";
 import { Calendar, CheckCircle, XCircle, Clock, TrendingUp, X } from "lucide-react";
 
@@ -17,8 +18,10 @@ interface CalendarDay {
 }
 
 const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => {
+  const { user } = useAuth();
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
@@ -32,25 +35,34 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
       try {
         setLoading(true);
         // Get start and end date for the selected month
-        const startDate = `${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}-01`;
-        const endDate = `${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}-${getDaysInMonth(selectedMonth, selectedYear)}`;
-
+        // Use robust date string calculation to avoid timezone shifts
+        const year = selectedYear;
+        const month = String(selectedMonth + 1).padStart(2, '0');
+        const startDate = `${year}-${month}-01`;
+        
+        // Get last day of month
+        const lastDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+        const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        
+        console.log(`[AttendanceView] Fetching attendance for class ${student.classId} from ${startDate} to ${endDate}`);
         const records = await db.getClassAttendanceByDateRange(
           student.schoolId,
           student.classId,
           startDate,
-          endDate,
+          endDate
         );
         setAttendanceRecords(records);
-      } catch (error) {
+        setErrorMsg(null);
+      } catch (error: any) {
         console.error("Error fetching attendance:", error);
+        setErrorMsg(error.message || "Failed to fetch attendance");
       } finally {
         setLoading(false);
       }
     }
 
     fetchAttendance();
-  }, [student.classId, student.schoolId, selectedMonth, selectedYear]);
+  }, [student.id, student.classId, student.schoolId, selectedMonth, selectedYear]);
 
   const getDaysInMonth = (month: number, year: number) => {
     return new Date(year, month + 1, 0).getDate();
@@ -187,34 +199,34 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
 
         <div className="p-6 space-y-6">
           {/* Stats Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-green-50 rounded-xl p-4 border border-green-100">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle size={18} className="text-green-600" />
-                <span className="text-sm text-green-700 font-medium">Present</span>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-green-50 rounded-xl p-3 sm:p-4 border border-green-100">
+              <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                <CheckCircle size={16} className="text-green-600 sm:w-[18px] sm:h-[18px]" />
+                <span className="text-xs sm:text-sm text-green-700 font-medium truncate">Present</span>
               </div>
-              <p className="text-2xl font-bold text-green-800">{stats.presentDays}</p>
+              <p className="text-xl sm:text-2xl font-bold text-green-800">{stats.presentDays}</p>
             </div>
-            <div className="bg-red-50 rounded-xl p-4 border border-red-100">
-              <div className="flex items-center gap-2 mb-2">
-                <XCircle size={18} className="text-red-600" />
-                <span className="text-sm text-red-700 font-medium">Absent</span>
+            <div className="bg-red-50 rounded-xl p-3 sm:p-4 border border-red-100">
+              <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                <XCircle size={16} className="text-red-600 sm:w-[18px] sm:h-[18px]" />
+                <span className="text-xs sm:text-sm text-red-700 font-medium truncate">Absent</span>
               </div>
-              <p className="text-2xl font-bold text-red-800">{stats.absentDays}</p>
+              <p className="text-xl sm:text-2xl font-bold text-red-800">{stats.absentDays}</p>
             </div>
-            <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-              <div className="flex items-center gap-2 mb-2">
-                <Calendar size={18} className="text-blue-600" />
-                <span className="text-sm text-blue-700 font-medium">Total Days</span>
+            <div className="bg-blue-50 rounded-xl p-3 sm:p-4 border border-blue-100">
+              <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                <Calendar size={16} className="text-blue-600 sm:w-[18px] sm:h-[18px]" />
+                <span className="text-xs sm:text-sm text-blue-700 font-medium truncate">Total Days</span>
               </div>
-              <p className="text-2xl font-bold text-blue-800">{stats.totalDays}</p>
+              <p className="text-xl sm:text-2xl font-bold text-blue-800">{stats.totalDays}</p>
             </div>
-            <div className="bg-purple-50 rounded-xl p-4 border border-purple-100">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp size={18} className="text-purple-600" />
-                <span className="text-sm text-purple-700 font-medium">Attendance</span>
+            <div className="bg-purple-50 rounded-xl p-3 sm:p-4 border border-purple-100">
+              <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                <TrendingUp size={16} className="text-purple-600 sm:w-[18px] sm:h-[18px]" />
+                <span className="text-xs sm:text-sm text-purple-700 font-medium truncate">Attendance</span>
               </div>
-              <p className="text-2xl font-bold text-purple-800">{stats.percentage}%</p>
+              <p className="text-xl sm:text-2xl font-bold text-purple-800">{stats.percentage}%</p>
             </div>
           </div>
 
@@ -237,53 +249,56 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
             </button>
           </div>
 
-          {/* Calendar */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden">
-            {/* Day Headers */}
-            <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
-                <div key={day} className="p-3 text-center text-sm font-medium text-slate-600">
-                  {day}
-                </div>
-              ))}
-            </div>
 
-            {/* Calendar Days */}
-            <div className="grid grid-cols-7">
-              {calendarDays.map((day, index) => (
-                <div
-                  key={index}
-                  className={`p-2 min-h-[60px] border-b border-r border-slate-100 ${
-                    !day.isCurrentMonth ? "bg-slate-50" : ""
-                  }`}
-                >
-                  {day.day > 0 && (
-                    <>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-sm ${
-                          day.isToday ? "font-bold text-blue-600" : "text-slate-700"
-                        }`}>
-                          {day.day}
-                        </span>
-                        {day.attendance && day.attendance !== "no-record" && (
-                          <div className={`w-2 h-2 rounded-full ${
-                            day.attendance === "present" ? "bg-green-500" :
-                            day.attendance === "absent" ? "bg-red-500" :
-                            "bg-blue-500"
-                          }`} />
-                        )}
-                      </div>
-                      {day.isCurrentMonth && (
-                        <div className={`text-xs px-1 py-0.5 rounded border ${getAttendanceColor(day.attendance)}`}>
-                          {day.attendance === "present" && "Present"}
-                          {day.attendance === "absent" && "Absent"}
-                          {day.attendance === "holiday" && "Holiday"}
+          {/* Calendar */}
+          <div className="border border-slate-200 rounded-xl overflow-x-auto">
+            <div className="min-w-[400px] sm:min-w-0">
+              {/* Day Headers */}
+              <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
+                  <div key={day} className="p-2 sm:p-3 text-center text-xs sm:text-sm font-medium text-slate-600">
+                    {day}
+                  </div>
+                ))}
+              </div>
+
+              {/* Calendar Days */}
+              <div className="grid grid-cols-7">
+                {calendarDays.map((day, index) => (
+                  <div
+                    key={index}
+                    className={`p-1.5 sm:p-2 min-h-[60px] sm:min-h-[80px] border-b border-r border-slate-100 ${
+                      !day.isCurrentMonth ? "bg-slate-50" : ""
+                    }`}
+                  >
+                    {day.day > 0 && (
+                      <>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`text-xs sm:text-sm ${
+                            day.isToday ? "font-bold text-blue-600" : "text-slate-700"
+                          }`}>
+                            {day.day}
+                          </span>
+                          {day.attendance && day.attendance !== "no-record" && (
+                            <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0 ${
+                              day.attendance === "present" ? "bg-green-500" :
+                              day.attendance === "absent" ? "bg-red-500" :
+                              "bg-blue-500"
+                            }`} />
+                          )}
                         </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
+                        {day.isCurrentMonth && (
+                          <div className={`text-[10px] sm:text-xs px-0.5 sm:px-1 py-0.5 rounded border text-center truncate ${getAttendanceColor(day.attendance)}`}>
+                            {day.attendance === "present" && "Present"}
+                            {day.attendance === "absent" && "Absent"}
+                            {day.attendance === "holiday" && "Holiday"}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 

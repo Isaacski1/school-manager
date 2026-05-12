@@ -112,43 +112,49 @@ const Billing: React.FC = () => {
   }, [billingStatus.status, paymentHistory]);
 
   const expectedAmount = useMemo(() => {
-    const plan = billingStatus.plan || "monthly";
-    const base = 300;
-    const multiplier = plan === "termly" ? 4 : plan === "yearly" ? 12 : 1;
-    const rawAmount = base * multiplier;
-    const discountRate = plan === "termly" ? 0.2 : plan === "yearly" ? 0.3 : 0;
-    const discounted = rawAmount * (1 - discountRate);
+    const billingCycle = billingStatus.plan || "monthly"; // monthly | termly | yearly
+    const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
 
-    if (plan !== "termly") {
-      return Math.round(discounted);
+    // Base monthly prices
+    const BASE_PRICES: Record<string, number> = { starter: 100, standard: 200 };
+    const base = BASE_PRICES[featurePlan] ?? 100;
+
+    // Calculate total based on cycle
+    if (billingCycle === "monthly") {
+      return base; // GHS 100 or GHS 200
     }
 
-    const startType = (school as any)?.billing?.startType || "term_start";
-    if (startType === "term_start") {
-      return Math.round(discounted);
+    if (billingCycle === "termly") {
+      // 3 months × base × 0.90 (10% discount)
+      const total = base * 3 * 0.9;
+
+      // Pro-rate if mid-term
+      const startType = (school as any)?.billing?.startType || "term_start";
+      if (startType === "term_start") return Math.round(total);
+
+      const startDate = parseSchoolDate(schoolConfig?.schoolReopenDate);
+      const endDate = parseSchoolDate(schoolConfig?.vacationDate);
+      if (!startDate || !endDate || endDate <= startDate) return Math.round(total);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (today <= startDate) return Math.round(total);
+
+      const totalDays = diffDays(startDate, endDate) + 1;
+      const remainingDays = Math.max(0, diffDays(today, endDate) + 1);
+      if (!totalDays || remainingDays <= 0) return Math.round(total);
+
+      const prorated = (total * remainingDays) / totalDays;
+      return Math.max(1, Math.round(prorated));
     }
 
-    const startDate = parseSchoolDate(schoolConfig?.schoolReopenDate);
-    const endDate = parseSchoolDate(schoolConfig?.vacationDate);
-    if (!startDate || !endDate || endDate <= startDate) {
-      return Math.round(discounted);
+    if (billingCycle === "yearly") {
+      // 12 months × base × 0.80 (20% discount)
+      return Math.round(base * 12 * 0.8);
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (today <= startDate) {
-      return Math.round(discounted);
-    }
-
-    const totalDays = diffDays(startDate, endDate) + 1;
-    const remainingDays = Math.max(0, diffDays(today, endDate) + 1);
-    if (!totalDays || remainingDays <= 0) {
-      return Math.round(discounted);
-    }
-
-    const prorated = (discounted * remainingDays) / totalDays;
-    return Math.max(1, Math.round(prorated));
-  }, [billingStatus.plan, schoolConfig]);
+    return base;
+  }, [billingStatus.plan, school, schoolConfig]);
 
   useEffect(() => {
     if (isFreePlan) return;
@@ -424,17 +430,34 @@ const Billing: React.FC = () => {
                 <h3 className="text-lg font-semibold text-slate-900">
                   Subscription Status
                 </h3>
-                <p className="text-sm text-slate-500">School Plan</p>
+                <p className="text-sm text-slate-500">Your current plan</p>
               </div>
             </div>
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">Plan</span>
-                <span className="font-semibold text-slate-800">
+                <span className="text-slate-500">Feature Plan</span>
+                <span className="font-semibold text-slate-800 capitalize">
+                  {(school as any)?.featurePlan || "Starter"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Billing Cycle</span>
+                <span className="font-semibold text-slate-800 capitalize">
                   {billingStatus.plan}
                 </span>
               </div>
               <div className="flex items-center justify-between">
+                <span className="text-slate-500">Amount Due</span>
+                <span className="font-bold text-slate-900">
+                  GH₵ {expectedAmount.toLocaleString()}
+                </span>
+              </div>
+              {billingStatus.plan !== "monthly" && (
+                <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-2">
+                  {billingStatus.plan === "termly" ? "10% termly discount applied" : "20% yearly discount applied"}
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                 <span className="text-slate-500">Status</span>
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${displayStatus.className}`}
@@ -442,14 +465,6 @@ const Billing: React.FC = () => {
                   {displayStatus.label}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Renewal</span>
-                <span className="font-semibold text-slate-800">Monthly</span>
-              </div>
-              {/* <div className="flex items-center gap-2 text-xs text-slate-400">
-                <Calendar size={14} />
-                Webhook updates status after payment.
-              </div> */}
             </div>
           </div>
         </div>

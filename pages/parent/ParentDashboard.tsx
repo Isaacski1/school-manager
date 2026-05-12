@@ -2,9 +2,10 @@ import React, { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { collection, query, where, getDocs, updateDoc, doc, setDoc } from "firebase/firestore";
 import { firestore } from "../../services/firebase";
 import { Student } from "../../types";
+import { CLASSES_LIST } from "../../constants";
 import { LogOut, User as UserIcon, Calendar, FileText, CreditCard, MessageSquare, BookOpen, Clock, Activity } from "lucide-react";
 import Layout from "../../components/Layout";
 import AttendanceView from "../../components/parent/AttendanceView";
@@ -16,8 +17,8 @@ import DashboardOverview from "../../components/parent/DashboardOverview";
 type ViewType = "attendance" | "fees" | "report" | "remarks" | null;
 
 export default function ParentDashboard() {
-  const { user } = useAuth();
-  const { school } = useSchool();
+  const { user, isAuthenticated } = useAuth();
+  const { school, refreshSchool } = useSchool();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const activeView = (searchParams.get("view") as ViewType) || null;
@@ -29,7 +30,7 @@ export default function ParentDashboard() {
   useEffect(() => {
     async function fetchLinkedStudents() {
       const phoneToMatch = user?.phoneNumber || user?.id;
-      if (!phoneToMatch) {
+      if (!phoneToMatch || !isAuthenticated) {
         setLoading(false);
         return;
       }
@@ -38,44 +39,61 @@ export default function ParentDashboard() {
         console.log(`[ParentDashboard] Fetching students for phone: "${phoneToMatch}"`);
         const studentsRef = collection(firestore, "students");
         
-        // Try with original phone number (with +)
-        const q = query(studentsRef, where("guardianPhone", "==", phoneToMatch));
-        const snapshot = await getDocs(q);
-        console.log(`[ParentDashboard] Found ${snapshot.size} matches for "${phoneToMatch}"`);
+        const queries = [
+          getDocs(query(studentsRef, where("guardianPhone", "==", phoneToMatch)))
+        ];
+        
+        if (phoneToMatch.startsWith("+")) {
+          const phoneNoPlus = phoneToMatch.substring(1);
+          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", phoneNoPlus))));
+        }
+        
+        if (phoneToMatch.startsWith("+233")) {
+          const localPhone = "0" + phoneToMatch.substring(4);
+          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", localPhone))));
+        }
+        
+        const snapshots = await Promise.all(queries);
         
         let fetchedStudents: Student[] = [];
-        snapshot.forEach((doc) => {
-          fetchedStudents.push({ id: doc.id, ...doc.data() } as Student);
+        const seenIds = new Set();
+        
+        snapshots.forEach(snapshot => {
+          snapshot.forEach((doc) => {
+            if (!seenIds.has(doc.id)) {
+              seenIds.add(doc.id);
+              fetchedStudents.push({ id: doc.id, ...doc.data() } as Student);
+            }
+          });
         });
-
-        // If no matches, try without the '+' prefix as a fallback
-        if (fetchedStudents.length === 0 && phoneToMatch.startsWith("+")) {
-          const phoneNoPlus = phoneToMatch.substring(1);
-          console.log(`[ParentDashboard] No matches found. Trying fallback without '+': "${phoneNoPlus}"`);
-          const q2 = query(studentsRef, where("guardianPhone", "==", phoneNoPlus));
-          const snapshot2 = await getDocs(q2);
-          console.log(`[ParentDashboard] Found ${snapshot2.size} matches for "${phoneNoPlus}"`);
-          snapshot2.forEach((doc) => {
-            fetchedStudents.push({ id: doc.id, ...doc.data() } as Student);
-          });
-        }
         
-        // If still no matches, try local format (stripping 233 and adding 0)
-        if (fetchedStudents.length === 0 && phoneToMatch.startsWith("+233")) {
-          const localPhone = "0" + phoneToMatch.substring(4);
-          console.log(`[ParentDashboard] No matches found. Trying fallback with local '0': "${localPhone}"`);
-          const q3 = query(studentsRef, where("guardianPhone", "==", localPhone));
-          const snapshot3 = await getDocs(q3);
-          console.log(`[ParentDashboard] Found ${snapshot3.size} matches for "${localPhone}"`);
-          snapshot3.forEach((doc) => {
-            fetchedStudents.push({ id: doc.id, ...doc.data() } as Student);
-          });
-        }
-        
-        setStudents(fetchedStudents);
         if (fetchedStudents.length > 0 && !selectedStudentId) {
-          setSelectedStudentId(fetchedStudents[0].id);
+          const firstStudent = fetchedStudents[0];
+          setSelectedStudentId(firstStudent.id);
+          
+          // 1. Sync local storage for immediate branding refresh
+          const currentActiveId = localStorage.getItem("activeSchoolId");
+          if (firstStudent.schoolId && currentActiveId !== firstStudent.schoolId) {
+            localStorage.setItem("activeSchoolId", firstStudent.schoolId);
+            refreshSchool();
+          }
+          
+          // 2. Sync Firestore profile in background (using setDoc with merge for resilience)
+          if (firstStudent.schoolId && user?.id && user.schoolId !== firstStudent.schoolId) {
+            setDoc(doc(firestore, "users", user.id), {
+              schoolId: firstStudent.schoolId,
+              role: 'parent' // Ensure role is set
+            }, { merge: true }).catch(err => {
+              console.warn("Could not persist school ID to profile (likely permission related):", err.message);
+            });
+          }
         }
+        
+        // Only update if data actually changed to prevent re-render loops
+        setStudents(prev => {
+          if (JSON.stringify(prev) === JSON.stringify(fetchedStudents)) return prev;
+          return fetchedStudents;
+        });
       } catch (error) {
         console.error("Error fetching linked students:", error);
       } finally {
@@ -84,9 +102,34 @@ export default function ParentDashboard() {
     }
     
     fetchLinkedStudents();
-  }, [user, selectedStudentId]);
+  }, [user?.phoneNumber, user?.id, isAuthenticated]); // Removed refreshSchool to prevent potential context-driven loops
 
-  const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
+  // Handle student change manually to refresh branding
+  const handleStudentSelect = (studentId: string) => {
+    setSelectedStudentId(studentId);
+    const student = students.find(s => s.id === studentId);
+    if (student && student.schoolId) {
+      // 1. Update local storage for immediate UI refresh
+      const currentActiveId = localStorage.getItem("activeSchoolId");
+      if (currentActiveId !== student.schoolId) {
+        localStorage.setItem("activeSchoolId", student.schoolId);
+        refreshSchool();
+      }
+      
+      // 2. Update Firestore profile
+      if (user?.id && user.schoolId !== student.schoolId) {
+        updateDoc(doc(firestore, "users", user.id), {
+          schoolId: student.schoolId
+        }).catch(err => {
+          console.warn("Could not persist school ID on selection:", err.message);
+        });
+      }
+    }
+  };
+
+  const selectedStudent = students.length > 0 
+    ? (students.find(s => s.id === selectedStudentId) || students[0]) 
+    : null;
 
   if (loading) {
     return (
@@ -100,10 +143,10 @@ export default function ParentDashboard() {
 
   return (
     <Layout title="Parent Dashboard">
-      <div className="max-w-7xl mx-auto pb-10">
+      <div className="max-w-7xl mx-auto pb-10 px-3 sm:px-4">
         
         {students.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center max-w-3xl mx-auto mt-10">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 text-center max-w-3xl mx-auto mt-10">
             <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
               <UserIcon size={32} />
             </div>
@@ -113,78 +156,94 @@ export default function ParentDashboard() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            
-            {/* Main Content Area (Left side - 3 columns) */}
-            <div className="lg:col-span-3 flex flex-col h-[calc(100vh-120px)]">
-              {!activeView && selectedStudent && (
-                <DashboardOverview student={selectedStudent} />
-              )}
-
-              {/* Inline Views */}
-              {activeView === "attendance" && selectedStudent && (
-                <AttendanceView student={selectedStudent} />
-              )}
-              {activeView === "fees" && selectedStudent && (
-                <FeesView student={selectedStudent} />
-              )}
-              {activeView === "report" && selectedStudent && (
-                <ReportCardView student={selectedStudent} />
-              )}
-              {activeView === "remarks" && selectedStudent && (
-                <RemarksView student={selectedStudent} />
-              )}
-            </div>
-
-            {/* Right Panel - My Kids (1 column) */}
-            <div className="lg:col-span-1 space-y-4">
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm sticky top-20">
-                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <UserIcon size={18} className="text-blue-500" /> My Kids
-                </h3>
-                
-                <div className="space-y-3">
-                  {students.map((student) => (
-                    <div 
-                      key={student.id}
-                      onClick={() => setSelectedStudentId(student.id)}
-                      className={`p-3 rounded-xl cursor-pointer transition-all border ${
-                        selectedStudentId === student.id 
-                          ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400' 
-                          : 'border-slate-100 hover:border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-white rounded-full border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
-                          <UserIcon className="text-slate-400" size={20} />
-                        </div>
-                        <div className="overflow-hidden">
-                          <h4 className="font-bold text-slate-800 truncate text-sm">{student.name}</h4>
-                          <p className="text-xs text-slate-500 truncate">Class {student.classId}</p>
-                          <p className="text-xs text-slate-400 truncate mt-0.5">ID: {student.id.substring(0, 8)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-slate-100">
-                  <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Clock size={18} className="text-orange-500" /> Upcoming Events
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="text-center py-4 text-slate-500 text-sm">
-                      No upcoming events scheduled at this time.
-                    </div>
-                  </div>
-                </div>
-
+          <div className="flex flex-col gap-4">
+            {/* Welcome Banner */}
+            <div className="bg-gradient-to-r from-slate-800 to-slate-700 rounded-2xl px-5 py-4 sm:px-6 sm:py-5 flex items-center justify-between shadow-md">
+              <div>
+                <p className="text-slate-400 text-xs sm:text-sm mb-0.5">Welcome back,</p>
+                <h1 className="text-white text-lg sm:text-xl font-bold leading-tight">
+                  {(students[0] as any)?.guardianName?.trim()
+                    ? (students[0] as any).guardianName
+                    : user?.fullName && user.fullName !== "Parent / Guardian"
+                      ? user.fullName
+                      : "Parent / Guardian"}
+                </h1>
+                <p className="text-slate-400 text-xs mt-1">
+                  {students.length === 1
+                    ? `You have 1 child enrolled.`
+                    : `You have ${students.length} children enrolled.`}
+                </p>
+              </div>
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/10 flex items-center justify-center shrink-0">
+                <UserIcon size={22} className="text-white" />
               </div>
             </div>
 
+            {/* My Child Selector — horizontal scrollable chips on mobile */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm">
+                <UserIcon size={16} className="text-blue-500" /> My Child
+              </h3>
+              <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+                {students.map((student) => (
+                  <button
+                    key={student.id}
+                    onClick={() => handleStudentSelect(student.id)}
+                    className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all shrink-0 text-left ${
+                      selectedStudentId === student.id
+                        ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="w-9 h-9 bg-white rounded-full border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
+                      <UserIcon className="text-slate-400" size={16} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800 text-sm whitespace-nowrap">{student.name}</p>
+                      <p className="text-xs text-slate-500 whitespace-nowrap">{CLASSES_LIST.find(c => c.id === student.classId)?.name || student.classId}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Main Content + Sidebar */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              {/* Main Content Area */}
+              <div className="lg:col-span-3">
+                {!activeView && selectedStudent && (
+                  <DashboardOverview student={selectedStudent} />
+                )}
+                {activeView === "attendance" && selectedStudent && (
+                  <AttendanceView student={selectedStudent} />
+                )}
+                {activeView === "fees" && selectedStudent && (
+                  <FeesView student={selectedStudent} />
+                )}
+                {activeView === "report" && selectedStudent && (
+                  <ReportCardView student={selectedStudent} />
+                )}
+                {activeView === "remarks" && selectedStudent && (
+                  <RemarksView student={selectedStudent} />
+                )}
+              </div>
+
+              {/* Upcoming Events Sidebar */}
+              <div className="lg:col-span-1">
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm lg:sticky lg:top-20">
+                  <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-sm">
+                    <Clock size={16} className="text-orange-500" /> Upcoming Events
+                  </h3>
+                  <div className="text-center py-4 text-slate-500 text-sm">
+                    No upcoming events scheduled at this time.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
     </Layout>
   );
 }
+

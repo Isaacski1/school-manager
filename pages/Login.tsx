@@ -460,11 +460,28 @@ const Login = () => {
   };
 
   if (authLoading) {
+    const lastSchoolId = localStorage.getItem("activeSchoolId") || localStorage.getItem("lastSchoolId");
+    let splashName = "";
+    let splashLogo = "";
+    
+    if (lastSchoolId) {
+      const cacheKey = `school_${lastSchoolId}`;
+      const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          splashName = parsed.name || "";
+          splashLogo = parsed.logoUrl || "";
+        } catch (e) {}
+      }
+    }
+
     return (
       <SplashScreen
         roleLabel=""
-        schoolName=""
-        schoolLogoUrl=""
+        schoolName={splashName}
+        schoolLogoUrl={splashLogo}
+        hideDefaultBranding={Boolean(lastSchoolId || splashName || splashLogo)}
       />
     );
   }
@@ -548,6 +565,15 @@ const Login = () => {
 
         {/* Right Column: Login Form */}
         <div className="md:w-1/2 p-8 sm:p-12 flex flex-col justify-center bg-white relative">
+          {/* Visit Marketing Site Link */}
+          <a
+            href="/"
+            className="absolute top-6 right-6 flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-[#0B4A82] transition-colors group"
+          >
+            <span>Visit our website</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:translate-x-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </a>
+
           {/* Logo & Header */}
           <div className="mb-10">
             <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Welcome Back</h1>
@@ -910,6 +936,26 @@ const Login = () => {
 
           <div id="parent-recaptcha-container"></div>
           <div id="mfa-recaptcha-container"></div>
+
+          {/* Marketing Site CTA */}
+          <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+            <p className="text-sm text-slate-500 mb-3">Don't have a school account yet?</p>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+              <a
+                href="/get-started"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-[#0B4A82] text-white text-sm font-bold hover:bg-[#0B4A82]/90 transition-colors shadow-md"
+              >
+                Register Your School
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </a>
+              <a
+                href="/"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Learn more
+              </a>
+            </div>
+          </div>
         </div>
         </div>
       </div>

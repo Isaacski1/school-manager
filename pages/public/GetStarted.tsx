@@ -10,11 +10,11 @@ const STEPS = ["School Profile", "Admin Account", "Subscription Plan", "Setup De
 
 const inputCls: React.CSSProperties = {
   width: "100%", padding: "13px 16px", borderRadius: 12, fontSize: 15,
-  border: "1.5px solid #DBEAFE", outline: "none", background: "white",
-  color: "#0f172a", fontFamily: "inherit", boxSizing: "border-box",
-  transition: "border-color 0.2s",
+  border: "1.5px solid rgba(255,255,255,0.1)", outline: "none", background: "rgba(255,255,255,0.03)",
+  color: "white", fontFamily: "inherit", boxSizing: "border-box",
+  transition: "all 0.2s",
 };
-const labelCls: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 };
+const labelCls: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.7)", display: "block", marginBottom: 6 };
 const gridTwo: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 };
 
 const GetStarted = () => {
@@ -67,14 +67,7 @@ const GetStarted = () => {
       return;
     }
     setLoading(true);
-    console.log("[Launch] Starting setup with payload:", {
-      ...formData,
-      password: "***",
-      confirmPassword: "***",
-    });
-
     try {
-      // Helper to convert file to base64
       const getBase64 = (file: File): Promise<string> => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -102,22 +95,17 @@ const GetStarted = () => {
         academicYear: formData.academicYear.trim(),
         currentTerm: formData.currentTerm,
         onboardingTemplate: formData.onboardingTemplate,
-        logoData, // Pass the base64 data
+        logoData,
         logoFileName: formData.logoFile?.name,
         plan: formData.plan,
         featurePlan: formData.featurePlan,
       });
 
-      console.log("[Launch] Backend response:", response);
-
       if (!response?.schoolId) {
         throw new Error("Backend did not return a valid schoolId.");
       }
-
-      console.log("[Launch] Showing success popup.");
       setShowSuccessPopup(true);
     } catch (err: any) {
-      console.error("[Launch] Critical error:", err);
       showToast(err?.message || "Failed to start school setup.", {
         type: "error",
       });
@@ -150,15 +138,18 @@ const GetStarted = () => {
       <img 
         src={formData.logoPreview} 
         alt="Logo" 
-        style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: "1px solid #E2E8F0" }} 
+        style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(255,255,255,0.1)" }} 
       />
     ) : "Not provided"],
   ];
 
   return (
     <PublicSiteLayout>
-      {/* Responsive Design System */}
       <style>{`
+        select option {
+          background-color: #041222;
+          color: white;
+        }
         @media (max-width: 960px) {
           .get-started-grid { grid-template-columns: 1fr !important; gap: 32px !important; }
           .get-started-header { padding: 60px 24px 80px !important; }
@@ -187,8 +178,7 @@ const GetStarted = () => {
         }
       `}</style>
 
-      {/* Blue hero header */}
-      <section className="get-started-header" style={{ background: "linear-gradient(135deg, #0B4A82 0%, #1160A8 100%)", padding: "72px 24px 100px" }}>
+      <section className="get-started-header" style={{ background: "transparent", padding: "72px 24px 100px" }}>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
           <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", margin: "0 0 12px 0" }}>Register Your School</p>
           <h1 style={{ fontSize: "clamp(28px, 5vw, 48px)", fontWeight: 800, color: "white", margin: "0 0 14px 0", lineHeight: 1.15 }}>
@@ -200,15 +190,12 @@ const GetStarted = () => {
         </motion.div>
       </section>
 
-      {/* Main content */}
       <section className="get-started-section" style={{ padding: "0 24px 80px", marginTop: -52 }}>
         <div className="get-started-grid" style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "320px 1fr", gap: 28, alignItems: "start" }}>
 
-          {/* Left sidebar */}
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6 }}>
-            {/* Steps list */}
-            <div className="progress-card" style={{ background: "white", borderRadius: 24, padding: 24, boxShadow: "0 4px 24px rgba(11,74,130,0.1)", border: "1.5px solid #DBEAFE", marginBottom: 20 }}>
-              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "#94A3B8", margin: "0 0 16px 0" }}>Your Progress</p>
+            <div className="progress-card" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 24, padding: 24, boxShadow: "0 4px 24px rgba(0,0,0,0.3)", border: "1.5px solid rgba(255,255,255,0.1)", backdropFilter: "blur(10px)", marginBottom: 20 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "0 0 16px 0" }}>Your Progress</p>
               {STEPS.map((label, i) => {
                 const done = i < currentStep;
                 const active = i === currentStep;
@@ -217,49 +204,46 @@ const GetStarted = () => {
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                       <div style={{
                         width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14,
-                        background: done ? "#16A34A" : active ? "linear-gradient(135deg, #0B4A82, #1160A8)" : "#F1F5F9",
-                        color: done || active ? "white" : "#94A3B8",
-                        boxShadow: active ? "0 4px 16px rgba(11,74,130,0.25)" : "none",
+                        background: done ? "#10B981" : active ? "#0B4A82" : "rgba(255,255,255,0.05)",
+                        color: done || active ? "white" : "rgba(255,255,255,0.4)",
+                        boxShadow: active ? "0 4px 16px rgba(0,0,0,0.3)" : "none",
                         flexShrink: 0,
                       }}>
                         {done ? <CheckCircle2 size={18} /> : i + 1}
                       </div>
                       {i < STEPS.length - 1 && (
-                        <div style={{ width: 2, height: 20, background: done ? "#16A34A" : "#E2E8F0", margin: "2px 0" }} />
+                        <div style={{ width: 2, height: 20, background: done ? "#10B981" : "rgba(255,255,255,0.1)", margin: "2px 0" }} />
                       )}
                     </div>
-                    <p style={{ fontSize: 14, fontWeight: active ? 700 : 500, color: active ? "#0B4A82" : done ? "#16A34A" : "#94A3B8", margin: 0, paddingBottom: i < STEPS.length - 1 ? 24 : 0 }}>{label}</p>
+                    <p style={{ fontSize: 14, fontWeight: active ? 700 : 500, color: active ? "white" : done ? "#10B981" : "rgba(255,255,255,0.4)", margin: 0, paddingBottom: i < STEPS.length - 1 ? 24 : 0 }}>{label}</p>
                   </div>
                 );
               })}
             </div>
 
-            {/* Trust badge */}
-            <div className="trust-badge" style={{ background: "#EFF6FF", borderRadius: 20, padding: 20, border: "1.5px solid #DBEAFE" }}>
+            <div className="trust-badge" style={{ background: "rgba(255,255,255,0.02)", borderRadius: 20, padding: 20, border: "1.5px solid rgba(255,255,255,0.05)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                 <div style={{ width: 40, height: 40, borderRadius: 12, background: "#0B4A82", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <ShieldCheck size={20} color="white" />
                 </div>
                 <div>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: "#0B4A82", margin: "0 0 4px 0" }}>Secure & Private</p>
-                  <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.6, margin: 0 }}>Your school data is protected with enterprise-grade security on Firebase.</p>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: "white", margin: "0 0 4px 0" }}>Secure & Private</p>
+                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.6, margin: 0 }}>Your school data is protected with enterprise-grade security on Firebase.</p>
                 </div>
               </div>
             </div>
 
-            <p style={{ marginTop: 16, fontSize: 13, color: "#64748B", textAlign: "center" }}>
+            <p style={{ marginTop: 16, fontSize: 13, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
               Prefer a walkthrough first?{" "}
-              <Link to="/book-demo" style={{ color: "#0B4A82", fontWeight: 700 }}>Book a demo</Link>
+              <Link to="/book-demo" style={{ color: "#93C5FD", fontWeight: 700 }}>Book a demo</Link>
             </p>
           </motion.div>
 
-          {/* Right: Form card */}
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, delay: 0.1 }}>
-            <div className="get-started-form" style={{ background: "white", borderRadius: 28, padding: "36px 32px", boxShadow: "0 8px 48px rgba(11,74,130,0.1)", border: "1.5px solid #DBEAFE" }}>
-              {/* Step title */}
+            <div className="get-started-form" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 28, padding: "36px 32px", boxShadow: "0 8px 48px rgba(0,0,0,0.3)", border: "1.5px solid rgba(255,255,255,0.1)", backdropFilter: "blur(20px)" }}>
               <div style={{ marginBottom: 28 }}>
-                <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "#94A3B8", margin: "0 0 6px 0" }}>Step {currentStep + 1} of {STEPS.length}</p>
-                <h2 style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", margin: 0 }}>{STEPS[currentStep]}</h2>
+                <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "0 0 6px 0" }}>Step {currentStep + 1} of {STEPS.length}</p>
+                <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", margin: 0 }}>{STEPS[currentStep]}</h2>
               </div>
 
               <form onSubmit={handleFormSubmit}>
@@ -267,115 +251,32 @@ const GetStarted = () => {
                   <motion.div key={currentStep} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
 
                     {currentStep === 0 && (
-                      <div
-                        className="school-profile-card"
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 20,
-                          padding: 22,
-                          borderRadius: 24,
-                          background: "linear-gradient(180deg,#ffffff 0%,#f8fbff 100%)",
-                          border: "1px solid #DBEAFE",
-                          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
-                        }}
-                      >
-                        <div
-                          className="school-profile-header"
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 16,
-                          }}
-                        >
+                      <div className="school-profile-card" style={{ display: "flex", flexDirection: "column", gap: 20, padding: 22, borderRadius: 24, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                        <div className="school-profile-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
                           <div>
-                            <h3 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: "0 0 6px 0" }}>
-                              Tell us about your school
-                            </h3>
-                            <p style={{ fontSize: 14, color: "#64748B", lineHeight: 1.6, margin: 0 }}>
-                              Add your school details so your workspace starts with the right profile.
-                            </p>
+                            <h3 style={{ fontSize: 22, fontWeight: 800, color: "white", margin: "0 0 6px 0" }}>Tell us about your school</h3>
+                            <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", lineHeight: 1.6, margin: 0 }}>Add your school details so your workspace starts with the right profile.</p>
                           </div>
-                          <span style={{ flexShrink: 0, borderRadius: 999, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#0B4A82", fontSize: 12, fontWeight: 700, padding: "8px 12px" }}>
-                            Step 1
-                          </span>
+                          <span style={{ flexShrink: 0, borderRadius: 999, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#93C5FD", fontSize: 12, fontWeight: 700, padding: "8px 12px" }}>Step 1</span>
                         </div>
 
-                        <label
-                          className="school-logo-upload"
-                          style={{
-                            border: "2px dashed #BFDBFE",
-                            borderRadius: 22,
-                            padding: 24,
-                            background: "linear-gradient(135deg,#EFF6FF 0%,#ffffff 100%)",
-                            cursor: "pointer",
-                            position: "relative",
-                            display: "grid",
-                            gridTemplateColumns: "96px minmax(0,1fr)",
-                            alignItems: "center",
-                            gap: 18,
-                            overflow: "hidden",
-                          }}
-                        >
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleLogoChange}
-                            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-                          />
-                          <div
-                            className="school-logo-visual"
-                            style={{
-                              width: 96,
-                              height: 96,
-                              borderRadius: 24,
-                              background: "white",
-                              border: "1px solid #DBEAFE",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              boxShadow: "0 14px 30px rgba(11,74,130,0.12)",
-                              position: "relative",
-                              overflow: "hidden",
-                            }}
-                          >
+                        <label className="school-logo-upload" style={{ border: "2px dashed rgba(255,255,255,0.2)", borderRadius: 22, padding: 24, background: "rgba(255,255,255,0.03)", cursor: "pointer", position: "relative", display: "grid", gridTemplateColumns: "96px minmax(0,1fr)", alignItems: "center", gap: 18, overflow: "hidden" }}>
+                          <input type="file" accept="image/*" onChange={handleLogoChange} style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
+                          <div className="school-logo-visual" style={{ width: 96, height: 96, borderRadius: 24, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 14px 30px rgba(0,0,0,0.3)", position: "relative", overflow: "hidden" }}>
                             {formData.logoPreview ? (
                               <>
                                 <img src={formData.logoPreview} alt="Logo preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setFormData(p => ({ ...p, logoFile: null, logoPreview: "" }));
-                                  }}
-                                  style={{
-                                    position: "absolute",
-                                    top: 8,
-                                    right: 8,
-                                    background: "rgba(255,255,255,0.95)",
-                                    border: "1px solid #E2E8F0",
-                                    borderRadius: "50%",
-                                    padding: 5,
-                                    cursor: "pointer",
-                                    boxShadow: "0 4px 10px rgba(15,23,42,0.14)",
-                                  }}
-                                >
+                                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFormData(p => ({ ...p, logoFile: null, logoPreview: "" })); }} style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.95)", border: "1px solid #E2E8F0", borderRadius: "50%", padding: 5, cursor: "pointer", boxShadow: "0 4px 10px rgba(15,23,42,0.14)" }}>
                                   <X size={14} color="#64748B" />
                                 </button>
                               </>
                             ) : (
-                              <UploadCloud size={34} color="#0B4A82" />
+                              <UploadCloud size={34} color="rgba(255,255,255,0.5)" />
                             )}
                           </div>
                           <div style={{ minWidth: 0 }}>
-                            <p style={{ fontSize: 15, fontWeight: 800, color: "#0B4A82", margin: "0 0 5px 0" }}>
-                              {formData.logoPreview ? "Logo selected" : "Upload school logo"}
-                            </p>
-                            <p style={{ fontSize: 13, color: "#64748B", lineHeight: 1.6, margin: 0 }}>
-                              Click this area to choose a PNG, JPG, WEBP, GIF, or SVG logo up to 2MB.
-                            </p>
+                            <p style={{ fontSize: 15, fontWeight: 800, color: "white", margin: "0 0 5px 0" }}>{formData.logoPreview ? "Logo selected" : "Upload school logo"}</p>
+                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.6, margin: 0 }}>Click this area to choose a PNG, JPG, WEBP, GIF, or SVG logo up to 2MB.</p>
                           </div>
                         </label>
 
@@ -432,7 +333,7 @@ const GetStarted = () => {
                           </div>
                           <div>
                             <label style={labelCls}>Confirm Password *</label>
-                            <input style={{ ...inputCls, borderColor: formData.confirmPassword && formData.confirmPassword !== formData.password ? "#EF4444" : "#DBEAFE" }} required type="password" value={formData.confirmPassword} onChange={set("confirmPassword")} placeholder="••••••••" />
+                            <input style={{ ...inputCls, borderColor: formData.confirmPassword && formData.confirmPassword !== formData.password ? "#EF4444" : "rgba(255,255,255,0.1)" }} required type="password" value={formData.confirmPassword} onChange={set("confirmPassword")} placeholder="••••••••" />
                             {formData.confirmPassword && formData.confirmPassword !== formData.password && (
                               <p style={{ fontSize: 12, color: "#EF4444", margin: "4px 0 0 0" }}>Passwords do not match</p>
                             )}
@@ -444,69 +345,71 @@ const GetStarted = () => {
                     {currentStep === 2 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                          {/* Starter Plan */}
                           <div 
-                            onClick={() => {
-                              if (Number(formData.studentEstimate) <= 300) {
-                                setFormData(p => ({ ...p, featurePlan: "starter" }));
-                              }
-                            }}
+                            onClick={() => { if (Number(formData.studentEstimate) <= 500) setFormData(p => ({ ...p, featurePlan: "starter" })); }}
                             style={{ 
-                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "starter" ? "#0B4A82" : "#E2E8F0"}`,
-                              background: formData.featurePlan === "starter" ? "#F0F9FF" : "white", 
-                              cursor: Number(formData.studentEstimate) > 300 ? "not-allowed" : "pointer", 
-                              transition: "all 0.2s",
-                              opacity: Number(formData.studentEstimate) > 300 ? 0.5 : 1,
-                              position: "relative"
+                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "starter" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
+                              background: formData.featurePlan === "starter" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", 
+                              cursor: Number(formData.studentEstimate) > 500 ? "not-allowed" : "pointer", 
+                              transition: "all 0.2s", opacity: Number(formData.studentEstimate) > 500 ? 0.3 : 1, position: "relative", backdropFilter: "blur(10px)"
                             }}
                           >
-                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "#E0F2FE", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
-                              <CheckCircle2 size={24} color="#0369A1" style={{ margin: "auto" }} />
+                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
+                              <CheckCircle2 size={24} color="#10B981" style={{ margin: "auto" }} />
                             </div>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0" }}>Starter</h3>
-                            <p style={{ fontSize: 13, color: "#64748B", margin: 0, lineHeight: 1.5 }}>Max 300 Students. Perfect for small schools.</p>
-                            {Number(formData.studentEstimate) > 300 && (
+                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Starter</h3>
+                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Max 500 Students. Perfect for small schools.</p>
+                            {Number(formData.studentEstimate) > 500 && (
                               <p style={{ fontSize: 11, color: "#EF4444", fontWeight: 700, marginTop: 8 }}>Est. {formData.studentEstimate} students exceeds limit</p>
                             )}
                           </div>
-                          {/* Standard Plan */}
                           <div 
                             onClick={() => setFormData(p => ({ ...p, featurePlan: "standard" }))}
                             style={{ 
-                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "standard" ? "#0B4A82" : "#E2E8F0"}`,
-                              background: formData.featurePlan === "standard" ? "#F0F9FF" : "white", cursor: "pointer", transition: "all 0.2s"
+                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "standard" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
+                              background: formData.featurePlan === "standard" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", transition: "all 0.2s", backdropFilter: "blur(10px)"
                             }}
                           >
-                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "#FEF3C7", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
-                              <ShieldCheck size={24} color="#B45309" style={{ margin: "auto" }} />
+                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(11, 74, 130, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
+                              <ShieldCheck size={24} color="#93C5FD" style={{ margin: "auto" }} />
                             </div>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0" }}>Standard</h3>
-                            <p style={{ fontSize: 13, color: "#64748B", margin: 0, lineHeight: 1.5 }}>Max 700 Students. Advanced features for growing schools.</p>
+                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Standard</h3>
+                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Unlimited Students. Advanced features for growing schools.</p>
                           </div>
                         </div>
 
                         <div>
                           <label style={labelCls}>Preferred Billing Cycle (Post-Trial)</label>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                            {["monthly", "termly", "yearly"].map(p => (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, plan: p }))}
-                                style={{ 
-                                  padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 600,
-                                  border: `1.5px solid ${formData.plan === p ? "#0B4A82" : "#DBEAFE"}`,
-                                  background: formData.plan === p ? "#0B4A82" : "white",
-                                  color: formData.plan === p ? "white" : "#0B4A82",
-                                  cursor: "pointer", transition: "all 0.2s"
-                                }}
-                              >
-                                {p.charAt(0).toUpperCase() + p.slice(1)}
-                              </button>
-                            ))}
+                            {([
+                              { key: "monthly", label: "Monthly", discount: null, price: (base: number) => base },
+                              { key: "termly", label: "Termly", discount: "10% off", price: (base: number) => Math.round(base * 3 * 0.9) },
+                              { key: "yearly", label: "Yearly", discount: "20% off", price: (base: number) => Math.round(base * 12 * 0.8) },
+                            ] as const).map(({ key, label, discount, price }) => {
+                              const base = formData.featurePlan === "starter" ? 100 : 200;
+                              const amt = price(base);
+                              return (
+                                <button
+                                  key={key} type="button" onClick={() => setFormData(prev => ({ ...prev, plan: key }))}
+                                  style={{
+                                    padding: "14px 10px", borderRadius: 12, fontSize: 13, fontWeight: 600,
+                                    border: `1.5px solid ${formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
+                                    background: formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.03)",
+                                    color: "white", cursor: "pointer", transition: "all 0.2s",
+                                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 700 }}>{label}</span>
+                                  <span style={{ fontSize: 15, fontWeight: 800 }}>GH₵ {amt.toLocaleString()}</span>
+                                  {discount && (
+                                    <span style={{ fontSize: 10, fontWeight: 800, color: "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>{discount}</span>
+                                  )}
+                                </button>
+                              );
+                            })}
                           </div>
-                          <p style={{ fontSize: 12, color: "#64748B", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
-                            <Lightbulb size={14} color="#0B4A82" /> You can change your plan or cycle anytime after your 30-day trial ends.
+                          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
+                            <Lightbulb size={14} color="#93C5FD" /> Pricing shown is after your free 30-day trial. You can change your plan anytime.
                           </p>
                         </div>
                       </div>
@@ -534,73 +437,55 @@ const GetStarted = () => {
                             <option value="default">Default School Template</option>
                             <option value="basic">Basic Operational Setup</option>
                           </select>
-                          <div style={{ marginTop: 12, padding: "12px 16px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E2E8F0" }}>
-                            {formData.onboardingTemplate === "default" ? (
-                              <p style={{ fontSize: 13, color: "#475569", margin: 0, lineHeight: 1.6, display: "flex", gap: 8 }}>
-                                <Lightbulb size={16} color="#0B4A82" style={{ flexShrink: 0, marginTop: 2 }} />
+                          <div style={{ marginTop: 12, padding: "12px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)" }}>
+                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", margin: 0, lineHeight: 1.6, display: "flex", gap: 8 }}>
+                              <Lightbulb size={16} color="#93C5FD" style={{ flexShrink: 0, marginTop: 2 }} />
+                              {formData.onboardingTemplate === "default" ? (
                                 <span><strong>Default Template:</strong> Pre-configured with standard classes, grading systems, and roles. Recommended for a quick start.</span>
-                              </p>
-                            ) : (
-                              <p style={{ fontSize: 13, color: "#475569", margin: 0, lineHeight: 1.6, display: "flex", gap: 8 }}>
-                                <Lightbulb size={16} color="#0B4A82" style={{ flexShrink: 0, marginTop: 2 }} />
+                              ) : (
                                 <span><strong>Basic Setup:</strong> Provides a clean workspace with only core modules. Best if you want to configure everything yourself.</span>
-                              </p>
-                            )}
+                              )}
+                            </p>
                           </div>
                         </div>
-                        <div style={{ background: "#EFF6FF", borderRadius: 16, padding: 16, border: "1px solid #DBEAFE", display: "flex", gap: 10 }}>
-                          <CheckCircle2 size={18} color="#0B4A82" style={{ flexShrink: 0, marginTop: 1 }} />
-                          <p style={{ fontSize: 13, color: "#0B4A82", margin: 0, lineHeight: 1.6 }}>
-                            After launch, you can add teachers, students, classes, and configure all settings from your admin dashboard.
-                          </p>
+                        <div style={{ background: "rgba(11, 74, 130, 0.1)", borderRadius: 16, padding: 16, border: "1px solid rgba(11, 74, 130, 0.2)", display: "flex", gap: 10 }}>
+                          <CheckCircle2 size={18} color="#93C5FD" style={{ flexShrink: 0, marginTop: 1 }} />
+                          <p style={{ fontSize: 13, color: "#93C5FD", margin: 0, lineHeight: 1.6 }}>After launch, you can add teachers, students, classes, and configure all settings from your admin dashboard.</p>
                         </div>
                       </div>
                     )}
 
                     {currentStep === 4 && (
                       <div>
-                        <p style={{ fontSize: 14, color: "#64748B", marginBottom: 20 }}>Please review your details before creating your school workspace.</p>
+                        <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginBottom: 20 }}>Please review your details before creating your school workspace.</p>
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {reviewRows.map(([label, value], index) => (
-                            <div key={index} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E2E8F0" }}>
-                              <span style={{ fontSize: 13, color: "#64748B", fontWeight: 600 }}>{label}</span>
-                              <span style={{ fontSize: 14, color: "#0f172a", fontWeight: 700, textAlign: "right", maxWidth: "60%" }}>{value || <span style={{ color: "#94A3B8", fontStyle: "italic" }}>Not set</span>}</span>
+                            <div key={index} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)" }}>
+                              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>{label}</span>
+                              <span style={{ fontSize: 14, color: "white", fontWeight: 700, textAlign: "right", maxWidth: "60%" }}>{value || <span style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>Not set</span>}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
-
                   </motion.div>
                 </AnimatePresence>
 
-                {/* Navigation buttons */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 32, paddingTop: 24, borderTop: "1px solid #F1F5F9" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 32, paddingTop: 24, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
                   <button
-                    type="button"
-                    onClick={() => setCurrentStep(p => Math.max(p - 1, 0))}
+                    type="button" onClick={() => setCurrentStep(p => Math.max(p - 1, 0))}
                     disabled={currentStep === 0 || loading}
-                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap", padding: "11px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, border: "1.5px solid #E2E8F0", background: "white", color: "#64748B", cursor: currentStep === 0 ? "not-allowed" : "pointer", opacity: currentStep === 0 ? 0.4 : 1 }}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap", padding: "11px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, border: "1.5px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)", cursor: currentStep === 0 ? "not-allowed" : "pointer", opacity: currentStep === 0 ? 0.4 : 1 }}
                   >
                     <ArrowLeft size={16} /> Back
                   </button>
 
-                  {currentStep < STEPS.length - 1 ? (
-                    <button
-                      type="submit"
-                      style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: "linear-gradient(135deg, #0B4A82, #1160A8)", color: "white", border: "none", cursor: "pointer", boxShadow: "0 4px 16px rgba(11,74,130,0.28)" }}
-                    >
-                      Continue <ArrowRight size={16} />
-                    </button>
-                  ) : (
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: loading ? "#94A3B8" : "linear-gradient(135deg, #0B4A82, #1160A8)", color: "white", border: "none", cursor: loading ? "not-allowed" : "pointer", boxShadow: loading ? "none" : "0 4px 16px rgba(11,74,130,0.28)" }}
-                    >
-                      {loading ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating workspace...</> : <><Rocket size={18} /> Launch School Workspace</>}
-                    </button>
-                  )}
+                  <button
+                    type="submit" disabled={loading}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: loading ? "rgba(255,255,255,0.1)" : "#0B4A82", color: "white", border: "none", cursor: loading ? "not-allowed" : "pointer", boxShadow: loading ? "none" : "0 4px 16px rgba(0,0,0,0.3)" }}
+                  >
+                    {currentStep < STEPS.length - 1 ? (<>Continue <ArrowRight size={16} /></>) : (loading ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating workspace...</> : <><Rocket size={18} /> Launch School Workspace</>)}
+                  </button>
                 </div>
                 <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
               </form>
@@ -609,56 +494,14 @@ const GetStarted = () => {
         </div>
       </section>
 
-      {/* Success Popup */}
       <AnimatePresence>
         {showSuccessPopup && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            style={{
-              position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-              background: "rgba(15, 23, 42, 0.6)", backdropFilter: "blur(4px)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              padding: 24, zIndex: 1000
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              style={{
-                background: "white", borderRadius: 24, padding: "40px 32px",
-                maxWidth: 440, width: "100%", textAlign: "center",
-                boxShadow: "0 24px 48px rgba(0,0,0,0.2)"
-              }}
-            >
-              <div style={{
-                width: 80, height: 80, borderRadius: "50%", background: "#DCFCE7",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                margin: "0 auto 24px"
-              }}>
-                <CheckCircle2 size={40} color="#16A34A" />
-              </div>
-              
-              <h3 style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", margin: "0 0 12px 0" }}>
-                School Created Successfully!
-              </h3>
-              
-              <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.6, margin: "0 0 32px 0" }}>
-                Your school workspace has been set up. We've sent a verification link to <strong>{formData.adminEmail}</strong>.
-              </p>
-              
-              <button
-                onClick={() => navigate("/verify-email", { replace: true, state: { email: formData.adminEmail.trim().toLowerCase(), password: formData.password } })}
-                style={{
-                  width: "100%", padding: "14px", borderRadius: 999, fontSize: 15, fontWeight: 700,
-                  background: "linear-gradient(135deg, #0B4A82, #1160A8)", color: "white",
-                  border: "none", cursor: "pointer", boxShadow: "0 4px 16px rgba(11,74,130,0.28)"
-                }}
-              >
-                Continue
-              </button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 1000 }}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} style={{ background: "#041222", borderRadius: 24, padding: "40px 32px", maxWidth: 440, width: "100%", textAlign: "center", boxShadow: "0 24px 48px rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.1)" }}>
+              <div style={{ width: 80, height: 80, borderRadius: "50%", background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}><CheckCircle2 size={40} color="#10B981" /></div>
+              <h3 style={{ fontSize: 24, fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>School Created Successfully!</h3>
+              <p style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", lineHeight: 1.6, margin: "0 0 32px 0" }}>Your school workspace has been set up. We've sent a verification link to <strong>{formData.adminEmail}</strong>.</p>
+              <button onClick={() => navigate("/verify-email", { replace: true, state: { email: formData.adminEmail.trim().toLowerCase(), password: formData.password } })} style={{ width: "100%", padding: "14px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: "#0B4A82", color: "white", border: "none", cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" }}>Continue</button>
             </motion.div>
           </motion.div>
         )}

@@ -30,3 +30,8 @@ public/sw.js
 
 # Firebase
 .firebase/
+
+# WhatsApp Bot Cache & Sessions
+.wwebjs_cache/
+whatsapp-session/
+scratch/

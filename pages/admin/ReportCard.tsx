@@ -6,7 +6,7 @@ import { jsPDF } from "jspdf";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { Student, SchoolConfig, AdminRemark } from "../../types";
-import { CLASSES_LIST, calculateGrade } from "../../constants";
+import { CLASSES_LIST, calculateGrade, getFilteredClasses } from "../../constants";
 import ReportCardLayout from "../../components/ReportCardLayout";
 import { Save, Edit2, X, MessageSquare } from "lucide-react";
 import { showToast } from "../../services/toast";
@@ -131,7 +131,11 @@ const ReportCard = () => {
   const { user } = useAuth();
   const schoolId = school?.id || null;
 
-  const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
+
+  const [selectedClass, setSelectedClass] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string>("");
   const [reportCardData, setReportCardData] = useState<any>(null);
@@ -1148,9 +1152,18 @@ const ReportCard = () => {
   };
 
   useEffect(() => {
+    if (availableClasses.length > 0 && !selectedClass) {
+      setSelectedClass(availableClasses[0].id);
+      handleClassChange(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClass]);
+
+  useEffect(() => {
     const load = async () => {
       try {
-        await handleClassChange(selectedClass);
+        if (selectedClass) {
+          await handleClassChange(selectedClass);
+        }
       } catch (error) {
         console.error("Error in useEffect:", error);
       }
@@ -1171,7 +1184,7 @@ const ReportCard = () => {
             value={selectedClass}
             onChange={(e) => handleClassChange(e.target.value)}
           >
-            {CLASSES_LIST.map((c) => (
+            {availableClasses.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>

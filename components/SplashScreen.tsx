@@ -14,39 +14,48 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
   schoolLogoUrl,
   hideDefaultBranding,
 }) => {
-  const displayName =
-    hideDefaultBranding && !schoolName ? "" : schoolName || "School Manager GH";
-  const displayLogo =
-    hideDefaultBranding && !schoolLogoUrl ? "" : schoolLogoUrl || schoolLogo;
-  return (
-    <div className="min-h-screen bg-[#0B4A82] flex flex-col items-center justify-center text-white relative overflow-hidden">
-      <div className="absolute -top-32 -right-20 w-72 h-72 bg-white/10 rounded-full blur-3xl" />
-      <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-emerald-200/10 rounded-full blur-3xl" />
+  // If we should hide default and don't have school info yet, show a clean generic loader
+  const displayName = hideDefaultBranding && !schoolName ? "" : (schoolName || "School Manager GH");
+  const displayLogo = hideDefaultBranding && !schoolLogoUrl ? "" : (schoolLogoUrl || schoolLogo);
 
-      <div className="relative flex w-full max-w-sm flex-col items-center px-6 text-center">
-        <div className="w-24 h-24 rounded-3xl bg-white/15 border border-white/20 flex items-center justify-center shadow-2xl animate-pulse">
+  return (
+    <div className="min-h-screen bg-[#041222] flex flex-col items-center justify-center text-white relative overflow-hidden">
+      {/* Animated background blobs matching the new marketing theme */}
+      <div className="absolute -top-32 -right-20 w-96 h-96 bg-blue-600/20 rounded-full blur-[100px] animate-pulse" />
+      <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-purple-600/20 rounded-full blur-[100px] animate-pulse [animation-delay:1s]" />
+
+      <div className="relative flex w-full max-w-sm flex-col items-center px-6 text-center z-10">
+        <div className="w-28 h-28 rounded-[2rem] bg-white/5 border border-white/10 flex items-center justify-center shadow-2xl backdrop-blur-xl mb-8 group overflow-hidden">
           {displayLogo ? (
-            <img src={displayLogo} alt={displayName} className="w-16 h-16" />
+            <img 
+              src={displayLogo} 
+              alt={displayName} 
+              className="w-20 h-20 object-contain transition-transform duration-700 group-hover:scale-110" 
+            />
           ) : (
-            <div className="w-16 h-16" />
+            <div className="w-20 h-20 bg-white/5 rounded-2xl animate-pulse" />
           )}
         </div>
-        {displayName ? (
-          <h1 className="mt-6 w-full text-2xl font-bold leading-tight tracking-wide text-center">
+
+        {displayName && (
+          <h1 className="text-3xl font-bold tracking-tight text-white mb-3 animate-in fade-in slide-in-from-bottom-4 duration-700">
             {displayName}
           </h1>
-        ) : null}
-        <p className="mt-2 text-sm text-white/80 text-center">
-          {roleLabel
-            ? `Welcome back, ${roleLabel}.`
-            : "Preparing your dashboard..."}
+        )}
+
+        <p className="text-blue-200/60 font-medium tracking-wide text-sm uppercase mb-8">
+          {roleLabel ? `Welcome back, ${roleLabel}` : "Preparing your dashboard"}
         </p>
-        <div className="mt-6 flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-white/80 animate-bounce" />
-          <span className="w-2.5 h-2.5 rounded-full bg-white/60 animate-bounce [animation-delay:120ms]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-white/40 animate-bounce [animation-delay:240ms]" />
+
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-duration:0.8s]" />
+          <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-duration:0.8s] [animation-delay:0.15s]" />
+          <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-duration:0.8s] [animation-delay:0.3s]" />
         </div>
       </div>
+
+      {/* Decorative glass border */}
+      <div className="absolute inset-4 border border-white/5 rounded-[2.5rem] pointer-events-none" />
     </div>
   );
 };

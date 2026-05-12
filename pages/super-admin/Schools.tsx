@@ -45,6 +45,8 @@ const Schools = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [formData, setFormData] = useState({
+    schoolType: "Basic School (Nursery to JHS)",
+
     name: "",
     phone: "",
     address: "",
@@ -331,6 +333,8 @@ const Schools = () => {
         address: formData.address.trim(),
         logoUrl: croppedLogo || "",
         plan: formData.plan,
+        schoolType: formData.schoolType,
+
         featurePlan: formData.featurePlan,
         billingStartType: formData.billingStartType,
         cloneFromTemplate,
@@ -346,6 +350,8 @@ const Schools = () => {
         address: "",
         logoUrl: "",
         plan: "trial",
+        schoolType: "Basic School (Nursery to JHS)",
+
         featurePlan: "starter",
         billingStartType: "term_start",
         specialPricingEnabled: false,
@@ -525,7 +531,7 @@ const Schools = () => {
     if (!nextPlanId) return;
     try {
       if (["starter", "standard"].includes(nextPlanId)) {
-        const nextLimit = nextPlanId === "standard" ? 700 : 300;
+        const nextLimit = nextPlanId === "standard" ? 0 : 500;
         await updateDoc(doc(firestore, "schools", schoolId), {
           featurePlan: nextPlanId,
           "limits.maxStudents": nextLimit,
@@ -1071,6 +1077,32 @@ const Schools = () => {
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
                   Billing Start
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  School Type
+                </label>
+                <select
+                  disabled={isCreatingSchool}
+                  className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  value={formData.schoolType}
+                  onChange={(e) =>
+                    setFormData({ ...formData, schoolType: e.target.value })
+                  }
+                >
+                  <option>Primary School</option>
+                  <option>Junior High School</option>
+                  <option>Senior High School</option>
+                  <option>Basic School (Nursery to JHS)</option>
+                  <option>Nursery/Kindergarten</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Billing Start
+
                 </label>
                 <select
                   disabled={isCreatingSchool}

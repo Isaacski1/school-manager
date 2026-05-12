@@ -4,7 +4,7 @@ import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { createTeacher } from "../../services/backendApi";
 import { User, UserRole } from "../../types";
-import { CLASSES_LIST } from "../../constants";
+import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { logActivity } from "../../services/activityLog";
@@ -45,6 +45,7 @@ const ManageTeachers = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || ""; // ✅ current school scope
+  const availableClasses = getFilteredClasses(school?.schoolType);
 
   const [teachers, setTeachers] = useState<TeacherWithClasses[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -536,7 +537,7 @@ const ManageTeachers = () => {
                 teachers.map((teacher) => {
                   const assignedIds = teacher.assignedClassIds || [];
                   const classNames = assignedIds
-                    .map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                    .map((id) => availableClasses.find((c) => c.id === id)?.name)
                     .filter(Boolean);
 
                   const isMissingSchoolId = !teacher.schoolId;
@@ -742,7 +743,7 @@ const ManageTeachers = () => {
 
                 <div className="border border-slate-300 rounded-lg p-3 max-h-56 overflow-y-auto bg-slate-50">
                   <div className="grid grid-cols-2 gap-3">
-                    {CLASSES_LIST.map((c) => {
+                    {availableClasses.map((c) => {
                       const isSelected = formData.assignedClassIds?.includes(
                         c.id,
                       );
@@ -1004,7 +1005,7 @@ const ManageTeachers = () => {
 
             <div className="border border-slate-300 rounded-lg p-3 max-h-56 overflow-y-auto bg-slate-50 mb-4">
               <div className="grid grid-cols-2 gap-3">
-                {CLASSES_LIST.map((c) => {
+                {availableClasses.map((c) => {
                   const isSelected = (editClasses || []).includes(c.id);
 
                   return (

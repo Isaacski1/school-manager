@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
+import { useSchool } from "../../context/SchoolContext";
 import { db } from "../../services/mockDb";
-import { Student, Assessment } from "../../types";
+import { Student, Assessment, UserRole } from "../../types";
 import {
   CLASSES_LIST,
   ACADEMIC_YEAR,
@@ -10,6 +11,7 @@ import {
   calculateGrade,
   getGradeColor,
   calculateTotalScore,
+  getFilteredClasses,
 } from "../../constants";
 import { Save } from "lucide-react";
 import { showToast } from "../../services/toast";
@@ -62,7 +64,17 @@ const jhsSubjects = [
 
 const AssessmentPage = () => {
   const { user } = useAuth();
-  const assignedClassIds = user?.assignedClassIds || [];
+  const { school } = useSchool();
+  const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
+
+  const availableClasses = React.useMemo(() => {
+    if (isAdmin) {
+      return getFilteredClasses(school?.schoolType);
+    }
+    const assignedIds = user?.assignedClassIds || [];
+    return CLASSES_LIST.filter((c) => assignedIds.includes(c.id));
+  }, [isAdmin, school?.schoolType, user?.assignedClassIds]);
+
   const schoolId = user?.schoolId || null;
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
@@ -90,10 +102,10 @@ const AssessmentPage = () => {
 
   // Initialize selected class
   useEffect(() => {
-    if (assignedClassIds.length > 0 && !selectedClassId) {
-      setSelectedClassId(assignedClassIds[0]);
+    if (availableClasses.length > 0 && !selectedClassId) {
+      setSelectedClassId(availableClasses[0].id);
     }
-  }, [assignedClassIds]);
+  }, [availableClasses]);
 
   // Load school configuration (term + academic year)
   useEffect(() => {
@@ -175,7 +187,7 @@ const AssessmentPage = () => {
           (a) => a.studentId === s.id && a.term === dynamicTerm,
         );
         map[s.id] = found || {
-          id: `${s.id}_${selectedSubject}_${dynamicTerm}_${schoolConfig.academicYear}`,
+          id: `${s.id}_${selectedSubject.replace(/\//g, '-')}_${dynamicTerm}_${schoolConfig.academicYear}`,
           schoolId: schoolId || "",
           studentId: s.id,
           classId: selectedClassId,
@@ -317,10 +329,10 @@ const AssessmentPage = () => {
     }
   };
 
-  if (assignedClassIds.length === 0)
+  if (availableClasses.length === 0)
     return (
       <Layout title="Assessment">
-        <div className="p-8 text-center text-slate-500">No class assigned.</div>
+        <div className="p-8 text-center text-slate-500">No class available.</div>
       </Layout>
     );
 
@@ -340,11 +352,10 @@ const AssessmentPage = () => {
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="p-2 border border-slate-300 rounded-md shadow-sm w-full md:w-64 bg-white text-black"
               >
-                {assignedClassIds.map((id) => {
-                  const c = CLASSES_LIST.find((cl) => cl.id === id);
+                {availableClasses.map((c) => {
                   return (
-                    <option key={id} value={id}>
-                      {c?.name}
+                    <option key={c.id} value={c.id}>
+                      {c.name}
                     </option>
                   );
                 })}

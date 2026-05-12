@@ -2,7 +2,17 @@ import React, { useState, useEffect } from "react";
 // @ts-ignore - html2pdf.js doesn't have proper types
 import html2pdf from "html2pdf.js";
 import { calculateGrade, getGradeColor } from "../constants";
-import { Save } from "lucide-react";
+import { Save, GraduationCap, BarChart2, Star, MessageSquare } from "lucide-react";
+
+const SectionHeader = ({ icon: Icon, title }: { icon: any; title: string }) => (
+  <div className="flex items-center gap-2 mb-2">
+    <Icon className="text-[#1160A8]" size={18} />
+    <h3 className="text-[13px] font-bold text-[#1160A8] uppercase tracking-wide whitespace-nowrap">
+      {title}
+    </h3>
+    <div className="flex-grow border-b-2 border-[#1160A8] opacity-80 ml-1 mt-0.5"></div>
+  </div>
+);
 
 interface ReportCardLayoutProps {
   data: any;
@@ -126,19 +136,12 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
 
     const originalLogoSrc = logoImg?.src;
     const originalStyle = {
-      transform: element.style.transform,
-      transformOrigin: element.style.transformOrigin,
       width: element.style.width,
     };
 
     try {
-      const A4_WIDTH_PX = 794; // 8.27in * 96dpi
-      const A4_HEIGHT_PX = 1123; // 11.69in * 96dpi
+      const A4_WIDTH_PX = 794;
       element.style.width = `${A4_WIDTH_PX}px`;
-      const measuredHeight = element.scrollHeight || element.offsetHeight;
-      const scaleFactor = Math.min(1, A4_HEIGHT_PX / measuredHeight);
-      element.style.transform = `scale(${scaleFactor})`;
-      element.style.transformOrigin = "top left";
 
       // ✅ Ensure logo is base64 before export (best way to always show in PDF)
       if (logoImg?.src && !logoImg.src.startsWith("data:image")) {
@@ -153,19 +156,19 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
       await waitForImages(element);
 
       const opt: any = {
-        margin: 0,
+        margin: [0, 0, 0, 0],
         filename: `${data.studentInfo.name}_Report_Card.pdf`,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: {
-          scale: 2.2,
+          scale: 2,
           useCORS: true,
           allowTaint: true,
           backgroundColor: "#ffffff",
           logging: false,
         },
         jsPDF: {
-          unit: "px",
-          format: [794, 1123],
+          unit: "mm",
+          format: "a4",
           orientation: "portrait",
           compress: true,
         },
@@ -178,9 +181,8 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     } finally {
       // restore original src
       if (logoImg && originalLogoSrc) logoImg.src = originalLogoSrc;
-      element.style.transform = originalStyle.transform;
-      element.style.transformOrigin = originalStyle.transformOrigin;
       element.style.width = originalStyle.width;
+      
       setIsGenerating(false);
     }
   };
@@ -189,17 +191,40 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     <>
       <div
         id="report-card"
-        className="bg-white p-4 rounded-lg shadow-lg border border-slate-200 text-[12.5px] leading-relaxed"
+        className="bg-white px-[15px] py-[10px] rounded-lg shadow-lg border border-slate-200 text-[12px] leading-snug"
         style={{
-          minHeight: "10.7in",
           boxSizing: "border-box",
           pageBreakInside: "avoid",
+          position: "relative",
+          height: "1123px",
+          overflow: "hidden",
         }}
       >
-        {/* Header */}
+        {/* Watermark Overlay */}
+        {schoolInfo.logoUrl && (
+          <img
+            src={schoolInfo.logoUrl}
+            alt="Watermark"
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "500px",
+              height: "500px",
+              objectFit: "contain",
+              opacity: 0.05,
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+            crossOrigin="anonymous"
+          />
+        )}
+        <div id="report-card-inner" className="w-full flex flex-col h-full">
+          {/* Header */}
         <div
-          className="flex justify-between items-center pb-2 mb-2"
-          style={{ borderBottom: "2px solid #0B4A82" }}
+          className="flex justify-between items-center pb-2 mb-3"
+          style={{ borderBottom: "2px solid #1160A8" }}
         >
           <div className="flex items-center">
             {schoolInfo.logoUrl ? (
@@ -207,7 +232,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                 data-report-logo="true"
                 src={schoolInfo.logoUrl}
                 alt="School Logo"
-                className="h-12 w-12 object-contain"
+                className="h-14 w-14 object-contain"
                 crossOrigin="anonymous"
                 referrerPolicy="no-referrer"
                 onError={(e) => {
@@ -237,96 +262,86 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
           </div>
         </div>
         {/* Student Info */}
-        <div className="grid grid-cols-4 gap-2 bg-slate-50 p-2 rounded mb-2 text-xs">
-          <div>
-            <span className="font-semibold">Name:</span> {studentInfo.name}
+        <div className="flex justify-between items-center pb-2 mb-3 text-[12px] font-medium">
+          <div className="flex gap-1">
+            <span className="font-bold text-slate-900">Name:</span> <span className="text-slate-700">{studentInfo.name}</span>
           </div>
-          <div>
-            <span className="font-semibold">Class:</span> {studentInfo.class}
+          <div className="flex gap-1">
+            <span className="font-bold text-slate-900">Class:</span> <span className="text-slate-700">{studentInfo.class}</span>
           </div>
-          <div>
-            <span className="font-semibold">Gender:</span> {studentInfo.gender}
+          <div className="flex gap-1">
+            <span className="font-bold text-slate-900">Gender:</span> <span className="text-slate-700">{studentInfo.gender}</span>
           </div>
-          <div>
-            <span className="font-semibold">Teacher:</span>{" "}
-            {studentInfo.classTeacher}
+          <div className="flex gap-1">
+            <span className="font-bold text-slate-900">Teacher:</span> <span className="text-slate-700">{studentInfo.classTeacher || "N/A"}</span>
           </div>
         </div>
 
         {/* Attendance */}
-        <div className="mb-2">
-          <div className="grid grid-cols-4 gap-2 text-center">
-            <div className="bg-red-50 p-1.5 rounded">
-              <span className="block font-bold text-red-800 text-lg">
+        <div className="mb-3">
+          <div className="grid grid-cols-4 gap-3 text-center">
+            <div className="bg-red-50 p-2 rounded-md">
+              <span className="block font-bold text-red-700 text-3xl leading-tight mb-0.5">
                 {attendance.totalDays}
               </span>
-              <span className="text-xs text-red-700">School Days</span>
+              <span className="text-[12px] font-medium text-red-700">School Days</span>
             </div>
-            <div className="bg-green-50 p-1.5 rounded">
-              <span className="block font-bold text-green-800 text-lg">
+            <div className="bg-green-50 p-2 rounded-md">
+              <span className="block font-bold text-green-700 text-3xl leading-tight mb-0.5">
                 {attendance.presentDays}
               </span>
-              <span className="text-xs text-green-700">Present</span>
+              <span className="text-[12px] font-medium text-green-700">Present</span>
             </div>
-            <div className="bg-red-50 p-1.5 rounded">
-              <span className="block font-bold text-red-800 text-lg">
+            <div className="bg-red-50 p-2 rounded-md">
+              <span className="block font-bold text-red-700 text-3xl leading-tight mb-0.5">
                 {attendance.absentDays}
               </span>
-              <span className="text-xs text-red-700">Absent</span>
+              <span className="text-[12px] font-medium text-red-700">Absent</span>
             </div>
-            <div className="bg-purple-50 p-1.5 rounded">
-              <span className="block font-bold text-purple-800 text-lg">
+            <div className="bg-purple-50 p-2 rounded-md">
+              <span className="block font-bold text-purple-800 text-3xl leading-tight mb-0.5">
                 {attendance.attendancePercentage}%
               </span>
-              <span className="text-xs text-purple-700">Attendance</span>
+              <span className="text-[12px] font-medium text-purple-800">Attendance</span>
             </div>
           </div>
         </div>
 
         {/* Academic Performance */}
         <div className="mb-2">
-          <h3
-            className="text-sm font-bold text-primary-900 mb-2 px-3 pb-2 bg-slate-50"
-            style={{
-              borderLeft: "2px solid #1160A8",
-              borderRight: "2px solid #1160A8",
-              borderBottom: "1px solid #1160A8",
-            }}
-          >
-            Academic Performance
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <SectionHeader icon={GraduationCap} title="Academic Performance" />
+          <div className="overflow-x-auto rounded-t-md overflow-hidden">
+            <table className="w-full text-left border-collapse text-[11px]">
               <thead
                 className="text-white"
                 style={{ backgroundColor: "#1160A8" }}
               >
                 <tr>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle leading-relaxed">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center">
                     Subject
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-12">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     C.Test
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-12">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     HW
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-12">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     Proj
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-12">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     Exam
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-12">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     Total
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-10">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     Pos
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle text-center w-10">
+                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
                     Grade
                   </th>
-                  <th className="px-2 pt-0 pb-3 border-b border-white align-middle">
+                  <th className="px-2 py-1.5 align-middle text-center">
                     Remark
                   </th>
                 </tr>
@@ -385,34 +400,34 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                     }
 
                     return (
-                      <tr key={i} className="hover:bg-slate-50">
-                        <td className="p-1.5 border font-medium">
+                      <tr key={i} className="bg-white hover:bg-slate-50">
+                        <td className="px-2 py-1 border-b border-slate-200 font-medium">
                           {p.subject}
                         </td>
-                        <td className="px-2 py-2 border text-center leading-relaxed">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center">
                           {p.testScore}
                         </td>
-                        <td className="p-1.5 border text-center">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center">
                           {p.homeworkScore}
                         </td>
-                        <td className="p-1.5 border text-center">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center">
                           {p.projectScore}
                         </td>
-                        <td className="p-1.5 border text-center">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center">
                           {p.examScore}
                         </td>
-                        <td className="p-1.5 border text-center font-bold">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center font-bold">
                           {p.total}
                         </td>
-                        <td className="p-1.5 border text-center">
+                        <td className="px-2 py-1 border-b border-slate-200 text-center">
                           {positionLabel}
                         </td>
                         <td
-                          className={`p-1.5 border text-center font-bold ${getGradeColor(grade.grade).split(" ")[0]}`}
+                          className={`px-2 py-1 border-b border-slate-200 text-center font-bold ${getGradeColor(grade.grade).split(" ")[0]}`}
                         >
                           {grade.grade}
                         </td>
-                        <td className="p-1.5 border">{grade.remark}</td>
+                        <td className="px-2 py-1 border-b border-slate-200">{grade.remark}</td>
                       </tr>
                     );
                   })}
@@ -424,114 +439,103 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         {/* Summary & Skills - Side by Side */}
         <div className="grid grid-cols-2 gap-3 mb-2">
           <div>
-            <h3
-              className="text-sm font-bold text-primary-900 mb-1 pl-2"
-              style={{ borderLeft: "3px solid #1160A8" }}
-            >
-              Performance Summary
-            </h3>
             <div
-              className="bg-slate-50 p-3 rounded text-xs space-y-1"
+              className="bg-white p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
-              <div
-                className="flex justify-between py-0.5"
-                style={{ borderBottom: "1px solid #C7D7EA" }}
-              >
-                <span className="font-semibold">Total Score:</span>
-                <span>{summary.totalScore}</span>
-              </div>
-              <div
-                className="flex justify-between py-0.5"
-                style={{ borderBottom: "1px solid #C7D7EA" }}
-              >
-                <span className="font-semibold">Average:</span>
-                <span>{summary.averageScore}</span>
-              </div>
-              <div
-                className="flex justify-between py-0.5"
-                style={{ borderBottom: "1px solid #C7D7EA" }}
-              >
-                <span className="font-semibold">Grade:</span>
-                <span className="font-bold">{summary.overallGrade}</span>
-              </div>
-              <div className="flex justify-between py-0.5">
-                <span className="font-semibold">Position:</span>
-                <span>
-                  {summary.classPosition} of {summary.totalStudents}
-                </span>
+              <SectionHeader icon={BarChart2} title="Performance Summary" />
+              <div className="mt-2">
+                <div
+                  className="flex justify-between py-0.5"
+                  style={{ borderBottom: "1px solid #E2E8F0" }}
+                >
+                  <span className="font-semibold text-slate-800">Total Score:</span>
+                  <span>{summary.totalScore}</span>
+                </div>
+                <div
+                  className="flex justify-between py-0.5"
+                  style={{ borderBottom: "1px solid #E2E8F0" }}
+                >
+                  <span className="font-semibold text-slate-800">Average:</span>
+                  <span>{summary.averageScore}</span>
+                </div>
+                <div
+                  className="flex justify-between py-0.5"
+                  style={{ borderBottom: "1px solid #E2E8F0" }}
+                >
+                  <span className="font-semibold text-slate-800">Grade:</span>
+                  <span className="font-bold">{summary.overallGrade}</span>
+                </div>
+                <div className="flex justify-between py-0.5">
+                  <span className="font-semibold text-slate-800">Position:</span>
+                  <span>
+                    {summary.classPosition} of {summary.totalStudents}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
           <div>
-            <h3
-              className="text-sm font-bold text-primary-900 mb-1 pl-2"
-              style={{ borderLeft: "3px solid #1160A8" }}
-            >
-              Skills & Behaviour
-            </h3>
             <div
-              className="bg-slate-50 p-3 rounded text-xs space-y-1"
+              className="bg-white p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
-              {skills &&
-                Object.entries(skills).map(([skill, rating]) => (
-                  <div
-                    key={skill}
-                    className="flex justify-between py-0.5 last:border-0"
-                    style={{ borderBottom: "1px solid #C7D7EA" }}
-                  >
-                    <span className="font-semibold capitalize">
-                      {skill.replace(/([A-Z])/g, " $1")}:
-                    </span>
-                    <span>{rating as string}</span>
-                  </div>
-                ))}
+              <SectionHeader icon={Star} title="Skills & Behaviour" />
+              <div className="mt-2">
+                {skills &&
+                  Object.entries(skills).map(([skill, rating]) => (
+                    <div
+                      key={skill}
+                      className="flex justify-between py-0.5 last:border-0"
+                      style={{ borderBottom: "1px solid #E2E8F0" }}
+                    >
+                      <span className="font-semibold text-slate-800 capitalize">
+                        {skill.replace(/([A-Z])/g, " $1")}:
+                      </span>
+                      <span>{rating as string}</span>
+                    </div>
+                  ))}
+              </div>
             </div>
           </div>{" "}
         </div>
 
         {/* Remarks */}
         <div className="mb-2">
-          <h3
-            className="text-sm font-bold text-primary-900 mb-1 pl-2"
-            style={{ borderLeft: "3px solid #1160A8" }}
-          >
-            Remarks
-          </h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-50 p-3 rounded text-xs min-h-[70px]">
-              <h4 className="font-bold mb-0.5">Class Teacher:</h4>
-              <p className="italic">"{remarks.teacher}"</p>
+          <SectionHeader icon={MessageSquare} title="Remarks" />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white px-2 py-1 text-[11px]">
+              <h4 className="font-bold mb-0.5 text-slate-900">Class Teacher:</h4>
+              <p className="italic text-slate-700">"{remarks.teacher}"</p>
             </div>
-            <div className="bg-slate-50 p-2 rounded text-xs">
-              <h4 className="font-bold mb-0.5">Head Teacher:</h4>
-              <p className="italic">"{remarks.headTeacher}"</p>
+            <div className="bg-white px-2 py-1 text-[11px]">
+              <h4 className="font-bold mb-0.5 text-slate-900">Head Teacher:</h4>
+              <p className="italic text-slate-700">"{remarks.headTeacher}"</p>
             </div>
           </div>
         </div>
 
         {/* Promotion & Dates */}
-        <div className="grid grid-cols-3 gap-3 mb-2 text-xs">
+        <div className="grid grid-cols-3 gap-2 mb-2 text-[12px]">
           {promotion?.isPromotionalTerm !== false && (
-            <div className="bg-red-50 text-red-800 p-2 rounded text-center">
+            <div className="bg-red-50 text-red-800 p-2 rounded-md text-center">
               <span className="font-bold">Promotion:</span> {promotion.status}
             </div>
           )}
-          <div className="bg-green-50 text-green-800 p-2 rounded text-center">
+          <div className="bg-green-50 text-green-800 p-2 rounded-md text-center">
             <span className="font-bold">Next Term:</span>{" "}
             {termDates.reopeningDate}
           </div>
-          <div className="bg-slate-100 text-slate-700 p-2 rounded text-center">
+          <div className="bg-blue-50 text-[#1160A8] p-2 rounded-md text-center">
             <span className="font-bold">Term Ends in:</span>{" "}
-            {termDates.vacationDate}
+            <span>{termDates.vacationDate}</span>
           </div>
         </div>
 
         {/* Signatures */}
-        <div className="flex justify-between items-center pt-2 border-t">
+        <div className="flex justify-between items-center pt-2 mt-auto border-t border-slate-300">
           <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-32 pt-1 text-xs font-semibold">
+            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[12px] font-semibold">
               Class Teacher
             </p>
           </div>
@@ -541,10 +545,11 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
             </div>
           </div>
           <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-32 pt-1 text-xs font-semibold">
+            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[12px] font-semibold">
               Head Teacher
             </p>
           </div>
+        </div>
         </div>
       </div>
       <div className="flex justify-end mt-4">

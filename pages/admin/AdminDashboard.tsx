@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useEffect,
   useMemo,
   useState,
@@ -60,6 +60,7 @@ import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
   calculateTotalScore,
+  getFilteredClasses,
 } from "../../constants";
 import AttendanceChart from "../../components/dashboard/AttendanceChart";
 
@@ -192,7 +193,7 @@ const getGradeAveragePercent = (distribution: Record<string, number>) => {
 };
 
 const RelativeTimeText: React.FC<{
-  timestamp: Date | null;
+  timestamp: Date | number | null;
   fallback?: string;
 }> = React.memo(({ timestamp, fallback = "Not updated" }) => {
   const [now, setNow] = useState(() => Date.now());
@@ -202,11 +203,12 @@ const RelativeTimeText: React.FC<{
     setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [timestamp?.getTime()]);
+  }, [timestamp instanceof Date ? timestamp.getTime() : timestamp]);
 
   if (!timestamp) return <>{fallback}</>;
+  const tsMs = timestamp instanceof Date ? timestamp.getTime() : timestamp;
   return (
-    <>{Math.max(0, Math.floor((now - timestamp.getTime()) / 1000))}s ago</>
+    <>{Math.max(0, Math.floor((now - tsMs) / 1000))}s ago</>
   );
 });
 
@@ -417,14 +419,19 @@ const describePieSlice = (
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { school, schoolLoading } = useSchool();
   const schoolId = school?.id || null;
   const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
+
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
+
   const [stats, setStats] = useState({
     students: 0,
     teachers: 0,
-    classes: CLASSES_LIST.length,
+    classes: availableClasses.length,
     maleStudents: 0,
     femaleStudents: 0,
     classAttendance: [] as {
@@ -626,23 +633,22 @@ const AdminDashboard = () => {
 
   const subscriptionPlanEndsAt = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
-    if ((school as any)?.plan === "trial") return null;
+    if ((school as any)?.plan === "trial" || (school as any)?.status === "trial_active") return null;
     if (!resolvedPlanEndsAt) return null;
     return resolvedPlanEndsAt.getTime() > Date.now()
       ? resolvedPlanEndsAt
       : null;
-  }, [resolvedPlanEndsAt, school?.plan]);
+  }, [resolvedPlanEndsAt, school?.plan, (school as any)?.status]);
 
   const trialPlanEndsAt = useMemo(() => {
-    if ((school as any)?.plan !== "trial") return null;
+    if ((school as any)?.plan !== "trial" && (school as any)?.status !== "trial_active") return null;
     const planEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
     if (!planEndsAt) return null;
     return planEndsAt.getTime() > Date.now() ? planEndsAt : null;
-  }, [school?.planEndsAt, school?.plan]);
+  }, [school?.planEndsAt, school?.plan, (school as any)?.status]);
 
   const gracePeriod = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
-    if ((school as any)?.plan === "trial") return null;
     if (!resolvedPlanEndsAt) return null;
 
     const graceEndsAt = new Date(
@@ -825,7 +831,7 @@ const AdminDashboard = () => {
         const nextStats = {
           students: summary.studentsCount,
           teachers: summary.teachersCount,
-          classes: CLASSES_LIST.length,
+          classes: availableClasses.length,
           maleStudents: 0,
           femaleStudents: 0,
           classAttendance: [] as {
@@ -1030,7 +1036,7 @@ const AdminDashboard = () => {
                 date: dateKey,
                 classes:
                   teacher.assignedClassIds
-                    ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                    ?.map((id) => availableClasses.find((c) => c.id === id)?.name)
                     .join(", ") || "Not Assigned",
               });
             }
@@ -1045,7 +1051,7 @@ const AdminDashboard = () => {
           .forEach((teacher) => {
             const classId = teacher.assignedClassIds![0];
             const className =
-              CLASSES_LIST.find((c) => c.id === classId)?.name ||
+              availableClasses.find((c) => c.id === classId)?.name ||
               "Unknown Class";
 
             expectedSchoolDays.forEach((dateKey) => {
@@ -1215,7 +1221,7 @@ const AdminDashboard = () => {
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
-                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                  ?.map((id) => availableClasses.find((c) => c.id === id)?.name)
                   .join(", ") || "Not Assigned",
             };
           },
@@ -1235,7 +1241,7 @@ const AdminDashboard = () => {
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
-                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                  ?.map((id) => availableClasses.find((c) => c.id === id)?.name)
                   .join(", ") || "Not Assigned",
             };
           }) as any[];
@@ -1250,7 +1256,7 @@ const AdminDashboard = () => {
               teacherName: teacher?.fullName || "Unknown",
               teacherClasses:
                 teacher?.assignedClassIds
-                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+                  ?.map((id) => availableClasses.find((c) => c.id === id)?.name)
                   .join(", ") || "Not Assigned",
             };
           }) as any[];
@@ -1426,7 +1432,7 @@ const AdminDashboard = () => {
           const record = {
             id: studentId,
             name: s.name,
-            class: CLASSES_LIST.find((c) => c.id === s.classId)?.name || "N/A",
+            class: availableClasses.find((c) => c.id === s.classId)?.name || "N/A",
             avg: parseFloat(avg.toFixed(1)),
           };
           averagesList.push(record);
@@ -1447,7 +1453,7 @@ const AdminDashboard = () => {
 
         const comp = Object.entries(perClassTotals)
           .map(([cls, v]) => ({
-            className: CLASSES_LIST.find((c) => c.id === cls)?.name || cls,
+            className: availableClasses.find((c) => c.id === cls)?.name || cls,
             avg: Math.round(v.total / Math.max(1, v.count)),
           }))
           .sort((a, b) => b.avg - a.avg);
@@ -1476,7 +1482,7 @@ const AdminDashboard = () => {
         const fullStats = {
           students: dashboardStats.studentsCount,
           teachers: dashboardStats.teachersCount,
-          classes: CLASSES_LIST.length,
+          classes: availableClasses.length,
           maleStudents: dashboardStats.gender.male,
           femaleStudents: dashboardStats.gender.female,
           classAttendance: dashboardStats.classAttendance,
@@ -1872,7 +1878,7 @@ const AdminDashboard = () => {
           JSON.stringify({
             students: dashboardStats.studentsCount,
             teachers: dashboardStats.teachersCount,
-            classes: CLASSES_LIST.length,
+            classes: availableClasses.length,
             maleStudents: dashboardStats.gender.male,
             femaleStudents: dashboardStats.gender.female,
             classAttendance: dashboardStats.classAttendance,
@@ -1910,7 +1916,7 @@ const AdminDashboard = () => {
             teacherClasses:
               teacher?.assignedClassIds
                 ?.map(
-                  (id: string) => CLASSES_LIST.find((c) => c.id === id)?.name,
+                  (id: string) => availableClasses.find((c) => c.id === id)?.name,
                 )
                 .join(", ") || "Not Assigned",
           };
@@ -1956,7 +1962,7 @@ const AdminDashboard = () => {
   const computeAttendanceForWeek = async (monday: Date, friday: Date) => {
     // For each class, fetch attendance records and compute percent for dates in range
     const results: number[] = [];
-    for (const cls of CLASSES_LIST) {
+    for (const cls of availableClasses) {
       try {
         if (!schoolId) return null;
         const records = await db.getClassAttendance(schoolId, cls.id);
@@ -2007,7 +2013,7 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => {
-    if (schoolLoading || !schoolId) return;
+    if (schoolLoading || !schoolId || !isAuthenticated) return;
 
     setLoading(false);
 
@@ -2060,15 +2066,15 @@ const AdminDashboard = () => {
   ]);
 
   useEffect(() => {
-    if (!schoolId) return;
+    if (!schoolId || !isAuthenticated) return;
     computeWeekComparison().catch((e) =>
       console.error("Error computing week comparison", e),
     );
-  }, [schoolId, attendanceWeek]);
+  }, [schoolId, attendanceWeek, isAuthenticated]);
 
   // Real-time listeners: refresh stats when attendance, assessments, or config change
   useEffect(() => {
-    if (!schoolId) return;
+    if (!schoolId || !isAuthenticated) return;
     const attendanceRef = query(
       collection(firestore, "attendance"),
       where("schoolId", "==", schoolId),
@@ -2138,7 +2144,7 @@ const AdminDashboard = () => {
       unsubConfig();
       unsubTeacherAttendance();
     };
-  }, [schoolId, attendanceWeek]);
+  }, [schoolId, attendanceWeek, isAuthenticated]);
 
   // Real-time polling effect
   useEffect(() => {
@@ -3231,7 +3237,7 @@ const AdminDashboard = () => {
               {classes.map((cls) => (
                 <React.Fragment key={cls}>
                   <div className="p-2 font-medium text-sm text-slate-700">
-                    {CLASSES_LIST.find((c) => c.id === cls)?.name || cls}
+                    {availableClasses.find((c) => c.id === cls)?.name || cls}
                   </div>
                   {subjects.map((sub) => {
                     const v = data[cls]?.[sub] ?? 0;
@@ -3699,14 +3705,14 @@ const AdminDashboard = () => {
                         Trial Countdown
                       </p>
                       <h3 className="text-xl font-bold text-slate-900 mt-1">
-                        Trial access ends soon
+                        Free 30-Day Testing Period
                       </h3>
                       <p className="text-sm text-slate-600 mt-2">
-                        Your trial ends on{" "}
+                        You have free access to test how the system works until{" "}
                         <span className="font-semibold text-slate-800">
                           {trialPlanEndsAt.toLocaleDateString()}
                         </span>
-                        . Make the most of your evaluation period.
+                        . When the trial ends, the main countdown of your billing cycle will start.
                       </p>
                     </div>
                   </div>
@@ -3723,15 +3729,6 @@ const AdminDashboard = () => {
                         <LiveCountdownText target={trialPlanEndsAt} />
                       </div>
                     </div>
-                    {hasFeature("billing") && (
-                      <Link
-                        to="/admin/billing"
-                        className={DASHBOARD_BUTTON_PRIMARY}
-                      >
-                        <Wallet size={16} />
-                        Upgrade Plan
-                      </Link>
-                    )}
                   </div>
                 </div>
               </div>

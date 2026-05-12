@@ -629,6 +629,12 @@ const TeacherAttendance = () => {
                         Reason: {holidayReason}
                       </div>
                     )}
+                    {record?.approvalStatus === "pending" && (
+                      <div className="flex items-center gap-2 rounded-xl bg-indigo-50 p-3 text-xs font-semibold text-indigo-700 border border-indigo-100 animate-pulse">
+                        <Clock className="h-4 w-4" />
+                        Attendance submitted. Please wait for the admin to approve your attendance.
+                      </div>
+                    )}
                     {record?.approvalStatus === "rejected" && (
                       <div className="text-xs font-semibold text-rose-600">
                         Attendance is marked as Absent. Please do not cheat when

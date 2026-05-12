@@ -18,6 +18,9 @@ export const CLASSES_LIST = [
   { id: "c_jhs1", name: "JHS 1", level: "JHS" },
   { id: "c_jhs2", name: "JHS 2", level: "JHS" },
   { id: "c_jhs3", name: "JHS 3", level: "JHS" },
+  { id: "c_shs1", name: "SHS 1", level: "SHS" },
+  { id: "c_shs2", name: "SHS 2", level: "SHS" },
+  { id: "c_shs3", name: "SHS 3", level: "SHS" },
 ];
 
 export const CLASS_PROMOTION_MAP: Record<string, string | null> = {
@@ -34,7 +37,40 @@ export const CLASS_PROMOTION_MAP: Record<string, string | null> = {
   c_p6: "c_jhs1",
   c_jhs1: "c_jhs2",
   c_jhs2: "c_jhs3",
-  c_jhs3: null,
+  c_jhs3: "c_shs1",
+  c_shs1: "c_shs2",
+  c_shs2: "c_shs3",
+  c_shs3: null,
+};
+
+/**
+ * Filter the global CLASSES_LIST based on the school type.
+ * @param schoolType The type of school (e.g., "Primary School", "Junior High School")
+ * @returns A filtered array of classes
+ */
+export const getFilteredClasses = (schoolType?: string) => {
+  if (!schoolType) return CLASSES_LIST;
+
+  const type = schoolType.toLowerCase();
+
+  if (type.includes("junior high")) {
+    return CLASSES_LIST.filter(c => c.level === "JHS");
+  }
+  if (type.includes("primary school")) {
+    return CLASSES_LIST.filter(c => c.level === "PRIMARY");
+  }
+  if (type.includes("senior high")) {
+    return CLASSES_LIST.filter(c => c.level === "SHS");
+  }
+  if (type.includes("nursery") || type.includes("kindergarten")) {
+    return CLASSES_LIST.filter(c => ["CRECHE", "NURSERY", "KG"].includes(c.level));
+  }
+  if (type.includes("basic school")) {
+    // Basic School usually includes Nursery through JHS
+    return CLASSES_LIST.filter(c => ["NURSERY", "KG", "PRIMARY", "JHS"].includes(c.level));
+  }
+
+  return CLASSES_LIST;
 };
 
 export const DEFAULT_SUBJECTS = [

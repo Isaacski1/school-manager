@@ -12,7 +12,17 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
   const [remarks, setRemarks] = useState<StudentRemark[]>([]);
   const [adminRemarks, setAdminRemarks] = useState<AdminRemark[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTerm, setSelectedTerm] = useState<string>("all");
+  const [selectedTerm, setSelectedTerm] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const stored = sessionStorage.getItem(`remarks-selected-term-${student.id}`);
+      if (stored) return stored;
+    }
+    return "all";
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem(`remarks-selected-term-${student.id}`, selectedTerm);
+  }, [selectedTerm, student.id]);
 
   useEffect(() => {
     async function fetchRemarks() {
@@ -25,7 +35,10 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
         setLoading(true);
 
         // Fetch teacher remarks for the student
-        const teacherRemarks = await db.getStudentRemarks(student.schoolId, student.id);
+        const teacherRemarks = await db.getStudentRemarksByStudent(
+          student.schoolId,
+          student.id
+        );
         setRemarks(teacherRemarks);
 
         // Fetch admin remarks for the student
@@ -117,9 +130,9 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
 
         <div className="p-6 space-y-6">
           {/* Term Filter */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-slate-600">Filter by term:</span>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setSelectedTerm("all")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -160,10 +173,10 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
               {filteredRemarks.map((remark, index) => (
                 <div key={index} className="border border-slate-200 rounded-xl overflow-hidden">
                   {/* Remark Header */}
-                  <div className={`px-5 py-3 border-b border-slate-200 flex items-center justify-between ${
+                  <div className={`px-4 sm:px-5 py-3 border-b border-slate-200 flex flex-wrap items-start sm:items-center justify-between gap-2 sm:gap-0 ${
                     remark.type === "teacher" ? "bg-blue-50" : "bg-purple-50"
                   }`}>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       {remark.type === "teacher" ? (
                         <User size={18} className="text-blue-600" />
                       ) : (
@@ -178,7 +191,7 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
                         </p>
                       </div>
                     </div>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-slate-500 whitespace-nowrap ml-7 sm:ml-0 mt-1 sm:mt-0">
                       {new Date(remark.date).toLocaleDateString()}
                     </span>
                   </div>
@@ -206,7 +219,7 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
           {filteredRemarks.length > 0 && (
             <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Summary</h3>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div className="text-center">
                   <p className="text-2xl font-bold text-slate-800">
                     {filteredRemarks.filter(r => r.type === "teacher").length}

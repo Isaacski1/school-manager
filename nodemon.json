@@ -1,0 +1,12 @@
+{
+  "watch": ["server", "services", "types"],
+  "ext": "js,mjs,cjs,json,ts",
+  "ignore": [
+    "whatsapp-session/**",
+    ".wwebjs_cache/**",
+    "node_modules/**",
+    "dist/**",
+    "*.log"
+  ],
+  "exec": "node server/server.js"
+}

@@ -21,42 +21,120 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
       try {
         setLoading(true);
         
-        // 1. Fetch Fees
-        console.log("[Dashboard] Fetching ledgers...");
-        const ledgerData = await db.getStudentLedgers({
-          schoolId: student.schoolId,
-          classId: student.classId || "",
-          academicYear: "2024/2025",
-          studentId: student.id
+        // 0. Fetch School Config first to get correct academic context
+        let config;
+        try {
+          config = await db.getSchoolConfig(student.schoolId);
+        } catch (e) {
+          console.error("[DashboardOverview] Error fetching school config:", e);
+          throw e;
+        }
+        
+        const currentYear = config.academicYear || "2023-2024";
+        const currentTermLabel = config.currentTerm || "Term 1";
+        const currentTermNum = parseInt(currentTermLabel.split(" ")[1]) || 1;
+        
+        // --- PARALLEL DATA FETCHING ---
+        // Fire all remaining queries at once to vastly improve load time
+        const [ledgerData, paymentData, allClassAttendance, assessments, remarks] = await Promise.all([
+          // 1. Fees data
+          db.getStudentLedgers({
+            schoolId: student.schoolId,
+            classId: student.classId || "",
+            academicYear: currentYear,
+            studentId: student.id
+          }).catch(e => { console.error("Error fetching ledgers:", e); return []; }),
+          
+          db.getPayments({
+            schoolId: student.schoolId,
+            studentId: student.id
+          }).catch(e => { console.error("Error fetching payments:", e); return []; }),
+          
+          // 2. Attendance data
+          db.getClassAttendance(student.schoolId, student.classId || "")
+            .catch(e => { console.error("Error fetching attendance:", e); return []; }),
+            
+          // 3. Assessments data
+          db.getStudentAssessmentsByStudent(student.schoolId, student.id)
+            .catch(e => { console.error("Error fetching assessments:", e); return []; }),
+            
+          // 4. Remarks data
+          db.getStudentRemarksByStudent(student.schoolId, student.id)
+            .catch(e => { console.error("Error fetching remarks:", e); return []; })
+        ]);
+
+        // --- PROCESS RESULTS ---
+        
+        // 1. Process Fees
+        // We calculate balance per-ledger (per term) to correctly handle payments made
+        // via the parent portal (feeId = "online_payment") that are not tied to a specific
+        // fee but still reduce the overall term balance.
+        let totalDue = 0;
+        ledgerData.forEach((ledger: any) => {
+          const totalFeesInLedger = ledger.fees.reduce((sum: number, fee: any) => sum + fee.amount, 0);
+          const openingPaidTotal = ledger.fees.reduce((sum: number, fee: any) => sum + (fee.openingPaidAmount || 0), 0);
+
+          // Sum ALL payments for this student in this specific term (regardless of feeId)
+          const termPayments = paymentData.filter(
+            (p: any) => p.studentId === student.id &&
+                        p.academicYear === ledger.academicYear &&
+                        p.term === ledger.term
+          );
+          const paidSinceOnboarding = termPayments.reduce((sum: number, p: any) => sum + p.amountPaid, 0);
+
+          const totalPaid = openingPaidTotal + paidSinceOnboarding;
+          totalDue += Math.max(0, totalFeesInLedger - totalPaid);
         });
-        const ledgers = ledgerData;
-        const totalDue = ledgers.reduce((sum, ledger) => sum + (ledger.openingBalance ?? 0), 0);
         setDueFees(totalDue);
         
-        // 2. Fetch Attendance (Current Month)
-        console.log("[Dashboard] Fetching attendance...");
-        const date = new Date();
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const daysInMonth = new Date(year, date.getMonth() + 1, 0).getDate();
-        const startDate = `${year}-${month}-01`;
-        const endDate = `${year}-${month}-${daysInMonth}`;
+        // 2. Process Attendance (Term-wide)
+        const getLocalDateString = (d: Date) => 
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         
-        const attendanceRecords = await db.getClassAttendanceByDateRange(
-          student.schoolId,
-          student.classId || "",
-          startDate,
-          endDate
-        );
+        const today = new Date();
+        const endDate = getLocalDateString(today);
+        
+        // Use schoolReopenDate or fallback to 90 days ago
+        let startDate = config.schoolReopenDate?.trim();
+        if (!startDate || startDate > endDate) {
+          const fallbackDate = new Date();
+          fallbackDate.setDate(today.getDate() - 90); 
+          startDate = getLocalDateString(fallbackDate);
+        }
         
         let present = 0;
         let total = 0;
-        attendanceRecords.forEach(record => {
-          if (!record.isHoliday) {
-            total++;
-            if (record.presentStudentIds.includes(student.id)) present++;
+        const studentIdTrimmed = student.id.trim();
+        
+        allClassAttendance.forEach(record => {
+          // Filter by date range locally
+          if (record.date >= startDate! && record.date <= endDate) {
+            if (!record.isHoliday) {
+              total++;
+              // Robust ID check
+              const isPresent = record.presentStudentIds?.some((id: string) => id.trim() === studentIdTrimmed);
+              if (isPresent) present++;
+            }
           }
         });
+        
+        // Final fallback: If still 0 days found in the term but data exists elsewhere, 
+        // try the full 90-day window to show SOMETHING useful
+        if (total === 0 && allClassAttendance.length > 0) {
+           const fallbackDate = new Date();
+           fallbackDate.setDate(today.getDate() - 90);
+           const fallbackStart = getLocalDateString(fallbackDate);
+           
+           allClassAttendance.forEach(record => {
+             if (record.date >= fallbackStart && record.date <= endDate) {
+               if (!record.isHoliday) {
+                 total++;
+                 const isPresent = record.presentStudentIds?.some((id: string) => id.trim() === studentIdTrimmed);
+                 if (isPresent) present++;
+               }
+             }
+           });
+        }
         
         setAttendanceStats({
           present,
@@ -64,44 +142,51 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           percentage: total > 0 ? Math.round((present / total) * 100) : 0
         });
         
-        // 3. Fetch Latest Assessment
-        console.log("[Dashboard] Fetching assessments...");
-        const assessments = await db.getStudentAssessmentsByStudent(
-          student.schoolId,
-          student.id
-        );
-        
+        // 3. Process Latest Assessment
         if (assessments.length > 0) {
-          // Sort by term desc
-          const sorted = [...assessments].sort((a, b) => b.term - a.term);
-          setLatestExam(sorted[0]);
-        } else {
-          setLatestExam(null);
-        }
-
-        // 4. Fetch Latest Remark
-        console.log("[Dashboard] Fetching remarks...");
-        const remarks = await db.getStudentRemarks(student.schoolId, student.id);
-        if (remarks.length > 0) {
-          const sorted = [...remarks].sort((a, b) => {
-             const dateA = typeof a.dateCreated === 'number' ? a.dateCreated : new Date(a.dateCreated).getTime();
-             const dateB = typeof b.dateCreated === 'number' ? b.dateCreated : new Date(b.dateCreated).getTime();
-             return dateB - dateA;
+          // Sort by term desc, then academic year desc
+          const sorted = [...assessments].sort((a, b) => {
+            if (b.academicYear !== a.academicYear) return b.academicYear.localeCompare(a.academicYear);
+            
+            // Extract term numbers for comparison
+            const termA = parseInt(String(a.term).replace(/\D/g, '')) || 0;
+            const termB = parseInt(String(b.term).replace(/\D/g, '')) || 0;
+            return termB - termA;
           });
-          setLatestRemark(sorted[0]);
-        } else {
-          setLatestRemark(null);
+          
+          setLatestExam(sorted[0]);
+        }
+        
+        // 4. Process Latest Remark
+        if (remarks.length > 0) {
+          // Find remark matching current year and term, otherwise use the most recent
+          let matchedRemark = remarks.find(
+            r => r.academicYear === currentYear && r.term === currentTermLabel
+          );
+          
+          if (!matchedRemark) {
+            // Sort to find latest
+            const sortedRemarks = [...remarks].sort((a, b) => {
+              if (b.academicYear !== a.academicYear) return b.academicYear.localeCompare(a.academicYear);
+              const termA = parseInt(String(a.term).replace(/\D/g, '')) || 0;
+              const termB = parseInt(String(b.term).replace(/\D/g, '')) || 0;
+              return termB - termA;
+            });
+            matchedRemark = sortedRemarks[0];
+          }
+          
+          setLatestRemark(matchedRemark);
         }
         
       } catch (error) {
-        console.error("Error fetching overview data:", error);
+        console.error("General error in DashboardOverview fetchData:", error);
       } finally {
         setLoading(false);
       }
     }
     
     fetchData();
-  }, [student]);
+  }, [student.id, student.schoolId, student.classId]);
 
   if (loading) {
     return (
@@ -143,7 +228,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           </div>
           <p className="text-2xl font-bold text-purple-900">{attendanceStats.percentage}%</p>
           <p className="text-xs text-purple-600 mt-1">
-            Present {attendanceStats.present} out of {attendanceStats.total} days this month
+            Present {attendanceStats.present} out of {attendanceStats.total} days this term
           </p>
         </div>
 

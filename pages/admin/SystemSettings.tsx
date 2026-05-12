@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
@@ -14,6 +14,7 @@ import {
   kgSubjects,
   primarySubjects,
   jhsSubjects,
+  getFilteredClasses,
 } from "../../constants";
 import {
   Plus,
@@ -72,10 +73,12 @@ const SystemSettings = () => {
   const [noticeType, setNoticeType] = useState<"info" | "urgent">("info");
   const [isAddingNotice, setIsAddingNotice] = useState(false);
 
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
+
   // Class Subjects State
-  const [selectedClassId, setSelectedClassId] = useState<string>(
-    CLASSES_LIST[0]?.id || "",
-  );
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [currentClassSubjects, setCurrentClassSubjects] = useState<string[]>(
     [],
   );
@@ -133,16 +136,16 @@ const SystemSettings = () => {
       Other: [],
     };
 
-    CLASSES_LIST.forEach((cls: ClassRoom) => {
+    availableClasses.forEach((cls: ClassRoom) => {
       const key = getClassGroupKey(cls.name);
       groups[key].push(cls);
     });
 
     return groups;
-  }, []);
+  }, [availableClasses]);
 
   const getGroupClassIds = (classId: string) => {
-    const cls = CLASSES_LIST.find((item) => item.id === classId);
+    const cls = availableClasses.find((item) => item.id === classId);
     if (!cls) return [classId];
     const groupKey = getClassGroupKey(cls.name);
     const group = classGroups[groupKey];
@@ -188,16 +191,29 @@ const SystemSettings = () => {
     fetchSubjects();
   }, [selectedClassId, schoolId]);
 
+  useEffect(() => {
+    if (availableClasses.length > 0 && !selectedClassId) {
+      setSelectedClassId(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClassId]);
+
   // --- Config Handlers ---
   const handleSaveConfig = async () => {
     setSavingConfig(true);
     try {
+      // Save primary config first
       await db.updateSchoolConfig({
         ...config,
+        schoolId, // Explicitly ensure schoolId is passed
         holidayDates: config.holidayDates || [],
       });
+      
+      // Success feedback immediately after primary save
       showToast("Configuration saved successfully!", { type: "success" });
-      await logActivity({
+      setSavingConfig(false);
+
+      // Log activity in background without awaiting
+      logActivity({
         schoolId,
         actorUid: user?.id || null,
         actorRole: user?.role || null,
@@ -208,13 +224,16 @@ const SystemSettings = () => {
           module: "System Settings",
           actorName: user?.fullName || "",
         },
-      });
+      }).catch(err => console.warn("Background activity log failed", err));
+
     } catch (error: any) {
       console.error("Failed to save config", error);
       showToast("Failed to save configuration. Please try again.", {
         type: "error",
       });
-      await logActivity({
+      setSavingConfig(false);
+      
+      logActivity({
         schoolId,
         actorUid: user?.id || null,
         actorRole: user?.role || null,
@@ -226,9 +245,7 @@ const SystemSettings = () => {
           error: error?.message || "Unknown error",
           actorName: user?.fullName || "",
         },
-      });
-    } finally {
-      setSavingConfig(false);
+      }).catch(() => {});
     }
   };
 
@@ -251,6 +268,7 @@ const SystemSettings = () => {
     try {
       await db.updateSchoolConfig({
         ...nextConfig,
+        schoolId, // Explicitly ensure schoolId is passed
         holidayDates: nextConfig.holidayDates || [],
       });
       showToast("Holiday date saved.", { type: "success" });
@@ -302,6 +320,7 @@ const SystemSettings = () => {
     try {
       await db.updateSchoolConfig({
         ...nextConfig,
+        schoolId, // Explicitly ensure schoolId is passed
         holidayDates: nextConfig.holidayDates || [],
       });
       showToast("Holiday date removed.", { type: "success" });

@@ -16,7 +16,10 @@ export type FeatureKey =
   | "backups"
   | "activity_monitor"
   | "student_history"
-  | "timetable";
+  | "timetable"
+  | "whatsapp_broadcast"
+  | "parent_portal"
+  | "online_payments";
 
 export type FeaturePlan = "starter" | "standard";
 
@@ -51,6 +54,9 @@ export const PLAN_FEATURES: Record<FeaturePlan, FeatureKey[]> = {
     "activity_monitor",
     "student_history",
     "timetable",
+    "whatsapp_broadcast",
+    "parent_portal",
+    "online_payments",
   ],
 };
 

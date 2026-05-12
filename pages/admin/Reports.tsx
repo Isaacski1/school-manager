@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { useSchool } from "../../context/SchoolContext";
@@ -15,6 +15,7 @@ import {
   kgSubjects,
   primarySubjects,
   jhsSubjects,
+  getFilteredClasses,
 } from "../../constants";
 import { Download, BookOpen, Users, CheckCircle, XCircle } from "lucide-react";
 import { Assessment } from "../../types";
@@ -22,7 +23,12 @@ import { Assessment } from "../../types";
 const Reports = () => {
   const { school } = useSchool();
   const schoolId = school?.id || null;
-  const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
+
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
+
+  const [selectedClass, setSelectedClass] = useState("");
   const [reportData, setReportData] = useState<any[]>([]);
   const [passFailData, setPassFailData] = useState<{
     pass: any[];
@@ -176,6 +182,12 @@ const Reports = () => {
     }
   }, [selectedClass, schoolId]);
 
+  useEffect(() => {
+    if (availableClasses.length > 0 && !selectedClass) {
+      setSelectedClass(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClass]);
+
   const downloadCSV = () => {
     if (reportData.length === 0) return;
 
@@ -293,7 +305,7 @@ const Reports = () => {
                 value={selectedClass}
                 onChange={(e) => setSelectedClass(e.target.value)}
               >
-                {CLASSES_LIST.map((c) => (
+                {availableClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

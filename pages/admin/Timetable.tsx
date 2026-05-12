@@ -1,7 +1,8 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
-import { CLASSES_LIST } from "../../constants";
+import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { db } from "../../services/mockDb";
+import { useSchool } from "../../context/SchoolContext";
 import { TimeSlot, ClassTimetable } from "../../types";
 import {
   Save,
@@ -67,9 +68,15 @@ const normalizeCustomType = (value: string) =>
     .replace(/^_+|_+$/g, "");
 
 const Timetable = () => {
+  const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = requireSchoolId(user);
-  const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
+
+  const availableClasses = React.useMemo(() => {
+    return getFilteredClasses(school?.schoolType);
+  }, [school?.schoolType]);
+
+  const [selectedClass, setSelectedClass] = useState("");
   const [timetable, setTimetable] = useState<Record<string, TimeSlot[]>>({});
   const [loading, setLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(DAYS[0]);
@@ -170,6 +177,12 @@ const Timetable = () => {
 
     loadDataForClass();
   }, [selectedClass, schoolId]);
+
+  useEffect(() => {
+    if (availableClasses.length > 0 && !selectedClass) {
+      setSelectedClass(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClass]);
 
   const setSlotType = (type: string) => {
     const subject =
@@ -391,7 +404,7 @@ const Timetable = () => {
                 value={selectedClass}
                 onChange={(e) => setSelectedClass(e.target.value)}
               >
-                {CLASSES_LIST.map((c) => (
+                {availableClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

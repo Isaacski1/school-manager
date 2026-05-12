@@ -66,6 +66,7 @@ export interface School {
     maxStudents?: number;
   };
   studentsCount?: number;
+  schoolType?: string;
 }
 
 export interface PlanConfig {
@@ -369,6 +370,7 @@ export interface Student {
   classId: string;
   guardianName: string;
   guardianPhone: string;
+  guardianEmail?: string;
   parentId?: string;
   studentStatus?: "graduated" | "stopped" | "active";
   createdAt?: Date | number;

@@ -629,20 +629,43 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
       });
     }
 
-    const normalizedPhone = normalizeWhatsappAddress(phone).replace("whatsapp:", "");
+    const rawPhone = String(phone).trim();
+    const normalizedPhone = normalizeWhatsappAddress(rawPhone).replace("whatsapp:", "");
     console.log(`[Auth] Parent login attempt for phone: ${normalizedPhone}, DOB: ${dob}`);
 
+    // Generate phone variants to check (normalized, local 0..., and raw digits)
+    const phoneVariants = [normalizedPhone, rawPhone];
+    if (normalizedPhone.startsWith("+233")) {
+      phoneVariants.push("0" + normalizedPhone.substring(4));
+      phoneVariants.push(normalizedPhone.substring(4));
+    }
+    // Remove duplicates and empty strings
+    const uniquePhoneVariants = [...new Set(phoneVariants.filter(Boolean))];
+
+    // Generate DOB variants (YYYY-MM-DD, MM/DD/YYYY, M/D/YYYY)
+    const [y, m, d] = dob.split("-");
+    const dobVariants = [
+      dob,
+      `${m}/${d}/${y}`,
+      `${parseInt(m)}/${parseInt(d)}/${y}`
+    ];
+
     const startTime = Date.now();
-    // Check if any student matches this phone and DOB
+    // Query by phone variants (Firestore 'in' limit is 10, we have ~4)
     const studentsRef = admin.firestore().collection("students");
     const snapshot = await studentsRef
-      .where("guardianPhone", "==", normalizedPhone)
-      .where("dob", "==", dob)
+      .where("guardianPhone", "in", uniquePhoneVariants)
       .get();
     
-    console.log(`[Auth] Firestore query took ${Date.now() - startTime}ms. Found ${snapshot.size} matches.`);
+    console.log(`[Auth] Phone query found ${snapshot.size} potential matches in ${Date.now() - startTime}ms.`);
 
-    if (snapshot.empty) {
+    // Filter by DOB in memory to handle different date formats
+    const matches = snapshot.docs.filter(doc => {
+      const studentDob = String(doc.data().dob || "").trim();
+      return dobVariants.includes(studentDob);
+    });
+
+    if (matches.length === 0) {
       return res.status(401).json({
         success: false,
         error: "Invalid login credentials. Please verify the phone number and your child's Date of Birth."
@@ -651,8 +674,8 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
 
     // Match found! Mint a free Custom Token for Firebase
     const uid = normalizedPhone;
-    const schoolIds = [...new Set(snapshot.docs.map(doc => doc.data().schoolId))].filter(Boolean);
-    const studentIds = snapshot.docs.map(doc => doc.id);
+    const schoolIds = [...new Set(matches.map(doc => doc.data().schoolId))].filter(Boolean);
+    const studentIds = matches.map(doc => doc.id);
     const customToken = await admin.auth().createCustomToken(uid, {
       role: "parent",
       schoolIds: schoolIds,
@@ -670,6 +693,78 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
       success: false,
       error: "Internal server error during login."
     });
+  }
+});
+
+/**
+ * Setup School Payment (Paystack Subaccount)
+ * POST /api/schools/setup-payment
+ */
+app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
+  try {
+    const { schoolId, businessName, bankCode, accountNumber, contactPhone, method } = req.body;
+    const { uid } = req.user;
+
+    // 1. Verify caller is admin of this school
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (!userData || userData.schoolId !== schoolId || userData.role !== "school_admin") {
+      return res.status(403).json({ error: "Forbidden: You are not authorized to setup payments for this school." });
+    }
+
+    if (!businessName || !bankCode || !accountNumber) {
+      return res.status(400).json({ error: "Business name, bank, and account number are required." });
+    }
+
+    if (!PAYSTACK_SECRET_KEY) {
+      return res.status(500).json({ error: "Server configuration error: Paystack secret key missing." });
+    }
+
+    // 2. Call Paystack to create subaccount
+    const paystackResponse = await fetch("https://api.paystack.co/subaccount", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        business_name: businessName,
+        settlement_bank: bankCode,
+        account_number: accountNumber,
+        percentage_charge: 0,
+        primary_contact_phone: contactPhone || userData.phone || ""
+      }),
+    });
+
+    const paystackData = await paystackResponse.json();
+
+    if (!paystackResponse.ok) {
+      console.error("Paystack Subaccount Error:", paystackData);
+      return res.status(400).json({ 
+        error: paystackData.message || "Failed to create Paystack subaccount." 
+      });
+    }
+
+    const subaccountCode = paystackData.data.subaccount_code;
+
+    // 3. Store subaccount details in Firestore
+    await admin.firestore().collection("schools").doc(schoolId).update({
+      paymentSettings: {
+        ...req.body,
+        subaccountCode: subaccountCode,
+        setupAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "active"
+      }
+    });
+
+    return res.json({
+      success: true,
+      subaccountCode: subaccountCode
+    });
+
+  } catch (error) {
+    console.error("Payment Setup Error:", error);
+    return res.status(500).json({ error: "Internal server error during payment setup." });
   }
 });
 
@@ -5363,6 +5458,7 @@ app.post(
         address,
         logoUrl,
         plan,
+        schoolType,
         cloneFromTemplate,
         templateType,
         templateSchoolId,
@@ -5442,6 +5538,7 @@ app.post(
         phone: phone ? phone.trim() : "",
         address: address ? address.trim() : "",
         logoUrl: logoUrl ? logoUrl.trim() : "",
+        schoolType: schoolType ? String(schoolType).trim() : "Basic School",
         status: "active",
         plan,
         planEndsAt: trialEndsAt,
@@ -8340,7 +8437,7 @@ app.post("/api/public/start-trial", async (req, res) => {
     }
 
     const featurePlanSafe = String(featurePlan || "starter").trim().toLowerCase();
-    const maxStudents = featurePlanSafe === "standard" ? 700 : 300;
+    const maxStudents = featurePlanSafe === "standard" ? 0 : 500;
 
     // Calculate trial end date (30 days from now) - store as Firestore Timestamp
     const trialEndDate = new Date();
@@ -8641,6 +8738,91 @@ app.post("/api/public/start-trial", async (req, res) => {
 });
 
 
+// ─── Paystack Integration Endpoints ──────────────────────────────────────────
+/**
+ * POST /api/schools/setup-payment
+ * Configures Paystack subaccount for a school.
+ */
+app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
+  const { schoolId, method, bankName, accountNumber, accountName, momoNetwork, momoNumber, momoName } = req.body;
+
+  if (!schoolId) return res.status(400).json({ error: "School ID is required." });
+
+  try {
+    const { uid } = req.user;
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    
+    if (userData?.role !== "school_admin" || userData?.schoolId !== schoolId) {
+      if (userData?.role !== "super_admin") {
+        return res.status(403).json({ error: "Unauthorized to configure payment for this school." });
+      }
+    }
+
+    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackSecret) {
+      return res.status(500).json({ error: "Paystack is not configured on the server." });
+    }
+
+    const business_name = method === "Bank" ? accountName : momoName;
+    const settlement_bank = method === "Bank" ? bankName : momoNetwork;
+    const account_number = method === "Bank" ? accountNumber : momoNumber;
+
+    console.log("[Paystack Setup] Final Payload:", { method, business_name, settlement_bank, account_number });
+
+    if (!business_name || !settlement_bank || !account_number) {
+      return res.status(400).json({ error: `Missing required ${method} details.` });
+    }
+
+    const response = await fetch("https://api.paystack.co/subaccount", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        business_name,
+        settlement_bank,
+        account_number,
+        percentage_charge: 0,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!data.status) {
+      return res.status(400).json({ error: data.message });
+    }
+
+    const subaccountCode = data.data.subaccount_code;
+
+    // Explicit mapping to ensure no fields are lost
+    const paymentSettings = {
+      method,
+      subaccountCode,
+      status: "active",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Bank specific fields
+      bankName: method === "Bank" ? (bankName || settlement_bank) : null,
+      accountNumber: method === "Bank" ? (accountNumber || account_number) : null,
+      accountName: method === "Bank" ? (accountName || business_name) : null,
+      // MoMo specific fields
+      momoNetwork: method === "MoMo" ? (momoNetwork || settlement_bank) : null,
+      momoNumber: method === "MoMo" ? (momoNumber || account_number) : null,
+      momoName: method === "MoMo" ? (momoName || business_name) : null,
+    };
+
+    await admin.firestore().collection("schools").doc(schoolId).update({
+      paymentSettings,
+    });
+
+    return res.json({ success: true, subaccountCode });
+  } catch (err) {
+    console.error("[Setup Payment] Error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/", (req, res) => {
   res.send("School Manager GH Backend is running ✅");
 });
@@ -8657,8 +8839,216 @@ app.get("/version", (req, res) => {
   });
 });
 
+// ─── WhatsApp Broadcast Endpoints ────────────────────────────────────────────
+let whatsappService = null;
+
+const loadWhatsAppService = async () => {
+  if (!whatsappService) {
+    try {
+      whatsappService = await import("./whatsappService.js");
+    } catch (err) {
+      console.error("[WhatsApp] Failed to load whatsappService:", err.message);
+    }
+  }
+  return whatsappService;
+};
+
+/**
+ * GET /api/whatsapp/status
+ * Returns current WhatsApp connection status and QR code if pending.
+ */
+app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
+  try {
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service failed to load. Check server logs for details." });
+    const info = svc.getWhatsAppStatus();
+    if (!info.available) {
+      return res.status(503).json({ error: "whatsapp-web.js not loaded. Run: npm install whatsapp-web.js qrcode --legacy-peer-deps" });
+    }
+    return res.json({ status: info.status, qr: info.qr });
+  } catch (err) {
+    console.error("[WhatsApp status]", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/whatsapp/init
+ * Initializes the WhatsApp client and starts QR generation.
+ */
+app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
+  try {
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable. Ensure whatsapp-web.js is installed." });
+    svc.initWhatsAppClient();
+    return res.json({ success: true, message: "WhatsApp client initializing..." });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/whatsapp/disconnect
+ * Disconnects and destroys the WhatsApp session.
+ */
+app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
+  try {
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
+    await svc.disconnectWhatsApp();
+    return res.json({ success: true, message: "WhatsApp disconnected." });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/whatsapp/broadcast
+ * Sends a WhatsApp message to multiple parents.
+ * Body: { message: string, phones: string[] }
+ */
+app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
+  // Validate caller is a school_admin
+  const { uid } = req.user;
+  try {
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const role = callerDoc.exists ? (callerDoc.data().role || "") : "";
+    if (role !== "school_admin") {
+      return res.status(403).json({ error: "Only school admins can send WhatsApp broadcasts." });
+    }
+
+    const { message, phones } = req.body;
+    if (!message || typeof message !== "string" || !message.trim()) {
+      return res.status(400).json({ error: "Message is required." });
+    }
+    if (!Array.isArray(phones) || phones.length === 0) {
+      return res.status(400).json({ error: "At least one phone number is required." });
+    }
+    if (phones.length > 500) {
+      return res.status(400).json({ error: "Maximum 500 recipients per broadcast." });
+    }
+
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable. Ensure whatsapp-web.js is installed." });
+
+    const { status } = svc.getWhatsAppStatus();
+    if (status !== "ready") {
+      return res.status(400).json({ error: `WhatsApp is not connected. Current status: ${status}` });
+    }
+
+    // Set SSE headers for streaming progress
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const sendEvent = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const cleanPhones = phones
+      .map((p) => String(p || "").trim())
+      .filter((p) => p.length >= 10);
+
+    sendEvent({ type: "start", total: cleanPhones.length });
+
+    const results = await svc.broadcastWhatsAppMessages(
+      cleanPhones,
+      message.trim(),
+      (result) => {
+        sendEvent({ type: "progress", ...result });
+      }
+    );
+
+    const sent = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    sendEvent({ type: "complete", sent, failed, results });
+    res.end();
+  } catch (err) {
+    console.error("[WhatsApp Broadcast] Error:", err.message);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.write(`data: ${JSON.stringify({ type: "error", error: err.message })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * Send Payment Invoice via WhatsApp
+ * POST /api/payments/send-invoice
+ */
+
+// Send Payment Invoice via WhatsApp
+// POST /api/payments/send-invoice
+app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
+  try {
+    const { studentId, amount, reference, base64Pdf, studentName, guardianPhone, feeName, adminPhone } = req.body;
+    console.log(`[Invoice] Received request payload for: ${studentName}`);
+    if (!guardianPhone || !base64Pdf) {
+      console.warn('[Invoice] Missing guardianPhone or base64Pdf');
+      return res.status(400).json({ error: "Guardian phone and PDF data are required." });
+    }
+    const svc = await loadWhatsAppService();
+    if (!svc) {
+      console.error('[Invoice] WhatsApp service unavailable');
+      return res.status(503).json({ error: "WhatsApp service unavailable." });
+    }
+    const caption = `Dear Parent, please find attached the receipt for your fee payment of GHS ${amount} for ${studentName}. Reference: ${reference}. Thank you!`;
+    const filename = `Invoice_${reference}.pdf`;
+    const mimetype = "application/pdf";
+    console.log(`[Invoice] Attempting to send WhatsApp invoice to ${guardianPhone} for ${studentName} (Ref: ${reference})`);
+    const cleanBase64 = base64Pdf.includes("base64,") ? base64Pdf.split("base64,")[1] : base64Pdf;
+    
+    // Diagnostic Logging
+    const payloadSize = cleanBase64.length;
+    const isPDF = cleanBase64.startsWith("JVBERi0"); // %PDF- in base64 usually starts with this
+    console.log(`[Invoice] Payload Analysis: Size=${(payloadSize/1024).toFixed(2)}KB, isPDFHeader=${isPDF}`);
+
+    if (payloadSize < 1000) {
+      console.error("[Invoice] Payload size too small - possibly corrupted or blank PDF");
+      return res.status(400).json({ error: "Invalid PDF payload (too small)." });
+    }
+    
+    // Add a tiny stability delay before sending media to prevent frame detachment
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const result = await svc.sendWhatsAppMedia(guardianPhone, caption, cleanBase64, filename, mimetype);
+    console.log(`[Invoice] WhatsApp send result:`, result);
+    
+    // Notify the school admin about the payment
+    const adminMessage = `🟢 *New Payment Received*\n\nStudent: *${studentName}*\nAmount: *GHS ${amount}*\nFee: *${feeName || "School Fees"}*\nReference: ${reference}`;
+    if (adminPhone && svc.sendWhatsAppMessage) {
+      await svc.sendWhatsAppMessage(adminPhone, adminMessage);
+    } else if (svc.sendWhatsAppToSelf) {
+      await svc.sendWhatsAppToSelf(adminMessage);
+    }
+    
+    if (!result.success) {
+      console.error(`[Invoice] WhatsApp transmission failed: ${result.error}`);
+      return res.status(500).json({ error: result.error });
+    }
+    return res.json({ success: true, size: payloadSize });
+  } catch (error) {
+    console.error("Error sending WhatsApp invoice:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Auto-initialize WhatsApp on startup if possible
+  try {
+    const svc = await loadWhatsAppService();
+    if (svc) {
+      console.log("[WhatsApp] Auto-initializing client on startup...");
+      svc.initWhatsAppClient();
+    }
+  } catch (err) {
+    console.error("[WhatsApp] Failed to auto-initialize on startup:", err.message);
+  }
 });

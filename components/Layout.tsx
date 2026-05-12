@@ -1,6 +1,6 @@
 import schoolLogo from "../logo/apple-icon-180x180.png";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   collection,
   limit,
@@ -48,7 +48,16 @@ import {
   History,
   Activity,
   BadgeDollarSign,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
+
+// WhatsApp SVG icon (official brand logo)
+const WhatsAppIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+  </svg>
+);
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -58,14 +67,25 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const { user, logout } = useAuth();
   const { school } = useSchool();
-  const activeSchoolId =
+  const activeSchoolId = useMemo(() => 
     school?.id ||
     user?.schoolId ||
     localStorage.getItem("activeSchoolId") ||
     localStorage.getItem("lastSchoolId") ||
-    null;
+    null
+  , [school?.id, user?.schoolId]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    const saved = localStorage.getItem("sidebarCollapsed");
+    return saved === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("sidebarCollapsed", String(isCollapsed));
+  }, [isCollapsed]);
+
   const location = useLocation();
+  const navigate = useNavigate();
   const isBillingRoute = location.pathname.startsWith("/admin/billing");
 
   // Notification State
@@ -73,8 +93,28 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const notificationsPollRef = useRef(true);
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        notificationRef.current &&
+        !notificationRef.current.contains(event.target as Node)
+      ) {
+        setShowNotifications(false);
+      }
+    };
+
+    if (showNotifications) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showNotifications]);
 
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
+  const isTeacher = user?.role === UserRole.TEACHER;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const isParent = user?.role === UserRole.PARENT;
   const isFreePlan = (school as any)?.plan === "free";
@@ -199,22 +239,16 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     if (!isAdmin && !isSuperAdmin) return;
 
     notificationsPollRef.current = true;
+    const currentSchoolId = String(activeSchoolId || "").trim();
 
-    // For regular admins, require a valid schoolId (not null, not empty string)
+    // For regular admins, require a valid schoolId
     if (!isSuperAdmin) {
-      const hasValidSchoolId = activeSchoolId && typeof activeSchoolId === "string" && activeSchoolId.trim() !== "";
-      if (!hasValidSchoolId) {
+      if (!currentSchoolId) {
         setNotifications([]);
         setUnreadCount(0);
         return;
       }
     }
-
-    console.info("[Notifications] subscribe", {
-      isSuperAdmin,
-      schoolId: activeSchoolId || null,
-      path: "admin_notifications",
-    });
 
     let notificationsQuery;
 
@@ -225,79 +259,66 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         limit(20),
       );
     } else {
-      // Only set up query if we have a valid schoolId
-      const validSchoolId = String(activeSchoolId).trim();
-      if (!validSchoolId) {
-        setNotifications([]);
-        setUnreadCount(0);
-        return () => {};
-      }
-
       notificationsQuery = query(
         collection(firestore, "admin_notifications"),
-        where("schoolId", "==", validSchoolId),
+        where("schoolId", "==", currentSchoolId),
         orderBy("createdAt", "desc"),
         limit(20),
       );
     }
 
-    const unsubscribe = onSnapshot(
-      notificationsQuery as any,
-      (snap: any) => {
-        if (!notificationsPollRef.current) return;
+    const setupSubscription = (q: any) => {
+      return onSnapshot(
+        q,
+        (snap: any) => {
+          if (!notificationsPollRef.current) return;
 
-        if (isSuperAdmin) {
-          const dismissedIds = new Set(loadSuperAdminDismissed());
-          const readIds = new Set(loadSuperAdminRead());
+          const dismissedIds = isSuperAdmin ? new Set(loadSuperAdminDismissed()) : new Set();
+          const readIds = isSuperAdmin ? new Set(loadSuperAdminRead()) : new Set();
+
           const notes: SystemNotification[] = snap.docs
-            .filter((doc) => !dismissedIds.has(doc.id))
-            .map((doc) => {
-              const notice = doc.data() as any;
+            .filter((doc: any) => !isSuperAdmin || !dismissedIds.has(doc.id))
+            .map((docSnap: any) => {
+              const notice = docSnap.data() as any;
               return {
-                id: doc.id,
-                schoolId: notice.schoolId || "system",
+                id: docSnap.id,
+                schoolId: notice.schoolId || activeSchoolId || "system",
                 message: notice.message || "System notification",
                 createdAt: toTimestamp(notice.createdAt),
-                isRead: readIds.has(doc.id),
+                isRead: isSuperAdmin ? readIds.has(docSnap.id) : Boolean(notice.isRead),
                 type: notice.type || "system",
               };
-            });
+            })
+            .sort((a, b) => b.createdAt - a.createdAt);
+
           setNotifications(notes);
           setUnreadCount(notes.filter((n) => !n.isRead).length);
-          return;
+        },
+        (e: any) => {
+          console.error("Failed to subscribe to notifications", e);
+          const message = String(e?.message || "").toLowerCase();
+          
+          if (message.includes("index") || message.includes("composite")) {
+            const fallbackQuery = isSuperAdmin 
+              ? query(collection(firestore, "admin_notifications"), limit(40))
+              : query(collection(firestore, "admin_notifications"), where("schoolId", "==", currentSchoolId), limit(40));
+            
+            unsubscribe = setupSubscription(fallbackQuery);
+          } else if (
+            message.includes("permission") ||
+            message.includes("insufficient")
+          ) {
+            notificationsPollRef.current = false;
+          }
         }
+      );
+    };
 
-        const notes: SystemNotification[] = snap.docs.map((docSnap) => {
-          const notice = docSnap.data() as Partial<SystemNotification> & {
-            createdAt?: unknown;
-          };
-          return {
-            id: notice.id || docSnap.id,
-            schoolId: notice.schoolId || activeSchoolId || "",
-            message: notice.message || "System notification",
-            createdAt: toTimestamp(notice.createdAt),
-            isRead: Boolean(notice.isRead),
-            type: notice.type || "system",
-          };
-        });
-        setNotifications(notes);
-        setUnreadCount(notes.filter((n) => !n.isRead).length);
-      },
-      (e: any) => {
-        console.error("Failed to subscribe to notifications", e);
-        const message = String(e?.message || "").toLowerCase();
-        if (
-          message.includes("permission") ||
-          message.includes("insufficient")
-        ) {
-          notificationsPollRef.current = false;
-        }
-      },
-    );
+    let unsubscribe = setupSubscription(notificationsQuery);
 
     return () => {
       notificationsPollRef.current = false;
-      unsubscribe();
+      if (unsubscribe) unsubscribe();
     };
   }, [isAdmin, isSuperAdmin, activeSchoolId]);
 
@@ -366,14 +387,15 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       <Link
         to={href}
         onClick={() => setSidebarOpen(false)}
-        className={`flex items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[15px] font-medium transition-all
+        title={isCollapsed ? label : ""}
+        className={`flex items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[17px] font-medium transition-all
           ${isActive
             ? "bg-[#E6F0FA] text-[#0B4A82] shadow-sm"
             : "text-[#E6F0FA] hover:bg-[#0B4A82] hover:text-white"
-          }`}
+          } ${isCollapsed ? "justify-center px-0 mx-2" : ""}`}
       >
-        {icon}
-        <span className="truncate">{label}</span>
+        <span className={`${isCollapsed ? "flex-shrink-0" : ""}`}>{icon}</span>
+        {!isCollapsed && <span className="truncate">{label}</span>}
       </Link>
     );
   };
@@ -390,12 +412,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
       <aside
         className={`
-          fixed inset-y-0 left-0 z-30 w-72 max-w-[85vw] sm:w-64 bg-[#0B4A82] text-white transform transition-transform duration-200 ease-in-out overflow-y-auto shrink-0
+          fixed inset-y-0 left-0 z-50 bg-[#0B4A82] text-white transform transition-all duration-300 ease-in-out shrink-0
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
           xl:relative xl:translate-x-0 flex flex-col shadow-xl border-r border-[#0B4A82]
+          ${isCollapsed ? "w-20" : "w-72 max-w-[85vw] sm:w-64"}
         `}
       >
-        <div className="p-5 sm:p-6 border-b border-[#0B4A82] bg-[#0B4A82] flex flex-col items-center justify-center relative">
+        <div className={`p-5 sm:p-6 border-b border-[#0B4A82] bg-[#0B4A82] flex flex-col items-center justify-center relative transition-all duration-300 ${isCollapsed ? "p-4" : ""}`}>
           <button
             onClick={() => setSidebarOpen(false)}
             className="xl:hidden absolute top-4 right-4 text-[#E6F0FA] hover:text-white"
@@ -403,32 +426,42 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             <X size={24} />
           </button>
 
+          {/* Desktop Collapse Toggle */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="hidden xl:flex absolute -right-3 top-10 w-6 h-6 bg-white text-[#0B4A82] rounded-full items-center justify-center shadow-md border border-slate-200 hover:bg-[#E6F0FA] transition-colors z-50"
+          >
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
+
           {isSuperAdmin ? (
             <>
-              <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-[#E6F0FA] overflow-hidden">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 mb-2 bg-white rounded-full p-1 shadow-lg border-2 border-[#E6F0FA] overflow-hidden transition-all">
                 <img
                   src={schoolLogo}
                   alt="School Manager GH Logo"
                   className="w-full h-full object-contain rounded-full"
                 />
               </div>
-              <div className="text-center">
-                <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
-                  Super Admin Panel
-                </h1>
-                <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
-                  System Administration
-                </p>
-              </div>
+              {!isCollapsed && (
+                <div className="text-center animate-fadeIn">
+                  <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-poppins break-words px-2">
+                    Super Admin Panel
+                  </h1>
+                  <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
+                    System Administration
+                  </p>
+                </div>
+              )}
             </>
           ) : (
             <>
-              {isParent ? (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-green-500 overflow-hidden flex items-center justify-center">
-                  <Users size={32} className="text-green-600" />
+              {isParent && !school ? (
+                <div className={`${isCollapsed ? "w-10 h-10" : "w-16 h-16 sm:w-20 sm:h-20"} mb-2 bg-white rounded-full p-1 shadow-lg border-2 border-green-500 overflow-hidden flex items-center justify-center transition-all`}>
+                  <Users size={isCollapsed ? 20 : 32} className="text-green-600" />
                 </div>
               ) : (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 bg-white rounded-full p-1 shadow-lg border-2 border-amber-500 overflow-hidden">
+                <div className={`${isCollapsed ? "w-12 h-12" : "w-16 h-16 sm:w-20 sm:h-20"} mb-2 bg-white rounded-full p-1 shadow-lg border-2 border-amber-500 overflow-hidden transition-all`}>
                   <img
                     src={school?.logoUrl || schoolLogo}
                     alt={school?.name || "School Management System"}
@@ -439,19 +472,21 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   />
                 </div>
               )}
-              <div className="text-center">
-                <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-serif break-words px-2">
-                  {isParent ? "Parent Portal" : (school?.name || "School Management System")}
-                </h1>
-                <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
-                  {isParent ? "Student Tracker" : "Management System"}
-                </p>
-              </div>
+              {!isCollapsed && (
+                <div className="text-center animate-fadeIn">
+                  <h1 className="text-lg sm:text-xl font-bold text-[#E6F0FA] leading-tight tracking-wide font-poppins break-words px-2">
+                    {school?.name || (isParent ? "Parent Portal" : "School Management System")}
+                  </h1>
+                  <p className="text-xs text-[#E6F0FA] mt-1 uppercase tracking-wider">
+                    {isParent ? (school ? "Parent Portal" : "Student Tracker") : "Management System"}
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>
 
-        <nav className="flex-1 py-4 sm:py-6 space-y-1">
+        <nav className="flex-1 py-4 sm:py-6 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
           {isSuperAdmin ? (
             <>
               <NavItem
@@ -523,11 +558,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 icon={<ClipboardCheck size={18} />}
                 label="Attendance"
               />
-              <NavItem
-                href="/parent?view=fees"
-                icon={<CreditCard size={18} />}
-                label="Fees & Bills"
-              />
+              {hasFeature("parent_portal") && (
+                <NavItem
+                  href="/parent?view=fees"
+                  icon={<CreditCard size={18} />}
+                  label="Fees & Bills"
+                />
+              )}
               <NavItem
                 href="/parent?view=report"
                 icon={<FileText size={18} />}
@@ -539,7 +576,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 label="Remarks"
               />
             </>
-          ) : (
+          ) : isAdmin ? (
             <>
               {subscriptionGate ? (
                 <div className="mx-4 mb-4 p-4 bg-amber-500/20 border border-amber-400/40 rounded-xl text-amber-100 text-sm">
@@ -570,14 +607,12 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("attendance") && (
                 <NavItem href="/admin/attendance" icon={<ClipboardCheck size={18} />} label="Attendance" />
               )}
-              {hasFeature("teacher_attendance") && (
-                <NavItem href="/teacher/my-attendance" icon={<CalendarDays size={18} />} label="My Attendance" />
-              )}
-              {hasFeature("basic_exam_reports") && (
-                <NavItem href="/admin/assessment" icon={<BookOpen size={18} />} label="Assessments" />
-              )}
+              
               {hasFeature("basic_exam_reports") && (
                 <NavItem href="/admin/report-card" icon={<FileText size={18} />} label="Report Cards" />
+              )}
+              {hasFeature("basic_exam_reports") && (
+                <NavItem href="/admin/reports" icon={<BookOpen size={18} />} label="Academic Reports" />
               )}
               {hasFeature("timetable") && (
                 <NavItem href="/admin/timetable" icon={<CalendarDays size={18} />} label="Timetable" />
@@ -585,9 +620,19 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/fees" icon={<CreditCard size={18} />} label="Fees & Payments" />
               )}
+              {hasFeature("fees_payments") && (
+                <NavItem href="/admin/payment-settings" icon={<Wallet size={18} />} label="Online Payment" />
+              )}
               {hasFeature("activity_monitor") && (
                 <NavItem href="/admin/activity" icon={<Activity size={18} />} label="Activity" />
               )}
+              {hasFeature("whatsapp_broadcast") && (
+                <NavItem href="/admin/whatsapp" icon={<WhatsAppIcon size={18} />} label="WhatsApp Broadcast" />
+              )}
+              {hasFeature("student_history") && (
+                <NavItem href="/admin/student-history" icon={<History size={18} />} label="Student History" />
+              )}
+
               {!isFreePlan && (
                 <NavItem href="/admin/billing" icon={<Wallet size={18} />} label="Billing" />
               )}
@@ -595,22 +640,47 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <NavItem href="/admin/backups" icon={<History size={18} />} label="Backups" />
               )}
               {hasFeature("academic_year") && (
-                <NavItem href="/admin/system-settings" icon={<Settings size={18} />} label="Settings" />
+                <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
               )}
             </>
-          )}
+          ) : isTeacher ? (
+            <>
+              <NavItem
+                href="/teacher"
+                icon={<LayoutDashboard size={18} />}
+                label="Dashboard"
+              />
+              {hasFeature("attendance") && (
+                <NavItem href="/teacher/attendance" icon={<ClipboardCheck size={18} />} label="Attendance" />
+              )}
+              {hasFeature("basic_exam_reports") && (
+                <NavItem href="/teacher/assessment" icon={<BookOpen size={18} />} label="Assessments" />
+              )}
+              {hasFeature("teacher_attendance") && (
+                <NavItem href="/teacher/my-attendance" icon={<CalendarDays size={18} />} label="My Attendance" />
+              )}
+              {hasFeature("basic_exam_reports") && (
+                <NavItem href="/teacher/write-remarks" icon={<MessageSquare size={18} />} label="Write Remarks" />
+              )}
+              {hasFeature("basic_exam_reports") && (
+                <NavItem href="/teacher/student-performance" icon={<BarChart size={18} />} label="Student Performance" />
+              )}
+
+            </>
+          ) : null}
         </nav>
 
         <div className="p-4 border-t border-[#0B4A82]">
-          <button
-            onClick={() => {
-              logout();
-            }}
-            className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-white/10 border border-[#E6F0FA]/30 text-[#E6F0FA] hover:text-white px-4 py-3 rounded-xl font-semibold transition-colors text-[15px]"
-          >
-            <LogOut size={18} />
-            Sign Out
-          </button>
+            <button
+              onClick={() => {
+                logout();
+              }}
+              className={`w-full flex items-center justify-center gap-2 bg-transparent hover:bg-white/10 border border-[#E6F0FA]/30 text-[#E6F0FA] hover:text-white px-4 py-3 rounded-xl font-semibold transition-all text-[15px] ${isCollapsed ? "px-0" : ""}`}
+              title={isCollapsed ? "Sign Out" : ""}
+            >
+              <LogOut size={18} />
+              {!isCollapsed && <span>Sign Out</span>}
+            </button>
         </div>
       </aside>
 
@@ -632,8 +702,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
             <div className="flex items-center gap-2 sm:gap-4">
               {/* Notifications */}
-              {!isSuperAdmin && (
-                <div className="relative">
+              {(isAdmin || isSuperAdmin) && (
+                <div className="relative" ref={notificationRef}>
                   <button
                     onClick={() => setShowNotifications(!showNotifications)}
                     className="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"

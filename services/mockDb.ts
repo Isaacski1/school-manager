@@ -59,6 +59,7 @@ import {
   kgSubjects,
   primarySubjects,
   jhsSubjects,
+  getFilteredClasses,
 } from "../constants";
 
 type SchoolScopedPage<T> = {
@@ -1108,11 +1109,14 @@ class FirestoreService {
     
     // Also sync logo and name to the public 'schools' profile for the marketing site
     if (data.logoUrl || data.schoolName) {
-      await setDoc(doc(firestore, "schools", schoolId), {
+      // Execute in background to keep the main settings update fast
+      setDoc(doc(firestore, "schools", schoolId), {
         ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
         ...(data.schoolName ? { name: data.schoolName } : {}),
         updatedAt: Date.now()
-      }, { merge: true });
+      }, { merge: true }).catch((err) => {
+        console.warn("Failed to sync profile to public schools collection (background task)", err);
+      });
     }
   }
 
@@ -1631,13 +1635,28 @@ class FirestoreService {
     await this.requireFeature(schoolId, "attendance");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getClassAttendance");
     if (!classId) return [];
-    const q = query(
-      collection(firestore, "attendance"),
-      where("schoolId", "==", scopedSchoolId),
-      where("classId", "==", classId),
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as AttendanceRecord);
+
+    try {
+      const q = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("classId", "==", classId),
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      console.warn("[mockDb] getClassAttendance failed, trying school-wide fallback", error);
+      // Fallback: Fetch all attendance for the school and filter by classId locally
+      // This is less efficient but works without composite indexes
+      const q = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+      );
+      const snap = await getDocs(q);
+      return snap.docs
+        .map((d) => d.data() as AttendanceRecord)
+        .filter((r) => r.classId === classId);
+    }
   }
 
   async getClassAttendanceByDateRange(
@@ -1828,27 +1847,6 @@ class FirestoreService {
     return this.getCollectionBySchoolId<Assessment>("assessments", schoolId);
   }
 
-  async getStudentRemarks(schoolId: string, studentId: string): Promise<StudentRemark[]> {
-    await this.requireFeature(schoolId, "student_remarks");
-    const q = query(
-      collection(firestore, "student_remarks"),
-      where("schoolId", "==", schoolId),
-      where("studentId", "==", studentId)
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() } as StudentRemark));
-  }
-
-  async getAdminRemarks(schoolId: string, studentId: string): Promise<AdminRemark[]> {
-    await this.requireFeature(schoolId, "student_remarks");
-    const q = query(
-      collection(firestore, "admin_remarks"),
-      where("schoolId", "==", schoolId),
-      where("studentId", "==", studentId)
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() } as AdminRemark));
-  }
 
   async getStudentAssessmentsByStudent(
 
@@ -2064,6 +2062,22 @@ class FirestoreService {
     );
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as StudentRemark);
+  }
+
+  async getAdminRemarks(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<AdminRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAdminRemarks");
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "admin_remarks"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as AdminRemark);
   }
 
   async saveStudentRemark(remark: StudentRemark): Promise<void> {
@@ -2309,7 +2323,7 @@ class FirestoreService {
   async getDashboardStats(schoolId?: string) {
     await this.requireFeature(schoolId, "basic_analytics");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getDashboardStats");
-    const [studentsSnap, usersSnap, attendanceSnap] = await Promise.all([
+    const [studentsSnap, usersSnap, attendanceSnap, schoolSnap] = await Promise.all([
       getDocs(
         query(
           collection(firestore, "students"),
@@ -2328,11 +2342,14 @@ class FirestoreService {
           where("schoolId", "==", scopedSchoolId),
         ),
       ),
+      getDoc(doc(firestore, "schools", scopedSchoolId)),
     ]);
 
     const students = studentsSnap.docs.map((d) => d.data() as Student);
     const users = usersSnap.docs.map((d) => d.data() as User);
     const config = await this.getSchoolConfig(scopedSchoolId);
+    const schoolData = schoolSnap.exists() ? (schoolSnap.data() as School) : null;
+    const filteredClasses = getFilteredClasses(schoolData?.schoolType);
     const configHolidaySet = new Set(
       (config.holidayDates || []).map((h) => h.date),
     );
@@ -2345,7 +2362,7 @@ class FirestoreService {
     const male = students.filter((s) => s.gender === "Male").length;
     const female = students.filter((s) => s.gender === "Female").length;
 
-    const classAttendance = CLASSES_LIST.map((cls) => {
+    const classAttendance = filteredClasses.map((cls) => {
       const records = attendance.filter((r) => r.classId === cls.id);
       const studentsInClass = students.filter((s) => s.classId === cls.id);
 
@@ -3769,13 +3786,23 @@ class FirestoreService {
   }
 
   async recordStudentPayment(payment: StudentFeePayment): Promise<void> {
+    console.log("[recordStudentPayment] Starting...", payment);
     await this.requireFeature(payment.schoolId, "fees_payments");
     this.requireSchoolId(payment.schoolId, "recordStudentPayment");
+    
+    const id = payment.id || payment.receiptNumber || `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const finalPayment = { ...payment, id };
+    
     const useV2 = await this.useFinanceV2(payment.schoolId);
+    console.log("[recordStudentPayment] ID:", id, "useV2:", useV2, "schoolId:", payment.schoolId);
+    
     const docRef = useV2
-      ? doc(firestore, "schools", payment.schoolId, "payments", payment.id)
-      : doc(firestore, "payments", payment.id);
-    await setDoc(docRef, payment);
+      ? doc(firestore, "schools", payment.schoolId, "payments", id)
+      : doc(firestore, "payments", id);
+      
+    console.log("[recordStudentPayment] Attempting setDoc to:", docRef.path);
+    await setDoc(docRef, finalPayment);
+    console.log("[recordStudentPayment] Success!");
   }
 
   async updateStudentPayment(

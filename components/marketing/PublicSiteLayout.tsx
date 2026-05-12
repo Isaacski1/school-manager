@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/features", label: "Features" },
   { href: "/pricing", label: "Pricing" },
+  { href: "/blog", label: "Blog" },
   { href: "/book-demo", label: "Book Demo" },
 ];
 
@@ -35,7 +36,12 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
   const isActive = (href: string) => location.pathname === href;
 
   return (
-    <div className="min-h-screen font-sans" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#f8fafc", overflowX: "hidden" }}>
+    <div className="min-h-screen font-sans relative overflow-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#041222", color: "white" }}>
+      
+      {/* Animated Glowing Orbs (Fixed background) */}
+      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ backgroundColor: "rgba(37, 99, 235, 0.5)", mixBlendMode: "screen", filter: "blur(80px)", opacity: 0.9, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ backgroundColor: "rgba(16, 185, 129, 0.4)", mixBlendMode: "screen", filter: "blur(100px)", opacity: 0.7, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ backgroundColor: "rgba(147, 51, 234, 0.4)", mixBlendMode: "screen", filter: "blur(100px)", opacity: 0.7, zIndex: 1, willChange: "transform" }}></div>
 
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
@@ -47,18 +53,18 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
       {/* Navbar */}
       <header style={{
         position: "sticky", top: 0, zIndex: 50,
-        backgroundColor: scrolled ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.92)",
+        backgroundColor: scrolled ? "rgba(4, 18, 34, 0.9)" : "rgba(4, 18, 34, 0.6)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
-        borderBottom: scrolled ? "1px solid #DBEAFE" : "1px solid rgba(219,234,254,0.6)",
-        boxShadow: scrolled ? "0 1px 24px rgba(11,74,130,0.08)" : "none",
+        borderBottom: scrolled ? "1px solid rgba(255,255,255,0.1)" : "1px solid rgba(255,255,255,0.05)",
+        boxShadow: scrolled ? "0 4px 20px rgba(0,0,0,0.3)" : "none",
         transition: "all 0.3s ease",
       }}>
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 80 }}>
 
           {/* Logo */}
           <Link to="/" style={{ textDecoration: "none", display: "flex", alignItems: "center" }}>
-            <img src="/logo.png" alt="School Manager GH" style={{ height: 56, objectFit: "contain" }} />
+            <img src="/logo.png" alt="School Manager GH" style={{ height: 56, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
           </Link>
 
           {/* Desktop Nav */}
@@ -74,11 +80,11 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
                   fontWeight: 600,
                   textDecoration: "none",
                   transition: "all 0.2s",
-                  color: isActive(item.href) ? "#0B4A82" : "#475569",
-                  backgroundColor: isActive(item.href) ? "#EFF6FF" : "transparent",
+                  color: isActive(item.href) ? "white" : "rgba(255,255,255,0.7)",
+                  backgroundColor: isActive(item.href) ? "rgba(255,255,255,0.1)" : "transparent",
                 }}
-                onMouseEnter={e => { if (!isActive(item.href)) (e.currentTarget as HTMLElement).style.backgroundColor = "#F1F5F9"; }}
-                onMouseLeave={e => { if (!isActive(item.href)) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                onMouseEnter={e => { if (!isActive(item.href)) (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.05)"; (e.currentTarget as HTMLElement).style.color = "white"; }}
+                onMouseLeave={e => { if (!isActive(item.href)) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.7)"; }}
               >
                 {item.label}
               </Link>
@@ -91,10 +97,10 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
               to="/login"
               style={{
                 padding: "9px 20px", borderRadius: 999, fontSize: 14, fontWeight: 600,
-                border: "1.5px solid #DBEAFE", color: "#0B4A82", textDecoration: "none",
+                border: "1.5px solid rgba(255,255,255,0.2)", color: "white", textDecoration: "none",
                 transition: "all 0.2s",
               }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "#EFF6FF"; }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.1)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
             >
               Login
@@ -122,8 +128,8 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
             style={{
               display: "none",
               width: 44, height: 44, borderRadius: 12,
-              border: "1.5px solid #DBEAFE", backgroundColor: "white",
-              color: "#0B4A82", cursor: "pointer", alignItems: "center", justifyContent: "center",
+              border: "1.5px solid rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.05)",
+              color: "white", cursor: "pointer", alignItems: "center", justifyContent: "center",
             }}
             className="mobile-toggle"
             aria-label="Toggle menu"
@@ -140,7 +146,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.25, ease: "easeInOut" }}
-              style={{ overflow: "hidden", borderTop: "1px solid #DBEAFE", backgroundColor: "white" }}
+              style={{ overflow: "hidden", borderTop: "1px solid rgba(255,255,255,0.1)", backgroundColor: "#041222" }}
             >
               <div style={{ padding: "16px 24px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {navLinks.map((item) => (
@@ -149,15 +155,15 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
                     to={item.href}
                     style={{
                       padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600,
-                      color: isActive(item.href) ? "#0B4A82" : "#475569",
-                      backgroundColor: isActive(item.href) ? "#EFF6FF" : "#F8FAFC",
+                      color: isActive(item.href) ? "white" : "rgba(255,255,255,0.7)",
+                      backgroundColor: isActive(item.href) ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.05)",
                       textDecoration: "none",
                     }}
                   >
                     {item.label}
                   </Link>
                 ))}
-                <Link to="/login" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600, color: "#0B4A82", border: "1.5px solid #DBEAFE", textDecoration: "none", textAlign: "center" }}>Login</Link>
+                <Link to="/login" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600, color: "white", border: "1.5px solid rgba(255,255,255,0.2)", textDecoration: "none", textAlign: "center" }}>Login</Link>
                 <Link
                   to="/get-started"
                   style={{
@@ -175,6 +181,25 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
       </header>
 
       <style>{`
+        select option {
+          background-color: #041222;
+          color: white;
+        }
+        @keyframes blob {
+          0% { transform: translate3d(0, 0, 0) scale(1); }
+          33% { transform: translate3d(120px, -180px, 0) scale(1.4); }
+          66% { transform: translate3d(-100px, 120px, 0) scale(0.7); }
+          100% { transform: translate3d(0, 0, 0) scale(1); }
+        }
+        .animate-blob {
+          animation: blob 12s infinite alternate ease-in-out;
+        }
+        .animation-delay-2000 {
+          animation-delay: 2s;
+        }
+        .animation-delay-4000 {
+          animation-delay: 4s;
+        }
         @media (max-width: 1024px) {
           .desktop-nav, .desktop-ctas { display: none !important; }
           .mobile-toggle { display: flex !important; }
@@ -187,10 +212,10 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         }
       `}</style>
 
-      <main>{children}</main>
+      <main className="relative">{children}</main>
 
       {/* Footer */}
-      <footer style={{ background: "linear-gradient(180deg, #0B4A82 0%, #082E52 100%)", color: "white", paddingTop: 64, paddingBottom: 40 }}>
+      <footer style={{ background: "linear-gradient(180deg, rgba(4, 18, 34, 0.8) 0%, rgba(4, 18, 34, 1) 100%)", color: "white", paddingTop: 64, paddingBottom: 40, position: "relative", zIndex: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px" }}>
           <div className="footer-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 48, marginBottom: 48 }}>
 
@@ -199,14 +224,14 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
                 <img src="/logo.png" alt="School Manager GH" style={{ height: 48, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
               </div>
               <p style={{ fontSize: 14, lineHeight: 1.7, color: "rgba(255,255,255,0.7)", maxWidth: 340, margin: "0 0 20px 0" }}>
-                The premium school operations platform built for Ghanaian schools. Attendance, reports, assessments, and fee management — all in one place.
+                The premium school operations platform built for Ghanaian schools. Attendance, reports, fees, and parent engagement — all in one place.
               </p>
               <p style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", margin: 0 }}>🇬🇭 Proudly built for Ghana</p>
             </div>
 
             <div>
               <p style={{ fontWeight: 700, fontSize: 14, marginBottom: 16, color: "rgba(255,255,255,0.9)" }}>Platform</p>
-              {[["Home", "/"], ["Pricing", "/pricing"], ["Book Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
+              {[["Home", "/"], ["Features", "/features"], ["Pricing", "/pricing"], ["Book Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
                 <Link key={href} to={href} style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10, transition: "color 0.2s" }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "white"}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"}

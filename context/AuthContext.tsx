@@ -228,6 +228,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setUser(null);
       setError(null);
       clearSensitiveBrowserState();
+      // Force redirect to login on sign out
+      if (typeof window !== "undefined") {
+        window.location.hash = "#/login";
+      }
     } catch (error) {
       console.error("Logout failed", error);
     }

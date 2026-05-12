@@ -71,16 +71,16 @@ const InstallPrompt = () => {
 
   if (showIosGuide && !visible) {
     return (
-      <div className="fixed bottom-6 right-6 z-[200] w-[320px] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+      <div className="fixed bottom-6 right-6 z-[200] w-[320px] rounded-2xl border border-white/10 bg-[#041222]/80 p-4 shadow-2xl backdrop-blur-md">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 h-10 w-10 rounded-xl bg-[#E6F0FA] flex items-center justify-center text-[#0B4A82]">
+          <div className="mt-0.5 h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center text-[#93C5FD]">
             <Download className="h-5 w-5" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-slate-800">
+            <p className="text-sm font-semibold text-white">
               Install School Manager
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-white/60">
               On iPhone/iPad, tap the Share button and choose “Add to Home
               Screen”.
             </p>
@@ -89,7 +89,7 @@ const InstallPrompt = () => {
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             onClick={() => setShowIosGuide(false)}
-            className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+            className="text-xs font-semibold text-white/40 hover:text-white/60"
           >
             Dismiss
           </button>
@@ -101,16 +101,16 @@ const InstallPrompt = () => {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[200] w-[280px] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+    <div className="fixed bottom-6 right-6 z-[200] w-[280px] rounded-2xl border border-white/10 bg-[#041222]/80 p-4 shadow-2xl backdrop-blur-md">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 h-10 w-10 rounded-xl bg-[#E6F0FA] flex items-center justify-center text-[#0B4A82]">
+        <div className="mt-0.5 h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center text-[#93C5FD]">
           <Download className="h-5 w-5" />
         </div>
         <div className="flex-1">
-          <p className="text-sm font-semibold text-slate-800">
+          <p className="text-sm font-semibold text-white">
             Install School Manager
           </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-white/60">
             Add the app to your device for faster access.
           </p>
         </div>
@@ -118,7 +118,7 @@ const InstallPrompt = () => {
       <div className="mt-4 flex items-center justify-end gap-2">
         <button
           onClick={() => setVisible(false)}
-          className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+          className="text-xs font-semibold text-white/40 hover:text-white/60"
         >
           Not now
         </button>

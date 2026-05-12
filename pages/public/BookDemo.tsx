@@ -7,12 +7,12 @@ import { showToast } from "../../services/toast";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "13px 16px", borderRadius: 12, fontSize: 15,
-  border: "1.5px solid #DBEAFE", outline: "none", background: "white",
-  color: "#0f172a", fontFamily: "inherit", boxSizing: "border-box",
-  transition: "border-color 0.2s",
+  border: "1.5px solid rgba(255,255,255,0.1)", outline: "none", background: "rgba(255,255,255,0.03)",
+  color: "white", fontFamily: "inherit", boxSizing: "border-box",
+  transition: "all 0.2s",
 };
 
-const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 };
+const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.7)", display: "block", marginBottom: 6 };
 
 const BookDemo = () => {
   const [form, setForm] = useState({ fullName: "", schoolName: "", role: "", phone: "", email: "", studentCount: "", schoolType: "", preferredDate: "", preferredTime: "", message: "" });
@@ -42,6 +42,10 @@ const BookDemo = () => {
     <PublicSiteLayout>
       {/* Responsive Design System */}
       <style>{`
+        select option {
+          background-color: #041222;
+          color: white;
+        }
         @media (max-width: 960px) {
           .book-demo-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
           .book-demo-header { padding: 60px 24px 80px !important; }
@@ -56,7 +60,7 @@ const BookDemo = () => {
       `}</style>
 
       {/* Header */}
-      <section className="book-demo-header" style={{ background: "linear-gradient(135deg, #0B4A82 0%, #1160A8 100%)", padding: "80px 24px 100px" }}>
+      <section className="book-demo-header" style={{ background: "transparent", padding: "80px 24px 100px" }}>
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
           <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)", margin: "0 0 12px 0" }}>Book a Demo</p>
           <h1 style={{ fontSize: "clamp(30px, 5vw, 48px)", fontWeight: 800, color: "white", margin: "0 0 16px 0", lineHeight: 1.15 }}>See School Manager GH in action</h1>
@@ -79,8 +83,8 @@ const BookDemo = () => {
               </div>
             </div>
 
-            <div className="sidebar-card" style={{ background: "white", borderRadius: 20, padding: 24, border: "1.5px solid #DBEAFE" }}>
-              <p style={{ fontSize: 14, fontWeight: 700, color: "#0B4A82", margin: "0 0 16px 0", textTransform: "uppercase", letterSpacing: "0.1em" }}>What you'll see</p>
+            <div className="sidebar-card" style={{ background: "rgba(255,255,255,0.03)", borderRadius: 20, padding: 24, border: "1.5px solid rgba(255,255,255,0.1)", backdropFilter: "blur(10px)" }}>
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#93C5FD", margin: "0 0 16px 0", textTransform: "uppercase", letterSpacing: "0.1em" }}>What you'll see</p>
               {[
                 [Calendar, "Full platform walkthrough"],
                 [School, "Live demo of your school setup"],
@@ -88,10 +92,10 @@ const BookDemo = () => {
                 [Phone, "Q&A with our team"],
               ].map(([Icon, text]) => (
                 <div key={text as string} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon size={18} color="#0B4A82" />
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon size={18} color="#93C5FD" />
                   </div>
-                  <span style={{ fontSize: 14, color: "#374151", fontWeight: 500 }}>{text as string}</span>
+                  <span style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>{text as string}</span>
                 </div>
               ))}
             </div>
@@ -99,17 +103,17 @@ const BookDemo = () => {
 
           {/* Right: Form */}
           <motion.div initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
-            <div className="book-demo-form" style={{ background: "white", borderRadius: 28, padding: "36px 32px", boxShadow: "0 8px 48px rgba(11,74,130,0.1)", border: "1.5px solid #DBEAFE" }}>
+            <div className="book-demo-form" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 28, padding: "36px 32px", boxShadow: "0 8px 48px rgba(0,0,0,0.3)", border: "1.5px solid rgba(255,255,255,0.1)", backdropFilter: "blur(20px)" }}>
               <AnimatePresence mode="wait">
                 {done ? (
                   <motion.div key="done" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ textAlign: "center", padding: "48px 24px" }}>
-                    <CheckCircle2 size={64} color="#16A34A" style={{ margin: "0 auto 20px" }} />
-                    <h2 style={{ fontSize: 26, fontWeight: 800, color: "#0f172a", margin: "0 0 12px 0" }}>Demo request received!</h2>
-                    <p style={{ fontSize: 16, color: "#64748B", lineHeight: 1.7, margin: 0 }}>Our team will be in touch within 24 hours to schedule your personalised walkthrough.</p>
+                    <CheckCircle2 size={64} color="#10B981" style={{ margin: "0 auto 20px" }} />
+                    <h2 style={{ fontSize: 26, fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Demo request received!</h2>
+                    <p style={{ fontSize: 16, color: "rgba(255,255,255,0.7)", lineHeight: 1.7, margin: 0 }}>Our team will be in touch within 24 hours to schedule your personalised walkthrough.</p>
                   </motion.div>
                 ) : (
                   <motion.form key="form" onSubmit={handleSubmit}>
-                    <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: "0 0 24px 0" }}>Your details</h2>
+                    <h2 style={{ fontSize: 22, fontWeight: 800, color: "white", margin: "0 0 24px 0" }}>Your details</h2>
                     <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                       <div>
                         <label style={labelStyle}>Full Name *</label>
@@ -182,10 +186,10 @@ const BookDemo = () => {
                       disabled={loading}
                       style={{
                         width: "100%", padding: "14px 24px", borderRadius: 999, fontSize: 16, fontWeight: 700,
-                        background: loading ? "#94A3B8" : "linear-gradient(135deg, #0B4A82, #1160A8)",
+                        background: loading ? "rgba(255,255,255,0.1)" : "#0B4A82",
                         color: "white", border: "none", cursor: loading ? "not-allowed" : "pointer",
                         display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                        boxShadow: loading ? "none" : "0 6px 24px rgba(11,74,130,0.3)",
+                        boxShadow: loading ? "none" : "0 6px 24px rgba(0,0,0,0.3)",
                         transition: "all 0.2s",
                       }}
                     >

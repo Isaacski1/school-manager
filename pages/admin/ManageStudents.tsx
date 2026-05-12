@@ -11,6 +11,7 @@ import {
   CLASSES_LIST,
   calculateGrade,
   getGradeColor,
+  getFilteredClasses,
 } from "../../constants";
 import {
   Plus,
@@ -32,7 +33,9 @@ const ManageStudents = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || null;
-  const defaultClassId = CLASSES_LIST[0]?.id || "c_creche";
+
+  const availableClasses = getFilteredClasses(school?.schoolType);
+  const defaultClassId = availableClasses[0]?.id || "c_p1";
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [filterClass, setFilterClass] = useState("all");
@@ -153,7 +156,7 @@ const ManageStudents = () => {
   const classLabel =
     filterClass === "all"
       ? "All Classes"
-      : CLASSES_LIST.find((c) => c.id === filterClass)?.name || filterClass;
+      : availableClasses.find((c) => c.id === filterClass)?.name || filterClass;
   const totalStudents = students.length;
   const filteredCount = filteredStudents.length;
   const attendanceTotal = performanceData?.attendance?.total;
@@ -410,10 +413,21 @@ const ManageStudents = () => {
     setIsSaving(true);
     try {
       if (editingId) {
+        const normalizePhone = (p: string) => {
+          if (!p) return "";
+          let cleaned = p.trim().replace(/\s+/g, "");
+          if (!cleaned.startsWith("+")) {
+            if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
+            else cleaned = "+233" + cleaned;
+          }
+          return cleaned;
+        };
+
         const updatedStudent: Student = {
           ...(formData as Student),
           id: editingId,
           schoolId: schoolId || (formData as Student).schoolId,
+          guardianPhone: normalizePhone(formData.guardianPhone || ""),
         };
         await db.updateStudent(updatedStudent);
         showToast("Student updated successfully.", { type: "success" });
@@ -432,6 +446,16 @@ const ManageStudents = () => {
           },
         });
       } else {
+        const normalizePhone = (p: string) => {
+          if (!p) return "";
+          let cleaned = p.trim().replace(/\s+/g, "");
+          if (!cleaned.startsWith("+")) {
+            if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
+            else cleaned = "+233" + cleaned;
+          }
+          return cleaned;
+        };
+
         const newStudent: Student = {
           id: Math.random().toString(36).substr(2, 9),
           name: formData.name,
@@ -440,7 +464,7 @@ const ManageStudents = () => {
           classId: formData.classId,
           schoolId: schoolId || "",
           guardianName: formData.guardianName || "",
-          guardianPhone: formData.guardianPhone || "",
+          guardianPhone: normalizePhone(formData.guardianPhone || ""),
           createdAt: Date.now(),
         };
         await db.addStudent(newStudent);
@@ -672,7 +696,7 @@ const ManageStudents = () => {
                 onChange={(e) => setFilterClass(e.target.value)}
               >
                 <option value="all">All Classes</option>
-                {CLASSES_LIST.map((c) => (
+                {availableClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -711,7 +735,7 @@ const ManageStudents = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {filteredStudents.map((student) => {
                   const className =
-                    CLASSES_LIST.find((c) => c.id === student.classId)?.name ||
+                    availableClasses.find((c) => c.id === student.classId)?.name ||
                     student.classId;
                   return (
                     <div
@@ -755,11 +779,7 @@ const ManageStudents = () => {
                           </p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">
                             {student.dob
-                              ? new Date(student.dob).toLocaleDateString("en-GB", {
-                                  day: "2-digit",
-                                  month: "short",
-                                  year: "numeric",
-                                })
+                              ? new Date(student.dob).toLocaleDateString("en-US")
                               : "-"}
                           </p>
                         </div>
@@ -966,7 +986,7 @@ const ManageStudents = () => {
                       setFormData({ ...formData, classId: e.target.value })
                     }
                   >
-                    {CLASSES_LIST.map((c) => (
+                    {availableClasses.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>

@@ -1,8 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
+import { auth } from "../../services/firebase";
+import { createRoot } from "react-dom/client";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
+import InvoiceTemplate from "../../components/parent/InvoiceTemplate";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
 import {
@@ -18,7 +24,7 @@ import {
   StudentFeePayment,
   SchoolConfig,
 } from "../../types";
-import { ACADEMIC_YEAR, CLASSES_LIST } from "../../constants";
+import { ACADEMIC_YEAR, CLASSES_LIST, getFilteredClasses } from "../../constants";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -38,7 +44,12 @@ import {
   TrendingUp,
   Users,
   Wallet,
+  CreditCard,
+  Settings,
+  X,
+  MessageSquare,
 } from "lucide-react";
+
 
 const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
 const paymentMethods: PaymentMethod[] = ["Cash", "MoMo", "Bank"];
@@ -196,7 +207,10 @@ const PAYMENT_METHOD_THEMES: Record<
 const FeesPayments: React.FC = () => {
   const { school } = useSchool();
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const schoolId = school?.id || "";
+  const availableClasses = getFilteredClasses(school?.schoolType);
   const [loading, setLoading] = useState(false);
 
   const feeSetupRef = useRef<HTMLDivElement | null>(null);
@@ -216,6 +230,13 @@ const FeesPayments: React.FC = () => {
     const stored = readStoredFilters();
     return stored.selectedClassId || "all";
   });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const filters = { academicYear, term, selectedClassId };
+      window.sessionStorage.setItem(financeFiltersStorageKey, JSON.stringify(filters));
+    }
+  }, [academicYear, term, selectedClassId]);
+
   const [statusFilter, setStatusFilter] =
     useState<(typeof statusFilters)[number]>("all");
   const [search, setSearch] = useState("");
@@ -235,6 +256,161 @@ const FeesPayments: React.FC = () => {
   const [financeSettings, setFinanceSettings] =
     useState<FinanceSettings | null>(null);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
+
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState<string | null>(null);
+
+  // Helper: Pre-load image to Base64
+  const urlToBase64 = (url: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return reject(new Error("Canvas context not available"));
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        } catch (err) { reject(err); }
+      };
+      img.onerror = () => reject(new Error("Failed to load image"));
+      img.src = url;
+    });
+
+  const waitForNextPaint = () =>
+    new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      });
+    });
+
+  const generateSinglePagePdfBlob = async (element: HTMLElement): Promise<Blob> => {
+    const canvas = await html2canvas(element, {
+      scale: 1.5,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+    });
+    const imgData = canvas.toDataURL("image/jpeg", 0.8);
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "px",
+      format: [canvas.width / 1.5, canvas.height / 1.5],
+    });
+    pdf.addImage(imgData, "JPEG", 0, 0, canvas.width / 1.5, canvas.height / 1.5);
+    return pdf.output("blob");
+  };
+
+  const handleSendWhatsAppInvoice = async (payment: StudentFeePayment) => {
+    const student = students.find(s => s.id === payment.studentId);
+    if (!student?.guardianPhone) {
+      showToast("No guardian phone number found for this student.", { type: "error" });
+      return;
+    }
+
+    try {
+      setIsSendingWhatsApp(payment.id);
+      showToast("Generating receipt PDF...", { type: "info" });
+
+      const container = document.createElement("div");
+      container.style.position = "fixed";
+      container.style.top = "0";
+      container.style.left = "-9999px";
+      container.style.width = "800px";
+      container.style.backgroundColor = "white";
+      document.body.appendChild(container);
+
+      try {
+        let logoBase64 = "";
+        if (school?.logoUrl) {
+          try {
+            logoBase64 = await urlToBase64(school.logoUrl);
+          } catch (e) {
+            logoBase64 = school.logoUrl;
+          }
+        }
+
+        const root = createRoot(container);
+        root.render(
+          <InvoiceTemplate
+            schoolName={school?.name || "School Manager"}
+            schoolLogo={logoBase64}
+            studentName={student.name}
+            studentId={student.id}
+            amount={payment.amountPaid}
+            reference={payment.receiptNumber || payment.id}
+            date={payment.createdAt as number}
+            academicYear={payment.academicYear}
+            term={payment.term}
+          />
+        );
+
+        await waitForNextPaint();
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        let pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
+        
+        if (pdfBlob.size < 5000) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
+        }
+
+        const reader = new FileReader();
+        const pdfBase64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+        });
+        reader.readAsDataURL(pdfBlob);
+        const pdfBase64 = await pdfBase64Promise;
+
+        root.unmount();
+        document.body.removeChild(container);
+
+        const idToken = await auth.currentUser?.getIdToken();
+        const response = await fetch('/api/payments/send-invoice', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
+          },
+          body: JSON.stringify({
+            studentId: student.id,
+            studentName: student.name,
+            guardianPhone: student.guardianPhone,
+            amount: payment.amountPaid,
+            reference: payment.receiptNumber || payment.id,
+            base64Pdf: pdfBase64
+          })
+        });
+
+        if (response.ok) {
+          showToast("Invoice sent to WhatsApp successfully!", { type: "success" });
+          logActivity({
+            schoolId: schoolId!,
+            actorUid: user?.id || null,
+            actorRole: user?.role || null,
+            eventType: "WhatsApp",
+            meta: {
+              description: `Sent invoice for ${student.name} (${payment.receiptNumber || payment.id})`
+            }
+          });
+        } else {
+          throw new Error("Failed to send WhatsApp message");
+        }
+      } catch (err) {
+        if (document.body.contains(container)) document.body.removeChild(container);
+        throw err;
+      }
+    } catch (error) {
+      console.error("WhatsApp Error:", error);
+      showToast("Failed to send invoice via WhatsApp.", { type: "error" });
+    } finally {
+      setIsSendingWhatsApp(null);
+    }
+  };
+
   const [onboardingStep, setOnboardingStep] = useState(1);
 
   const [isCreatingFee, setIsCreatingFee] = useState(false);
@@ -246,8 +422,12 @@ const FeesPayments: React.FC = () => {
   >(null);
   const [isSavingOnboarding, setIsSavingOnboarding] = useState(false);
 
-  const [paymentPage, setPaymentPage] = useState(1);
-  const paymentPageSize = 6;
+  useEffect(() => {
+    // No longer needed as it's a full page
+  }, []);
+
+  // Recent payments pagination removed - switching to scrollable section
+
 
   const [feeForm, setFeeForm] = useState({
     feeName: "",
@@ -415,7 +595,7 @@ const FeesPayments: React.FC = () => {
     ];
     const rows = paymentsSorted.map((payment) => {
       const student = students.find((s) => s.id === payment.studentId);
-      const className = CLASSES_LIST.find(
+      const className = availableClasses.find(
         (c) => c.id === payment.classId,
       )?.name;
       return [
@@ -439,7 +619,7 @@ const FeesPayments: React.FC = () => {
     setActiveQuickExport("defaulters");
     const headers = ["Student", "Class", "Balance", "Status"];
     const rows = defaulters.map(({ ledger, student, balance, status }) => {
-      const className = CLASSES_LIST.find((c) => c.id === ledger.classId)?.name;
+      const className = availableClasses.find((c) => c.id === ledger.classId)?.name;
       return [
         student?.name || ledger.studentId,
         className || ledger.classId,
@@ -683,7 +863,7 @@ const FeesPayments: React.FC = () => {
   };
 
   const getClassLabel = (classId?: string | null) =>
-    CLASSES_LIST.find((cls) => cls.id === classId)?.name || classId || "this class";
+    availableClasses.find((cls) => cls.id === classId)?.name || classId || "this class";
 
   const getNewStudentFeeCutoff = () => {
     const reopenDate = schoolConfig?.schoolReopenDate?.trim() || "";
@@ -1521,7 +1701,7 @@ const FeesPayments: React.FC = () => {
     const className =
       selectedClassId === "all"
         ? "All Classes"
-        : CLASSES_LIST.find((cls) => cls.id === selectedClassId)?.name ||
+        : availableClasses.find((cls) => cls.id === selectedClassId)?.name ||
           "Class";
     return `${academicYear} · ${term} · ${className}`;
   }, [academicYear, term, selectedClassId]);
@@ -2161,18 +2341,11 @@ const FeesPayments: React.FC = () => {
     };
   }, [ledgerPaymentModal, ledgerRows]);
 
-  const paginatedPayments = useMemo(() => {
-    const start = (paymentPage - 1) * paymentPageSize;
-    return paymentsSorted.slice(start, start + paymentPageSize);
-  }, [paymentsSorted, paymentPage]);
+  // Pagination logic removed - section is now scrollable
 
-  const paymentPages = Math.max(
-    1,
-    Math.ceil(paymentsSorted.length / paymentPageSize),
-  );
 
   const classCollection = useMemo(() => {
-    const summary = CLASSES_LIST.map((cls) => {
+    const summary = availableClasses.map((cls) => {
       const classPayments = payments.filter((p) => p.classId === cls.id);
       const totalPaid = classPayments.reduce((sum, p) => sum + p.amountPaid, 0);
       return { label: cls.name, value: totalPaid };
@@ -2400,7 +2573,7 @@ const FeesPayments: React.FC = () => {
                       className={DASH_INPUT}
                     >
                       <option value="all">All Classes</option>
-                      {CLASSES_LIST.map((cls) => (
+                      {availableClasses.map((cls) => (
                         <option key={cls.id} value={cls.id}>
                           {cls.name}
                         </option>
@@ -2482,7 +2655,7 @@ const FeesPayments: React.FC = () => {
                       "Class",
                       selectedClassId === "all"
                         ? "All classes"
-                        : CLASSES_LIST.find((cls) => cls.id === selectedClassId)
+                        : availableClasses.find((cls) => cls.id === selectedClassId)
                             ?.name || selectedClassId,
                     ],
                     ["Search", search.trim() || "No search filter"],
@@ -3006,18 +3179,17 @@ const FeesPayments: React.FC = () => {
                     </>
                   )}
                 </button>
-              </div>
-              <div className="mt-5 space-y-3">
+              </div>              <div className="mt-5 max-h-[620px] overflow-y-auto pr-2 space-y-3 scrollbar-thin">
                 {loading ? (
-                  Array.from({ length: paymentPageSize }).map((_, index) => (
+                  Array.from({ length: 5 }).map((_, index) => (
                     <SkeletonBlock key={index} className="h-16 w-full" />
                   ))
-                ) : paginatedPayments.length === 0 ? (
+                ) : paymentsSorted.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
                     No payments recorded yet.
                   </div>
                 ) : (
-                  paginatedPayments.map((payment) => (
+                  paymentsSorted.map((payment) => (
                     <div
                       key={payment.id}
                       className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/80 bg-gradient-to-r from-white/90 via-white to-slate-50/90 px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-5"
@@ -3054,43 +3226,32 @@ const FeesPayments: React.FC = () => {
                         >
                           <Eye size={14} /> Details
                         </button>
+                        <button
+                          onClick={() => handleSendWhatsAppInvoice(payment)}
+                          disabled={isSendingWhatsApp === payment.id}
+                          className={`inline-flex items-center gap-1 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-sm transition-all ${
+                            isSendingWhatsApp === payment.id
+                              ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
+                              : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
+                          }`}
+                        >
+                          {isSendingWhatsApp === payment.id ? (
+                            <RefreshCw size={14} className="animate-spin" />
+                          ) : (
+                            <MessageSquare size={14} />
+                          )}
+                          WhatsApp
+                        </button>
                       </div>
                     </div>
                   ))
                 )}
               </div>
-              <div className="mt-4 flex flex-col gap-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-                <span>
-                  {paymentsSorted.length === 0
-                    ? "Showing 0 of 0"
-                    : `Showing ${(paymentPage - 1) * paymentPageSize + 1} - ${Math.min(
-                        paymentPage * paymentPageSize,
-                        paymentsSorted.length,
-                      )} of ${paymentsSorted.length}`}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      setPaymentPage((prev) => Math.max(1, prev - 1))
-                    }
-                    disabled={paymentPage === 1}
-                    className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 font-semibold text-slate-600 shadow-sm disabled:opacity-50"
-                  >
-                    Prev
-                  </button>
-                  <button
-                    onClick={() =>
-                      setPaymentPage((prev) => Math.min(paymentPages, prev + 1))
-                    }
-                    disabled={paymentPage === paymentPages}
-                    className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 font-semibold text-slate-600 shadow-sm disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
               </div>
+
               </div>
-            </div>
+
+
 
             <div className="space-y-6">
               <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
@@ -3154,6 +3315,18 @@ const FeesPayments: React.FC = () => {
                     </span>
                     <span className="text-xs text-slate-500">
                       Download the latest finance snapshot for review.
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => navigate("/admin/payment-settings")}
+                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-blue-200/80 bg-gradient-to-br from-blue-50 via-white to-cyan-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    <CreditCard size={18} className="text-blue-600" />
+                    <span className="font-semibold text-slate-900">
+                      Online Payments
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Setup your bank or MoMo account for payouts.
                     </span>
                   </button>
                 </div>
@@ -3543,7 +3716,7 @@ const FeesPayments: React.FC = () => {
                     className={DASH_INPUT}
                   >
                     <option value="">All Classes</option>
-                    {CLASSES_LIST.map((cls) => (
+                    {availableClasses.map((cls) => (
                       <option key={cls.id} value={cls.id}>
                         {cls.name}
                       </option>
@@ -3725,7 +3898,7 @@ const FeesPayments: React.FC = () => {
                             </p>
                             <p className="text-xs text-slate-500">
                               {(fee.appliesTo === "class" && fee.classId
-                                ? CLASSES_LIST.find((c) => c.id === fee.classId)
+                                ? availableClasses.find((c) => c.id === fee.classId)
                                     ?.name
                                 : fee.appliesTo === "selected_students"
                                   ? "Selected students"
@@ -3836,7 +4009,7 @@ const FeesPayments: React.FC = () => {
                     className={DASH_INPUT}
                   >
                     <option value="">All Classes</option>
-                    {CLASSES_LIST.map((cls) => (
+                    {availableClasses.map((cls) => (
                       <option key={cls.id} value={cls.id}>
                         {cls.name}
                       </option>
@@ -4085,7 +4258,7 @@ const FeesPayments: React.FC = () => {
                             {student?.name || ledger.studentId}
                           </td>
                           <td className="py-3 px-2 whitespace-nowrap text-slate-500">
-                            {CLASSES_LIST.find(
+                            {availableClasses.find(
                               (cls) => cls.id === ledger.classId,
                             )?.name || "-"}
                           </td>
@@ -4158,7 +4331,7 @@ const FeesPayments: React.FC = () => {
                           {student?.name || ledger.studentId}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {CLASSES_LIST.find((cls) => cls.id === ledger.classId)
+                          {availableClasses.find((cls) => cls.id === ledger.classId)
                             ?.name || ""}
                         </p>
                       </div>
@@ -4372,12 +4545,25 @@ const FeesPayments: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
-                  <div className="text-xs text-slate-500">
-                    Transaction recorded by finance team.
-                  </div>
+                  <button
+                    onClick={() => handleSendWhatsAppInvoice(selectedPayment)}
+                    disabled={isSendingWhatsApp === selectedPayment.id}
+                    className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-all ${
+                      isSendingWhatsApp === selectedPayment.id
+                        ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
+                        : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
+                    }`}
+                  >
+                    {isSendingWhatsApp === selectedPayment.id ? (
+                      <RefreshCw size={16} className="animate-spin" />
+                    ) : (
+                      <MessageSquare size={16} />
+                    )}
+                    Send to WhatsApp
+                  </button>
                   <button
                     onClick={() => setSelectedPayment(null)}
-                    className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
+                    className="rounded-full bg-slate-900 px-6 py-2 text-sm font-semibold text-white shadow-sm"
                   >
                     Done
                   </button>
@@ -4730,7 +4916,7 @@ const FeesPayments: React.FC = () => {
                               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                             >
                               <option value="">Select class</option>
-                              {CLASSES_LIST.map((cls) => (
+                              {availableClasses.map((cls) => (
                                 <option key={cls.id} value={cls.id}>
                                   {cls.name}
                                 </option>
@@ -4830,7 +5016,7 @@ const FeesPayments: React.FC = () => {
                                     {student?.name || ledger.studentId}
                                   </p>
                                   <p className="text-xs text-slate-400">
-                                    {CLASSES_LIST.find(
+                                    {availableClasses.find(
                                       (cls) => cls.id === ledger.classId,
                                     )?.name || ""}
                                   </p>

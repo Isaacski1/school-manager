@@ -1,7 +1,7 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
-import { CLASSES_LIST } from "../../constants";
+import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { AlertTriangle, CheckCircle, HelpCircle } from "lucide-react";
 import { useSchool } from "../../context/SchoolContext";
 import {
@@ -21,7 +21,10 @@ interface StudentAttendanceStats {
 const AttendanceStats = () => {
   const { school } = useSchool();
   const schoolId = school?.id || null;
-  const [selectedClass, setSelectedClass] = useState(CLASSES_LIST[0].id);
+  const availableClasses = getFilteredClasses(school?.schoolType);
+  const [selectedClass, setSelectedClass] = useState(
+    availableClasses[0]?.id || "c_p1",
+  );
   const [stats, setStats] = useState<StudentAttendanceStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [termTotalDays, setTermTotalDays] = useState(0);
@@ -141,7 +144,7 @@ const AttendanceStats = () => {
                 value={selectedClass}
                 onChange={(e) => setSelectedClass(e.target.value)}
               >
-                {CLASSES_LIST.map((c) => (
+                {availableClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

@@ -11,7 +11,7 @@
     "env:test": "node scripts/switch-env.mjs test",
     "env:prod": "node scripts/switch-env.mjs prod",
     "start": "node server/server.js",
-    "server:dev": "nodemon server/server.js",
+    "server:dev": "nodemon",
     "predeploy": "npm run build",
     "deploy": "npm run deploy:prod",
     "deploy:prod": "npm run env:prod && npm run build && firebase deploy --project school-manager-gh --only hosting",
@@ -31,10 +31,13 @@
     "html2pdf.js": "^0.12.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-paystack": "^6.0.0",
     "react-router-dom": "^7.11.0",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "whatsapp-web.js": "^1.34.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

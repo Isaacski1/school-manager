@@ -41,6 +41,7 @@ service cloud.firestore {
       return isAuthenticated() && (
         request.auth.token.role == 'parent' ||
         request.auth.token.userRole == 'parent' ||
+        request.auth.uid.matches('.*\\+.*') ||
         request.auth.uid.matches('^\\+') ||
         (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -131,6 +132,9 @@ service cloud.firestore {
       allow create, delete: if isSuperAdmin();
       allow read, update: if isSuperAdmin();
 
+      // Authenticated users can create their own profile (essential for parents)
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+
       // School admin can delete teacher profiles in their own active school.
       allow delete: if isAuthenticated() && isActiveUser() &&
         isSchoolAdmin() &&
@@ -151,11 +155,14 @@ service cloud.firestore {
       // Authenticated users can read their own profile
       allow read: if isAuthenticated() && request.auth.uid == userId;
 
-      // Users can update only safe fields on their own profile (cannot change role/schoolId)
+      // Users can update only safe fields on their own profile
       allow update: if isAuthenticated() &&
                        request.auth.uid == userId &&
                        request.resource.data.role == resource.data.role &&
-                       request.resource.data.schoolId == resource.data.schoolId;
+                       (
+                         request.resource.data.schoolId == resource.data.schoolId ||
+                         resource.data.role == 'parent'
+                       );
 
       // Teachers can read their own profile (redundant but explicit)
       allow read: if isTeacher() && request.auth.uid == userId;
@@ -255,8 +262,7 @@ service cloud.firestore {
         ]);
 
       allow read: if isSuperAdmin() || 
-                     (schoolScopedRead(schoolId) && (isSchoolAdmin() || isTeacher())) || 
-                     isParent();
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -283,35 +289,20 @@ service cloud.firestore {
         isActiveSchoolId(schoolId);
     }
 
-    match /schools/{schoolId}/payments/{paymentId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
-        isActiveSchoolId(schoolId) &&
-        request.resource.data.schoolId == schoolId &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "studentId",
-          "classId",
-          "feeId",
-          "feeName",
-          "amountPaid",
-          "paymentMethod",
-          "receiptNumber",
-          "academicYear",
-          "term",
-          "createdAt",
-          "recordedBy",
-          "amount",
-          "currency",
-          "reference",
-          "status",
-          "event",
-          "adminEmail",
-          "schoolName",
-          "isOpeningPayment"
-        ]);
+    match /schools/{schoolId}/fees/{feeId} {
+      allow read: if isSuperAdmin() || 
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+      allow write: if isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId);
+    }
 
+
+    match /schools/{schoolId}/payments/{paymentId} {
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || 
+        (isSchoolAdmin() && userSchoolId() == schoolId) ||
+        isParent()
+      );
+      
       allow get: if schoolScopedRead(schoolId);
 
       allow list: if isSuperAdmin() ||
@@ -392,6 +383,9 @@ service cloud.firestore {
 
       // Teachers need read access to load term/session settings on their dashboard.
       allow read: if isTeacher() && userSchoolId() == document;
+
+      // Parents need read access to see school-specific dates and config on dashboard
+      allow read, get: if isAuthenticated();
     }
 
     // Field whitelisting helpers
@@ -794,6 +788,24 @@ service cloud.firestore {
         isActiveSchoolId(resource.data.schoolId);
     }
 
+    // Legacy student ledgers
+    match /student_ledgers/{ledgerId} {
+      allow read: if isSuperAdmin() || 
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+    }
+
+    // Legacy payments
+    match /payments/{paymentId} {
+      allow read: if isSuperAdmin() || 
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+    }
+
+    // Legacy fee definitions
+    match /fees/{feeId} {
+      allow read: if isSuperAdmin() || 
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+    }
+
     // System notifications collection
     match /admin_notifications/{notificationId} {
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
@@ -971,32 +983,11 @@ service cloud.firestore {
 
     // Student fee payments collection
     match /payments/{paymentId} {
-      allow create: if isAuthenticated() && isActiveUser() &&
-        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
-        isActiveSchoolId(request.resource.data.schoolId) &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "studentId",
-          "classId",
-          "feeId",
-          "feeName",
-          "amountPaid",
-          "paymentMethod",
-          "receiptNumber",
-          "academicYear",
-          "term",
-          "createdAt",
-          "recordedBy",
-          "amount",
-          "currency",
-          "reference",
-          "status",
-          "event",
-          "adminEmail",
-          "schoolName",
-          "isOpeningPayment"
-        ]);
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || 
+        (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId) ||
+        isParent()
+      );
 
       // Resource-scoped read handles both document reads and queries.
       allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);

@@ -14,6 +14,7 @@ interface SchoolContextType {
   school: School | null;
   schoolLoading: boolean;
   schoolError: string | null;
+  refreshSchool: () => void;
 }
 
 const SchoolContext = createContext<SchoolContextType | undefined>(undefined);
@@ -26,6 +27,9 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   const [schoolLoading, setSchoolLoading] = useState(false);
   const [schoolError, setSchoolError] = useState<string | null>(null);
   const [cachedSchool, setCachedSchool] = useState<School | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const refreshSchool = React.useCallback(() => setRefreshTrigger((prev) => prev + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,19 +42,25 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       setSchoolError(null);
 
       if (!isAuthenticated || !user || user.role === "super_admin") {
+        setSchool(null);
+        setCachedSchool(null);
         setSchoolLoading(false);
         return;
       }
 
-      if (!user.schoolId) {
+      const effectiveSchoolId = user.schoolId || localStorage.getItem("activeSchoolId");
+
+      if (!effectiveSchoolId) {
         setSchoolLoading(false);
-        setSchoolError("No school assigned to your account");
+        if (user.role !== "parent") {
+          setSchoolError("No school assigned to your account");
+        }
         return;
       }
 
       setSchoolLoading(true);
 
-      const cacheKey = `school_${user.schoolId}`;
+      const cacheKey = `school_${effectiveSchoolId}`;
       const cached =
         sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
 
@@ -70,13 +80,13 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
       try {
         // First do a direct get to check if document exists
-        const schoolDocRef = doc(firestore, "schools", user.schoolId);
+        const schoolDocRef = doc(firestore, "schools", effectiveSchoolId);
         const schoolDoc = await getDoc(schoolDocRef);
 
         if (!schoolDoc.exists()) {
           // School document doesn't exist yet - this is normal for brand new schools
           console.info("[SchoolContext] School document not found yet, will retry...", {
-            schoolId: user.schoolId,
+            schoolId: effectiveSchoolId,
           });
           if (!cancelled) setSchoolLoading(false);
           
@@ -105,8 +115,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
           return;
         }
 
+        localStorage.setItem(cacheKey, JSON.stringify(schoolData));
         sessionStorage.setItem(cacheKey, JSON.stringify(schoolData));
-        localStorage.removeItem(cacheKey);
         if (!cancelled) setSchool(schoolData);
         if (!cancelled) setCachedSchool(schoolData);
         window.dispatchEvent(new Event("school-branding-updated"));
@@ -129,8 +139,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
               return; // Keep showing cached data
             }
 
+            localStorage.setItem(cacheKey, JSON.stringify(updatedSchoolData));
             sessionStorage.setItem(cacheKey, JSON.stringify(updatedSchoolData));
-            localStorage.removeItem(cacheKey);
             if (!cancelled) setSchool(updatedSchoolData);
             if (!cancelled) setCachedSchool(updatedSchoolData);
             window.dispatchEvent(new Event("school-branding-updated"));
@@ -156,7 +166,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
       if (unsubscribe) unsubscribe();
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [isAuthenticated, user?.id, user?.schoolId, user?.role]);
+  }, [isAuthenticated, user?.id, user?.schoolId, user?.role, refreshTrigger]);
 
   return (
     <SchoolContext.Provider
@@ -164,6 +174,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         school: school || cachedSchool,
         schoolLoading,
         schoolError,
+        refreshSchool,
       }}
     >
       {children}
