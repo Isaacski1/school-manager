@@ -12,7 +12,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
   roleLabel,
   schoolName,
   schoolLogoUrl,
-  hideDefaultBranding,
+  hideDefaultBranding = false,
 }) => {
   // If we should hide default and don't have school info yet, show a clean generic loader
   const displayName = hideDefaultBranding && !schoolName ? "" : (schoolName || "School Manager GH");

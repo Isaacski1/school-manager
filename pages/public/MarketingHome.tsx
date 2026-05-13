@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Sparkles, Users, Heart, ChevronDown, Star, Quote, MessageCircle, Bell, Wallet } from "lucide-react";
+import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Sparkles, Users, Heart, ChevronDown, Star, Quote, MessageCircle, Bell, Wallet, X } from "lucide-react";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { db } from "../../services/mockDb";
 
@@ -170,15 +170,19 @@ const MarketingHome = () => {
                 onClick={() => setShowPopup(false)}
                 style={{
                   position: "absolute", top: 16, right: 16,
-                  width: 36, height: 36, borderRadius: "50%",
-                  background: "rgba(0,0,0,0.08)", border: "none",
+                  width: 40, height: 40, borderRadius: "50%",
+                  background: "white", 
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
                   cursor: "pointer", display: "flex", alignItems: "center",
-                  justifyContent: "center", zIndex: 10, fontSize: 18,
-                  color: "#555", fontWeight: 700
+                  justifyContent: "center", zIndex: 100, fontSize: 24,
+                  color: "#111", fontWeight: 400,
+                  transition: "all 0.2s"
                 }}
+                className="popup-close-button"
                 aria-label="Close popup"
               >
-                ×
+                <X size={20} />
               </button>
 
               {/* Left: Image */}

@@ -193,7 +193,7 @@ const AppContent = () => {
   const currentPath = location.pathname === "/" && location.hash
     ? getPathFromHash(location.hash)
     : location.pathname;
-  const isPublicRoute = ["/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
+  const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
 
   const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
   const splashSchoolName = school?.name || cachedSchool?.name || "";
@@ -205,7 +205,7 @@ const AppContent = () => {
   if (authLoading && !isPublicRoute) {
     const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
     // Hide default branding if we have school info OR if this is a returning school user
-    const hideDefault = isSchoolUser || hasBranding || hasSchoolContext;
+    const hideDefault = (isSchoolUser || hasBranding || hasSchoolContext) && Boolean(splashSchoolName || splashSchoolLogo);
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
@@ -223,7 +223,7 @@ const AppContent = () => {
     !(user.role === UserRole.PARENT && !hasSchoolContext)
   ) {
     const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
-    const hideDefault = isSchoolUser || hasBranding || hasSchoolContext;
+    const hideDefault = (isSchoolUser || hasBranding || hasSchoolContext) && Boolean(splashSchoolName || splashSchoolLogo);
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
@@ -375,7 +375,7 @@ const ProtectedRoute = ({
       <SplashScreen 
         schoolName={splashName} 
         schoolLogoUrl={splashLogo} 
-        hideDefaultBranding={isSchoolUser || hasBranding || Boolean(resolvedSchoolId)}
+        hideDefaultBranding={(isSchoolUser || hasBranding || Boolean(resolvedSchoolId)) && Boolean(splashName || splashLogo)}
       />
     );
   }
