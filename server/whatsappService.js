@@ -23,6 +23,10 @@ let clientStatus = "disconnected";
 let currentQrBase64 = null;
 let lastError = null;
 
+// Utility functions for safety and timing
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const randomDelay = () => 3000 + Math.random() * 4000; // 3-7 second delay between broadcast messages
+
 export const getWhatsAppStatus = () => ({
   status: clientStatus,
   qr: currentQrBase64,

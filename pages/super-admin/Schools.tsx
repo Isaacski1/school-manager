@@ -712,19 +712,22 @@ const Schools = () => {
                 ) : (
                   schools.map((school) => (
                     <tr key={school.id} className="hover:bg-slate-50">
-                      <td className="px-6 py-4 font-medium text-slate-800 flex items-center gap-3">
-                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center overflow-hidden">
+                      <td className="px-6 py-4 font-medium text-slate-800 flex items-center gap-4 min-w-[280px]">
+                        <div className="w-12 h-12 flex-shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center overflow-hidden p-1 shadow-sm">
                           {school.logoUrl ? (
                             <img
                               src={school.logoUrl}
                               alt={school.name}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-contain"
                             />
                           ) : (
-                            <Building size={16} className="text-slate-600" />
+                            <Building size={20} className="text-slate-400" />
                           )}
                         </div>
-                        {school.name}
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-slate-900 leading-tight">{school.name}</span>
+                          <span className="text-[10px] text-slate-400 font-normal uppercase tracking-wider mt-0.5">{school.schoolType || "School"}</span>
+                        </div>
                       </td>
                       <td className="px-6 py-4 font-mono text-sm">
                         {school.code}

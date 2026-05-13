@@ -161,10 +161,10 @@ const SkeletonBlock: React.FC<{ className?: string }> = ({ className }) => (
 const formatMoney = (value: number) => `GHS ${value.toFixed(2)}`;
 
 const DASH_PANEL =
-  "rounded-[30px] border border-white/55 bg-white/80 shadow-[0_28px_80px_-45px_rgba(15,23,42,0.38)] backdrop-blur-xl";
+  "rounded-[30px] border border-white/55 bg-white shadow-[0_28px_80px_-45px_rgba(15,23,42,0.38)]";
 
 const DASH_PANEL_SOFT =
-  "rounded-[24px] border border-white/65 bg-white/72 shadow-[0_20px_45px_-36px_rgba(15,23,42,0.35)] backdrop-blur";
+  "rounded-[24px] border border-white/65 bg-white shadow-[0_20px_45px_-36px_rgba(15,23,42,0.35)]";
 
 const DASH_INPUT =
   "mt-2 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-3.5 py-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100";
@@ -488,6 +488,8 @@ const FeesPayments: React.FC = () => {
   const [onboardingMode, setOnboardingMode] =
     useState<OnboardingMode>("fresh_start");
   const [onboardingDate, setOnboardingDate] = useState("");
+  const [paymentsLimit, setPaymentsLimit] = useState(15);
+  const [ledgersLimit, setLedgersLimit] = useState(25);
   const financeRequestIdRef = useRef(0);
 
   const financeCacheKey = useMemo(() => {
@@ -1621,12 +1623,27 @@ const FeesPayments: React.FC = () => {
     [ledgers],
   );
 
+  const studentsMap = useMemo(() => {
+    const map = new Map<string, Student>();
+    students.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [students]);
+
+  const paymentsByStudentMap = useMemo(() => {
+    const map = new Map<string, StudentFeePayment[]>();
+    payments.forEach((p) => {
+      if (!map.has(p.studentId)) map.set(p.studentId, []);
+      map.get(p.studentId)!.push(p);
+    });
+    return map;
+  }, [payments]);
+
   const ledgerRows = useMemo(() => {
     return visibleLedgers.map((ledger) => {
-      const student = students.find((s) => s.id === ledger.studentId);
-      const ledgerPayments = payments.filter(
+      const student = studentsMap.get(ledger.studentId);
+      const studentPayments = paymentsByStudentMap.get(ledger.studentId) || [];
+      const ledgerPayments = studentPayments.filter(
         (p) =>
-          p.studentId === ledger.studentId &&
           p.academicYear === academicYear &&
           p.term === term,
       );
@@ -1655,7 +1672,7 @@ const FeesPayments: React.FC = () => {
         status,
       };
     });
-  }, [visibleLedgers, students, payments, academicYear, term]);
+  }, [visibleLedgers, studentsMap, paymentsByStudentMap, academicYear, term]);
 
   const filteredLedgerRows = useMemo(() => {
     const queryText = search.trim().toLowerCase();
@@ -2374,8 +2391,8 @@ const FeesPayments: React.FC = () => {
 
   return (
     <Layout title="Finance & Payments">
-      <div className="relative rounded-[32px] bg-gradient-to-br from-amber-50 via-rose-50 to-violet-100 p-4 sm:p-6 lg:p-8">
-        <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.25),_transparent_40%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.25),_transparent_35%),radial-gradient(circle_at_20%_80%,_rgba(139,92,246,0.2),_transparent_40%)]" />
+      <div className="relative rounded-[32px] bg-slate-50 p-4 sm:p-6 lg:p-8">
+        <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.1),_transparent_40%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.1),_transparent_35%)]" />
         <div className="relative space-y-8">
           <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
             <div className="relative overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_38%,#0ea5e9_100%)] p-6 text-white shadow-[0_35px_90px_-45px_rgba(11,74,130,0.88)] sm:p-7">
@@ -2416,7 +2433,7 @@ const FeesPayments: React.FC = () => {
                   ].map((pill) => (
                     <span
                       key={pill}
-                      className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-sky-50/90 backdrop-blur"
+                      className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-sky-50/90"
                     >
                       {pill}
                     </span>
@@ -3192,149 +3209,123 @@ const FeesPayments: React.FC = () => {
                     No payments recorded yet.
                   </div>
                 ) : (
-                  paymentsSorted.map((payment) => (
-                    <div
-                      key={payment.id}
-                      className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/80 bg-gradient-to-r from-white/90 via-white to-slate-50/90 px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-5"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-                          <Wallet size={18} />
+                  <>
+                    {paymentsSorted.slice(0, paymentsLimit).map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/80 bg-gradient-to-r from-white/90 via-white to-slate-50/90 px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-5"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+                            <Wallet size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
+                              {studentsMap.get(payment.studentId)?.name || payment.studentId}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {payment.feeName} / {payment.paymentMethod}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
-                            {students.find((s) => s.id === payment.studentId)
-                              ?.name || payment.studentId}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {payment.feeName} / {payment.paymentMethod}
-                          </p>
+                        <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+                          <div className="min-w-[120px] text-left lg:text-right">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                              Amount paid
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-slate-900">
+                              {formatMoney(payment.amountPaid)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {new Date(payment.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setSelectedPayment(payment)}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm"
+                          >
+                            <Eye size={14} /> Details
+                          </button>
+                          <button
+                            onClick={() => handleSendWhatsAppInvoice(payment)}
+                            disabled={isSendingWhatsApp === payment.id}
+                            className={`inline-flex items-center gap-1 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-sm transition-all ${
+                              isSendingWhatsApp === payment.id
+                                ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
+                                : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
+                            }`}
+                          >
+                            {isSendingWhatsApp === payment.id ? (
+                              <RefreshCw size={14} className="animate-spin" />
+                            ) : (
+                              <MessageSquare size={14} />
+                            )}
+                            WhatsApp
+                          </button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-                        <div className="min-w-[120px] text-left lg:text-right">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                            Amount paid
-                          </p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">
-                            {formatMoney(payment.amountPaid)}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {new Date(payment.createdAt).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => setSelectedPayment(payment)}
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm"
-                        >
-                          <Eye size={14} /> Details
-                        </button>
-                        <button
-                          onClick={() => handleSendWhatsAppInvoice(payment)}
-                          disabled={isSendingWhatsApp === payment.id}
-                          className={`inline-flex items-center gap-1 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-sm transition-all ${
-                            isSendingWhatsApp === payment.id
-                              ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
-                              : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
-                          }`}
-                        >
-                          {isSendingWhatsApp === payment.id ? (
-                            <RefreshCw size={14} className="animate-spin" />
-                          ) : (
-                            <MessageSquare size={14} />
-                          )}
-                          WhatsApp
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                    ))}
+                    {paymentsSorted.length > paymentsLimit && (
+                      <button
+                        onClick={() => setPaymentsLimit((prev) => prev + 15)}
+                        className="w-full rounded-2xl border border-slate-200 bg-white/80 py-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                      >
+                        Load More Payments ({paymentsSorted.length - paymentsLimit} remaining)
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
+                <div className="mt-6">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Workspace
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                    Quick Actions
+                  </h3>
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+                    <button
+                      onClick={() => setShowOnboardingWizard(true)}
+                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-indigo-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <Users size={18} className="text-indigo-600" />
+                      <span className="text-[11px] font-semibold text-slate-900">Onboarding</span>
+                    </button>
+                    <button
+                      onClick={() => scrollToSection(feeSetupRef)}
+                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-rose-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <Plus size={18} className="text-rose-600" />
+                      <span className="text-[11px] font-semibold text-slate-900">Add Fee</span>
+                    </button>
+                    <button
+                      onClick={() => scrollToSection(recordPaymentRef)}
+                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-emerald-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <Banknote size={18} className="text-emerald-600" />
+                      <span className="text-[11px] font-semibold text-slate-900">Record</span>
+                    </button>
+                    <button
+                      onClick={handleExportReport}
+                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-amber-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <Download size={18} className="text-amber-600" />
+                      <span className="text-[11px] font-semibold text-slate-900">Export</span>
+                    </button>
+                    <button
+                      onClick={() => navigate("/admin/payment-settings")}
+                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-blue-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <CreditCard size={18} className="text-blue-600" />
+                      <span className="text-[11px] font-semibold text-slate-900">Online</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-
-              </div>
-
+            </div>
 
 
             <div className="space-y-6">
-              <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.14),_transparent_35%),radial-gradient(circle_at_80%_20%,_rgba(14,165,233,0.12),_transparent_32%)]" />
-                <div className="relative">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                      Workspace
-                    </p>
-                    <h3 className="mt-1 text-lg font-semibold text-slate-900">
-                      Quick Actions
-                    </h3>
-                  </div>
-                  <BarChart3 size={18} className="text-slate-400" />
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <button
-                    onClick={() => setShowOnboardingWizard(true)}
-                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-indigo-200/80 bg-gradient-to-br from-indigo-50 via-white to-sky-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <Users size={18} className="text-indigo-600" />
-                    <span className="font-semibold text-slate-900">
-                      Onboarding Setup
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      Configure migration mode and opening balances.
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => scrollToSection(feeSetupRef)}
-                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-amber-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <Plus size={18} className="text-rose-600" />
-                    <span className="font-semibold text-slate-900">
-                      Add Fee
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      Create a fee structure and assign it into ledgers.
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => scrollToSection(recordPaymentRef)}
-                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <Banknote size={18} className="text-emerald-600" />
-                    <span className="font-semibold text-slate-900">
-                      Record Payment
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      Capture a receipt and update balances instantly.
-                    </span>
-                  </button>
-                  <button
-                    onClick={handleExportReport}
-                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-orange-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <Download size={18} className="text-amber-600" />
-                    <span className="font-semibold text-slate-900">
-                      Export Report
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      Download the latest finance snapshot for review.
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => navigate("/admin/payment-settings")}
-                    className="inline-flex min-h-[92px] flex-col items-start gap-2 rounded-[22px] border border-blue-200/80 bg-gradient-to-br from-blue-50 via-white to-cyan-50 px-4 py-4 text-left text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <CreditCard size={18} className="text-blue-600" />
-                    <span className="font-semibold text-slate-900">
-                      Online Payments
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      Setup your bank or MoMo account for payouts.
-                    </span>
-                  </button>
-                </div>
-                </div>
-              </div>
 
               <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,197,94,0.12),_transparent_32%),radial-gradient(circle_at_80%_20%,_rgba(59,130,246,0.1),_transparent_30%)]" />
@@ -3983,217 +3974,139 @@ const FeesPayments: React.FC = () => {
               </div>
             </div>
 
+
             <div
               ref={recordPaymentRef}
               className={`relative overflow-hidden ${DASH_PANEL} p-6`}
             >
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Cash capture
-              </p>
-              <h2 className="mt-1 text-xl font-semibold text-slate-900">
-                Record Payment
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Capture receipts and update balances instantly.
-              </p>
-              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="text-xs text-slate-500">Class</label>
-                  <select
-                    value={paymentForm.classId}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        classId: e.target.value,
-                        studentId: "",
-                        feeId: "",
-                      })
-                    }
-                    className={DASH_INPUT}
-                  >
-                    <option value="">All Classes</option>
-                    {availableClasses.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500">Student</label>
-                  <select
-                    value={paymentForm.studentId}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        studentId: e.target.value,
-                        feeId: "",
-                      })
-                    }
-                    className={DASH_INPUT}
-                  >
-                    <option value="">Select student</option>
-                    {students
-                      .filter((student) =>
-                        paymentForm.classId
-                          ? student.classId === paymentForm.classId
-                          : true,
-                      )
-                      .map((student) => (
-                        <option key={student.id} value={student.id}>
-                          {student.name}
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_rgba(11,74,130,0.12),_transparent_35%)]" />
+              <div className="relative">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  Cash capture
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                  Record Payment
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Capture receipts and update balances instantly.
+                </p>
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-slate-500">Class</label>
+                    <select
+                      value={paymentForm.classId}
+                      onChange={(e) =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          classId: e.target.value,
+                          studentId: "",
+                          feeId: "",
+                        })
+                      }
+                      className={DASH_INPUT}
+                    >
+                      <option value="">All Classes</option>
+                      {availableClasses.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name}
                         </option>
                       ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500">Fee</label>
-                  <select
-                    value={paymentForm.feeId}
-                    onChange={(e) =>
-                      setPaymentForm({ ...paymentForm, feeId: e.target.value })
-                    }
-                    className={DASH_INPUT}
-                    disabled={!paymentForm.studentId}
-                  >
-                    <option value="">
-                      {paymentForm.studentId ? "Select fee" : "Select student first"}
-                    </option>
-                    {availablePaymentFees.map((fee) => (
-                      <option key={fee.id} value={fee.id}>
-                        {fee.feeName}
-                      </option>
-                    ))}
-                  </select>
-                  {paymentForm.studentId && availablePaymentFees.length === 0 && (
-                    <div className="mt-2 rounded-[20px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50 px-3.5 py-3 text-[11px] text-amber-800 shadow-sm">
-                      <p className="font-semibold text-amber-900">
-                        No fee is available for this student yet.
-                      </p>
-                      {unavailableCurrentScopeFees.length > 0 ? (
-                        <ul className="mt-2 space-y-1">
-                          {unavailableCurrentScopeFees.map((item) => (
-                            <li key={item.id}>
-                              - {item.feeName}: {item.reason}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-2">
-                          No fee in the current finance view matches this
-                          student.
-                        </p>
-                      )}
-                      {matchingOtherScopeFees.length > 0 && (
-                        <div className="mt-2 border-t border-amber-200/80 pt-2">
-                          <p className="font-semibold text-amber-900">
-                            Available in another scope
-                          </p>
-                          <ul className="mt-1 space-y-1">
-                            {matchingOtherScopeFees.map((item) => (
-                              <li key={item.id}>
-                                - {item.feeName} is set for {item.scope}.
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                {recordPaymentSummary && (
-                  <div className="sm:col-span-2 rounded-[24px] border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-xs text-slate-600 shadow-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-indigo-500">
-                          Payment summary
-                        </p>
-                        <p className="mt-1 text-sm font-semibold text-slate-900">
-                          Paid so far:{" "}
-                          {formatMoney(recordPaymentSummary.totalPaid)}
-                          <span className="mx-2 text-slate-400">/</span>
-                          Remaining:{" "}
-                          {formatMoney(recordPaymentSummary.remaining)}
-                        </p>
-                      </div>
-                      <div className="rounded-full bg-white px-3 py-1 text-[11px] text-slate-500">
-                        Due: {formatMoney(recordPaymentSummary.totalDue)}
-                      </div>
-                    </div>
+                    </select>
                   </div>
-                )}
-                <div>
-                  <label className="text-xs text-slate-500">Amount Paid</label>
-                  <input
-                    value={paymentForm.amountPaid}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        amountPaid: e.target.value,
-                      })
-                    }
-                    className={DASH_INPUT}
-                    placeholder="150"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500">
-                    Payment Method
-                  </label>
-                  <select
-                    value={paymentForm.paymentMethod}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        paymentMethod: e.target.value as PaymentMethod,
-                      })
-                    }
-                    className={DASH_INPUT}
-                  >
-                    {paymentMethods.map((method) => (
-                      <option key={method} value={method}>
-                        {method}
+                  <div>
+                    <label className="text-xs text-slate-500">Student</label>
+                    <select
+                      value={paymentForm.studentId}
+                      onChange={(e) =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          studentId: e.target.value,
+                          feeId: "",
+                        })
+                      }
+                      className={DASH_INPUT}
+                    >
+                      <option value="">Select student</option>
+                      {students
+                        .filter((student) =>
+                          paymentForm.classId
+                            ? student.classId === paymentForm.classId
+                            : true,
+                        )
+                        .map((student) => (
+                          <option key={student.id} value={student.id}>
+                            {student.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Fee</label>
+                    <select
+                      value={paymentForm.feeId}
+                      onChange={(e) =>
+                        setPaymentForm({ ...paymentForm, feeId: e.target.value })
+                      }
+                      className={DASH_INPUT}
+                      disabled={!paymentForm.studentId}
+                    >
+                      <option value="">
+                        {paymentForm.studentId ? "Select fee" : "Select student first"}
                       </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500">
-                    Receipt / Ref
-                  </label>
-                  <input
-                    value={paymentForm.receiptNumber}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        receiptNumber: e.target.value,
-                      })
-                    }
-                    className={DASH_INPUT}
-                    placeholder="Optional"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    onClick={handleRecordPayment}
-                    disabled={isRecordingPayment}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_45%,#0ea5e9_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_20px_40px_-28px_rgba(11,74,130,0.85)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_44px_-26px_rgba(11,74,130,0.78)] disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {isRecordingPayment ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                        Saving...
-                      </span>
-                    ) : (
-                      <>
-                        <Banknote size={16} /> Save Payment
-                      </>
-                    )}
-                  </button>
+                      {availablePaymentFees.map((fee) => (
+                        <option key={fee.id} value={fee.id}>
+                          {fee.feeName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Amount Paid</label>
+                    <input
+                      value={paymentForm.amountPaid}
+                      onChange={(e) =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          amountPaid: e.target.value,
+                        })
+                      }
+                      className={DASH_INPUT}
+                      placeholder="150"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Method</label>
+                    <select
+                      value={paymentForm.paymentMethod}
+                      onChange={(e) =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          paymentMethod: e.target.value as PaymentMethod,
+                        })
+                      }
+                      className={DASH_INPUT}
+                    >
+                      {paymentMethods.map((method) => (
+                        <option key={method} value={method}>
+                          {method}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={handleRecordPayment}
+                      disabled={isRecordingPayment}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0B4A82] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isRecordingPayment ? "Saving..." : "Save Payment"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+
+
 
           <div className={`relative overflow-hidden ${DASH_PANEL} p-4 sm:p-6`}>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -4244,69 +4157,83 @@ const FeesPayments: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    filteredLedgerRows.map(
-                      ({
-                        ledger,
-                        student,
-                        totalDue,
-                        totalPaid,
-                        balance,
-                        status,
-                      }) => (
-                        <tr
-                          key={ledger.id}
-                          className="border-t border-slate-100"
-                        >
-                          <td className="py-3 px-2 font-medium text-slate-800">
-                            {student?.name || ledger.studentId}
-                          </td>
-                          <td className="py-3 px-2 whitespace-nowrap text-slate-500">
-                            {availableClasses.find(
-                              (cls) => cls.id === ledger.classId,
-                            )?.name || "-"}
-                          </td>
-                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                            {formatMoney(totalDue)}
-                          </td>
-                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                            {formatMoney(totalPaid)}
-                          </td>
-                          <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                            {formatMoney(balance)}
-                          </td>
-                          <td className="py-3 px-2 whitespace-nowrap">
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                status === "paid"
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : status === "part-paid"
-                                    ? "bg-amber-50 text-amber-700"
-                                    : "bg-rose-50 text-rose-700"
-                              }`}
-                            >
-                              {status}
-                            </span>
-                          </td>
-                          <td className="py-3 px-2 text-right whitespace-nowrap">
+                    <>
+                      {filteredLedgerRows.slice(0, ledgersLimit).map(
+                        ({
+                          ledger,
+                          student,
+                          totalDue,
+                          totalPaid,
+                          balance,
+                          status,
+                        }) => (
+                          <tr
+                            key={ledger.id}
+                            className="border-t border-slate-100"
+                          >
+                            <td className="py-3 px-2 font-medium text-slate-800">
+                              {student?.name || ledger.studentId}
+                            </td>
+                            <td className="py-3 px-2 whitespace-nowrap text-slate-500">
+                              {availableClasses.find(
+                                (cls) => cls.id === ledger.classId,
+                              )?.name || "-"}
+                            </td>
+                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
+                              {formatMoney(totalDue)}
+                            </td>
+                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
+                              {formatMoney(totalPaid)}
+                            </td>
+                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
+                              {formatMoney(balance)}
+                            </td>
+                            <td className="py-3 px-2 whitespace-nowrap">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                  status === "paid"
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : status === "part-paid"
+                                      ? "bg-amber-50 text-amber-700"
+                                      : "bg-rose-50 text-rose-700"
+                                }`}
+                              >
+                                {status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 text-right whitespace-nowrap">
+                              <button
+                                onClick={() =>
+                                  openLedgerPayments(ledger.id, ledger.studentId)
+                                }
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 whitespace-nowrap"
+                              >
+                                <FilePenLine size={14} /> Edit
+                              </button>
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                      {filteredLedgerRows.length > ledgersLimit && (
+                        <tr>
+                          <td colSpan={7} className="py-4">
                             <button
-                              onClick={() =>
-                                openLedgerPayments(ledger.id, ledger.studentId)
-                              }
-                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 whitespace-nowrap"
+                              onClick={() => setLedgersLimit((prev) => prev + 25)}
+                              className="w-full rounded-2xl border border-slate-200 bg-white/80 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                             >
-                              <FilePenLine size={14} /> Edit
+                              Load More Ledgers ({filteredLedgerRows.length - ledgersLimit} remaining)
                             </button>
                           </td>
                         </tr>
-                      ),
-                    )
+                      )}
+                    </>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
               <h2 className="text-lg font-semibold text-slate-900">
                 Defaulters
@@ -4398,7 +4325,7 @@ const FeesPayments: React.FC = () => {
               </button>
             </div>
 
-            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+            <div className={`relative overflow-hidden ${DASH_PANEL} p-6 lg:col-span-2`}>
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(244,114,182,0.18),_transparent_45%),radial-gradient(circle_at_80%_20%,_rgba(251,191,36,0.18),_transparent_45%)]" />
               <div className="relative">
                 <div className="flex items-start justify-between gap-4">
@@ -4483,6 +4410,7 @@ const FeesPayments: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
 
           {selectedPayment && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur">

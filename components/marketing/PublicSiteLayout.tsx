@@ -41,9 +41,9 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
     <div className="min-h-screen font-sans relative overflow-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#041222", color: "white" }}>
       
       {/* Animated Glowing Orbs (Fixed background) */}
-      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 1, willChange: "transform" }}></div>
-      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 1, willChange: "transform" }}></div>
-      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 1, willChange: "transform" }}></div>
+      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 0, willChange: "transform" }}></div>
+      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0, willChange: "transform" }}></div>
+      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0, willChange: "transform" }}></div>
 
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
@@ -214,7 +214,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         }
       `}</style>
 
-      <main className="relative">{children}</main>
+      <main className="relative" style={{ zIndex: 10 }}>{children}</main>
 
       {/* Footer */}
       <footer style={{ background: "linear-gradient(180deg, rgba(4, 18, 34, 0.8) 0%, rgba(4, 18, 34, 1) 100%)", color: "white", paddingTop: 64, paddingBottom: 40, position: "relative", zIndex: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
