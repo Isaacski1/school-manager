@@ -507,7 +507,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
 
           // 9. Send to WhatsApp
           const idToken = await auth.currentUser?.getIdToken();
-          await fetch('/api/payments/send-invoice', {
+          const response = await fetch('/api/payments/send-invoice', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -525,10 +525,16 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             })
           });
 
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${response.status}`);
+          }
+
           console.log("[Invoice] WhatsApp transmission triggered successfully.");
           showToast("Invoice sent to WhatsApp!", { type: "success" });
-        } catch (captureError) {
-          console.error("[Invoice] Capture failed:", captureError);
+        } catch (captureError: any) {
+          console.error("[Invoice] Capture/Send failed:", captureError);
+          showToast(captureError.message || "Failed to send WhatsApp invoice.", { type: "error" });
           if (document.body.contains(container)) {
             document.body.removeChild(container);
           }

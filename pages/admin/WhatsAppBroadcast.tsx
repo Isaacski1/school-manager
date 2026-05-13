@@ -93,6 +93,11 @@ const WhatsAppBroadcast: React.FC = () => {
   }
   const [waStatus, setWaStatus] = useState<WaStatus>("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairingPhone, setPairingPhone] = useState("");
+  const [requestingCode, setRequestingCode] = useState(false);
+  const [isDebugging, setIsDebugging] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
@@ -140,6 +145,7 @@ const WhatsAppBroadcast: React.FC = () => {
       const data = await res.json();
       setWaStatus(data.status);
       setQrCode(data.qr || null);
+      setLastError(data.lastError || null);
       if (manual) await new Promise(r => setTimeout(r, 400));
     } catch (e: any) {
       setStatusError(e.message || "Cannot reach server");
@@ -157,11 +163,13 @@ const WhatsAppBroadcast: React.FC = () => {
   // ── Connect / Disconnect ─────────────────────────────────────────────────────
   const handleConnect = async () => {
     setConnecting(true);
+    setWaStatus("connecting"); // Show options immediately
     try {
       await apiFetch("/api/whatsapp/init", { method: "POST" });
-      await pollStatus(false);
+      // The pollStatus loop will handle updating to 'qr_ready' once the server is ready
     } catch {
       showToast("Failed to start WhatsApp connection.", { type: "error" });
+      setWaStatus("disconnected");
     } finally {
       setConnecting(false);
     }
@@ -171,6 +179,69 @@ const WhatsAppBroadcast: React.FC = () => {
     await apiFetch("/api/whatsapp/disconnect", { method: "POST" });
     setWaStatus("disconnected");
     setQrCode(null);
+    setPairingCode(null);
+    setLastError(null);
+  };
+
+  const handleHardReset = async () => {
+    if (!window.confirm("This will completely clear your WhatsApp session and disconnect you. Continue?")) return;
+    setConnecting(true);
+    try {
+      await apiFetch("/api/whatsapp/clear-session", { method: "POST" });
+      setWaStatus("disconnected");
+      setQrCode(null);
+      setPairingCode(null);
+      setLastError(null);
+      showToast("Session cleared. You can now reconnect.", { type: "success" });
+    } catch (e: any) {
+      showToast("Failed to reset session: " + e.message, { type: "error" });
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const runDiagnostic = async () => {
+    setIsDebugging(true);
+    try {
+      const res = await apiFetch("/api/whatsapp/debug");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast("System Check Passed: " + (data.version || "Browser is working."), { type: "success" });
+      } else {
+        const errMsg = data.error || data.message || "Unknown error";
+        setLastError("System Check Failed: " + errMsg);
+        showToast("System Check Failed. Check the error log.", { type: "error" });
+      }
+    } catch (e: any) {
+      showToast("Diagnostic failed: " + e.message, { type: "error" });
+    } finally {
+      setIsDebugging(false);
+    }
+  };
+
+  const handleRequestPairingCode = async () => {
+    if (!pairingPhone.trim()) {
+      showToast("Please enter your phone number.", { type: "error" });
+      return;
+    }
+    setRequestingCode(true);
+    try {
+      const res = await apiFetch("/api/whatsapp/pairing-code", {
+        method: "POST",
+        body: JSON.stringify({ phone: pairingPhone.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPairingCode(data.code);
+        showToast("Pairing code generated!", { type: "success" });
+      } else {
+        showToast(data.error || "Failed to generate code.", { type: "error" });
+      }
+    } catch (e: any) {
+      showToast(e.message || "Error requesting code.", { type: "error" });
+    } finally {
+      setRequestingCode(false);
+    }
   };
 
   // ── Load parents from Firestore ──────────────────────────────────────────────
@@ -358,24 +429,94 @@ const WhatsAppBroadcast: React.FC = () => {
                     </button>
                   )}
                   <button
-                    onClick={() => pollStatus(true)}
-                    disabled={isPolling}
-                    title="Refresh Status"
-                    className="p-1.5 sm:p-2 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 transition disabled:opacity-50"
+                    onClick={() => window.location.reload()}
+                    title="Reload Page"
+                    className="p-1.5 sm:p-2 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 transition active:scale-95"
                   >
-                    <RefreshCw size={14} className={isPolling ? "animate-spin" : ""} />
+                    <RefreshCw size={14} />
                   </button>
                 </div>
               </div>
 
-              {/* QR Code */}
-              {qrCode && waStatus === "qr_ready" && (
-                <div className="flex flex-col items-center gap-3 p-4 sm:p-6 bg-slate-50 rounded-xl border border-slate-100">
-                  <p className="text-xs sm:text-sm font-semibold text-slate-700 text-center">
-                    Open WhatsApp → ⋮ Menu → Linked Devices → Link a Device → Scan QR
-                  </p>
-                  <img src={qrCode} alt="WhatsApp QR Code" className="w-44 h-44 sm:w-56 sm:h-56 rounded-xl border-4 border-white shadow-lg" />
-                  <p className="text-xs text-slate-400">QR code refreshes automatically every 20 seconds</p>
+              {/* QR Code / Pairing Code Section */}
+              {(waStatus === "qr_ready" || waStatus === "connecting") && (
+                <div className="mt-4 border-t border-slate-100 pt-5">
+                  <div className="flex flex-col md:grid md:grid-cols-2 gap-6">
+                    {/* Method 1: QR Code */}
+                    <div className="flex flex-col items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <h3 className="text-sm font-bold text-slate-800">Method 1: Scan QR</h3>
+                      <p className="text-[11px] text-slate-500 text-center leading-relaxed mb-2">
+                        Open WhatsApp → ⋮ Menu → Linked Devices → Link a Device → Scan QR
+                      </p>
+                      {qrCode ? (
+                        <img src={qrCode} alt="WhatsApp QR Code" className="w-40 h-40 rounded-xl border-4 border-white shadow-md" />
+                      ) : (
+                        <div className="w-40 h-40 flex flex-col items-center justify-center bg-white rounded-xl border-4 border-white shadow-sm px-4 text-center">
+                          <Loader2 size={24} className="animate-spin text-emerald-500 mb-2" />
+                          <p className="text-[10px] text-slate-400 font-medium leading-tight mb-2">
+                            Starting WhatsApp service...<br/>This may take 10-30 seconds.
+                          </p>
+                          <button 
+                            onClick={handleHardReset}
+                            className="text-[9px] text-slate-400 underline hover:text-red-500 transition mb-1"
+                          >
+                            Reset service if stuck
+                          </button>
+                          <button 
+                            onClick={runDiagnostic}
+                            className="text-[9px] text-slate-400 underline hover:text-blue-500 transition"
+                          >
+                            Run System Check
+                          </button>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-slate-400">Refreshes every 20s</p>
+                    </div>
+
+                    {/* Method 2: Pairing Code (For Phone Users) */}
+                    <div className="flex flex-col items-center gap-3 p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100/50">
+                      <h3 className="text-sm font-bold text-slate-800">Method 2: Link with Phone</h3>
+                      <p className="text-[11px] text-slate-500 text-center leading-relaxed mb-2">
+                        Great for when you are using the same phone to manage this site.
+                      </p>
+
+                      {!pairingCode ? (
+                        <div className="w-full space-y-3">
+                          <input
+                            type="tel"
+                            placeholder="e.g. 024XXXXXXX"
+                            value={pairingPhone}
+                            onChange={(e) => setPairingPhone(e.target.value)}
+                            className="w-full text-center py-2 px-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-emerald-500 transition"
+                          />
+                          <button
+                            onClick={handleRequestPairingCode}
+                            disabled={requestingCode || !pairingPhone.trim()}
+                            className="w-full py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition disabled:opacity-50"
+                          >
+                            {requestingCode ? <Loader2 size={14} className="animate-spin mx-auto" /> : "Get Pairing Code"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-full text-center space-y-3">
+                          <div className="bg-white border-2 border-emerald-500 py-4 px-2 rounded-2xl shadow-inner">
+                            <span className="text-2xl font-black tracking-[0.3em] text-emerald-600 select-all">
+                              {pairingCode}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 px-2">
+                            Go to WhatsApp → Linked Devices → Link with Phone Number. Enter this code.
+                          </p>
+                          <button
+                            onClick={() => setPairingCode(null)}
+                            className="text-[10px] font-bold text-slate-400 hover:text-slate-600"
+                          >
+                            Use a different number
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -386,9 +527,18 @@ const WhatsAppBroadcast: React.FC = () => {
                 </div>
               )}
               {waStatus === "error" && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 rounded-xl border border-red-100">
-                  <AlertTriangle size={16} className="text-red-500 shrink-0" />
-                  <p className="text-xs sm:text-sm text-red-700">Connection error. Click Connect to try again.</p>
+                <div className="flex flex-col gap-2 p-3 bg-red-50 rounded-xl border border-red-100">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={16} className="text-red-500 shrink-0" />
+                    <p className="text-xs sm:text-sm text-red-700 font-bold">Connection Error</p>
+                  </div>
+                  {lastError && <p className="text-[11px] text-red-600 font-mono bg-white/50 p-2 rounded-lg">{lastError}</p>}
+                  <button 
+                    onClick={handleHardReset}
+                    className="text-[11px] text-white bg-red-600 px-3 py-1.5 rounded-lg font-bold hover:bg-red-700 transition w-fit mt-1"
+                  >
+                    Reset Connection
+                  </button>
                 </div>
               )}
               {statusError && (

@@ -8888,6 +8888,26 @@ app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
 });
 
 /**
+ * POST /api/whatsapp/pairing-code
+ * Requests a pairing code for a specific phone number.
+ */
+app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: "Phone number is required for pairing code." });
+
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
+
+    const code = await svc.requestPairingCode(phone);
+    return res.json({ success: true, code });
+  } catch (err) {
+    console.error("[WhatsApp Pairing]", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/whatsapp/disconnect
  * Disconnects and destroys the WhatsApp session.
  */
@@ -8897,6 +8917,25 @@ app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
     if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
     await svc.disconnectWhatsApp();
     return res.json({ success: true, message: "WhatsApp disconnected." });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/whatsapp/clear-session
+ * Disconnects and deletes the local session folder.
+ */
+app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
+  try {
+    const svc = await loadWhatsAppService();
+    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
+    const result = await svc.clearWhatsAppSession();
+    if (result.success) {
+      return res.json({ success: true, message: "Session cleared successfully." });
+    } else {
+      return res.status(500).json({ error: result.error });
+    }
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -9015,18 +9054,29 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 500));
     
     const result = await svc.sendWhatsAppMedia(guardianPhone, caption, cleanBase64, filename, mimetype);
-    console.log(`[Invoice] WhatsApp send result:`, result);
+    console.log(`[Invoice] Parent WhatsApp result for ${studentName}:`, result.success ? "✅ Success" : `❌ Failed: ${result.error}`);
     
     // Notify the school admin about the payment
     const adminMessage = `🟢 *New Payment Received*\n\nStudent: *${studentName}*\nAmount: *GHS ${amount}*\nFee: *${feeName || "School Fees"}*\nReference: ${reference}`;
-    if (adminPhone && svc.sendWhatsAppMessage) {
-      await svc.sendWhatsAppMessage(adminPhone, adminMessage);
-    } else if (svc.sendWhatsAppToSelf) {
-      await svc.sendWhatsAppToSelf(adminMessage);
+    
+    try {
+      if (adminPhone) {
+        console.log(`[Invoice] Attempting Admin notification to ${adminPhone}`);
+        const adminResult = await svc.sendWhatsAppMessage(adminPhone, adminMessage);
+        if (!adminResult.success && svc.sendWhatsAppToSelf) {
+          console.log(`[Invoice] Admin notify failed, falling back to Send-To-Self`);
+          await svc.sendWhatsAppToSelf(adminMessage);
+        }
+      } else if (svc.sendWhatsAppToSelf) {
+        console.log(`[Invoice] No adminPhone provided, using Send-To-Self`);
+        await svc.sendWhatsAppToSelf(adminMessage);
+      }
+    } catch (adminErr) {
+      console.warn(`[Invoice] Admin notification secondary failure (non-critical):`, adminErr.message);
     }
     
     if (!result.success) {
-      console.error(`[Invoice] WhatsApp transmission failed: ${result.error}`);
+      console.error(`[Invoice] Final failure returning to client: ${result.error}`);
       return res.status(500).json({ error: result.error });
     }
     return res.json({ success: true, size: payloadSize });

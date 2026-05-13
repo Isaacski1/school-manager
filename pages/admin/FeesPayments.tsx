@@ -379,9 +379,11 @@ const FeesPayments: React.FC = () => {
             studentId: student.id,
             studentName: student.name,
             guardianPhone: student.guardianPhone,
+            adminPhone: school?.phone,
             amount: payment.amountPaid,
             reference: payment.receiptNumber || payment.id,
-            base64Pdf: pdfBase64
+            base64Pdf: pdfBase64,
+            feeName: payment.feeName
           })
         });
 
@@ -397,7 +399,8 @@ const FeesPayments: React.FC = () => {
             }
           });
         } else {
-          throw new Error("Failed to send WhatsApp message");
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to send WhatsApp message");
         }
       } catch (err) {
         if (document.body.contains(container)) document.body.removeChild(container);

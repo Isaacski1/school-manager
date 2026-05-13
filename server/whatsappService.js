@@ -21,15 +21,45 @@ try {
 let client = null;
 let clientStatus = "disconnected";
 let currentQrBase64 = null;
-
-const RATE_LIMIT_MS = 1200;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let lastError = null;
 
 export const getWhatsAppStatus = () => ({
   status: clientStatus,
   qr: currentQrBase64,
   available: Boolean(Client && LocalAuth && qrcode),
+  lastError: lastError
 });
+
+export const clearWhatsAppSession = async () => {
+  await disconnectWhatsApp();
+  try {
+    const fs = await import("fs/promises");
+    await fs.rm("./whatsapp-session", { recursive: true, force: true });
+    console.log("[WhatsApp] Session folder cleared.");
+    lastError = null;
+    return { success: true };
+  } catch (err) {
+    console.error("[WhatsApp] Failed to clear session folder:", err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+export const testPuppeteer = async () => {
+  try {
+    const puppeteer = require("puppeteer");
+    console.log("[WhatsApp] Testing Puppeteer launch...");
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    const version = await browser.version();
+    await browser.close();
+    return { success: true, version };
+  } catch (err) {
+    console.error("[WhatsApp] Puppeteer Test Failed:", err.message);
+    return { success: false, error: err.message };
+  }
+};
 
 export const initWhatsAppClient = () => {
   if (!Client || !LocalAuth) {
@@ -101,6 +131,7 @@ export const initWhatsAppClient = () => {
 
   client.on("auth_failure", (msg) => {
     clientStatus = "error";
+    lastError = `Authentication failed: ${msg}`;
     console.error("[WhatsApp] Auth failure:", msg);
   });
 
@@ -113,6 +144,7 @@ export const initWhatsAppClient = () => {
 
   client.initialize().catch((err) => {
     clientStatus = "error";
+    lastError = `Initialization error: ${err.message}`;
     console.error("[WhatsApp] Init error:", err.message);
   });
 };
@@ -124,6 +156,23 @@ export const disconnectWhatsApp = async () => {
   }
   clientStatus = "disconnected";
   currentQrBase64 = null;
+};
+
+export const requestPairingCode = async (phone) => {
+  if (!client || (clientStatus !== "qr_ready" && clientStatus !== "connecting")) {
+    console.warn(`[WhatsApp] Cannot request pairing code: Client is ${clientStatus}`);
+    throw new Error("WhatsApp client must be initializing to request a code.");
+  }
+  try {
+    const digits = normalizePhone(phone);
+    console.log(`[WhatsApp] Requesting Pairing Code for: ${digits}`);
+    const code = await client.requestPairingCode(digits);
+    console.log(`[WhatsApp] ✅ Pairing Code generated: ${code}`);
+    return code;
+  } catch (err) {
+    console.error(`[WhatsApp] Pairing Code Error:`, err.message);
+    throw err;
+  }
 };
 
 /**
@@ -156,7 +205,16 @@ export const sendWhatsAppMessage = async (phone, message) => {
     const chatId = `${digits}@c.us`;
     console.log(`[WhatsApp] Sending → ${chatId}`);
 
-    // Send directly without isRegisteredUser check (avoids timeout issues)
+    // Simulate Human Behavior: Typing...
+    try {
+      const chat = await client.getChatById(chatId);
+      await chat.sendStateTyping();
+      await sleep(2000 + Math.random() * 2000); // Type for 2-4 seconds
+    } catch (_) {
+      // Fallback if chat state fails
+      await sleep(2000);
+    }
+
     await client.sendMessage(chatId, message);
     console.log(`[WhatsApp] ✅ Sent to ${chatId}`);
     return { success: true, phone };
@@ -185,6 +243,15 @@ export const sendWhatsAppMedia = async (phone, caption, base64Data, filename, mi
 
     const chatId = `${digits}@c.us`;
     console.log(`[WhatsApp] Sending Media → ${chatId} (${filename}), Status: ${clientStatus}`);
+
+    // Simulate Human Behavior: Typing...
+    try {
+      const chat = await client.getChatById(chatId);
+      await chat.sendStateTyping();
+      await sleep(3000 + Math.random() * 2000); // Type/Upload for 3-5 seconds
+    } catch (_) {
+      await sleep(3000);
+    }
 
     const media = new MessageMedia(mimetype, base64Data, filename);
     await client.sendMessage(chatId, media, { caption });
@@ -225,7 +292,7 @@ export const broadcastWhatsAppMessages = async (phones, message, progressCallbac
     const result = await sendWhatsAppMessage(phone, message);
     results.push(result);
     if (progressCallback) progressCallback(result);
-    await sleep(RATE_LIMIT_MS);
+    await sleep(randomDelay());
   }
   return results;
 };
