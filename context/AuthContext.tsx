@@ -93,11 +93,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               if (schoolDoc.exists()) {
                 const schoolData = {
                   id: schoolDoc.id,
-                  ...schoolDoc.data(),
+                  name: (schoolDoc.data() as any).name,
+                  logoUrl: (schoolDoc.data() as any).logoUrl,
                 };
                 localStorage.setItem(
-                  `school_${userProfile.schoolId}`,
+                  `persistent_school_branding_${userProfile.schoolId}`,
                   JSON.stringify(schoolData),
+                );
+                localStorage.setItem(
+                  `school_${userProfile.schoolId}`,
+                  JSON.stringify({ id: schoolDoc.id, ...schoolDoc.data() }),
                 );
                 window.dispatchEvent(new Event("school-branding-updated"));
               }

@@ -48,7 +48,11 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         return;
       }
 
-      const effectiveSchoolId = user.schoolId || localStorage.getItem("activeSchoolId");
+      // For parents, we prioritize the selected student's school from localStorage
+      const activeId = localStorage.getItem("activeSchoolId");
+      const effectiveSchoolId = user.role === "parent" && activeId 
+        ? activeId 
+        : (user.schoolId || activeId);
 
       if (!effectiveSchoolId) {
         setSchoolLoading(false);

@@ -1046,7 +1046,11 @@ class FirestoreService {
 
   // --- Config ---
   async getSchoolConfig(schoolId?: string): Promise<SchoolConfig> {
-    await this.requireFeatures(schoolId, ["academic_year", "admin_dashboard"]);
+    const actorRole = await this.getCurrentActorRole();
+    // Parents only need the config for term/year context, skip strict admin checks
+    if (actorRole !== UserRole.PARENT) {
+      await this.requireFeatures(schoolId, ["academic_year", "admin_dashboard"]);
+    }
     const scopedSchoolId = this.requireSchoolId(schoolId, "getSchoolConfig");
     const docRef = doc(firestore, "settings", scopedSchoolId);
     const snap = await getDoc(docRef);
@@ -1326,6 +1330,12 @@ class FirestoreService {
     const q = query(studentsRef, ...conditions);
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as Student);
+  }
+
+  async getStudent(id: string): Promise<Student | null> {
+    const snap = await getDoc(doc(firestore, "students", id));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() } as Student;
   }
 
   async addStudent(student: Student): Promise<void> {
@@ -1648,14 +1658,19 @@ class FirestoreService {
       console.warn("[mockDb] getClassAttendance failed, trying school-wide fallback", error);
       // Fallback: Fetch all attendance for the school and filter by classId locally
       // This is less efficient but works without composite indexes
-      const q = query(
-        collection(firestore, "attendance"),
-        where("schoolId", "==", scopedSchoolId),
-      );
-      const snap = await getDocs(q);
-      return snap.docs
-        .map((d) => d.data() as AttendanceRecord)
-        .filter((r) => r.classId === classId);
+      try {
+        const q = query(
+          collection(firestore, "attendance"),
+          where("schoolId", "==", scopedSchoolId),
+        );
+        const snap = await getDocs(q);
+        return snap.docs
+          .map((d) => d.data() as AttendanceRecord)
+          .filter((r) => r.classId === classId);
+      } catch (innerError) {
+        console.warn("[mockDb] getClassAttendance fallback failed, returning empty", innerError);
+        return [];
+      }
     }
   }
 
@@ -1672,6 +1687,29 @@ class FirestoreService {
     );
     if (!classId || !startDate || !endDate) return [];
 
+    const readRecordsByDeterministicIds = async () => {
+      const cursor = new Date(`${startDate}T00:00:00`);
+      const end = new Date(`${endDate}T00:00:00`);
+      const reads = [];
+
+      while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
+        const date = `${cursor.getFullYear()}-${String(
+          cursor.getMonth() + 1,
+        ).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+        reads.push(
+          getDoc(
+            doc(firestore, "attendance", `${scopedSchoolId}_${classId}_${date}`),
+          ),
+        );
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const snapshots = await Promise.all(reads);
+      return snapshots
+        .filter((recordSnap) => recordSnap.exists())
+        .map((recordSnap) => recordSnap.data() as AttendanceRecord);
+    };
+
     try {
       const rangedQuery = query(
         collection(firestore, "attendance"),
@@ -1681,13 +1719,24 @@ class FirestoreService {
         where("date", "<=", endDate),
       );
       const rangedSnap = await getDocs(rangedQuery);
-      return rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
+      const rangedRecords = rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
+      if (rangedRecords.length > 0) return rangedRecords;
+      return readRecordsByDeterministicIds();
     } catch (error) {
       // Fallback for environments missing composite indexes.
-      const fallback = await this.getClassAttendance(scopedSchoolId, classId);
-      return fallback.filter(
-        (record) => record.date >= startDate && record.date <= endDate,
-      );
+      try {
+        const fallback = await this.getClassAttendance(scopedSchoolId, classId);
+        const filtered = fallback.filter(
+          (record) => record.date >= startDate && record.date <= endDate,
+        );
+        if (filtered.length > 0) return filtered;
+      } catch (fallbackError) {
+        console.warn(
+          "[mockDb] getClassAttendanceByDateRange class fallback failed",
+          fallbackError,
+        );
+      }
+      return readRecordsByDeterministicIds();
     }
   }
 
@@ -3686,9 +3735,28 @@ class FirestoreService {
     const feesCollection = useV2
       ? collection(firestore, "schools", scopedSchoolId, "fees")
       : collection(firestore, "fees");
-    const q = query(feesCollection, ...conditions);
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ ...(d.data() as Omit<FeeDefinition, "id">), id: d.id }));
+    const alternateFeesCollection = useV2
+      ? collection(firestore, "fees")
+      : collection(firestore, "schools", scopedSchoolId, "fees");
+    const readFeesFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({
+        ...(d.data() as Omit<FeeDefinition, "id">),
+        id: d.id,
+      }));
+    };
+    try {
+      const primary = await readFeesFrom(feesCollection);
+      if (primary.length > 0) return primary;
+      return readFeesFrom(alternateFeesCollection).catch(() => []);
+    } catch (error) {
+      console.warn("[mockDb] getFees primary query failed, trying alternate", error);
+      return readFeesFrom(alternateFeesCollection).catch((alternateError) => {
+        console.warn("[mockDb] getFees alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
   }
 
   async saveFee(fee: FeeDefinition): Promise<void> {
@@ -3733,12 +3801,28 @@ class FirestoreService {
     const ledgerCollection = useV2
       ? collection(firestore, "schools", scopedSchoolId, "feeLedgers")
       : collection(firestore, "student_ledgers");
-    const q = query(ledgerCollection, ...conditions);
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({
-      ...(d.data() as Omit<StudentFeeLedger, "id">),
-      id: d.id,
-    }));
+    const alternateLedgerCollection = useV2
+      ? collection(firestore, "student_ledgers")
+      : collection(firestore, "schools", scopedSchoolId, "feeLedgers");
+    const readLedgersFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({
+        ...(d.data() as Omit<StudentFeeLedger, "id">),
+        id: d.id,
+      }));
+    };
+    try {
+      const primary = await readLedgersFrom(ledgerCollection);
+      if (primary.length > 0) return primary;
+      return readLedgersFrom(alternateLedgerCollection).catch(() => []);
+    } catch (error) {
+      console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);
+      return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {
+        console.warn("[mockDb] getStudentLedgers alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
   }
 
   async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
@@ -3777,12 +3861,28 @@ class FirestoreService {
     const paymentsCollection = useV2
       ? collection(firestore, "schools", scopedSchoolId, "payments")
       : collection(firestore, "payments");
-    const q = query(paymentsCollection, ...conditions);
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({
-      ...(d.data() as Omit<StudentFeePayment, "id">),
-      id: d.id,
-    }));
+    const alternatePaymentsCollection = useV2
+      ? collection(firestore, "payments")
+      : collection(firestore, "schools", scopedSchoolId, "payments");
+    const readPaymentsFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({
+        ...(d.data() as Omit<StudentFeePayment, "id">),
+        id: d.id,
+      }));
+    };
+    try {
+      const primary = await readPaymentsFrom(paymentsCollection);
+      if (primary.length > 0) return primary;
+      return readPaymentsFrom(alternatePaymentsCollection).catch(() => []);
+    } catch (error) {
+      console.warn("[mockDb] getPayments primary query failed, trying alternate", error);
+      return readPaymentsFrom(alternatePaymentsCollection).catch((alternateError) => {
+        console.warn("[mockDb] getPayments alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
   }
 
   async recordStudentPayment(payment: StudentFeePayment): Promise<void> {

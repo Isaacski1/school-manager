@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { db } from "../../services/mockDb";
 import { useAuth } from "../../context/AuthContext";
-import { AttendanceRecord, Student } from "../../types";
+import { AttendanceRecord, SchoolConfig, Student } from "../../types";
 import { Calendar, CheckCircle, XCircle, Clock, TrendingUp, X } from "lucide-react";
 
 interface AttendanceViewProps {
@@ -24,38 +24,69 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
+
+  const getMonthDateRange = (monthIndex: number, year: number) => {
+    const month = String(monthIndex + 1).padStart(2, "0");
+    const startDate = `${year}-${month}-01`;
+    const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+    const endDate = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
+    return { startDate, endDate };
+  };
 
   useEffect(() => {
     async function fetchAttendance() {
-      if (!student.classId || !student.schoolId) {
+      const effectiveSchoolId = student.schoolId;
+      const effectiveClassId = student.classId;
+      const studentId = student.id;
+
+      if (!effectiveClassId || !effectiveSchoolId || !studentId) {
+        console.error("[AttendanceView] Missing critical IDs for fetching:", { 
+          effectiveClassId, 
+          effectiveSchoolId, 
+          studentId,
+          studentName: student.name 
+        });
+        setErrorMsg("Missing student identification data. Please contact school administration.");
         setLoading(false);
         return;
       }
 
       try {
         setLoading(true);
-        // Get start and end date for the selected month
-        // Use robust date string calculation to avoid timezone shifts
-        const year = selectedYear;
-        const month = String(selectedMonth + 1).padStart(2, '0');
-        const startDate = `${year}-${month}-01`;
-        
-        // Get last day of month
-        const lastDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-        const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
-        
-        console.log(`[AttendanceView] Fetching attendance for class ${student.classId} from ${startDate} to ${endDate}`);
-        const records = await db.getClassAttendanceByDateRange(
-          student.schoolId,
-          student.classId,
-          startDate,
-          endDate
-        );
-        setAttendanceRecords(records);
         setErrorMsg(null);
+        
+        const { startDate, endDate } = getMonthDateRange(selectedMonth, selectedYear);
+        
+        console.log(`[AttendanceView] Fetching for ${student.name} (${studentId}) in class ${effectiveClassId} school ${effectiveSchoolId} from ${startDate} to ${endDate}`);
+        
+        const [records, config] = await Promise.all([
+          db.getClassAttendanceByDateRange(
+            effectiveSchoolId,
+            effectiveClassId,
+            startDate,
+            endDate
+          ),
+          db.getSchoolConfig(effectiveSchoolId),
+        ]);
+        
+        if (!records || records.length === 0) {
+          console.log(`[AttendanceView] No records found for the selected period.`);
+        } else {
+          console.log(`[AttendanceView] Successfully loaded ${records.length} attendance records.`);
+        }
+        
+        setAttendanceRecords(records);
+        setSchoolConfig(config);
       } catch (error: any) {
-        console.error("Error fetching attendance:", error);
-        setErrorMsg(error.message || "Failed to fetch attendance");
+        console.error("[AttendanceView] Error fetching attendance:", error);
+        
+        // Handle specific Firebase permission errors
+        if (error.code === 'permission-denied') {
+          setErrorMsg("Access Denied: You do not have permission to view these attendance records. Please try logging in again.");
+        } else {
+          setErrorMsg(error.message || "Failed to fetch attendance data");
+        }
       } finally {
         setLoading(false);
       }
@@ -97,15 +128,35 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
 
       const record = attendanceRecords.find(r => r.date === dateStr);
       let attendance: CalendarDay["attendance"] = "no-record";
+      const configHoliday = schoolConfig?.holidayDates?.some((holiday) => holiday.date === dateStr);
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      const reopenDate = schoolConfig?.schoolReopenDate || "";
+      const vacationDate = schoolConfig?.vacationDate || "";
+      const isExpectedSchoolDay =
+        !isWeekend &&
+        Boolean(reopenDate) &&
+        dateStr >= reopenDate &&
+        (!vacationDate || dateStr <= vacationDate) &&
+        date <= today;
 
-      if (record) {
+      if (configHoliday) {
+        attendance = "holiday";
+      } else if (record) {
         if (record.isHoliday) {
           attendance = "holiday";
-        } else if (record.presentStudentIds?.includes(student.id)) {
-          attendance = "present";
         } else {
-          attendance = "absent";
+          // Robust ID check: trim and compare
+          const studentIdTrimmed = student.id.trim();
+          const isPresent = record.presentStudentIds?.some(id => id.trim() === studentIdTrimmed);
+          
+          if (isPresent) {
+            attendance = "present";
+          } else {
+            attendance = "absent";
+          }
         }
+      } else if (isExpectedSchoolDay) {
+        attendance = "absent";
       }
 
       days.push({
@@ -118,19 +169,56 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
     }
 
     return days;
-  }, [selectedMonth, selectedYear, attendanceRecords, student.id]);
+  }, [selectedMonth, selectedYear, attendanceRecords, student.id, schoolConfig]);
 
   const stats = useMemo(() => {
-    const recordsWithAttendance = attendanceRecords.filter(r => !r.isHoliday);
-    const totalDays = recordsWithAttendance.length;
-    const presentDays = recordsWithAttendance.filter(r =>
-      r.presentStudentIds?.includes(student.id)
+    const studentIdTrimmed = student.id.trim();
+    const { startDate, endDate } = getMonthDateRange(selectedMonth, selectedYear);
+    const recordHolidayDates = new Set(
+      attendanceRecords.filter((record) => record.isHoliday).map((record) => record.date),
+    );
+    const configHolidayDates = new Set(
+      (schoolConfig?.holidayDates || []).map((holiday) => holiday.date),
+    );
+    const reopenDate = schoolConfig?.schoolReopenDate || "";
+    const vacationDate = schoolConfig?.vacationDate || "";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let totalDays = 0;
+    if (reopenDate) {
+      const cursor = new Date(`${startDate}T00:00:00`);
+      const end = new Date(`${endDate}T00:00:00`);
+      while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
+        const dateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+        const day = cursor.getDay();
+        const isWeekend = day === 0 || day === 6;
+        if (
+          !isWeekend &&
+          cursor <= today &&
+          dateStr >= reopenDate &&
+          (!vacationDate || dateStr <= vacationDate) &&
+          !recordHolidayDates.has(dateStr) &&
+          !configHolidayDates.has(dateStr)
+        ) {
+          totalDays++;
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    } else {
+      totalDays = attendanceRecords.filter(r => !r.isHoliday).length;
+    }
+
+    const presentDays = attendanceRecords.filter(r =>
+      !r.isHoliday &&
+      !configHolidayDates.has(r.date) &&
+      r.presentStudentIds?.some(id => id.trim() === studentIdTrimmed)
     ).length;
-    const absentDays = totalDays - presentDays;
+    const absentDays = Math.max(0, totalDays - presentDays);
     const percentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
     return { totalDays, presentDays, absentDays, percentage };
-  }, [attendanceRecords, student.id]);
+  }, [attendanceRecords, student.id, selectedMonth, selectedYear, schoolConfig]);
 
   const monthNames = [
     "January", "February", "March", "April", "May", "June",

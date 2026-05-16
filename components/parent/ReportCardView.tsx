@@ -29,11 +29,19 @@ interface TermReport {
 const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => {
   const { school } = useSchool();
   const hiddenContainerRef = useRef<HTMLDivElement | null>(null);
+  const userSelectedTermRef = useRef(false);
 
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [remarks, setRemarks] = useState<StudentRemark[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTerm, setSelectedTerm] = useState<string>("all");
+  const [selectedTerm, setSelectedTerm] = useState<string>(() => {
+    return "1";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("parent_report_selected_term", selectedTerm);
+  }, [selectedTerm]);
+
   const [academicYear, setAcademicYear] = useState("2023-2024");
   const [isDownloading, setIsDownloading] = useState(false);
   const [adminRemarks, setAdminRemarks] = useState<AdminRemark[]>([]);
@@ -42,8 +50,9 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
   const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
   const [printData, setPrintData] = useState<any>(null);
 
+  // Separate data fetching from printData building
   useEffect(() => {
-    async function fetchReportData() {
+    async function fetchAllData() {
       if (!student.schoolId || !student.id) {
         setLoading(false);
         return;
@@ -51,10 +60,13 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
 
       try {
         setLoading(true);
-
         const config = await db.getSchoolConfig(student.schoolId);
         setSchoolConfig(config);
         setAcademicYear(config.academicYear || "2023-2024");
+        if (!userSelectedTermRef.current) {
+          const configuredTerm = config.currentTerm?.split(" ")[1] || "1";
+          setSelectedTerm(["1", "2", "3"].includes(configuredTerm) ? configuredTerm : "1");
+        }
 
         const [assessmentData, remarksData, adminRemarksData, skillsData] = await Promise.all([
           db.getStudentAssessmentsByStudent(student.schoolId, student.id),
@@ -67,26 +79,60 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
         setRemarks(remarksData);
         setAdminRemarks(adminRemarksData);
         setStudentSkills(skillsData);
+      } catch (error) {
+        console.error("Error fetching report data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAllData();
+  }, [student.schoolId, student.id]);
 
-        // Fetch class data for rank
+  // Effect to rebuild printData when data or selectedTerm changes
+  useEffect(() => {
+    async function buildPrintData() {
+      if (!student.id) return;
+
+      try {
+        // Fetch fresh config snapshot
+        const config = await db.getSchoolConfig(student.schoolId);
+        const activeConfig = config || schoolConfig;
+        if (!activeConfig) return;
+
+        // Determine which term to print
+        let activeTermNum: TermType;
+        let activeYear = academicYear;
+
+        if (selectedTerm === "all") {
+          // Default to latest term that has assessments
+          if (assessments.length > 0) {
+            const latest = assessments.reduce((prev, curr) => (curr.term > prev.term ? curr : prev));
+            activeTermNum = latest.term;
+            activeYear = latest.academicYear;
+          } else {
+            activeTermNum = parseInt(activeConfig.currentTerm?.split(" ")[1] || "1") as TermType;
+          }
+        } else {
+          activeTermNum = parseInt(selectedTerm) as TermType;
+        }
+
+        // 1. Fetch Class Data for Rank (if needed)
         let classStudents: Student[] = [];
-        let allAssessments: Assessment[] = [];
+        let allAssessmentsInClass: Assessment[] = [];
         if (student.classId) {
-          [classStudents, allAssessments] = await Promise.all([
+          [classStudents, allAssessmentsInClass] = await Promise.all([
             db.getStudents(student.schoolId, student.classId),
             db.getAllAssessments(student.schoolId),
           ]);
         }
 
-        const currentTerm = parseInt(config.currentTerm?.split(" ")[1] || "1") as TermType;
-        const currentYear = config.academicYear;
-
+        // 2. Rank calculation for the active term
         const studentScores = classStudents.map(s => {
-          const sAssessments = allAssessments.filter(a =>
+          const sAssessments = allAssessmentsInClass.filter(a =>
             a.studentId === s.id &&
             a.classId === student.classId &&
-            a.term === currentTerm &&
-            a.academicYear === currentYear
+            String(a.term) === String(activeTermNum) &&
+            String(a.academicYear) === String(activeYear)
           );
           const subjectTotals: { [subject: string]: number } = {};
           sAssessments.forEach(a => {
@@ -100,94 +146,99 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
         }).sort((a, b) => b.totalScore - a.totalScore);
 
         const studentRank = studentScores.findIndex(s => s.studentId === student.id) + 1;
-        setRankInfo({ rank: studentRank, totalStudents: classStudents.length });
 
-        // --- Build printData for ReportCardLayout ---
-        const logoUrl =
-          (config as any)?.logoUrl?.trim?.() ||
-          (config as any)?.logo?.trim?.() ||
-          (school as any)?.logoUrl?.trim?.() ||
-          (school as any)?.logo?.trim?.() || "";
-
-        const termAssessmentsRaw = assessmentData.filter(
-          a => a.term === currentTerm && String(a.academicYear) === String(currentYear)
+        // 3. Performance Data (Assessments)
+        const termAssessmentsRaw = assessments.filter(
+          a => String(a.term) === String(activeTermNum) && String(a.academicYear) === String(activeYear)
         );
-        // Deduplicate by subject
         const termAssessments = Object.values(
           termAssessmentsRaw.reduce((acc, a) => {
             if (!a.subject) return acc;
             const existing = acc[a.subject];
-            const total = (a.testScore||0)+(a.homeworkScore||0)+(a.projectScore||0)+(a.examScore||0);
+            const total = (a.testScore || 0) + (a.homeworkScore || 0) + (a.projectScore || 0) + (a.examScore || 0);
             if (!existing || total >= (existing.total || 0)) acc[a.subject] = a;
             return acc;
           }, {} as Record<string, Assessment>)
         );
 
-        // Attendance
+        // 4. Attendance Data
         let attendanceData = { totalDays: 0, presentDays: 0, absentDays: 0, attendancePercentage: 0 };
         try {
           const classAttendance = await db.getClassAttendance(student.schoolId, student.classId || "");
           const holidayKeys = collectHolidayDateKeys([
             ...classAttendance.filter(r => r.isHoliday).map(r => r.date),
-            ...(config.holidayDates || []),
+            ...(activeConfig.holidayDates || []),
           ]);
-          const nonHolidayAttendance = classAttendance.filter(r => !r.isHoliday);
-          const today = new Date(); today.setHours(0,0,0,0);
-          const vacDate = config.vacationDate ? new Date(`${config.vacationDate}T00:00:00`) : null;
-          const endDate = vacDate && vacDate < today ? vacDate : today;
+          
+          // For attendance end date: if it's the current term, use today. 
+          // If it's a past term, we should ideally use the term's end date.
+          const isCurrentTerm = String(activeTermNum) === String(activeConfig.currentTerm?.split(" ")[1]);
+          const termEndDate = isCurrentTerm ? new Date() : (activeConfig.termEndDate ? new Date(activeConfig.termEndDate) : new Date());
+          termEndDate.setHours(23, 59, 59, 999);
+
           const expectedDays = getExpectedSchoolDayKeys({
-            reopenDate: config.schoolReopenDate,
-            endDate,
+            reopenDate: activeConfig.schoolReopenDate,
+            endDate: termEndDate,
             holidayDates: Array.from(holidayKeys),
-            vacationDate: config.vacationDate,
-            nextTermBegins: config.nextTermBegins,
+            vacationDate: activeConfig.vacationDate,
+            nextTermBegins: activeConfig.nextTermBegins,
           });
+          
           const expectedSet = new Set(expectedDays);
-          const presentDates = new Set<string>();
-          for (const record of nonHolidayAttendance) {
-            if (!expectedSet.has(record.date)) continue;
-            if (record.presentStudentIds?.includes(student.id)) presentDates.add(record.date);
-          }
-          const present = presentDates.size;
+          let presentCount = 0;
+          classAttendance.forEach(record => {
+            if (expectedSet.has(record.date) && record.presentStudentIds?.includes(student.id)) {
+              presentCount++;
+            }
+          });
+
           const total = expectedDays.length;
-          const absent = Math.max(0, total - present);
           attendanceData = {
             totalDays: total,
-            presentDays: present,
-            absentDays: absent,
-            attendancePercentage: total > 0 ? Math.round((present / total) * 100) : 0,
+            presentDays: presentCount,
+            absentDays: Math.max(0, total - presentCount),
+            attendancePercentage: total > 0 ? Math.round((presentCount / total) * 100) : 0,
           };
         } catch (e) {
-          console.warn("Attendance not available for print data", e);
+          console.warn("Attendance calculation failed for print data:", e);
         }
 
-        const termTotal = termAssessments.reduce((s, a) => s + (a.total || 0), 0);
+        const termTotal = termAssessments.reduce((sum, a) => sum + (calculateTotalScore(a) || 0), 0);
         const termAvg = termAssessments.length > 0 ? termTotal / termAssessments.length : 0;
-        const overallGrade = termAvg >= 80 ? "A" : termAvg >= 70 ? "B" : termAvg >= 60 ? "C" : termAvg >= 45 ? "D" : "F";
+        const overallGrade = calculateGrade(termAvg, activeConfig.gradingScale);
 
-        const termRemark = remarksData.find(r => r.term === currentTerm);
-        const adminRemark = adminRemarksData.find(r => r.term === currentTerm);
-        const skills = skillsData.find(s => (s as any).term === currentTerm || !(s as any).term);
+        const termRemark = remarks.find(r => String(r.term) === String(activeTermNum));
+        const adminRemark = adminRemarks.find(r => String(r.term) === String(activeTermNum));
+        const skills = studentSkills.find(s => String((s as any).term) === String(activeTermNum) || !(s as any).term);
 
         const className = CLASSES_LIST.find(c => c.id === student.classId)?.name || student.classId || "";
+        const logoUrl = activeConfig.logoUrl || (school as any)?.logoUrl || "";
 
-        const isPromotionalTerm = config.isPromotionalTerm ?? true;
+        // Promotion logic — mirrors the admin dashboard's PASS_THRESHOLD (500 total score)
         const PASS_THRESHOLD = 500;
+        const currentClassIndex = CLASSES_LIST.findIndex(c => c.id === student.classId);
+        const nextClass =
+          currentClassIndex > -1 && currentClassIndex < CLASSES_LIST.length - 1
+            ? CLASSES_LIST[currentClassIndex + 1].name
+            : "";
+        const isPromotionalTerm = activeConfig.isPromotionalTerm ?? true;
         const promotionStatus = isPromotionalTerm
           ? termTotal >= PASS_THRESHOLD
-            ? "Promoted"
+            ? nextClass
+              ? `Promoted to ${nextClass}`
+              : "Promoted"
             : "Fail"
           : "N/A";
 
         setPrintData({
           schoolInfo: {
-            name: school?.name || config.schoolName || "School",
+            name: school?.name || activeConfig.schoolName || "School",
             logoUrl,
-            address: school?.address || config.address || "",
-            phone: school?.phone || config.phone || "",
-            email: (config as any).email || "",
-            academicYear: currentYear,
-            term: config.currentTerm || "",
+            address: school?.address || activeConfig.address || "",
+            phone: school?.phone || activeConfig.phone || "",
+            email: activeConfig.email || "",
+            academicYear: activeYear,
+            term: `Term ${activeTermNum}`,
           },
           studentInfo: {
             name: student.name,
@@ -198,13 +249,13 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
           },
           attendance: attendanceData,
           performance: termAssessments,
-          positionRule: config.positionRule || "subject",
-          gradingScale: config.gradingScale,
+          positionRule: activeConfig.positionRule || "subject",
+          gradingScale: activeConfig.gradingScale,
           summary: {
             totalScore: termTotal,
             averageScore: termAvg.toFixed(1),
-            overallGrade,
-            classPosition: studentRank > 0 ? `${studentRank}${["st","nd","rd"][studentRank-1]||"th"}` : "N/A",
+            overallGrade: overallGrade.grade,
+            classPosition: studentRank > 0 ? `${studentRank}${["st", "nd", "rd"][studentRank - 1] || "th"}` : "N/A",
             totalStudents: classStudents.length,
           },
           skills: {
@@ -217,30 +268,29 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
           },
           remarks: {
             teacher: termRemark?.remark || "N/A",
-            headTeacher: adminRemark?.remark || config.headTeacherRemark || "An outstanding performance.",
+            headTeacher: adminRemark?.remark || activeConfig.headTeacherRemark || "An outstanding performance.",
             adminRemark: adminRemark?.remark || "",
             adminRemarkDate: adminRemark?.dateCreated || "",
           },
           promotion: { status: promotionStatus, isPromotionalTerm },
           termDates: {
-            endDate: config.termEndDate || "",
-            reopeningDate: config.nextTermBegins || "",
-            vacationDate: config.vacationDate || "",
+            endDate: activeConfig.termEndDate || "",
+            reopeningDate: activeConfig.nextTermBegins || "",
+            vacationDate: activeConfig.vacationDate || "",
           },
-          allStudentsAssessments: allAssessments.filter(
-            a => a.classId === student.classId && a.term === currentTerm && String(a.academicYear) === String(currentYear)
+          allStudentsAssessments: allAssessmentsInClass.filter(
+            a => String(a.term) === String(activeTermNum) && String(a.academicYear) === String(activeYear)
           ),
         });
-
-      } catch (error) {
-        console.error("Error fetching report card data:", error);
-      } finally {
-        setLoading(false);
+      } catch (err) {
+        console.error("Error building print data:", err);
       }
     }
 
-    fetchReportData();
-  }, [student.schoolId, student.id, student.classId]);
+    if (!loading) {
+      buildPrintData();
+    }
+  }, [student.id, schoolConfig, assessments, remarks, adminRemarks, studentSkills, selectedTerm, loading]);
 
   const termReports = useMemo((): TermReport[] => {
     const grouped: { [key: string]: Assessment[] } = {};
@@ -268,6 +318,11 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
     const termNum = parseInt(selectedTerm) as TermType;
     return termReports.filter(r => r.term === termNum);
   }, [termReports, selectedTerm]);
+
+  const handleTermChange = (term: string) => {
+    userSelectedTermRef.current = true;
+    setSelectedTerm(term);
+  };
 
   const getAssessmentSummary = (termAssessments: Assessment[]) => {
     const subjectMap: { [key: string]: Assessment[] } = {};
@@ -381,7 +436,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
               {["all", "1", "2", "3"].map(term => (
                 <button
                   key={term}
-                  onClick={() => setSelectedTerm(term)}
+                  onClick={() => handleTermChange(term)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                     selectedTerm === term ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
@@ -414,8 +469,20 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                           <h3 className="font-bold text-slate-800">Term {report.term} - {report.academicYear}</h3>
                           <p className="text-sm text-slate-500">{summary.length} subject(s)</p>
                         </div>
-                        <div className={`px-4 py-2 rounded-lg font-bold ${getGradeColor(termGrade.grade)}`}>
-                          Average: {termGrade.grade} ({termAverage.toFixed(1)}%)
+                        <div className="flex items-center gap-2">
+                          <div className={`px-4 py-2 rounded-lg font-bold ${getGradeColor(termGrade.grade)}`}>
+                            Average: {termGrade.grade} ({termAverage.toFixed(1)}%)
+                          </div>
+                          <button
+                            onClick={() => {
+                              handleTermChange(String(report.term));
+                              setTimeout(handleDownload, 100);
+                            }}
+                            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                            title="Download this report card"
+                          >
+                            <Download size={18} />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -441,21 +508,25 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {summary.map((s, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
-                              <td className="px-4 py-3 font-medium text-slate-800">{s.subject}</td>
-                              <td className="px-3 py-3 text-center text-slate-600">{s.best.testScore ?? 0}</td>
-                              <td className="px-3 py-3 text-center text-slate-600">{s.best.homeworkScore ?? 0}</td>
-                              <td className="px-3 py-3 text-center text-slate-600">{s.best.projectScore ?? 0}</td>
-                              <td className="px-3 py-3 text-center text-slate-600 border-l border-slate-200">{s.best.examScore ?? 0}</td>
-                              <td className="px-3 py-3 text-center font-bold text-slate-800 bg-slate-50">{s.average.toFixed(1)}</td>
-                              <td className="px-3 py-3 text-center bg-slate-50">
-                                <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold ${getGradeColor(s.grade.grade)}`}>
-                                  {s.grade.grade}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {summary.map((s, idx) => {
+                            const score = calculateTotalScore(s.best);
+                            const gradeInfo = calculateGrade(score, schoolConfig?.gradingScale);
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
+                                <td className="px-4 py-3 font-medium text-slate-800">{s.subject}</td>
+                                <td className="px-3 py-3 text-center text-slate-600">{s.best.testScore ?? 0}</td>
+                                <td className="px-3 py-3 text-center text-slate-600">{s.best.homeworkScore ?? 0}</td>
+                                <td className="px-3 py-3 text-center text-slate-600">{s.best.projectScore ?? 0}</td>
+                                <td className="px-3 py-3 text-center text-slate-600 border-l border-slate-200">{s.best.examScore ?? 0}</td>
+                                <td className="px-3 py-3 text-center font-bold text-slate-800 bg-slate-50">{score}</td>
+                                <td className="px-3 py-3 text-center bg-slate-50">
+                                  <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold ${getGradeColor(gradeInfo.grade)}`}>
+                                    {gradeInfo.grade}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -476,24 +547,6 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
             </div>
           )}
 
-          {/* Download Button */}
-          <div className="flex justify-center mt-4 pb-4">
-            <button
-              onClick={handleDownload}
-              disabled={isDownloading || !printData}
-              className={`flex items-center gap-2 px-6 py-3 rounded-lg transition-colors font-medium ${
-                isDownloading || !printData
-                  ? "bg-blue-100 text-blue-600 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
-              }`}
-            >
-              {isDownloading ? (
-                <><Loader2 size={18} className="animate-spin" /> Generating PDF...</>
-              ) : (
-                <><Download size={18} /> Download Report Card</>
-              )}
-            </button>
-          </div>
         </div>
       </div>
 

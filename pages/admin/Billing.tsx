@@ -82,6 +82,29 @@ const Billing: React.FC = () => {
     };
   };
 
+  const isBillingPayment = (payment: any) => {
+    const reference = String(payment?.reference || payment?.id || "");
+    const module = String(payment?.module || "").toLowerCase();
+    const type = String(payment?.type || "").toLowerCase();
+    const category = String(payment?.category || "").toLowerCase();
+
+    if (reference.toUpperCase().startsWith("FEES-")) {
+      return false;
+    }
+
+    return (
+      module === "billing" ||
+      type === "subscription" ||
+      category === "subscription" ||
+      reference.startsWith("sch_")
+    );
+  };
+
+  const subscriptionPaymentHistory = useMemo(
+    () => paymentHistory.filter(isBillingPayment),
+    [paymentHistory],
+  );
+
   const billingStatus = useMemo(() => {
     const status = (school as any)?.billing?.status || "inactive";
     const plan = (school as any)?.plan || "monthly";
@@ -107,9 +130,9 @@ const Billing: React.FC = () => {
   };
 
   const displayStatus = useMemo(() => {
-    const latestPayment = paymentHistory[0];
+    const latestPayment = subscriptionPaymentHistory[0];
     return getStatusMeta(latestPayment?.status || billingStatus.status);
-  }, [billingStatus.status, paymentHistory]);
+  }, [billingStatus.status, subscriptionPaymentHistory]);
 
   const expectedAmount = useMemo(() => {
     const billingCycle = billingStatus.plan || "monthly"; // monthly | termly | yearly
@@ -189,6 +212,7 @@ const Billing: React.FC = () => {
           id: doc.id,
           ...(doc.data() as any),
         }))
+        .filter(isBillingPayment)
         .sort((a, b) => {
           const aTime = a.createdAt?.toMillis
             ? a.createdAt.toMillis()
@@ -208,12 +232,12 @@ const Billing: React.FC = () => {
   };
 
   const handleVerifyPending = async () => {
-    if (!paymentHistory.length) {
+    if (!subscriptionPaymentHistory.length) {
       showToast("No payments to verify.", { type: "info" });
       return;
     }
 
-    const pendingPayments = paymentHistory.filter((payment) =>
+    const pendingPayments = subscriptionPaymentHistory.filter((payment) =>
       ["pending", "abandoned", "failed"].includes(
         String(payment.status || "pending").toLowerCase(),
       ),
@@ -509,7 +533,7 @@ const Billing: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {paymentHistory.map((payment) => {
+                {subscriptionPaymentHistory.map((payment) => {
                   const statusMeta = getStatusMeta(payment.status);
                   return (
                     <tr key={payment.id} className="border-b border-slate-100">
@@ -537,7 +561,7 @@ const Billing: React.FC = () => {
                 })}
               </tbody>
             </table>
-            {!paymentHistory.length && !loadingHistory && (
+            {!subscriptionPaymentHistory.length && !loadingHistory && (
               <div className="text-center text-sm text-slate-400 py-10">
                 No payment history yet.
               </div>

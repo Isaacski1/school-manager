@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../../services/mockDb";
 import { StudentFeeLedger, StudentFeePayment, FeeDefinition, Student, FeeTerm } from "../../types";
 import { Calendar, CreditCard, CheckCircle, AlertTriangle, Clock, Download, Loader2 } from "lucide-react";
@@ -12,6 +12,7 @@ import InvoiceTemplate from "./InvoiceTemplate";
 import { showToast } from "../../services/toast";
 import { auth } from "../../services/firebase";
 import html2pdf from "html2pdf.js";
+import { API_BASE_URL } from "../../src/config";
 
 interface FeesViewProps {
   student: Student;
@@ -20,16 +21,13 @@ interface FeesViewProps {
 
 const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const { school } = useSchool();
+  const userSelectedTermRef = useRef(false);
   const [ledgers, setLedgers] = useState<StudentFeeLedger[]>([]);
   const [feeDefinitions, setFeeDefinitions] = useState<FeeDefinition[]>([]);
   const [payments, setPayments] = useState<StudentFeePayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTerm, setSelectedTerm] = useState<FeeTerm | "all">(() => {
-    if (typeof window !== "undefined") {
-      const stored = sessionStorage.getItem(`fees-selected-term-${student.id}`);
-      if (stored) return stored as FeeTerm | "all";
-    }
-    return "all";
+    return "Term 1";
   });
   const [academicYear, setAcademicYear] = useState(() => {
     if (typeof window !== "undefined") {
@@ -42,6 +40,10 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedFeeToPay, setSelectedFeeToPay] = useState<{ id: string, name: string } | null>(null);
   const [lastPaymentInfo, setLastPaymentInfo] = useState<{ reference: string; amount: number; date: number } | null>(null);
+  const activeSubaccountCode =
+    school?.paymentSettings?.status === "active"
+      ? school.paymentSettings.subaccountCode
+      : undefined;
 
   useEffect(() => {
     sessionStorage.setItem(`fees-selected-term-${student.id}`, selectedTerm);
@@ -83,6 +85,43 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
         requestAnimationFrame(() => resolve());
       });
     });
+
+  const getStudentCreatedAtMs = () => {
+    if (!student.createdAt) return null;
+    const value =
+      student.createdAt instanceof Date
+        ? student.createdAt.getTime()
+        : new Date(student.createdAt).getTime();
+    return Number.isNaN(value) ? null : value;
+  };
+
+  const isFeeApplicableToStudent = (fee: FeeDefinition, currentYear: string, schoolReopenDate?: string) => {
+    if (fee.academicYear !== currentYear) return false;
+    if (fee.feeFrequency === "per_year" && fee.applyToAcademicYear && fee.applyToAcademicYear !== currentYear) {
+      return false;
+    }
+    if (fee.feeFrequency === "per_term" && fee.applyToTerm && fee.applyToTerm !== fee.term) {
+      return false;
+    }
+
+    switch (fee.appliesTo || "all_students") {
+      case "class":
+        return !fee.classId || fee.classId === student.classId;
+      case "selected_students":
+        return fee.selectedStudentIds?.includes(student.id) || false;
+      case "new_students_only": {
+        const cutoffDate = schoolReopenDate || "";
+        if (!cutoffDate) return true;
+        const createdAtMs = getStudentCreatedAtMs();
+        if (createdAtMs === null) return true;
+        const cutoffMs = new Date(`${cutoffDate}T00:00:00`).getTime();
+        return Number.isNaN(cutoffMs) || createdAtMs >= cutoffMs;
+      }
+      case "all_students":
+      default:
+        return true;
+    }
+  };
 
   const generateSinglePagePdfBlob = async (
     element: HTMLElement,
@@ -129,20 +168,28 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
 
         // Resolve academic year to fetch
         let yearToFetch = academicYear;
+        let schoolReopenDate = "";
+        let schoolConfig: any = null;
+        try {
+          schoolConfig = await db.getSchoolConfig(student.schoolId);
+          schoolReopenDate = schoolConfig?.schoolReopenDate || "";
+          if (!userSelectedTermRef.current) {
+            const configuredTerm = schoolConfig?.currentTerm as FeeTerm | undefined;
+            if (configuredTerm && ["Term 1", "Term 2", "Term 3"].includes(configuredTerm)) {
+              setSelectedTerm(configuredTerm);
+            }
+          }
+        } catch (e) {
+          console.error("[FeesView] Error fetching school config:", e);
+        }
+
         if (!yearToFetch) {
-          try {
-            const config = await db.getSchoolConfig(student.schoolId);
-            if (config && config.academicYear) {
-              yearToFetch = config.academicYear;
+            if (schoolConfig && schoolConfig.academicYear) {
+              yearToFetch = schoolConfig.academicYear;
             } else {
               yearToFetch = "2023-2024";
             }
             setAcademicYear(yearToFetch);
-          } catch (e) {
-            console.error("[FeesView] Error fetching school config:", e);
-            yearToFetch = "2023-2024";
-            setAcademicYear(yearToFetch);
-          }
         }
 
         // Fetch ALL fee ledgers for the student to discover available years
@@ -162,10 +209,6 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
         const sortedYears = Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
         setAvailableYears(sortedYears);
 
-        // Filter ledgers for the selected year
-        const studentLedgers = allLedgers.filter(l => l.academicYear === yearToFetch);
-        setLedgers(studentLedgers);
-
         // Fetch fee definitions (including global ones)
         const feeData = await db.getFees({
           schoolId: student.schoolId,
@@ -174,13 +217,44 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
         });
         
         // Filter in memory to show global fees + class specific fees
-        const relevantFees = feeData.filter(f => 
-          f.appliesTo === "all_students" || 
-          f.appliesTo === "new_students_only" || // Added this
-          (f.appliesTo === "class" && (f.classId === student.classId || !f.classId)) ||
-          (f.appliesTo === "selected_students" && f.selectedStudentIds?.includes(student.id))
-        );
+        const relevantFees = feeData.filter(f => isFeeApplicableToStudent(f, yearToFetch, schoolReopenDate));
         setFeeDefinitions(relevantFees);
+
+        // Filter ledgers for the selected year. If a newly-added student does
+        // not have ledger rows yet, project the balance from fee definitions so
+        // the parent still sees what the child owes.
+        const studentLedgers = allLedgers.filter(l => l.academicYear === yearToFetch);
+        if (studentLedgers.length > 0 || relevantFees.length === 0) {
+          setLedgers(studentLedgers);
+        } else {
+          const virtualLedgers = termOptions
+            .map((term) => {
+              const termFees = relevantFees.filter((fee) => fee.term === term);
+              if (termFees.length === 0) return null;
+
+              return {
+                id: `virtual_${student.id}_${yearToFetch}_${term}`,
+                schoolId: student.schoolId,
+                studentId: student.id,
+                classId: student.classId,
+                academicYear: yearToFetch,
+                term,
+                fees: termFees.map((fee) => ({
+                  feeId: fee.id,
+                  feeName: fee.feeName,
+                  amount: fee.amount,
+                  openingPaidAmount: 0,
+                  openingStatus: "Unpaid" as const,
+                })),
+                openingPaidAmount: 0,
+                openingStatus: "Unpaid" as const,
+                createdAt: Date.now(),
+              } satisfies StudentFeeLedger;
+            })
+            .filter(Boolean) as StudentFeeLedger[];
+
+          setLedgers(virtualLedgers);
+        }
 
         // 3. Fetch payments for the student
         const paymentData = await db.getPayments({
@@ -200,6 +274,10 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   }, [student.schoolId, student.classId, student.id, academicYear]);
 
   const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
+  const handleTermChange = (term: FeeTerm | "all") => {
+    userSelectedTermRef.current = true;
+    setSelectedTerm(term);
+  };
 
   const enrichedLedgers = useMemo(() => {
     const termLedgers = selectedTerm === "all" ? ledgers : ledgers.filter(l => l.term === selectedTerm);
@@ -507,7 +585,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
 
           // 9. Send to WhatsApp
           const idToken = await auth.currentUser?.getIdToken();
-          const response = await fetch('/api/payments/send-invoice', {
+          const response = await fetch(`${API_BASE_URL}/api/payments/send-invoice`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -751,7 +829,13 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                       })}
                     </select>
                     <button
-                      onClick={() => setShowPaymentModal(true)}
+                      onClick={() => {
+                        if (!activeSubaccountCode) {
+                          showToast("Online payments are not active for this school yet.", { type: "error" });
+                          return;
+                        }
+                        setShowPaymentModal(true);
+                      }}
                       className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-md shadow-blue-100"
                     >
                       <CreditCard size={16} />
@@ -779,7 +863,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                 <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <span className="text-xs sm:text-sm font-medium text-slate-700">Term:</span>
                   <button
-                    onClick={() => setSelectedTerm("all")}
+                    onClick={() => handleTermChange("all")}
                     className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                       selectedTerm === "all"
                         ? "bg-blue-600 text-white"
@@ -791,7 +875,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                   {termOptions.map(term => (
                     <button
                       key={term}
-                      onClick={() => setSelectedTerm(term)}
+                      onClick={() => handleTermChange(term)}
                       className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                         selectedTerm === term
                           ? "bg-blue-600 text-white"
@@ -920,8 +1004,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             return defFee ? Number(defFee.amount.toFixed(2)) : Number(totalStats.totalBalance.toFixed(2));
           })()}
           schoolName={school?.name || "The School"}
-          subaccountCode={(school as any)?.paymentSettings?.subaccountCode}
-          paystackPublicKey={import.meta.env.VITE_PAYSTACK_PUBLIC_KEY} 
+          subaccountCode={activeSubaccountCode}
           academicYear={academicYear}
           term={selectedTerm === "all" ? (enrichedLedgers[0]?.term || "Term 1") : selectedTerm}
           feeId={selectedFeeToPay?.id}

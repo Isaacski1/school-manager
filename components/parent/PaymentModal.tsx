@@ -2,14 +2,15 @@ import React, { useState } from "react";
 import { X, ShieldCheck, Landmark, Smartphone, CreditCard as CardIcon, ChevronRight } from "lucide-react";
 import { Student, FeeTerm } from "../../types";
 // @ts-ignore
-import { usePaystackPayment } from "react-paystack";
+import PaystackPop from "@paystack/inline-js";
+import { auth } from "../../services/firebase";
+import { API_BASE_URL } from "../../src/config";
 
 interface PaymentModalProps {
   student: Student;
   amount: number;
   schoolName: string;
   subaccountCode?: string;
-  paystackPublicKey: string;
   academicYear: string;
   term: string;
   feeId?: string;
@@ -23,7 +24,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
   amount,
   schoolName,
   subaccountCode,
-  paystackPublicKey,
   academicYear,
   term,
   feeId,
@@ -34,53 +34,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
   const [payAmount, setPayAmount] = useState<string>(amount.toFixed(2));
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Paystack Configuration
-  const names = (student.guardianName || "Parent Guardian").split(" ");
-  const firstname = names[0];
-  const lastname = names.slice(1).join(" ") || "Guardian";
-  
   const emailName = (student.guardianName || "Parent")
     .replace(/[^a-zA-Z0-9]/g, '.')
     .replace(/\.+/g, '.')
     .replace(/^\.|\.$/g, '');
     
-  const config = {
-    reference: `FEES-${student.id.slice(0, 5)}-${new Date().getTime()}`,
-    email: student.guardianEmail || `${emailName}@sm.gh`,
-    label: student.guardianName, // This might show the name in the header
-    firstname,
-    lastname,
-    amount: parseFloat(payAmount) * 100, // Paystack takes amount in kobo/pesewas
-    currency: "GHS",
-    publicKey: paystackPublicKey,
-    subaccount: subaccountCode, // This is what routes the money to the school!
-    metadata: {
-      studentId: student.id,
-      studentName: student.name,
-      guardianName: student.guardianName,
-      schoolId: student.schoolId,
-      feeId: feeId || "general",
-      feeName: feeName || "School Fees",
-      academicYear,
-      term,
-      custom_fields: [
-        {
-          display_name: "Student Name",
-          variable_name: "student_name",
-          value: student.name
-        },
-        {
-          display_name: "Parent Name",
-          variable_name: "parent_name",
-          value: student.guardianName
-        }
-      ]
-    }
-  };
-
-  const initializePayment = usePaystackPayment(config);
-
-  const handlePayment = () => {
+  const handlePayment = async () => {
     const numericAmount = parseFloat(payAmount);
     if (isNaN(numericAmount) || numericAmount <= 0) {
       alert("Please enter a valid amount");
@@ -93,20 +52,65 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
       return;
     }
 
+    if (!subaccountCode) {
+      alert("The school has not activated an online payout account yet. Please contact the school.");
+      return;
+    }
+
     setIsProcessing(true);
-    
-    // @ts-ignore
-    initializePayment({
-      onSuccess: (response: any) => {
-        // onSuccess callback
-        setIsProcessing(false);
-        onSuccess(response.reference, numericAmount, feeId, feeName);
-      },
-      onClose: () => {
-        // onClose callback
-        setIsProcessing(false);
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error("Your login session has expired. Please sign in again.");
       }
-    });
+
+      const response = await fetch(`${API_BASE_URL}/api/payments/initialize-fee-payment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          studentId: student.id,
+          schoolId: student.schoolId,
+          amount: numericAmount,
+          email: student.guardianEmail || `${emailName}@sm.gh`,
+          guardianName: student.guardianName,
+          studentName: student.name,
+          feeId,
+          feeName,
+          academicYear,
+          term,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.accessCode) {
+        throw new Error(result.error || "Could not initialize payment.");
+      }
+      if (result.paystackMode !== "live") {
+        throw new Error("Payment checkout is not in live mode. Please refresh and try again.");
+      }
+
+      const paystack = new PaystackPop();
+      paystack.resumeTransaction(result.accessCode, {
+        onSuccess: (transaction: any) => {
+          setIsProcessing(false);
+          onSuccess(transaction.reference || result.reference, numericAmount, feeId, feeName);
+        },
+        onCancel: () => {
+          setIsProcessing(false);
+        },
+        onError: (error: any) => {
+          setIsProcessing(false);
+          alert(error?.message || "We could not start this transaction.");
+        },
+      });
+    } catch (error: any) {
+      setIsProcessing(false);
+      alert(error.message || "We could not start this transaction.");
+    }
   };
 
   return (

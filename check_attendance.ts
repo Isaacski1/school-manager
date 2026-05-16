@@ -9,7 +9,7 @@ async function checkAttendance() {
   const attendanceRef = collection(firestore, "attendance");
   const snap = await getDocs(query(attendanceRef, limit(20)));
   
-  snap.forEach(doc =\u003e {
+  snap.forEach(doc => {
     console.log("Record:", JSON.stringify(doc.data(), null, 2));
   });
 }

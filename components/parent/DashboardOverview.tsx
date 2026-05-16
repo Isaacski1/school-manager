@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from "react";
-import { Student, AttendanceRecord, Assessment, StudentFeeLedger, StudentRemark } from "../../types";
+import { Student, AttendanceRecord, Assessment, StudentFeeLedger, StudentRemark, FeeDefinition } from "../../types";
 import { db } from "../../services/mockDb";
 import { CreditCard, Activity, BookOpen, MessageSquare, FileText } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
 
 interface DashboardOverviewProps {
   student: Student;
 }
 
 const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [dueFees, setDueFees] = useState(0);
-  const [attendanceStats, setAttendanceStats] = useState({ present: 0, total: 0, percentage: 0 });
+  const [attendanceStats, setAttendanceStats] = useState({ present: 0, total: 0, percentage: 0, isNew: false });
+  const [hasLedgers, setHasLedgers] = useState(false);
   const [latestExam, setLatestExam] = useState<Assessment | null>(null);
   const [latestRemark, setLatestRemark] = useState<StudentRemark | null>(null);
 
   useEffect(() => {
     async function fetchData() {
-      if (!student.schoolId || !student.id) return;
+      const effectiveSchoolId = student.schoolId || (user as any)?.schoolId;
+      if (!effectiveSchoolId || !student.id) return;
       
       try {
         setLoading(true);
@@ -24,7 +28,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         // 0. Fetch School Config first to get correct academic context
         let config;
         try {
-          config = await db.getSchoolConfig(student.schoolId);
+          config = await db.getSchoolConfig(effectiveSchoolId);
         } catch (e) {
           console.error("[DashboardOverview] Error fetching school config:", e);
           throw e;
@@ -33,113 +37,216 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         const currentYear = config.academicYear || "2023-2024";
         const currentTermLabel = config.currentTerm || "Term 1";
         const currentTermNum = parseInt(currentTermLabel.split(" ")[1]) || 1;
+        const getStudentCreatedAtMs = () => {
+          if (!student.createdAt) return null;
+          const value =
+            student.createdAt instanceof Date
+              ? student.createdAt.getTime()
+              : new Date(student.createdAt).getTime();
+          return Number.isNaN(value) ? null : value;
+        };
+        const isFeeApplicableToStudent = (fee: FeeDefinition) => {
+          if (fee.academicYear !== currentYear || fee.term !== currentTermLabel) {
+            return false;
+          }
+          if (fee.feeFrequency === "per_year" && fee.applyToAcademicYear && fee.applyToAcademicYear !== currentYear) {
+            return false;
+          }
+          if (fee.feeFrequency === "per_term" && fee.applyToTerm && fee.applyToTerm !== currentTermLabel) {
+            return false;
+          }
+
+          switch (fee.appliesTo || "all_students") {
+            case "class":
+              return !fee.classId || fee.classId === student.classId;
+            case "selected_students":
+              return fee.selectedStudentIds?.includes(student.id) || false;
+            case "new_students_only": {
+              const cutoffDate = config.schoolReopenDate || "";
+              if (!cutoffDate) return true;
+              const createdAtMs = getStudentCreatedAtMs();
+              if (createdAtMs === null) return true;
+              const cutoffMs = new Date(`${cutoffDate}T00:00:00`).getTime();
+              return Number.isNaN(cutoffMs) || createdAtMs >= cutoffMs;
+            }
+            case "all_students":
+            default:
+              return true;
+          }
+        };
         
         // --- PARALLEL DATA FETCHING ---
-        // Fire all remaining queries at once to vastly improve load time
+        console.log(`[DashboardOverview] Student Data Probe:`, {
+          id: student.id,
+          name: student.name,
+          schoolId: student.schoolId,
+          classId: student.classId,
+          effectiveSchoolId
+        });
+
         const [ledgerData, paymentData, allClassAttendance, assessments, remarks] = await Promise.all([
           // 1. Fees data
           db.getStudentLedgers({
-            schoolId: student.schoolId,
+            schoolId: effectiveSchoolId,
             classId: student.classId || "",
             academicYear: currentYear,
             studentId: student.id
-          }).catch(e => { console.error("Error fetching ledgers:", e); return []; }),
+          }).catch(e => { 
+            console.error("[DashboardOverview] Ledger Fetch Error:", e); 
+            // If it's a permission error (401/403), it might be due to a missing schoolId on the student record
+            return []; 
+          }),
           
           db.getPayments({
-            schoolId: student.schoolId,
+            schoolId: effectiveSchoolId,
             studentId: student.id
           }).catch(e => { console.error("Error fetching payments:", e); return []; }),
           
           // 2. Attendance data
-          db.getClassAttendance(student.schoolId, student.classId || "")
+          db.getClassAttendance(effectiveSchoolId, student.classId || "")
             .catch(e => { console.error("Error fetching attendance:", e); return []; }),
             
           // 3. Assessments data
-          db.getStudentAssessmentsByStudent(student.schoolId, student.id)
+          db.getStudentAssessmentsByStudent(effectiveSchoolId, student.id)
             .catch(e => { console.error("Error fetching assessments:", e); return []; }),
             
           // 4. Remarks data
-          db.getStudentRemarksByStudent(student.schoolId, student.id)
+          db.getStudentRemarksByStudent(effectiveSchoolId, student.id)
             .catch(e => { console.error("Error fetching remarks:", e); return []; })
         ]);
 
         // --- PROCESS RESULTS ---
-        
-        // 1. Process Fees
+        console.log(`[DashboardOverview] Data Counts for ${student.name}:`, {
+          ledgers: ledgerData.length,
+          payments: paymentData.length,
+          attendanceRecords: allClassAttendance.length,
+          assessments: assessments.length,
+          remarks: remarks.length
+        });
         // We calculate balance per-ledger (per term) to correctly handle payments made
         // via the parent portal (feeId = "online_payment") that are not tied to a specific
-        // fee but still reduce the overall term balance.
-        let totalDue = 0;
-        ledgerData.forEach((ledger: any) => {
-          const totalFeesInLedger = ledger.fees.reduce((sum: number, fee: any) => sum + fee.amount, 0);
-          const openingPaidTotal = ledger.fees.reduce((sum: number, fee: any) => sum + (fee.openingPaidAmount || 0), 0);
-
-          // Sum ALL payments for this student in this specific term (regardless of feeId)
-          const termPayments = paymentData.filter(
-            (p: any) => p.studentId === student.id &&
-                        p.academicYear === ledger.academicYear &&
-                        p.term === ledger.term
-          );
-          const paidSinceOnboarding = termPayments.reduce((sum: number, p: any) => sum + p.amountPaid, 0);
-
-          const totalPaid = openingPaidTotal + paidSinceOnboarding;
-          totalDue += Math.max(0, totalFeesInLedger - totalPaid);
-        });
-        setDueFees(totalDue);
         
-        // 2. Process Attendance (Term-wide)
+        // 1. Process Fees
+        let finalLedgerData = [...ledgerData];
+        
+        if (finalLedgerData.length === 0) {
+          console.log("[DashboardOverview] No personal ledger found, fetching class-wide fees as fallback...");
+          try {
+            const allFees = await db.getFees({
+              schoolId: effectiveSchoolId,
+              academicYear: currentYear,
+            });
+            const classFees = allFees.filter(isFeeApplicableToStudent);
+            
+            if (classFees.length > 0) {
+              console.log("[DashboardOverview] Projected class fees found:", classFees);
+              // Create a virtual ledger for the UI
+              const virtualLedger: any = {
+                id: "virtual_ledger_" + student.id,
+                studentId: student.id,
+                classId: student.classId,
+                academicYear: currentYear,
+                term: currentTermLabel,
+                fees: classFees.map(f => ({
+                  feeId: f.id,
+                  feeName: f.feeName,
+                  amount: f.amount
+                })),
+                isVirtual: true
+              };
+              finalLedgerData = [virtualLedger];
+            }
+          } catch (e) {
+            console.error("[DashboardOverview] Class fee fetch failed:", e);
+          }
+        }
+
+        const currentTermLedgers = finalLedgerData.filter(
+          (l) => l.academicYear === currentYear && l.term === currentTermLabel
+        );
+        
+        const hasLedgers = finalLedgerData.length > 0;
+        const currentBalance = currentTermLedgers.reduce((acc, ledger) => {
+          const totalDue = ledger.fees.reduce((sum: number, f: any) => sum + f.amount, 0);
+          const totalPaid = paymentData
+            .filter((p) => p.studentId === student.id && p.academicYear === currentYear && p.term === currentTermLabel)
+            .reduce((sum, p) => sum + p.amountPaid, 0);
+          return acc + (totalDue - totalPaid);
+        }, 0);
+
+        setDueFees(currentBalance);
+        setHasLedgers(hasLedgers);
+        
+        // 2. Process Attendance (Term-wide, aligned with admin student view)
         const getLocalDateString = (d: Date) => 
           `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         
         const today = new Date();
+        today.setHours(0, 0, 0, 0);
         const endDate = getLocalDateString(today);
-        
-        // Use schoolReopenDate or fallback to 90 days ago
-        let startDate = config.schoolReopenDate?.trim();
-        if (!startDate || startDate > endDate) {
-          const fallbackDate = new Date();
-          fallbackDate.setDate(today.getDate() - 90); 
-          startDate = getLocalDateString(fallbackDate);
-        }
         
         let present = 0;
         let total = 0;
         const studentIdTrimmed = student.id.trim();
+        const recordHolidayDates = new Set(
+          allClassAttendance.filter((record) => record.isHoliday).map((record) => record.date),
+        );
+        const configHolidayDates = new Set(
+          (config.holidayDates || []).map((holiday: any) => holiday.date),
+        );
+        const schoolDates: string[] = [];
         
-        allClassAttendance.forEach(record => {
-          // Filter by date range locally
-          if (record.date >= startDate! && record.date <= endDate) {
-            if (!record.isHoliday) {
+        if (config.schoolReopenDate) {
+          const cursor = new Date(`${config.schoolReopenDate}T00:00:00`);
+          const vacation = config.vacationDate
+            ? new Date(`${config.vacationDate}T00:00:00`)
+            : null;
+          const finalDay = vacation && vacation < today ? vacation : today;
+
+          while (!Number.isNaN(cursor.getTime()) && cursor <= finalDay) {
+            const dateKey = getLocalDateString(cursor);
+            const day = cursor.getDay();
+            if (
+              day !== 0 &&
+              day !== 6 &&
+              !recordHolidayDates.has(dateKey) &&
+              !configHolidayDates.has(dateKey)
+            ) {
               total++;
-              // Robust ID check
-              const isPresent = record.presentStudentIds?.some((id: string) => id.trim() === studentIdTrimmed);
-              if (isPresent) present++;
+              schoolDates.push(dateKey);
             }
+            cursor.setDate(cursor.getDate() + 1);
           }
-        });
-        
-        // Final fallback: If still 0 days found in the term but data exists elsewhere, 
-        // try the full 90-day window to show SOMETHING useful
-        if (total === 0 && allClassAttendance.length > 0) {
-           const fallbackDate = new Date();
-           fallbackDate.setDate(today.getDate() - 90);
-           const fallbackStart = getLocalDateString(fallbackDate);
-           
-           allClassAttendance.forEach(record => {
-             if (record.date >= fallbackStart && record.date <= endDate) {
-               if (!record.isHoliday) {
-                 total++;
-                 const isPresent = record.presentStudentIds?.some((id: string) => id.trim() === studentIdTrimmed);
-                 if (isPresent) present++;
-               }
-             }
-           });
         }
+
+        if (total === 0) {
+          allClassAttendance.forEach(record => {
+            if (!record.isHoliday && !configHolidayDates.has(record.date)) {
+              total++;
+              schoolDates.push(record.date);
+            }
+          });
+        }
+
+        const schoolDateSet = new Set(schoolDates);
+        present = allClassAttendance.filter(record =>
+          !record.isHoliday &&
+          !configHolidayDates.has(record.date) &&
+          (schoolDateSet.size === 0 || schoolDateSet.has(record.date)) &&
+          record.presentStudentIds?.some((id: string) => id.trim() === studentIdTrimmed)
+        ).length;
         
+        present = Math.min(present, total);
+        const attendancePercentage = total > 0 ? Math.round((present / total) * 100) : 0;
+        
+        // Check if student is "New" (joined in the last 7 days)
+        const isNewStudent = student.createdAt ? (Date.now() - new Date(student.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000) : false;
+
         setAttendanceStats({
           present,
           total,
-          percentage: total > 0 ? Math.round((present / total) * 100) : 0
+          percentage: attendancePercentage,
+          isNew: isNewStudent && total === 0
         });
         
         // 3. Process Latest Assessment
@@ -188,6 +295,21 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
     fetchData();
   }, [student.id, student.schoolId, student.classId]);
 
+  if (!student.classId) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-amber-200 shadow-sm">
+        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
+          <FileText size={32} />
+        </div>
+        <h3 className="text-xl font-bold text-slate-800 mb-2">No Class Assigned</h3>
+        <p className="text-slate-500 text-center max-w-md">
+          {student.name} has been added to the system but has not been assigned to a class yet. 
+          Please contact the school administration to assign a class.
+        </p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 bg-slate-50 rounded-2xl border border-slate-200">
@@ -213,9 +335,15 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             </div>
             <span className="font-semibold text-orange-800">Due Fees</span>
           </div>
-          <p className="text-2xl font-bold text-orange-900">GHS {dueFees.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-orange-900">
+            {dueFees > 0 ? `GHS ${dueFees.toFixed(2)}` : hasLedgers ? "GHS 0.00" : "—"}
+          </p>
           <p className="text-xs text-orange-600 mt-1">
-            {dueFees === 0 ? "Fully paid" : "Outstanding balance"}
+            {dueFees > 0 
+              ? "Outstanding balance" 
+              : hasLedgers 
+                ? "Fully paid" 
+                : "Setting up account balance..."}
           </p>
         </div>
 
@@ -226,9 +354,13 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             </div>
             <span className="font-semibold text-purple-800">Avg. Attendance</span>
           </div>
-          <p className="text-2xl font-bold text-purple-900">{attendanceStats.percentage}%</p>
+          <p className="text-2xl font-bold text-purple-900">
+            {attendanceStats.total > 0 ? `${attendanceStats.percentage}%` : "—"}
+          </p>
           <p className="text-xs text-purple-600 mt-1">
-            Present {attendanceStats.present} out of {attendanceStats.total} days this term
+            {attendanceStats.total > 0 
+              ? `Present ${attendanceStats.present} out of ${attendanceStats.total} days this term`
+              : (attendanceStats as any).isNew ? "Attendance tracking starting soon" : "No attendance records yet"}
           </p>
         </div>
 
@@ -240,10 +372,10 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             <span className="font-semibold text-green-800">Latest Exam</span>
           </div>
           <p className="text-2xl font-bold text-green-900">
-            {latestExam ? `${latestExam.total || (latestExam.testScore + latestExam.homeworkScore + latestExam.projectScore + latestExam.examScore)}/100` : "N/A"}
+            {latestExam ? `${latestExam.total || (latestExam.testScore + latestExam.homeworkScore + latestExam.projectScore + latestExam.examScore)}/100` : "—"}
           </p>
           <p className="text-xs text-green-600 mt-1 truncate">
-            {latestExam ? `${latestExam.subject} - Term ${latestExam.term}` : "No exams recorded"}
+            {latestExam ? `${latestExam.subject} - Term ${latestExam.term}` : "No exams recorded this term"}
           </p>
         </div>
       </div>

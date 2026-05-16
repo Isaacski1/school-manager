@@ -184,7 +184,11 @@ const ManageStudents = () => {
   };
 
   const handleEdit = async (student: Student) => {
-    setFormData(student);
+    const cleanedStudent = {
+      ...student,
+      dob: student.dob === "2015-01-01" ? "" : student.dob,
+    };
+    setFormData(cleanedStudent);
     setEditingId(student.id);
     setShowModal(true);
 
@@ -446,6 +450,11 @@ const ManageStudents = () => {
           },
         });
       } else {
+        if (!formData.classId) {
+          showToast("Please select a class for the student.", { type: "error" });
+          return;
+        }
+
         const normalizePhone = (p: string) => {
           if (!p) return "";
           let cleaned = p.trim().replace(/\s+/g, "");
@@ -460,9 +469,9 @@ const ManageStudents = () => {
           id: Math.random().toString(36).substr(2, 9),
           name: formData.name,
           gender: formData.gender as "Male" | "Female",
-          dob: formData.dob || "2015-01-01",
+          dob: formData.dob || "",
           classId: formData.classId,
-          schoolId: schoolId || "",
+          schoolId: schoolId || (school as any)?.id || "",
           guardianName: formData.guardianName || "",
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
           createdAt: Date.now(),
@@ -624,7 +633,7 @@ const ManageStudents = () => {
                     <div key={idx} className="flex items-center justify-center">
                       <div
                         title={`${iso}: ${isPresent ? "Present" : "Absent"}`}
-                        className={`${baseClasses} ${weekendClasses} ${isPresent ? "bg-emerald-100 text-emerald-800 shadow-sm" : "bg-sky-100 text-sky-800 shadow-sm"}`}
+                        className={`${baseClasses} ${weekendClasses} ${isPresent ? "bg-emerald-100 text-emerald-800 shadow-sm" : "bg-red-100 text-red-800 shadow-sm"}`}
                       >
                         {dayNum}
                       </div>
@@ -639,7 +648,7 @@ const ManageStudents = () => {
                   Present
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-sky-100 rounded-full border border-sky-200"></div>{" "}
+                  <div className="w-3 h-3 bg-red-100 rounded-full border border-red-200"></div>{" "}
                   Absent
                 </div>
               </div>
@@ -778,9 +787,9 @@ const ManageStudents = () => {
                             Date of Birth
                           </p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">
-                            {student.dob
+                            {student.dob && student.dob !== "" && student.dob !== "2015-01-01"
                               ? new Date(student.dob).toLocaleDateString("en-US")
-                              : "-"}
+                              : "Not Set"}
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
@@ -1388,8 +1397,8 @@ const ManageStudents = () => {
                       <div className="w-2.5 h-2.5 bg-emerald-300 rounded-full" />
                       Present
                     </span>
-                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 font-semibold text-sky-700">
-                      <div className="w-2.5 h-2.5 bg-sky-300 rounded-full" />
+                    <span className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-1 font-semibold text-red-700">
+                      <div className="w-2.5 h-2.5 bg-red-300 rounded-full" />
                       Absent
                     </span>
                   </div>
@@ -1412,11 +1421,11 @@ const ManageStudents = () => {
                       {attendancePresent ?? "-"}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4">
-                    <p className="text-xs uppercase tracking-wide text-sky-500">
+                  <div className="rounded-2xl border border-red-100 bg-red-50/70 p-4">
+                    <p className="text-xs uppercase tracking-wide text-red-500">
                       Days Absent
                     </p>
-                    <p className="mt-2 text-2xl font-bold text-sky-700">
+                    <p className="mt-2 text-2xl font-bold text-red-700">
                       {attendanceAbsent ?? "-"}
                     </p>
                   </div>

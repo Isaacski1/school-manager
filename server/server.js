@@ -672,10 +672,15 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
       });
     }
 
-    // Match found! Mint a free Custom Token for Firebase
+    // Match found! Grant access to ALL students associated with this phone number
+    // This allows parents with multiple children to manage all of them with one login
+    const allChildren = snapshot.docs;
     const uid = normalizedPhone;
-    const schoolIds = [...new Set(matches.map(doc => doc.data().schoolId))].filter(Boolean);
-    const studentIds = matches.map(doc => doc.id);
+    const schoolIds = [...new Set(allChildren.map(doc => doc.data().schoolId))].filter(Boolean);
+    const studentIds = allChildren.map(doc => doc.id);
+
+    console.log(`[Auth] Parent login success for ${normalizedPhone}. Granting access to ${studentIds.length} students in schools: ${schoolIds.join(', ')}`);
+
     const customToken = await admin.auth().createCustomToken(uid, {
       role: "parent",
       schoolIds: schoolIds,
@@ -719,6 +724,9 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     if (!PAYSTACK_SECRET_KEY) {
       return res.status(500).json({ error: "Server configuration error: Paystack secret key missing." });
     }
+    if (!isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
+    }
 
     // 2. Call Paystack to create subaccount
     const paystackResponse = await fetch("https://api.paystack.co/subaccount", {
@@ -738,7 +746,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
 
     const paystackData = await paystackResponse.json();
 
-    if (!paystackResponse.ok) {
+    if (!paystackResponse.ok || !paystackData.status) {
       console.error("Paystack Subaccount Error:", paystackData);
       return res.status(400).json({ 
         error: paystackData.message || "Failed to create Paystack subaccount." 
@@ -771,6 +779,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
+const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -8763,6 +8772,9 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     if (!paystackSecret) {
       return res.status(500).json({ error: "Paystack is not configured on the server." });
     }
+    if (!isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
+    }
 
     const business_name = method === "Bank" ? accountName : momoName;
     const settlement_bank = method === "Bank" ? bankName : momoNetwork;
@@ -8946,12 +8958,24 @@ app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
  * Sends a WhatsApp message to multiple parents.
  * Body: { message: string, phones: string[] }
  */
+const WHATSAPP_BROADCAST_LIMIT = 100;
+const WHATSAPP_DAILY_LIMIT = 100;
+
+const normalizeBroadcastPhone = (phone) => {
+  let digits = String(phone || "").replace(/[^\d]/g, "");
+  if (digits.startsWith("0") && digits.length === 10) digits = `233${digits.slice(1)}`;
+  if (digits.length === 9) digits = `233${digits}`;
+  return digits;
+};
+
 app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
   // Validate caller is a school_admin
   const { uid } = req.user;
   try {
     const callerDoc = await admin.firestore().collection("users").doc(uid).get();
     const role = callerDoc.exists ? (callerDoc.data().role || "") : "";
+    const schoolId = callerDoc.exists ? (callerDoc.data().schoolId || null) : null;
+    
     if (role !== "school_admin") {
       return res.status(403).json({ error: "Only school admins can send WhatsApp broadcasts." });
     }
@@ -8963,8 +8987,11 @@ app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
     if (!Array.isArray(phones) || phones.length === 0) {
       return res.status(400).json({ error: "At least one phone number is required." });
     }
-    if (phones.length > 500) {
-      return res.status(400).json({ error: "Maximum 500 recipients per broadcast." });
+    if (!schoolId) {
+      return res.status(400).json({ error: "Your admin profile is missing schoolId." });
+    }
+    if (phones.length > WHATSAPP_BROADCAST_LIMIT) {
+      return res.status(400).json({ error: `Maximum ${WHATSAPP_BROADCAST_LIMIT} recipients per broadcast.` });
     }
 
     const svc = await loadWhatsAppService();
@@ -8975,42 +9002,430 @@ app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: `WhatsApp is not connected. Current status: ${status}` });
     }
 
-    // Set SSE headers for streaming progress
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders();
+    const uniquePhones = [...new Set(
+      phones
+        .map(normalizeBroadcastPhone)
+        .filter((p) => p.length >= 10)
+    )];
 
-    const sendEvent = (data) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
+    if (uniquePhones.length === 0) {
+      return res.status(400).json({ error: "No valid parent phone numbers were selected." });
+    }
 
-    const cleanPhones = phones
-      .map((p) => String(p || "").trim())
-      .filter((p) => p.length >= 10);
-
-    sendEvent({ type: "start", total: cleanPhones.length });
-
-    const results = await svc.broadcastWhatsAppMessages(
-      cleanPhones,
-      message.trim(),
-      (result) => {
-        sendEvent({ type: "progress", ...result });
-      }
+    const db = admin.firestore();
+    const optOutRefs = uniquePhones.map((phone) =>
+      db.collection("schools").doc(schoolId).collection("whatsapp_opt_outs").doc(phone)
     );
+    const optOutDocs = optOutRefs.length ? await db.getAll(...optOutRefs) : [];
+    const optedOut = new Set(optOutDocs.filter((doc) => doc.exists).map((doc) => doc.id));
+    const cleanPhones = uniquePhones.filter((phone) => !optedOut.has(phone));
 
-    const sent = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
+    if (cleanPhones.length === 0) {
+      return res.status(400).json({ error: "All selected recipients have opted out or have invalid phone numbers." });
+    }
+    if (cleanPhones.length > WHATSAPP_BROADCAST_LIMIT) {
+      return res.status(400).json({ error: `Maximum ${WHATSAPP_BROADCAST_LIMIT} valid recipients per broadcast.` });
+    }
 
-    sendEvent({ type: "complete", sent, failed, results });
-    res.end();
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const quotaRef = db.collection("whatsapp_daily_quotas").doc(`${schoolId}_${todayKey}`);
+    const quotaResult = await db.runTransaction(async (tx) => {
+      const quotaSnap = await tx.get(quotaRef);
+      const used = quotaSnap.exists ? Number(quotaSnap.data().attempted || 0) : 0;
+      const remaining = Math.max(0, WHATSAPP_DAILY_LIMIT - used);
+      if (cleanPhones.length > remaining) {
+        return { allowed: false, used, remaining };
+      }
+      tx.set(
+        quotaRef,
+        {
+          schoolId,
+          date: todayKey,
+          attempted: admin.firestore.FieldValue.increment(cleanPhones.length),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return { allowed: true, used: used + cleanPhones.length, remaining: remaining - cleanPhones.length };
+    });
+
+    if (!quotaResult.allowed) {
+      return res.status(429).json({
+        error: `Daily WhatsApp safe-send limit reached. Remaining today: ${quotaResult.remaining}. Try a smaller class group or send tomorrow.`,
+      });
+    }
+
+    // 1. Create Background Job in Firestore
+    const jobId = `broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const jobRef = admin.firestore().collection("whatsapp_jobs").doc(jobId);
+    
+    await jobRef.set({
+      status: "processing",
+      total: cleanPhones.length,
+      sent: 0,
+      failed: 0,
+      skippedOptOut: optedOut.size,
+      safeLimit: WHATSAPP_DAILY_LIMIT,
+      createdBy: uid,
+      schoolId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      results: []
+    });
+
+    // 2. Run broadcast asynchronously in the background
+    (async () => {
+      try {
+        await svc.broadcastWhatsAppMessages(
+          cleanPhones,
+          message.trim(),
+          async (progress) => {
+            if (progress.type === "pause") {
+              await jobRef.update({ 
+                status: "paused_anti_ban", 
+                resumeAt: Date.now() + progress.duration 
+              });
+              return;
+            }
+            
+            let finalSuccess = progress.success;
+            let finalError = progress.error || null;
+            let usedFallback = false;
+
+            // ── SMS FALLBACK LOGIC ──
+            if (!progress.success && schoolId) {
+              const schoolRef = admin.firestore().collection("schools").doc(schoolId);
+              try {
+                await admin.firestore().runTransaction(async (t) => {
+                  const doc = await t.get(schoolRef);
+                  if (!doc.exists) return;
+                  const balance = doc.data().smsWallet?.balance || 0;
+                  
+                  if (balance > 0) {
+                    const arkeselKey = process.env.ARKESEL_API_KEY;
+                    if (arkeselKey) {
+                      const smsRes = await fetch("https://sms.arkesel.com/api/v2/sms/send", {
+                        method: "POST",
+                        headers: { "api-key": arkeselKey, "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          sender: "SCHOOL", // Note: Arkesel requires an approved sender ID
+                          message: progress.message || message.trim(),
+                          recipients: [progress.phone]
+                        })
+                      });
+                      const smsData = await smsRes.json();
+                      if (smsData.status === "success") {
+                        finalSuccess = true;
+                        finalError = null;
+                        usedFallback = true;
+                        t.update(schoolRef, { "smsWallet.balance": balance - 1 });
+                      } else {
+                        finalError = `WhatsApp failed & SMS fallback failed: ${smsData.message || 'Unknown Arkesel error'}`;
+                      }
+                    } else {
+                      finalError = `WhatsApp failed & No Arkesel API Key configured for fallback.`;
+                    }
+                  } else {
+                    finalError = `WhatsApp failed & Out of SMS credits.`;
+                  }
+                });
+              } catch (fallbackErr) {
+                console.error("[SMS Fallback Transaction Error]:", fallbackErr);
+                finalError = `WhatsApp failed & SMS error: ${fallbackErr.message}`;
+              }
+            }
+            // ──────────────────────────
+            
+            // Only update Firestore every 2 messages or if it's the last few to save writes
+            const isSignificant = progress.count % 2 === 0 || progress.count === cleanPhones.length;
+            
+            const updateData = {
+              status: "processing",
+              results: admin.firestore.FieldValue.arrayUnion({
+                phone: progress.phone,
+                success: finalSuccess,
+                usedFallback: usedFallback,
+                error: finalError
+              })
+            };
+            
+            if (finalSuccess) {
+              updateData.sent = admin.firestore.FieldValue.increment(1);
+            } else {
+              updateData.failed = admin.firestore.FieldValue.increment(1);
+            }
+            
+            await jobRef.update(updateData);
+          }
+        );
+        
+        await jobRef.update({ 
+          status: "completed", 
+          completedAt: admin.firestore.FieldValue.serverTimestamp() 
+        });
+      } catch (bgErr) {
+        console.error("[WhatsApp Background Job Error]:", bgErr.message);
+        await jobRef.update({ status: "error", error: bgErr.message });
+      }
+    })();
+
+    // 3. Return Job ID immediately
+    return res.json({ success: true, jobId });
   } catch (err) {
     console.error("[WhatsApp Broadcast] Error:", err.message);
-    if (!res.headersSent) {
-      return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Get WhatsApp Broadcast Job Status
+ * GET /api/whatsapp/job/:id
+ */
+app.get("/api/whatsapp/job/:id", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const callerData = callerDoc.exists ? callerDoc.data() || {} : {};
+    const role = callerData.role || req.user.role || "";
+    const callerSchoolId = callerData.schoolId || req.user.schoolId || null;
+
+    if (role !== "school_admin" && role !== "super_admin") {
+      return res.status(403).json({ error: "Forbidden." });
     }
-    res.write(`data: ${JSON.stringify({ type: "error", error: err.message })}\n\n`);
-    res.end();
+    const docRef = await admin.firestore().collection("whatsapp_jobs").doc(req.params.id).get();
+    if (!docRef.exists) {
+      return res.status(404).json({ error: "Job not found." });
+    }
+    const job = docRef.data() || {};
+    if (
+      role === "school_admin" &&
+      job.createdBy !== uid &&
+      (!callerSchoolId || job.schoolId !== callerSchoolId)
+    ) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+    return res.json({ success: true, job });
+  } catch (err) {
+    console.error("[WhatsApp Job] Error:", err.message);
+    return res.status(500).json({ error: "Failed to fetch job status." });
+  }
+});
+
+/**
+ * Top Up SMS Wallet
+ * POST /api/sms/topup
+ */
+app.post("/api/sms/topup", authMiddleware, async (req, res) => {
+  try {
+    const { reference, amount, credits, schoolId } = req.body;
+    const { role, uid } = req.user;
+    
+    if (role !== "school_admin" && role !== "super_admin") {
+      return res.status(403).json({ error: "Forbidden. Only admins can top up SMS." });
+    }
+    if (!reference || !amount || !credits || !schoolId) {
+      return res.status(400).json({ error: "Missing required fields." });
+    }
+    
+    // Verify with Paystack
+    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackSecret) {
+      return res.status(500).json({ error: "Server missing Paystack configuration." });
+    }
+    if (!isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
+    }
+    
+    const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      headers: { Authorization: `Bearer ${paystackSecret}` }
+    });
+    
+    const verifyData = await verifyRes.json();
+    if (!verifyData.status || verifyData.data.status !== "success") {
+      return res.status(400).json({ error: "Payment verification failed." });
+    }
+    
+    // Verify amount matches (Paystack amount is in pesewas)
+    const expectedPesewas = amount * 100;
+    if (verifyData.data.amount < expectedPesewas) {
+       return res.status(400).json({ error: "Payment amount mismatch." });
+    }
+    
+    // Update Firestore
+    const schoolRef = admin.firestore().collection("schools").doc(schoolId);
+    
+    await admin.firestore().runTransaction(async (t) => {
+       const doc = await t.get(schoolRef);
+       if (!doc.exists) throw new Error("School not found");
+       
+       const currentBalance = doc.data().smsWallet?.balance || 0;
+       const newBalance = currentBalance + credits;
+       
+       t.update(schoolRef, {
+         "smsWallet.balance": newBalance,
+         "smsWallet.lastRechargeAt": admin.firestore.FieldValue.serverTimestamp()
+       });
+       
+       // Log the topup
+       const logRef = admin.firestore().collection("sms_recharges").doc();
+       t.set(logRef, {
+         schoolId,
+         amount,
+         creditsAdded: credits,
+         reference,
+         rechargedBy: uid,
+         createdAt: admin.firestore.FieldValue.serverTimestamp()
+       });
+    });
+    
+    return res.json({ success: true, message: `Successfully added ${credits} SMS credits.` });
+  } catch (err) {
+    console.error("[SMS TopUp Error]:", err.message);
+    return res.status(500).json({ error: err.message || "Top-up failed." });
+  }
+});
+
+/**
+ * Initialize a parent fee payment with Paystack on the server so the
+ * configured school subaccount is validated before checkout opens.
+ * POST /api/payments/initialize-fee-payment
+ */
+app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res) => {
+  try {
+    const {
+      studentId,
+      schoolId,
+      amount,
+      email,
+      guardianName,
+      studentName,
+      feeId,
+      feeName,
+      academicYear,
+      term,
+    } = req.body || {};
+
+    const amountNumber = Number(amount);
+    if (!studentId || !schoolId || !Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return res.status(400).json({ error: "Missing or invalid payment details." });
+    }
+
+    if (!PAYSTACK_SECRET_KEY) {
+      return res.status(500).json({ error: "Server missing Paystack configuration." });
+    }
+    if (!isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
+    }
+
+    const db = admin.firestore();
+    const [schoolSnap, studentSnap, userSnap] = await Promise.all([
+      db.collection("schools").doc(String(schoolId)).get(),
+      db.collection("students").doc(String(studentId)).get(),
+      db.collection("users").doc(req.user.uid).get(),
+    ]);
+
+    if (!schoolSnap.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
+    if (!studentSnap.exists) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    const schoolData = schoolSnap.data() || {};
+    const studentData = studentSnap.data() || {};
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+
+    if (studentData.schoolId !== schoolId) {
+      return res.status(400).json({ error: "Student does not belong to this school." });
+    }
+
+    const role = userData.role || req.user.role;
+    if (role === "parent") {
+      const parentPhone = String(userData.phoneNumber || req.user.phoneNumber || req.user.uid || "");
+      const guardianPhone = String(studentData.guardianPhone || "");
+      const normalized = (value) => String(value || "").replace(/\D/g, "");
+      const phoneMatches =
+        normalized(parentPhone) &&
+        normalized(guardianPhone) &&
+        (
+          normalized(parentPhone) === normalized(guardianPhone) ||
+          normalized(parentPhone).endsWith(normalized(guardianPhone)) ||
+          normalized(guardianPhone).endsWith(normalized(parentPhone))
+        );
+      const linkedStudentIds = [
+        ...(Array.isArray(userData.linkedStudentIds) ? userData.linkedStudentIds : []),
+        ...(Array.isArray(userData.studentIds) ? userData.studentIds : []),
+        ...(Array.isArray(req.user.studentIds) ? req.user.studentIds : []),
+      ];
+
+      if (!phoneMatches && !linkedStudentIds.includes(studentId)) {
+        return res.status(403).json({ error: "You are not authorized to pay for this student." });
+      }
+    } else if (role !== "school_admin" && role !== "super_admin") {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
+    const paymentSettings = schoolData.paymentSettings || {};
+    const subaccountCode = String(paymentSettings.subaccountCode || "").trim();
+    if (paymentSettings.status !== "active" || !subaccountCode) {
+      return res.status(400).json({ error: "The school has not activated an online payout account yet." });
+    }
+
+    const reference = `FEES-${String(studentId).slice(0, 5)}-${Date.now()}`;
+    const payload = {
+      email: email || `${String(studentId).slice(0, 8)}@schoolmanagergh.com`,
+      amount: Math.round(amountNumber * 100),
+      currency: "GHS",
+      reference,
+      subaccount: subaccountCode,
+      metadata: {
+        studentId,
+        studentName: studentName || studentData.name || "",
+        guardianName: guardianName || studentData.guardianName || "",
+        schoolId,
+        feeId: feeId || "general",
+        feeName: feeName || "School Fees",
+        academicYear,
+        term,
+      },
+    };
+
+    const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const paystackData = await paystackRes.json();
+
+    if (!paystackRes.ok || !paystackData.status) {
+      console.error("[Fee Payment Initialize] Paystack error:", paystackData);
+      const paystackMessage = String(paystackData.message || "");
+      if (/invalid subaccount/i.test(paystackMessage)) {
+        await db.collection("schools").doc(String(schoolId)).update({
+          "paymentSettings.status": "error",
+          "paymentSettings.lastError": "Invalid Paystack subaccount. Recreate the payout account in Paystack live mode.",
+          "paymentSettings.lastErrorAt": admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      return res.status(400).json({
+        error: /invalid subaccount/i.test(paystackMessage)
+          ? "Invalid school payout account. The admin must re-activate Online Payments with a live Paystack subaccount."
+          : paystackData.message || "Could not initialize payment.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      reference,
+      accessCode: paystackData.data.access_code,
+      authorizationUrl: paystackData.data.authorization_url,
+      paystackMode: "live",
+    });
+  } catch (err) {
+    console.error("[Fee Payment Initialize Error]:", err.message);
+    return res.status(500).json({ error: "Could not initialize payment." });
   }
 });
 
@@ -9034,6 +9449,22 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
       console.error('[Invoice] WhatsApp service unavailable');
       return res.status(503).json({ error: "WhatsApp service unavailable." });
     }
+
+    const readiness = svc.ensureWhatsAppReady
+      ? await svc.ensureWhatsAppReady()
+      : { ready: false, status: "unavailable" };
+    if (!readiness.ready) {
+      console.error("[Invoice] WhatsApp is not ready:", readiness);
+      return res.status(503).json({
+        error:
+          readiness.status === "qr_ready"
+            ? "WhatsApp is waiting for admin pairing. Open the Admin Panel and connect WhatsApp."
+            : `WhatsApp client is not ready (Status: ${readiness.status}). Please reconnect WhatsApp in the Admin Panel.`,
+        whatsappStatus: readiness.status,
+        lastError: readiness.lastError || null,
+      });
+    }
+
     const caption = `Dear Parent, please find attached the receipt for your fee payment of GHS ${amount} for ${studentName}. Reference: ${reference}. Thank you!`;
     const filename = `Invoice_${reference}.pdf`;
     const mimetype = "application/pdf";
@@ -9055,6 +9486,10 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
     
     const result = await svc.sendWhatsAppMedia(guardianPhone, caption, cleanBase64, filename, mimetype);
     console.log(`[Invoice] Parent WhatsApp result for ${studentName}:`, result.success ? "✅ Success" : `❌ Failed: ${result.error}`);
+    
+    // ANTI-BAN: Add an 8 second delay before sending the admin notification to prevent "burst" flags
+    console.log(`[Invoice] Waiting 8 seconds before sending admin notification to simulate human typing...`);
+    await new Promise(resolve => setTimeout(resolve, 8000));
     
     // Notify the school admin about the payment
     const adminMessage = `🟢 *New Payment Received*\n\nStudent: *${studentName}*\nAmount: *GHS ${amount}*\nFee: *${feeName || "School Fees"}*\nReference: ${reference}`;
@@ -9086,11 +9521,86 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * Setup Paystack Subaccount for Schools
+ * POST /api/schools/setup-payment
+ */
+app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "school_admin" && role !== "super_admin") {
+      return res.status(403).json({ error: "Forbidden. Only admins can setup payments." });
+    }
+
+    const { schoolId, businessName, bankCode, accountNumber, contactPhone, method, bankName, accountName, momoNetwork, momoNumber, momoName } = req.body;
+
+    if (!schoolId || !businessName || !bankCode || !accountNumber) {
+      return res.status(400).json({ error: "Missing required fields for Paystack subaccount." });
+    }
+
+    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackSecret) {
+      return res.status(500).json({ error: "Server missing Paystack configuration." });
+    }
+    if (!isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
+    }
+
+    const payload = {
+      business_name: businessName,
+      settlement_bank: bankCode,
+      account_number: accountNumber,
+      percentage_charge: 0,
+      primary_contact_phone: contactPhone || ""
+    };
+    
+    console.log("[Setup Payment] Sending payload to Paystack:", { ...payload, secret_key: paystackSecret.substring(0, 10) + "..." });
+
+    const psRes = await fetch("https://api.paystack.co/subaccount", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${paystackSecret}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const psData = await psRes.json();
+    console.log("[Setup Payment] Paystack response:", JSON.stringify(psData, null, 2));
+
+    if (!psData.status) {
+      return res.status(400).json({ error: psData.message || "Failed to create Paystack subaccount" });
+    }
+
+    const subaccountCode = psData.data.subaccount_code;
+    console.log("[Setup Payment] Successfully extracted subaccount code:", subaccountCode);
+
+    // Save configuration back to the school document
+    const paymentSettings = {
+      method,
+      status: "active",
+      subaccountCode,
+      ...(method === "Bank" ? { bankName, accountNumber, accountName } : { momoNetwork, momoNumber, momoName })
+    };
+
+    await admin.firestore().collection("schools").doc(schoolId).update({
+      paymentSettings
+    });
+
+    return res.json({ success: true, subaccountCode, paymentSettings });
+  } catch (err) {
+    console.error("[Setup Payment Error]:", err.message);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
+const server = app.listen(PORT);
+
+server.on("listening", async () => {
   console.log(`Server running on port ${PORT}`);
-  
+
   // Auto-initialize WhatsApp on startup if possible
   try {
     const svc = await loadWhatsAppService();
@@ -9101,4 +9611,16 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error("[WhatsApp] Failed to auto-initialize on startup:", err.message);
   }
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Stop the other server process or run with a different port, for example: $env:PORT=3002; npm run server:dev`,
+    );
+    process.exit(1);
+  }
+
+  console.error("Server failed to start:", err);
+  process.exit(1);
 });

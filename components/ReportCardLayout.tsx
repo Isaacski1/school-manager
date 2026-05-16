@@ -1,16 +1,27 @@
 import React, { useState, useEffect } from "react";
-// @ts-ignore - html2pdf.js doesn't have proper types
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import html2pdf from "html2pdf.js";
 import { calculateGrade, getGradeColor } from "../constants";
 import { Save, GraduationCap, BarChart2, Star, MessageSquare } from "lucide-react";
 
 const SectionHeader = ({ icon: Icon, title }: { icon: any; title: string }) => (
-  <div className="flex items-center gap-2 mb-2">
-    <Icon className="text-[#1160A8]" size={18} />
-    <h3 className="text-[13px] font-bold text-[#1160A8] uppercase tracking-wide whitespace-nowrap">
+  <div className="flex items-center gap-2 mb-2 w-full whitespace-nowrap leading-none">
+    <div className="inline-flex h-[15px] w-[15px] items-center justify-center shrink-0 leading-none">
+      <Icon
+        size={15}
+        strokeWidth={2.2}
+        className="text-primary-600 block shrink-0"
+        style={{ display: "block", transform: "translateY(0.5px)" }}
+      />
+    </div>
+    <h3
+      className="text-[12px] font-bold text-primary-800 uppercase tracking-wider leading-none shrink-0 m-0 p-0"
+      style={{ lineHeight: "15px" }}
+    >
       {title}
     </h3>
-    <div className="flex-grow border-b-2 border-[#1160A8] opacity-80 ml-1 mt-0.5"></div>
+    <div className="flex-1 h-[2px] bg-primary-100/70 ml-1 self-center"></div>
   </div>
 );
 
@@ -135,9 +146,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     ) as HTMLImageElement | null;
 
     const originalLogoSrc = logoImg?.src;
-    const originalStyle = {
-      width: element.style.width,
-    };
+    const originalWidth = element.style.width;
 
     try {
       const A4_WIDTH_PX = 794;
@@ -181,7 +190,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     } finally {
       // restore original src
       if (logoImg && originalLogoSrc) logoImg.src = originalLogoSrc;
-      element.style.width = originalStyle.width;
+      element.style.width = originalWidth;
       
       setIsGenerating(false);
     }
@@ -191,78 +200,77 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
     <>
       <div
         id="report-card"
-        className="bg-white px-[15px] py-[10px] rounded-lg shadow-lg border border-slate-200 text-[12px] leading-snug"
+        className="bg-white px-[22px] py-[16px] rounded-lg shadow-lg border border-slate-200 text-[12px] leading-tight"
         style={{
           boxSizing: "border-box",
           pageBreakInside: "avoid",
           position: "relative",
-          height: "1123px",
+          height: "296mm",
+          width: "210mm",
           overflow: "hidden",
+          margin: "0 auto",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
-        {/* Watermark Overlay */}
-        {schoolInfo.logoUrl && (
+
+        {logoDataUrl && (
           <img
-            src={schoolInfo.logoUrl}
-            alt="Watermark"
+            src={logoDataUrl}
+            alt=""
+            aria-hidden="true"
             style={{
               position: "absolute",
               top: "50%",
               left: "50%",
               transform: "translate(-50%, -50%)",
-              width: "500px",
-              height: "500px",
+              width: "610px",
+              height: "610px",
               objectFit: "contain",
-              opacity: 0.05,
+              opacity: 0.13,
               pointerEvents: "none",
               zIndex: 0,
+              filter: "saturate(1.45) contrast(1.08)",
             }}
-            crossOrigin="anonymous"
           />
         )}
-        <div id="report-card-inner" className="w-full flex flex-col h-full">
+
+        <div id="report-card-inner" className="w-full flex flex-col h-full relative z-10">
           {/* Header */}
-        <div
-          className="flex justify-between items-center pb-2 mb-3"
-          style={{ borderBottom: "2px solid #1160A8" }}
-        >
-          <div className="flex items-center">
-            {schoolInfo.logoUrl ? (
+          <div
+            className="flex justify-between items-start pb-2 mb-3"
+            style={{ borderBottom: "3px solid #1160A8" }}
+          >
+          <div className="flex items-start">
+            {logoDataUrl ? (
               <img
                 data-report-logo="true"
-                src={schoolInfo.logoUrl}
-                alt="School Logo"
-                className="h-14 w-14 object-contain"
-                crossOrigin="anonymous"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  // Hide if hotlink blocked
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                  console.warn("Logo failed to load:", schoolInfo.logoUrl);
-                }}
+                src={logoDataUrl}
+                alt="Logo"
+                className="w-16 h-16 object-contain mr-3 shrink-0"
               />
             ) : null}
 
-            <div>
-              <h1 className="text-lg font-bold text-primary-900">
+            <div className="pt-0.5">
+              <h1 className="text-lg font-bold text-primary-900 leading-tight">
                 {schoolInfo.name}
               </h1>
-              <p className="text-xs text-slate-600">
+              <p className="text-[11px] text-slate-600 leading-tight mt-1">
                 {schoolInfo.address} | {schoolInfo.phone}
               </p>
             </div>
           </div>
           <div className="text-right">
-            <h2 className="text-lg font-bold text-primary-800">
+            <h2 className="text-lg font-bold text-primary-800 leading-tight">
               Terminal Report Card
             </h2>
-            <p className="text-xs font-semibold text-slate-700">
+            <p className="text-[11px] font-semibold text-slate-700 leading-tight mt-1">
               {schoolInfo.academicYear} | {schoolInfo.term}
             </p>
           </div>
         </div>
         {/* Student Info */}
-        <div className="flex justify-between items-center pb-2 mb-3 text-[12px] font-medium">
+        <div className="flex justify-between items-center pb-1.5 mb-3 text-[12px] font-medium border-b border-slate-100">
           <div className="flex gap-1">
             <span className="font-bold text-slate-900">Name:</span> <span className="text-slate-700">{studentInfo.name}</span>
           </div>
@@ -280,68 +288,68 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         {/* Attendance */}
         <div className="mb-3">
           <div className="grid grid-cols-4 gap-3 text-center">
-            <div className="bg-red-50 p-2 rounded-md">
+            <div className="bg-red-50 p-1.5 rounded-md">
               <span className="block font-bold text-red-700 text-3xl leading-tight mb-0.5">
                 {attendance.totalDays}
               </span>
-              <span className="text-[12px] font-medium text-red-700">School Days</span>
+              <span className="text-[11px] font-medium text-red-700">School Days</span>
             </div>
-            <div className="bg-green-50 p-2 rounded-md">
+            <div className="bg-green-50 p-1.5 rounded-md">
               <span className="block font-bold text-green-700 text-3xl leading-tight mb-0.5">
                 {attendance.presentDays}
               </span>
-              <span className="text-[12px] font-medium text-green-700">Present</span>
+              <span className="text-[11px] font-medium text-green-700">Present</span>
             </div>
-            <div className="bg-red-50 p-2 rounded-md">
+            <div className="bg-red-50 p-1.5 rounded-md">
               <span className="block font-bold text-red-700 text-3xl leading-tight mb-0.5">
                 {attendance.absentDays}
               </span>
-              <span className="text-[12px] font-medium text-red-700">Absent</span>
+              <span className="text-[11px] font-medium text-red-700">Absent</span>
             </div>
-            <div className="bg-purple-50 p-2 rounded-md">
+            <div className="bg-purple-50 p-1.5 rounded-md">
               <span className="block font-bold text-purple-800 text-3xl leading-tight mb-0.5">
                 {attendance.attendancePercentage}%
               </span>
-              <span className="text-[12px] font-medium text-purple-800">Attendance</span>
+              <span className="text-[11px] font-medium text-purple-800">Attendance</span>
             </div>
           </div>
         </div>
 
         {/* Academic Performance */}
-        <div className="mb-2">
+        <div className="mb-3">
           <SectionHeader icon={GraduationCap} title="Academic Performance" />
           <div className="overflow-x-auto rounded-t-md overflow-hidden">
-            <table className="w-full text-left border-collapse text-[11px]">
+            <table className="w-full text-left border-collapse text-[12px] bg-transparent">
               <thead
                 className="text-white"
                 style={{ backgroundColor: "#1160A8" }}
               >
                 <tr>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center">
                     Subject
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     C.Test
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     HW
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     Proj
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     Exam
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     Total
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     Pos
                   </th>
-                  <th className="px-2 py-1.5 border-r border-white/20 align-middle text-center w-10">
+                  <th className="px-2 py-2 border-r border-white/20 align-middle text-center w-12">
                     Grade
                   </th>
-                  <th className="px-2 py-1.5 align-middle text-center">
+                  <th className="px-2 py-2 align-middle text-center">
                     Remark
                   </th>
                 </tr>
@@ -378,7 +386,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                       const scorePositions = new Map<number, number>();
                       let lastScore: number | null = null;
                       let lastPosition = 0;
-                      subjectScores.forEach((score, index) => {
+                      subjectScores.forEach((score: number, index: number) => {
                         if (lastScore === null || score !== lastScore) {
                           lastPosition = index + 1;
                           lastScore = score;
@@ -390,7 +398,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                       position =
                         scorePositions.get(normalizedCurrentScore) || 0;
                       position =
-                        subjectScores.filter((score) => score > currentScore)
+                        subjectScores.filter((score: number) => score > currentScore)
                           .length + 1;
                     }
                     const positionSuffix =
@@ -400,34 +408,34 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
                     }
 
                     return (
-                      <tr key={i} className="bg-white hover:bg-slate-50">
-                        <td className="px-2 py-1 border-b border-slate-200 font-medium">
+                      <tr key={i} className="bg-transparent">
+                        <td className="px-2 py-2 border-b border-slate-200 font-medium bg-transparent">
                           {p.subject}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center">
+                        <td className="px-2 py-2 border-b border-slate-200 text-center bg-transparent">
                           {p.testScore}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center">
+                        <td className="px-2 py-2 border-b border-slate-200 text-center bg-transparent">
                           {p.homeworkScore}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center">
+                        <td className="px-2 py-2 border-b border-slate-200 text-center bg-transparent">
                           {p.projectScore}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center">
+                        <td className="px-2 py-2 border-b border-slate-200 text-center bg-transparent">
                           {p.examScore}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center font-bold">
-                          {p.total}
+                        <td className="px-2 py-2 border-b border-slate-200 text-center font-bold bg-transparent">
+                          {normalizedCurrentScore}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200 text-center">
+                        <td className="px-2 py-2 border-b border-slate-200 text-center bg-transparent">
                           {positionLabel}
                         </td>
                         <td
-                          className={`px-2 py-1 border-b border-slate-200 text-center font-bold ${getGradeColor(grade.grade).split(" ")[0]}`}
+                          className={`px-2 py-2 border-b border-slate-200 text-center font-bold bg-transparent ${getGradeColor(grade.grade).split(" ")[0]}`}
                         >
                           {grade.grade}
                         </td>
-                        <td className="px-2 py-1 border-b border-slate-200">{grade.remark}</td>
+                        <td className="px-2 py-2 border-b border-slate-200 bg-transparent">{grade.remark}</td>
                       </tr>
                     );
                   })}
@@ -437,10 +445,10 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         </div>
 
         {/* Summary & Skills - Side by Side */}
-        <div className="grid grid-cols-2 gap-3 mb-2">
+        <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <div
-              className="bg-white p-2.5 rounded-md text-[11px] space-y-0.5"
+              className="bg-white/80 p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
               <SectionHeader icon={BarChart2} title="Performance Summary" />
@@ -477,7 +485,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
           </div>
           <div>
             <div
-              className="bg-white p-2.5 rounded-md text-[11px] space-y-0.5"
+              className="bg-white/80 p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
               <SectionHeader icon={Star} title="Skills & Behaviour" />
@@ -501,14 +509,14 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         </div>
 
         {/* Remarks */}
-        <div className="mb-2">
+        <div className="mb-3">
           <SectionHeader icon={MessageSquare} title="Remarks" />
-          <div className="grid grid-cols-2 gap-2">
-            <div className="bg-white px-2 py-1 text-[11px]">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white/75 px-2 py-1 text-[11px]">
               <h4 className="font-bold mb-0.5 text-slate-900">Class Teacher:</h4>
               <p className="italic text-slate-700">"{remarks.teacher}"</p>
             </div>
-            <div className="bg-white px-2 py-1 text-[11px]">
+            <div className="bg-white/75 px-2 py-1 text-[11px]">
               <h4 className="font-bold mb-0.5 text-slate-900">Head Teacher:</h4>
               <p className="italic text-slate-700">"{remarks.headTeacher}"</p>
             </div>
@@ -516,7 +524,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         </div>
 
         {/* Promotion & Dates */}
-        <div className="grid grid-cols-3 gap-2 mb-2 text-[12px]">
+        <div className="grid grid-cols-3 gap-3 mb-5 text-[11px]">
           {promotion?.isPromotionalTerm !== false && (
             <div className="bg-red-50 text-red-800 p-2 rounded-md text-center">
               <span className="font-bold">Promotion:</span> {promotion.status}
@@ -533,19 +541,19 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         </div>
 
         {/* Signatures */}
-        <div className="flex justify-between items-center pt-2 mt-auto border-t border-slate-300">
+        <div className="flex justify-between items-end pt-3 mt-auto border-t border-slate-300">
           <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[12px] font-semibold">
+            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
               Class Teacher
             </p>
           </div>
           <div className="text-center">
-            <div className="w-16 h-16 border border-dashed border-slate-300 flex items-center justify-center">
+            <div className="w-12 h-12 border border-dashed border-slate-300 flex items-center justify-center">
               <p className="text-slate-400 text-[10px]">Stamp</p>
             </div>
           </div>
           <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[12px] font-semibold">
+            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
               Head Teacher
             </p>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../../services/mockDb";
 import { StudentRemark, AdminRemark, Student, Assessment } from "../../types";
 import { MessageSquare, User, Calendar, Tag, AlertCircle, CheckCircle } from "lucide-react";
@@ -9,15 +9,12 @@ interface RemarksViewProps {
 }
 
 const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
+  const userSelectedTermRef = useRef(false);
   const [remarks, setRemarks] = useState<StudentRemark[]>([]);
   const [adminRemarks, setAdminRemarks] = useState<AdminRemark[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTerm, setSelectedTerm] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const stored = sessionStorage.getItem(`remarks-selected-term-${student.id}`);
-      if (stored) return stored;
-    }
-    return "all";
+    return "1";
   });
 
   useEffect(() => {
@@ -33,6 +30,12 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
 
       try {
         setLoading(true);
+
+        const config = await db.getSchoolConfig(student.schoolId);
+        if (!userSelectedTermRef.current) {
+          const configuredTerm = config.currentTerm?.split(" ")[1] || "1";
+          setSelectedTerm(["1", "2", "3"].includes(configuredTerm) ? configuredTerm : "1");
+        }
 
         // Fetch teacher remarks for the student
         const teacherRemarks = await db.getStudentRemarksByStudent(
@@ -81,6 +84,11 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
     const termNum = parseInt(selectedTerm);
     return allRemarks.filter(r => r.term === termNum);
   }, [allRemarks, selectedTerm]);
+
+  const handleTermChange = (term: string) => {
+    userSelectedTermRef.current = true;
+    setSelectedTerm(term);
+  };
 
   const getBehaviorTagColor = (tag?: string) => {
     switch (tag) {
@@ -134,7 +142,7 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
             <span className="text-sm text-slate-600">Filter by term:</span>
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => setSelectedTerm("all")}
+                onClick={() => handleTermChange("all")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   selectedTerm === "all"
                     ? "bg-blue-600 text-white"
@@ -146,7 +154,7 @@ const RemarksView: React.FC<RemarksViewProps> = ({ student, onClose }) => {
               {["1", "2", "3"].map(term => (
                 <button
                   key={term}
-                  onClick={() => setSelectedTerm(term)}
+                  onClick={() => handleTermChange(term)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                     selectedTerm === term
                       ? "bg-blue-600 text-white"

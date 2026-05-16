@@ -13,6 +13,16 @@ export interface UserProfile extends User {
 export async function loadUserProfile(
   firebaseUser: FirebaseUser,
 ): Promise<UserProfile> {
+  // 1. Fetch Custom Claims (roles, studentIds, etc.) immediately
+  let customClaims: any = {};
+  try {
+    const idTokenResult = await firebaseUser.getIdTokenResult(true); // Force refresh to get latest claims
+    customClaims = idTokenResult.claims || {};
+    console.info("[Auth] Extracted custom claims:", customClaims);
+  } catch (e) {
+    console.warn("[Auth] Failed to fetch custom claims", e);
+  }
+
   const userDocRef = doc(firestore, "users", firebaseUser.uid);
   const userDoc = await getDoc(userDocRef);
 
@@ -89,6 +99,7 @@ export async function loadUserProfile(
       schoolId,
       phoneNumber,
       assignedClassIds,
+      studentIds: customClaims.studentIds || [],
       status: userStatus,
       emailVerified: firebaseUser.emailVerified,
       createdAt: userData.createdAt?.toDate() || new Date(),
@@ -107,6 +118,7 @@ export async function loadUserProfile(
         role: UserRole.PARENT,
         schoolId: null,
         phoneNumber: firebaseUser.phoneNumber || firebaseUser.uid,
+        studentIds: customClaims.studentIds || [],
         assignedClassIds: [],
         status: "active",
         emailVerified: false,

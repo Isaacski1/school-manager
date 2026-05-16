@@ -54,6 +54,7 @@ const SecuritySettings = lazy(() => import("./pages/super-admin/security/Securit
 import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
 import InstallPrompt from "./components/InstallPrompt";
+import WhatsAppBroadcastProgress from "./components/WhatsAppBroadcastProgress";
 
 // Public Marketing Pages
 const MarketingHome = lazy(() => import("./pages/public/MarketingHome"));
@@ -129,14 +130,20 @@ const AppContent = () => {
       localStorage.getItem("lastSchoolId") ||
       "";
     if (!resolvedSchoolId) return null;
-    const cacheKey = `school_${resolvedSchoolId}`;
-    const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-    if (!cached) return null;
     try {
+      // 1. Check persistent branding cache first (survives logout)
+      const persistentCache = localStorage.getItem(`persistent_school_branding_${resolvedSchoolId}`);
+      if (persistentCache) {
+        return JSON.parse(persistentCache) as { name?: string; logoUrl?: string };
+      }
+
+      // 2. Check main school cache (cleared on logout)
+      const cacheKey = `school_${resolvedSchoolId}`;
+      const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+      if (!cached) return null;
+      
       return JSON.parse(cached) as { name?: string; logoUrl?: string };
     } catch {
-      localStorage.removeItem(cacheKey);
-      sessionStorage.removeItem(cacheKey);
       return null;
     }
   }, [user?.schoolId, brandingVersion]);
@@ -196,21 +203,34 @@ const AppContent = () => {
   const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
 
   const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
-  const splashSchoolName = school?.name || cachedSchool?.name || "";
-  const splashSchoolLogo = school?.logoUrl || cachedSchool?.logoUrl || "";
+  
+  const isDefinitiveSchoolRoute = currentPath.startsWith("/admin") || currentPath.startsWith("/teacher") || currentPath.startsWith("/parent");
+  const isSuperAdminRoute = currentPath.startsWith("/super-admin");
+
+  const shouldShowSchoolBranding = () => {
+    if (user?.role === UserRole.SUPER_ADMIN || isSuperAdminRoute) return false;
+    if (isSchoolUser || isDefinitiveSchoolRoute) return true;
+    return false;
+  };
+
+  const showSchoolBranding = shouldShowSchoolBranding();
+  const splashSchoolName = showSchoolBranding ? (school?.name || cachedSchool?.name || "") : "";
+  const splashSchoolLogo = showSchoolBranding ? (school?.logoUrl || cachedSchool?.logoUrl || "") : "";
+  const hideDefault = showSchoolBranding;
+  
   const lastSchoolId = localStorage.getItem("lastSchoolId") || localStorage.getItem("activeSchoolId");
   const hasSchoolContext = Boolean(lastSchoolId);
 
+  const splashMessage = showSchoolBranding ? "Preparing Your Dashboard." : "Loading";
+
   // Show splash screen while auth is initializing
-  if (authLoading && !isPublicRoute) {
-    const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
-    // Hide default branding if we have school info OR if this is a returning school user
-    const hideDefault = (isSchoolUser || hasBranding || hasSchoolContext) && Boolean(splashSchoolName || splashSchoolLogo);
+  if (authLoading) {
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
+        message={splashMessage}
       />
     );
   }
@@ -219,16 +239,15 @@ const AppContent = () => {
     !isPublicRoute &&
     user &&
     (isSchoolUser || cachedSchool || hasSchoolContext) &&
-    (schoolLoading || (!school && !schoolError)) &&
+    ((schoolLoading && !school && !cachedSchool) || (!school && !cachedSchool && !schoolError)) &&
     !(user.role === UserRole.PARENT && !hasSchoolContext)
   ) {
-    const hasBranding = Boolean(splashSchoolName || splashSchoolLogo);
-    const hideDefault = (isSchoolUser || hasBranding || hasSchoolContext) && Boolean(splashSchoolName || splashSchoolLogo);
     return (
       <SplashScreen
         hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
+        message="Preparing Your Dashboard."
       />
     );
   }
@@ -314,8 +333,20 @@ const AppContent = () => {
   return (
     <ErrorBoundary>
       <InstallPrompt />
-      <Suspense fallback={<SplashScreen />}>
-        <AppRoutes />
+      {user?.role === UserRole.SCHOOL_ADMIN && <WhatsAppBroadcastProgress />}
+      <Suspense fallback={
+        <SplashScreen 
+          message={splashMessage} 
+          schoolName={splashSchoolName}
+          schoolLogoUrl={splashSchoolLogo}
+          hideDefaultBranding={hideDefault}
+        />
+      }>
+        <AppRoutes 
+          splashSchoolName={splashSchoolName} 
+          splashSchoolLogo={splashSchoolLogo}
+          hideDefault={hideDefault}
+        />
       </Suspense>
     </ErrorBoundary>
   );
@@ -357,8 +388,9 @@ const ProtectedRoute = ({
     let splashLogo = school?.logoUrl || "";
 
     if (!splashName && resolvedSchoolId) {
+      const persistentCache = localStorage.getItem(`persistent_school_branding_${resolvedSchoolId}`);
       const cacheKey = `school_${resolvedSchoolId}`;
-      const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+      const cached = persistentCache || localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -368,14 +400,14 @@ const ProtectedRoute = ({
       }
     }
 
-    const hasBranding = Boolean(splashName || splashLogo);
-    const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
+    const showBranding = user?.role !== UserRole.SUPER_ADMIN && Boolean(splashName || splashLogo);
 
     return (
       <SplashScreen 
-        schoolName={splashName} 
-        schoolLogoUrl={splashLogo} 
-        hideDefaultBranding={(isSchoolUser || hasBranding || Boolean(resolvedSchoolId)) && Boolean(splashName || splashLogo)}
+        schoolName={showBranding ? splashName : ""} 
+        schoolLogoUrl={showBranding ? splashLogo : ""} 
+        hideDefaultBranding={showBranding}
+        message={showBranding ? "Preparing Your Dashboard." : "Loading"}
       />
     );
   }
@@ -427,8 +459,17 @@ const RoleBasedHome = () => {
   return <Navigate to="/login" />;
 };
 
-const AppRoutes = () => {
+const AppRoutes = ({ 
+  splashSchoolName, 
+  splashSchoolLogo,
+  hideDefault
+}: { 
+  splashSchoolName: string; 
+  splashSchoolLogo: string;
+  hideDefault: boolean;
+}) => {
   const { isAuthenticated, authLoading } = useAuth();
+  const routeSplashMessage = hideDefault ? "Preparing Your Dashboard." : "Loading";
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -447,7 +488,12 @@ const AppRoutes = () => {
         path="/"
         element={
           authLoading ? (
-            <SplashScreen />
+            <SplashScreen 
+              message={routeSplashMessage} 
+              schoolName={splashSchoolName}
+              schoolLogoUrl={splashSchoolLogo}
+              hideDefaultBranding={hideDefault}
+            />
           ) : isAuthenticated ? (
             <ProtectedRoute>
               <RoleBasedHome />

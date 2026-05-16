@@ -6,6 +6,7 @@ type SplashScreenProps = {
   schoolName?: string;
   schoolLogoUrl?: string;
   hideDefaultBranding?: boolean;
+  message?: string;
 };
 
 const SplashScreen: React.FC<SplashScreenProps> = ({
@@ -13,10 +14,13 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
   schoolName,
   schoolLogoUrl,
   hideDefaultBranding = false,
+  message,
 }) => {
-  // If we should hide default and don't have school info yet, show a clean generic loader
-  const displayName = hideDefaultBranding && !schoolName ? "" : (schoolName || "School Manager GH");
-  const displayLogo = hideDefaultBranding && !schoolLogoUrl ? "" : (schoolLogoUrl || schoolLogo);
+  // If we should hide default or have any school context, don't show the main brand
+  const shouldShowDefault = !hideDefaultBranding && !schoolName && !schoolLogoUrl;
+  
+  const displayName = shouldShowDefault ? "School Manager GH" : (schoolName || "");
+  const displayLogo = shouldShowDefault ? schoolLogo : (schoolLogoUrl || "");
 
   return (
     <div className="min-h-screen bg-[#041222] flex flex-col items-center justify-center text-white relative overflow-hidden">
@@ -44,7 +48,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({
         )}
 
         <p className="text-blue-200/60 font-medium tracking-wide text-sm uppercase mb-8">
-          {roleLabel ? `Welcome back, ${roleLabel}` : "Preparing your dashboard"}
+          {message || (roleLabel ? `Welcome back, ${roleLabel}` : "Loading...")}
         </p>
 
         <div className="flex items-center gap-3">

@@ -3,7 +3,8 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { collection, query, where, getDocs, updateDoc, doc, setDoc } from "firebase/firestore";
-import { firestore } from "../../services/firebase";
+import { firestore, auth } from "../../services/firebase";
+import { db } from "../../services/mockDb";
 import { Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
 import { LogOut, User as UserIcon, Calendar, FileText, CreditCard, MessageSquare, BookOpen, Clock, Activity } from "lucide-react";
@@ -25,111 +26,140 @@ export default function ParentDashboard() {
 
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
+    return sessionStorage.getItem("parentDashboard_selectedStudentId") || null;
+  });
 
   useEffect(() => {
     async function fetchLinkedStudents() {
-      const phoneToMatch = user?.phoneNumber || user?.id;
-      if (!phoneToMatch || !isAuthenticated) {
+      if (!isAuthenticated || !user) {
         setLoading(false);
         return;
       }
-      
+
+      const phoneToMatch = user.phoneNumber || (user as any).id;
+      if (!phoneToMatch) {
+        setLoading(false);
+        return;
+      }
+
       try {
-        console.log(`[ParentDashboard] Fetching students for phone: "${phoneToMatch}"`);
-        const studentsRef = collection(firestore, "students");
+        setLoading(true);
+        console.log(`[ParentDashboard] Discovering students for phone: "${phoneToMatch}"`);
         
+        const studentsRef = collection(firestore, "students");
+        let fetchedStudents: Student[] = [];
+        const seenIds = new Set<string>();
+
+        // 1. DISCOVERY VIA PHONE NUMBER
         const queries = [
           getDocs(query(studentsRef, where("guardianPhone", "==", phoneToMatch)))
         ];
         
+        // Handle variations of phone formats (with/without plus, local prefix)
         if (phoneToMatch.startsWith("+")) {
-          const phoneNoPlus = phoneToMatch.substring(1);
-          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", phoneNoPlus))));
+          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", phoneToMatch.substring(1)))));
         }
-        
         if (phoneToMatch.startsWith("+233")) {
-          const localPhone = "0" + phoneToMatch.substring(4);
-          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", localPhone))));
+          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", "0" + phoneToMatch.substring(4)))));
         }
-        
+
         const snapshots = await Promise.all(queries);
-        
-        let fetchedStudents: Student[] = [];
-        const seenIds = new Set();
-        
         snapshots.forEach(snapshot => {
-          snapshot.forEach((doc) => {
-            if (!seenIds.has(doc.id)) {
-              seenIds.add(doc.id);
-              fetchedStudents.push({ id: doc.id, ...doc.data() } as Student);
+          snapshot.forEach(docSnap => {
+            if (!seenIds.has(docSnap.id)) {
+              seenIds.add(docSnap.id);
+              const data = docSnap.data() as Student;
+              fetchedStudents.push({ ...data, id: docSnap.id });
             }
           });
         });
+
+        // 2. DISCOVERY VIA TOKEN CLAIMS (Fallback)
+        const idTokenResult = await auth.currentUser?.getIdTokenResult(true);
+        const claimIds = (idTokenResult?.claims?.studentIds as string[]) || [];
         
-        if (fetchedStudents.length > 0 && !selectedStudentId) {
-          const firstStudent = fetchedStudents[0];
-          setSelectedStudentId(firstStudent.id);
-          
-          // 1. Sync local storage for immediate branding refresh
-          const currentActiveId = localStorage.getItem("activeSchoolId");
-          if (firstStudent.schoolId && currentActiveId !== firstStudent.schoolId) {
-            localStorage.setItem("activeSchoolId", firstStudent.schoolId);
-            refreshSchool();
-          }
-          
-          // 2. Sync Firestore profile in background (using setDoc with merge for resilience)
-          if (firstStudent.schoolId && user?.id && user.schoolId !== firstStudent.schoolId) {
-            setDoc(doc(firestore, "users", user.id), {
-              schoolId: firstStudent.schoolId,
-              role: 'parent' // Ensure role is set
-            }, { merge: true }).catch(err => {
-              console.warn("Could not persist school ID to profile (likely permission related):", err.message);
-            });
+        for (const id of claimIds) {
+          if (!seenIds.has(id)) {
+            const s = await db.getStudent(id);
+            if (s) {
+              seenIds.add(id);
+              fetchedStudents.push(s);
+            }
           }
         }
-        
-        // Only update if data actually changed to prevent re-render loops
-        setStudents(prev => {
-          if (JSON.stringify(prev) === JSON.stringify(fetchedStudents)) return prev;
-          return fetchedStudents;
-        });
+
+        // 3. PROCESS RESULTS
+        if (fetchedStudents.length > 0) {
+          setStudents(fetchedStudents);
+          
+          // Selection and Branding Sync
+          let targetStudentId = selectedStudentId;
+          const sessionSelectedId = sessionStorage.getItem("parentDashboard_selectedStudentId");
+          if (!targetStudentId && sessionSelectedId) {
+            targetStudentId = sessionSelectedId;
+          }
+
+          const initialStudent = fetchedStudents.find(s => s.id === targetStudentId) || fetchedStudents[0];
+          if (!selectedStudentId || selectedStudentId !== initialStudent.id) {
+            setSelectedStudentId(initialStudent.id);
+            sessionStorage.setItem("parentDashboard_selectedStudentId", initialStudent.id);
+          }
+
+          if (initialStudent.schoolId) {
+            // Update local storage for splash screen/branding
+            const currentActiveId = localStorage.getItem("activeSchoolId");
+            if (currentActiveId !== initialStudent.schoolId) {
+              localStorage.setItem("activeSchoolId", initialStudent.schoolId);
+              refreshSchool();
+            }
+            
+            // Persist to user profile if needed
+            if (user.schoolId !== initialStudent.schoolId) {
+              setDoc(doc(firestore, "users", user.id), {
+                schoolId: initialStudent.schoolId
+              }, { merge: true }).catch(err => console.warn("Profile sync skipped:", err.message));
+            }
+          }
+        } else {
+          setStudents([]);
+        }
       } catch (error) {
-        console.error("Error fetching linked students:", error);
+        console.error("[ParentDashboard] Fetch failed:", error);
       } finally {
         setLoading(false);
       }
     }
-    
+
     fetchLinkedStudents();
   }, [user?.phoneNumber, user?.id, isAuthenticated]); // Removed refreshSchool to prevent potential context-driven loops
 
-  // Handle student change manually to refresh branding
   const handleStudentSelect = (studentId: string) => {
     setSelectedStudentId(studentId);
+    sessionStorage.setItem("parentDashboard_selectedStudentId", studentId);
+    
     const student = students.find(s => s.id === studentId);
     if (student && student.schoolId) {
-      // 1. Update local storage for immediate UI refresh
       const currentActiveId = localStorage.getItem("activeSchoolId");
+      
       if (currentActiveId !== student.schoolId) {
+        // 1. Update local storage for immediate UI refresh
         localStorage.setItem("activeSchoolId", student.schoolId);
+        
+        // 2. Refresh branding
         refreshSchool();
       }
       
-      // 2. Update Firestore profile
+      // 3. PERSIST: Sync the profile in background so the next login is also correct
       if (user?.id && user.schoolId !== student.schoolId) {
         updateDoc(doc(firestore, "users", user.id), {
           schoolId: student.schoolId
-        }).catch(err => {
-          console.warn("Could not persist school ID on selection:", err.message);
-        });
+        }).catch(err => console.warn("Background profile sync skipped:", err.message));
       }
     }
   };
 
-  const selectedStudent = students.length > 0 
-    ? (students.find(s => s.id === selectedStudentId) || students[0]) 
-    : null;
+  const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
 
   if (loading) {
     return (
@@ -140,6 +170,10 @@ export default function ParentDashboard() {
       </Layout>
     );
   }
+
+  // Group students by school for better organization
+  const currentSchoolStudents = students.filter(s => s.schoolId === school?.id);
+  const otherSchoolStudents = students.filter(s => s.schoolId !== school?.id);
 
   return (
     <Layout title="Parent Dashboard">
@@ -162,8 +196,8 @@ export default function ParentDashboard() {
               <div>
                 <p className="text-slate-400 text-xs sm:text-sm mb-0.5">Welcome back,</p>
                 <h1 className="text-white text-lg sm:text-xl font-bold leading-tight">
-                  {(students[0] as any)?.guardianName?.trim()
-                    ? (students[0] as any).guardianName
+                  {(selectedStudent as any)?.guardianName?.trim()
+                    ? (selectedStudent as any).guardianName
                     : user?.fullName && user.fullName !== "Parent / Guardian"
                       ? user.fullName
                       : "Parent / Guardian"}
@@ -179,52 +213,90 @@ export default function ParentDashboard() {
               </div>
             </div>
 
-            {/* My Child Selector — horizontal scrollable chips on mobile */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm">
-                <UserIcon size={16} className="text-blue-500" /> My Child
-              </h3>
-              <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
-                {students.map((student) => (
-                  <button
-                    key={student.id}
-                    onClick={() => handleStudentSelect(student.id)}
-                    className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all shrink-0 text-left ${
-                      selectedStudentId === student.id
-                        ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400'
-                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="w-9 h-9 bg-white rounded-full border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
-                      <UserIcon className="text-slate-400" size={16} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-800 text-sm whitespace-nowrap">{student.name}</p>
-                      <p className="text-xs text-slate-500 whitespace-nowrap">{CLASSES_LIST.find(c => c.id === student.classId)?.name || student.classId}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
+            {/* My Children Section */}
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden mb-6">
+          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <UserIcon className="w-5 h-5 text-slate-400" />
+              <h2 className="font-semibold text-slate-800">My Children</h2>
             </div>
+            <span className="text-xs font-medium px-2 py-1 bg-slate-200 text-slate-600 rounded-full">
+              {students.length} {students.length === 1 ? 'Child' : 'Children'}
+            </span>
+          </div>
+          
+          <div className="p-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* CURRENT SCHOOL STUDENTS */}
+              {currentSchoolStudents.map((student) => (
+                <button
+                  key={student.id}
+                  onClick={() => handleStudentSelect(student.id)}
+                  className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all text-left ${
+                    selectedStudentId === student.id
+                      ? "border-slate-800 bg-slate-50 ring-4 ring-slate-800/5"
+                      : "border-slate-100 hover:border-slate-200"
+                  }`}
+                >
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl ${
+                    selectedStudentId === student.id ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-400"
+                  }`}>
+                    {student.name.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900">{student.name}</div>
+                    <div className="text-sm text-slate-500">{CLASSES_LIST.find(c => c.id === student.classId)?.name || student.classId}</div>
+                  </div>
+                </button>
+              ))}
+
+              {/* OTHER SCHOOL STUDENTS */}
+              {otherSchoolStudents.map((student) => (
+                <button
+                  key={student.id}
+                  onClick={() => handleStudentSelect(student.id)}
+                  className={`flex items-center gap-4 p-4 rounded-xl border-2 border-dashed transition-all text-left ${
+                    selectedStudentId === student.id
+                      ? "border-blue-600 bg-blue-50 ring-4 ring-blue-600/5"
+                      : "border-slate-200 hover:border-blue-200 bg-slate-50/50"
+                  }`}
+                >
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl ${
+                    selectedStudentId === student.id ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-400"
+                  }`}>
+                    {student.name.charAt(0)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-900 truncate">{student.name}</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-blue-600 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      Switch School
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
             {/* Main Content + Sidebar */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
               {/* Main Content Area */}
               <div className="lg:col-span-3">
                 {!activeView && selectedStudent && (
-                  <DashboardOverview student={selectedStudent} />
+                  <DashboardOverview key={selectedStudent.id} student={selectedStudent} />
                 )}
                 {activeView === "attendance" && selectedStudent && (
-                  <AttendanceView student={selectedStudent} />
+                  <AttendanceView key={selectedStudent.id} student={selectedStudent} />
                 )}
                 {activeView === "fees" && selectedStudent && (
-                  <FeesView student={selectedStudent} />
+                  <FeesView key={selectedStudent.id} student={selectedStudent} />
                 )}
                 {activeView === "report" && selectedStudent && (
-                  <ReportCardView student={selectedStudent} />
+                  <ReportCardView key={selectedStudent.id} student={selectedStudent} />
                 )}
                 {activeView === "remarks" && selectedStudent && (
-                  <RemarksView student={selectedStudent} />
+                  <RemarksView key={selectedStudent.id} student={selectedStudent} />
                 )}
               </div>
 

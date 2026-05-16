@@ -9,8 +9,10 @@ import { resolveFeaturePlan } from "../../services/featureAccess";
 import { Link } from "react-router-dom";
 import {
   Send, Users, CheckCircle2, XCircle,
-  Loader2, Wifi, WifiOff, RefreshCw, AlertTriangle, MessageSquare, Smartphone,
+  Loader2, Wifi, WifiOff, RefreshCw, AlertTriangle, MessageSquare, Smartphone, Sparkles, Wallet, CreditCard
 } from "lucide-react";
+import { usePaystackPayment } from "react-paystack";
+import { announceWhatsAppBroadcastJob } from "../../components/WhatsAppBroadcastProgress";
 
 // WhatsApp official SVG icon
 const WhatsAppIcon = ({ size = 22 }: { size?: number }) => (
@@ -20,10 +22,13 @@ const WhatsAppIcon = ({ size = 22 }: { size?: number }) => (
 );
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const SAFE_BROADCAST_LIMIT = 100;
+const LARGE_SEND_WARNING_LIMIT = 50;
 
 type WaStatus = "disconnected" | "connecting" | "qr_ready" | "ready" | "error";
 
 interface SendResult { phone: string; success: boolean; error?: string; }
+type ParentContact = { name: string; phone: string; class?: string };
 
 const TEMPLATES = [
   { label: "School Fees Reminder", text: "Dear Parent, this is a reminder that school fees for this term are due. Kindly make payment at your earliest convenience. Thank you." },
@@ -103,7 +108,7 @@ const WhatsAppBroadcast: React.FC = () => {
   const [isPolling, setIsPolling] = useState(false);
 
   // Recipients
-  const [parents, setParents] = useState<{ name: string; phone: string; class?: string }[]>([]);
+  const [parents, setParents] = useState<ParentContact[]>([]);
   const [loadingParents, setLoadingParents] = useState(false);
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const [classFilter, setClassFilter] = useState("All");
@@ -113,6 +118,12 @@ const WhatsAppBroadcast: React.FC = () => {
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [results, setResults] = useState<SendResult[]>([]);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
+
+  // SMS Wallet
+  const [topupAmount, setTopupAmount] = useState<number>(50);
+  const [isToppingUp, setIsToppingUp] = useState(false);
 
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -159,6 +170,90 @@ const WhatsAppBroadcast: React.FC = () => {
     statusPollRef.current = setInterval(() => pollStatus(false), 3000);
     return () => { if (statusPollRef.current) clearInterval(statusPollRef.current); };
   }, [pollStatus]);
+
+  // ── Poll Background Job Status ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!jobId || !sending) return;
+    
+    const pollJob = async () => {
+      try {
+        const res = await apiFetch(`/api/whatsapp/job/${jobId}`);
+        const data = await res.json();
+        
+        if (res.ok && data.job) {
+          const job = data.job;
+          setJobStatus(job.status);
+          setProgress({ done: (job.sent || 0) + (job.failed || 0), total: job.total || 1 });
+          setResults(job.results || []);
+          
+          if (job.status === "completed" || job.status === "error") {
+            setSending(false);
+            if (job.status === "completed") {
+              showToast(`Broadcast complete: ${job.sent} sent, ${job.failed} failed.`, { type: job.failed > 0 ? "info" : "success" });
+            } else {
+              showToast(`Broadcast failed: ${job.error}`, { type: "error" });
+            }
+          }
+        }
+      } catch (err) {
+        // Ignore polling network errors, keep trying
+      }
+    };
+
+    const interval = setInterval(pollJob, 3000);
+    return () => clearInterval(interval);
+  }, [jobId, sending, apiFetch]);
+
+  // ── SMS Wallet Top-Up (Paystack) ─────────────────────────────────────────────
+  const paystackConfig = {
+    reference: `sms_topup_${new Date().getTime()}`,
+    email: user?.email || "admin@school.com",
+    amount: topupAmount * 100, // Paystack uses pesewas
+    publicKey: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || "",
+    currency: "GHS",
+  };
+
+  const initializePayment = usePaystackPayment(paystackConfig);
+
+  const handleTopUp = () => {
+    if (!paystackConfig.publicKey) {
+      showToast("Payment gateway not configured.", { type: "error" });
+      return;
+    }
+    initializePayment({
+      onSuccess: async (reference: any) => {
+        setIsToppingUp(true);
+        try {
+          const token = await getToken();
+          // Calculate credits: 50 GHS = 1100, 100 = 2250, 200 = 4600
+          const credits = topupAmount === 50 ? 1100 : topupAmount === 100 ? 2250 : topupAmount === 200 ? 4600 : (topupAmount * 20);
+          
+          const res = await fetch(`${API_BASE}/api/sms/topup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              reference: reference.reference,
+              amount: topupAmount,
+              credits: credits,
+              schoolId: school?.id,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Top-up failed.");
+          
+          showToast(`Successfully purchased ${credits} SMS Credits!`, { type: "success" });
+          setTimeout(() => window.location.reload(), 2000);
+        } catch (err: any) {
+          showToast(err.message, { type: "error" });
+        } finally {
+          setIsToppingUp(false);
+        }
+      },
+      onClose: () => {
+        showToast("Payment cancelled.", { type: "info" });
+      },
+    });
+  };
 
   // ── Connect / Disconnect ─────────────────────────────────────────────────────
   const handleConnect = async () => {
@@ -252,7 +347,7 @@ const WhatsAppBroadcast: React.FC = () => {
       try {
         const q = query(collection(firestore, "students"), where("schoolId", "==", school.id));
         const snap = await getDocs(q);
-        const list: { name: string; phone: string; class?: string }[] = [];
+        const list: ParentContact[] = [];
         const seen = new Set<string>();
         snap.docs.forEach((doc) => {
           const d = doc.data() as any;
@@ -264,7 +359,7 @@ const WhatsAppBroadcast: React.FC = () => {
           }
         });
         setParents(list);
-        setSelectedPhones(new Set(list.map((p) => p.phone)));
+        setSelectedPhones(new Set());
       } catch (err: any) {
         showToast("Failed to load parent contacts: " + err.message, { type: "error" });
       } finally {
@@ -275,7 +370,26 @@ const WhatsAppBroadcast: React.FC = () => {
   }, [school?.id]);
 
   const classes = ["All", ...Array.from(new Set(parents.map((p) => p.class).filter(Boolean) as string[])).sort()];
-  const filteredParents = classFilter === "All" ? parents : parents.filter((p) => p.class === classFilter);
+  const filteredParents =
+    classFilter === "All"
+      ? parents
+      : classFilter === "No Class"
+        ? parents.filter((p) => !p.class)
+        : parents.filter((p) => p.class === classFilter);
+  const classGroups = Array.from(
+    parents.reduce((groups, parent) => {
+      const label = parent.class || "No Class";
+      const current = groups.get(label) || [];
+      current.push(parent);
+      groups.set(label, current);
+      return groups;
+    }, new Map<string, ParentContact[]>())
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  const selectClassGroup = (label: string, contacts: ParentContact[]) => {
+    setClassFilter(label === "All School" ? "All" : label);
+    setSelectedPhones(new Set(contacts.map((p) => p.phone).slice(0, SAFE_BROADCAST_LIMIT)));
+  };
 
   const togglePhone = (phone: string) => {
     setSelectedPhones((prev) => {
@@ -301,9 +415,21 @@ const WhatsAppBroadcast: React.FC = () => {
     if (!message.trim()) { showToast("Please enter a message.", { type: "error" }); return; }
     if (selectedPhones.size === 0) { showToast("Select at least one recipient.", { type: "error" }); return; }
     if (waStatus !== "ready") { showToast("WhatsApp is not connected.", { type: "error" }); return; }
+    if (selectedPhones.size > SAFE_BROADCAST_LIMIT) {
+      showToast(`Safe sending allows up to ${SAFE_BROADCAST_LIMIT} parents per broadcast.`, { type: "error" });
+      return;
+    }
+    if (
+      selectedPhones.size > LARGE_SEND_WARNING_LIMIT &&
+      !window.confirm(`You selected ${selectedPhones.size} parents. For safer sending, class groups under ${LARGE_SEND_WARNING_LIMIT} are recommended. Continue?`)
+    ) {
+      return;
+    }
 
     setSending(true);
     setResults([]);
+    setJobId(null);
+    setJobStatus(null);
     setProgress({ done: 0, total: selectedPhones.size });
 
     try {
@@ -314,36 +440,19 @@ const WhatsAppBroadcast: React.FC = () => {
         body: JSON.stringify({ message: message.trim(), phones: Array.from(selectedPhones) }),
       });
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let done = 0;
-
-      while (reader) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.replace(/^data: /, "").trim();
-          if (!line) continue;
-          try {
-            const evt = JSON.parse(line);
-            if (evt.type === "progress") {
-              done++;
-              setProgress({ done, total: selectedPhones.size });
-              setResults((prev) => [...prev, { phone: evt.phone, success: evt.success, error: evt.error }]);
-            }
-            if (evt.type === "complete") {
-              showToast(`Broadcast complete: ${evt.sent} sent, ${evt.failed} failed.`, { type: evt.failed > 0 ? "info" : "success" });
-            }
-          } catch (_) { /* ignore parse errors */ }
-        }
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to start broadcast");
       }
+
+      setJobId(data.jobId);
+      setJobStatus("processing");
+      announceWhatsAppBroadcastJob(data.jobId);
+      showToast("Broadcast job queued! This may take a while to prevent bans.", { type: "info" });
+      
     } catch (err: any) {
       showToast(err.message || "Broadcast failed.", { type: "error" });
-    } finally {
       setSending(false);
       setProgress(null);
     }
@@ -374,13 +483,29 @@ const WhatsAppBroadcast: React.FC = () => {
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 p-4 sm:p-6 text-white shadow-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
-              <WhatsAppIcon size={20} />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <WhatsAppIcon size={20} />
+              </div>
+              <div>
+                <h1 className="text-lg sm:text-2xl font-bold leading-tight">WhatsApp Broadcast</h1>
+                <p className="text-emerald-100 text-xs sm:text-sm">Safe sending for class groups and parent notices</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg sm:text-2xl font-bold leading-tight">WhatsApp Broadcast</h1>
-              <p className="text-emerald-100 text-xs sm:text-sm">Send messages to all parents at once — completely free</p>
+
+            {/* SMS Wallet Balance */}
+            <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
+              <div className="bg-white/20 p-2 rounded-lg">
+                <Wallet size={20} className="text-emerald-50" />
+              </div>
+              <div>
+                <p className="text-xs text-emerald-100 font-medium">Backup SMS Balance</p>
+                <div className="flex items-end gap-1">
+                  <p className="text-xl font-bold">{school?.smsWallet?.balance?.toLocaleString() || 0}</p>
+                  <p className="text-xs text-emerald-200 mb-1">credits</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -547,6 +672,33 @@ const WhatsAppBroadcast: React.FC = () => {
                   <p className="text-xs text-amber-700 font-medium">{statusError}</p>
                 </div>
               )}
+
+              {/* Top-up Button inside Connection Panel */}
+              <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 opacity-60 pointer-events-none select-none">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold text-slate-800">Buy Backup SMS Credits</p>
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold uppercase tracking-wider">Coming Soon</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Delivers your message as a normal SMS if the parent doesn't have WhatsApp.</p>
+                </div>
+                <div className="flex items-center gap-2 grayscale">
+                  <select
+                    disabled
+                    className="text-xs border border-slate-200 rounded-lg py-1.5 px-2 bg-slate-50 text-slate-400 cursor-not-allowed outline-none"
+                  >
+                    <option>50 GHS (1,100 SMS)</option>
+                  </select>
+                  <button
+                    disabled
+                    className="flex items-center gap-1.5 bg-slate-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-not-allowed"
+                  >
+                    <CreditCard size={13} />
+                    Pay
+                  </button>
+                </div>
+              </div>
+
             </div>
 
             {/* ── Message Composer ─────────────────────────────────────── */}
@@ -572,16 +724,30 @@ const WhatsAppBroadcast: React.FC = () => {
                 </div>
               </div>
 
+              {/* Smart Personalization Hint */}
+              <div className="mb-4 bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4">
+                <p className="text-xs text-blue-800 font-medium mb-1 flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-blue-600" />
+                  Safe Message Personalization
+                </p>
+                <p className="text-[11px] text-blue-700 leading-relaxed">
+                  Use class groups for smaller sends. The server sends slowly with cooldowns to reduce ban risk.
+                  You can also type <strong>{`{Hello|Hi|Greetings} Parent`}</strong> to vary greetings.
+                </p>
+              </div>
+
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 rows={5}
-                placeholder="Type your message here... Use [DATE], [TIME], [AMOUNT] as placeholders."
+                placeholder="Type your message here... Use {Hello|Hi|Greetings} to vary messages automatically."
                 className="w-full border border-slate-200 rounded-xl p-3 sm:p-4 text-sm text-slate-800 resize-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
               />
               <div className="flex items-center justify-between mt-1.5">
                 <p className="text-xs text-slate-400">{message.length} characters</p>
-                <p className="text-xs text-slate-400">{selectedPhones.size} recipient{selectedPhones.size !== 1 ? "s" : ""} selected</p>
+                <p className={`text-xs ${selectedPhones.size > SAFE_BROADCAST_LIMIT ? "text-red-500 font-semibold" : "text-slate-400"}`}>
+                  {selectedPhones.size}/{SAFE_BROADCAST_LIMIT} recipients selected
+                </p>
               </div>
 
               <button
@@ -590,9 +756,13 @@ const WhatsAppBroadcast: React.FC = () => {
                 className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-full bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
               >
                 {sending ? (
-                  <><Loader2 size={15} className="animate-spin" /> Sending... {progress ? `(${progress.done}/${progress.total})` : ""}</>
+                  jobStatus === "paused_anti_ban" ? (
+                    <><Loader2 size={15} className="animate-spin text-emerald-200" /> Paused (Anti-Ban cooldown)... {progress ? `(${progress.done}/${progress.total})` : ""}</>
+                  ) : (
+                    <><Loader2 size={15} className="animate-spin" /> Sending slowly... {progress ? `(${progress.done}/${progress.total})` : ""}</>
+                  )
                 ) : (
-                  <><Send size={15} /> Send to {selectedPhones.size} Parent{selectedPhones.size !== 1 ? "s" : ""}</>
+                  <><Send size={15} /> Safe Send to {selectedPhones.size} Parent{selectedPhones.size !== 1 ? "s" : ""}</>
                 )}
               </button>
             </div>
@@ -634,9 +804,35 @@ const WhatsAppBroadcast: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-500 mb-3 sm:mb-4 bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-100 leading-relaxed">
-              All <strong>unique parent phone numbers</strong> from your student records.
-              Unregistered WhatsApp numbers will be marked "Failed".
+              Choose one class group first, then adjust individual parents if needed. Safe sending is limited to <strong>{SAFE_BROADCAST_LIMIT}</strong> parents per broadcast.
             </p>
+
+            <div className="mb-4 space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Class Groups</p>
+              <button
+                onClick={() => selectClassGroup("All School", parents)}
+                className="w-full flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-semibold text-amber-800 hover:bg-amber-100 transition"
+              >
+                <span>All School</span>
+                <span>{Math.min(parents.length, SAFE_BROADCAST_LIMIT)}/{parents.length}</span>
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                {classGroups.map(([label, contacts]) => (
+                  <button
+                    key={label}
+                    onClick={() => selectClassGroup(label, contacts)}
+                    className={`rounded-xl border px-3 py-2 text-left transition ${
+                      classFilter === label
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                        : "border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span className="block truncate text-xs font-bold">{label}</span>
+                    <span className="text-[11px] text-slate-500">{contacts.length} parent{contacts.length !== 1 ? "s" : ""}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Class filter pills — horizontally scrollable on mobile */}
             <div className="flex gap-1.5 mb-3 sm:mb-4 overflow-x-auto pb-1 scrollbar-hide">

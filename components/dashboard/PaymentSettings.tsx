@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { firestore, auth } from "../../services/firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { API_BASE_URL } from "../../src/config";
 
 const BANK_CODES: Record<string, string> = {
   "Absa Bank Ghana": "004",
@@ -136,7 +137,7 @@ const PaymentSettings: React.FC = () => {
 
       const idToken = await auth.currentUser?.getIdToken();
 
-      const response = await fetch('/api/schools/setup-payment', {
+      const response = await fetch(`${API_BASE_URL}/api/schools/setup-payment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

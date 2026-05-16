@@ -52,6 +52,7 @@ import {
   SchoolConfig,
   UserRole,
   PlatformBroadcast,
+  StudentFeePayment,
 } from "../../types";
 import {
   CLASSES_LIST,
@@ -77,6 +78,7 @@ type AdminDashboardCache = {
   };
   notices: Notice[];
   recentStudents: Student[];
+  parentFeePayments?: ParentFeePaymentSignal[];
   teacherAttendance: any[];
   pendingTeacherAttendance?: any[];
   teacherTermStats: any[];
@@ -98,6 +100,11 @@ type AdminDashboardCache = {
 };
 
 const adminDashboardMemoryCache: Record<string, AdminDashboardCache> = {};
+
+type ParentFeePaymentSignal = StudentFeePayment & {
+  studentName?: string;
+  className?: string;
+};
 
 const SkeletonBlock: React.FC<{ className?: string }> = ({
   className = "h-4 bg-slate-100 rounded animate-pulse",
@@ -169,6 +176,7 @@ const DASHBOARD_RENDER_LIMITS = {
   teacherAttendance: 8,
   teacherTermStats: 8,
   recentStudents: 8,
+  parentFeePayments: 4,
 } as const;
 
 const getGradeAveragePercent = (distribution: Record<string, number>) => {
@@ -443,6 +451,9 @@ const AdminDashboard = () => {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [broadcasts, setBroadcasts] = useState<PlatformBroadcast[]>([]);
   const [recentStudents, setRecentStudents] = useState<Student[]>([]);
+  const [parentFeePayments, setParentFeePayments] = useState<
+    ParentFeePaymentSignal[]
+  >([]);
   const [dashboardStatsCache, setDashboardStatsCache] = useState<
     typeof stats | null
   >(null);
@@ -739,6 +750,19 @@ const AdminDashboard = () => {
     () => recentStudents.slice(0, DASHBOARD_RENDER_LIMITS.recentStudents),
     [recentStudents],
   );
+  const visibleParentFeePayments = useMemo(
+    () =>
+      parentFeePayments.slice(0, DASHBOARD_RENDER_LIMITS.parentFeePayments),
+    [parentFeePayments],
+  );
+  const parentFeePaymentTotal = useMemo(
+    () =>
+      parentFeePayments.reduce(
+        (sum, payment) => sum + (Number(payment.amountPaid) || 0),
+        0,
+      ),
+    [parentFeePayments],
+  );
   const visibleBroadcasts = useMemo(
     () => broadcasts.slice(0, DASHBOARD_RENDER_LIMITS.broadcasts),
     [broadcasts],
@@ -792,6 +816,7 @@ const AdminDashboard = () => {
     setDashboardStatsCache(cachedHeavy.stats);
     setNotices(cachedHeavy.notices);
     setRecentStudents(cachedHeavy.recentStudents);
+    setParentFeePayments(cachedHeavy.parentFeePayments || []);
     const cachedTeacherAttendance = (
       isCacheStale
         ? cachedHeavy.teacherAttendance || []
@@ -913,6 +938,7 @@ const AdminDashboard = () => {
           teacherAttendanceData,
           pendingTeacherAttendance,
           allTeacherRecords,
+          feePayments,
         ] = await Promise.all([
           wrapCall(() => db.getDashboardStats(schoolId), {
             studentsCount: 0,
@@ -942,6 +968,7 @@ const AdminDashboard = () => {
           ),
           wrapCall(() => db.getAllPendingTeacherAttendance(schoolId), []),
           wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId), []),
+          wrapCall(() => db.getPayments({ schoolId }), []),
         ]);
 
         // Check for missed attendance from school reopen date through yesterday.
@@ -1488,6 +1515,40 @@ const AdminDashboard = () => {
           classAttendance: dashboardStats.classAttendance,
         };
         const recentAdmissions = getRecentAdmissions(students);
+        const studentsById = new Map(students.map((student) => [student.id, student]));
+        const paymentCreatedAtMs = (value: any) => {
+          if (!value) return 0;
+          if (typeof value?.toMillis === "function") return value.toMillis();
+          if (value instanceof Date) return value.getTime();
+          if (typeof value === "number") return value;
+          const parsed = new Date(value).getTime();
+          return Number.isNaN(parsed) ? 0 : parsed;
+        };
+        const recentParentFeePayments = (feePayments as StudentFeePayment[])
+          .filter((payment) => {
+            const recordedBy = String(payment.recordedBy || "").toLowerCase();
+            const receipt = String(payment.receiptNumber || "").toUpperCase();
+            return (
+              recordedBy.includes("parent") || receipt.startsWith("FEES-")
+            );
+          })
+          .sort((left, right) => {
+            return (
+              paymentCreatedAtMs(right.createdAt) -
+              paymentCreatedAtMs(left.createdAt)
+            );
+          })
+          .slice(0, 8)
+          .map((payment) => {
+            const student = studentsById.get(payment.studentId);
+            return {
+              ...payment,
+              studentName: student?.name || payment.studentId,
+              className:
+                availableClasses.find((cls) => cls.id === payment.classId)
+                  ?.name || payment.classId,
+            };
+          });
         const todayTeacherAttendance = approvedAttendanceWithDetails.reduce(
           (acc: any[], record: any) => {
             const key = attendanceKey(record);
@@ -1538,6 +1599,7 @@ const AdminDashboard = () => {
           setNotices(fetchedNotices);
           setBroadcasts(fetchedBroadcasts);
           setRecentStudents(recentAdmissions);
+          setParentFeePayments(recentParentFeePayments);
           setTeacherAttendance(todayTeacherAttendance);
           setPendingTeacherAttendance(pendingTodayWithDetails);
           setTeacherTermStats(teacherTermStats);
@@ -1566,6 +1628,7 @@ const AdminDashboard = () => {
             stats: fullStats,
             notices: fetchedNotices,
             recentStudents: recentAdmissions,
+            parentFeePayments: recentParentFeePayments,
             teacherAttendance: todayTeacherAttendance,
             pendingTeacherAttendance: pendingTodayWithDetails,
             teacherTermStats: teacherTermStats,
@@ -2388,6 +2451,13 @@ const AdminDashboard = () => {
     setAttendanceWeek(getWeekRange(new Date()).monday);
   };
 
+  const formatFeeAmount = (value: number) =>
+    new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency: "GHS",
+      maximumFractionDigits: 0,
+    }).format(Number(value) || 0);
+
   // --- Components ---
 
   const StatCard = ({
@@ -2397,6 +2467,7 @@ const AdminDashboard = () => {
     icon: Icon,
     colorClass,
     iconColorClass,
+    children,
   }: any) => (
     <div
       className={`relative overflow-hidden ${DASHBOARD_PANEL} min-h-[168px] p-6 transition hover:-translate-y-0.5 hover:shadow-[0_22px_48px_-34px_rgba(15,23,42,0.26)]`}
@@ -2421,8 +2492,11 @@ const AdminDashboard = () => {
             <Icon size={22} className={iconColorClass} />
           </div>
         </div>
-        <div className="mt-5 inline-flex w-fit items-center rounded-full border border-white/75 bg-white/80 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 shadow-sm">
-          Dashboard signal
+        <div className="mt-5">
+          {children}
+          <div className="mt-4 inline-flex w-fit items-center rounded-full border border-white/75 bg-white/80 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 shadow-sm">
+            Dashboard signal
+          </div>
         </div>
       </div>
       <div
@@ -2534,8 +2608,14 @@ const AdminDashboard = () => {
     </div>
   );
 
-  const StudentEnrollCard = () => (
-    <div className="relative overflow-hidden rounded-[28px] border border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,251,235,0.96),rgba(255,255,255,0.94),rgba(255,237,213,0.92))] p-5 sm:p-6 shadow-[0_18px_42px_-30px_rgba(217,119,6,0.22)]">
+  const StudentEnrollCard = () => {
+    const topClassActivity = [...stats.classAttendance]
+      .sort((left, right) => right.percentage - left.percentage)
+      .slice(0, 4);
+    const hasClassActivity = topClassActivity.length > 0;
+
+    return (
+      <div className="relative overflow-hidden rounded-[28px] border border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,251,235,0.96),rgba(255,255,255,0.94),rgba(255,237,213,0.92))] p-5 sm:p-6 shadow-[0_18px_42px_-30px_rgba(217,119,6,0.22)]">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.28),transparent_50%)]" />
       <div className="relative flex h-full flex-col justify-between">
         <div className="flex items-start justify-between gap-4 min-w-0">
@@ -2556,8 +2636,8 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end xl:grid-cols-[auto_auto_1fr]">
-          <div className="rounded-[22px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch xl:grid-cols-[minmax(86px,0.55fr)_minmax(86px,0.55fr)_minmax(0,1.8fr)]">
+          <div className="rounded-[18px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
             <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
               Female
             </div>
@@ -2565,7 +2645,7 @@ const AdminDashboard = () => {
               {stats.femaleStudents}
             </div>
           </div>
-          <div className="rounded-[22px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
+          <div className="rounded-[18px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
             <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
               Male
             </div>
@@ -2575,41 +2655,60 @@ const AdminDashboard = () => {
           </div>
 
           <div className="min-w-0 sm:col-span-2 xl:col-span-1">
-            <div className="rounded-[22px] border border-white/80 bg-white/82 px-4 py-3 shadow-sm">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  Class activity
-                </span>
-                <span className="hidden text-[11px] text-slate-500 2xl:inline">
-                  Top attendance slices
-                </span>
+            <div className="h-full rounded-[18px] border border-white/80 bg-white/88 px-4 py-3 shadow-sm">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Class activity
+                  </span>
+                  <span className="mt-1 block text-[11px] text-slate-400">
+                    Top attendance rates
+                  </span>
+                </div>
+                <div className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-100">
+                  {currentAttendanceAverage}%
+                </div>
               </div>
-              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6 xl:grid-cols-8">
-                {stats.classAttendance.slice(0, 8).map((c) => (
-                  <div key={c.id} className="min-w-0">
-                    <div
-                      className="w-full rounded-t-[8px]"
-                      title={`${c.className}: ${c.percentage}%`}
-                      style={{
-                        background:
-                          c.percentage >= 80
-                            ? "linear-gradient(180deg,#10b981,#059669)"
-                            : c.percentage < 50
-                              ? "linear-gradient(180deg,#f97316,#ef4444)"
-                              : "linear-gradient(180deg,#facc15,#f59e0b)",
-                        height: `${Math.max(12, Math.round(c.percentage / 2.1))}px`,
-                      }}
-                    />
-                    <div className="mt-1 truncate text-center text-[9px] text-slate-500">
-                      {c.className
-                        .replace("Creche", "Cr")
-                        .replace("Primary ", "P")
-                        .replace("Class ", "P")
-                        .replace("Nursery ", "N")}
-                    </div>
-                  </div>
-                ))}
-              </div>
+
+              {hasClassActivity ? (
+                <div className="space-y-2.5">
+                  {topClassActivity.map((c) => {
+                    const percentage = Math.min(
+                      100,
+                      Math.max(0, Math.round(c.percentage || 0)),
+                    );
+                    const barColor =
+                      percentage >= 80
+                        ? "bg-emerald-500"
+                        : percentage < 50
+                          ? "bg-rose-500"
+                          : "bg-amber-500";
+                    return (
+                      <div key={c.id} className="min-w-0">
+                        <div className="mb-1 flex items-center justify-between gap-3">
+                          <span className="truncate text-[11px] font-semibold text-slate-600">
+                            {c.className}
+                          </span>
+                          <span className="shrink-0 text-[11px] font-bold text-slate-700">
+                            {percentage}%
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-slate-100">
+                          <div
+                            className={`h-full rounded-full ${barColor} shadow-[0_3px_8px_rgba(15,23,42,0.12)]`}
+                            style={{ width: `${percentage}%` }}
+                            title={`${c.className}: ${percentage}%`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex min-h-[88px] items-center justify-center rounded-[14px] border border-dashed border-amber-200 bg-amber-50/45 px-3 text-center text-xs font-medium text-amber-700">
+                  Attendance data will appear once classes are marked.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2623,8 +2722,9 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
-    </div>
-  );
+      </div>
+    );
+  };
 
   const TeacherStaffCard = () => {
     const avgStudentsPerTeacher =
@@ -4044,7 +4144,35 @@ const AdminDashboard = () => {
               icon={Bell}
               colorClass="bg-[#E6F0FA]"
               iconColorClass="text-[#0B4A82]"
-            />
+            >
+              {notices.length > 0 ? (
+                <div className="rounded-[18px] border border-white/80 bg-white/72 p-3 shadow-sm">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Latest notice
+                    </span>
+                    {visibleNotices[0]?.type === "urgent" && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-rose-700">
+                        Urgent
+                      </span>
+                    )}
+                  </div>
+                  <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-700">
+                    {visibleNotices[0]?.message}
+                  </p>
+                  {visibleNotices[0]?.date && (
+                    <p className="mt-2 text-[11px] font-medium text-[#0B4A82]/75">
+                      {visibleNotices[0].date}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-[18px] border border-dashed border-white/90 bg-white/54 p-3 text-sm font-medium leading-5 text-slate-500">
+                  No notices are active. New announcements will appear here for
+                  quick admin awareness.
+                </div>
+              )}
+            </StatCard>
           </div>
 
           {/* KPI row placed below the main stats so the three-card grid remains intact */}
@@ -4130,6 +4258,94 @@ const AdminDashboard = () => {
           <div style={DASHBOARD_DEFERRED_RENDER_STYLE}>
             <PerformanceSection />
           </div>
+
+          {parentFeePayments.length > 0 && (
+            <div className="mb-8" style={DASHBOARD_DEFERRED_RENDER_STYLE}>
+              <div className="relative overflow-hidden rounded-[28px] border border-emerald-200/80 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(255,255,255,0.96),rgba(240,253,250,0.94))] p-5 shadow-[0_18px_42px_-30px_rgba(5,150,105,0.28)] sm:p-6">
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.38),transparent_55%)]" />
+                <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200">
+                        <CreditCard size={20} />
+                      </div>
+                      <div>
+                        <p className={DASHBOARD_SECTION_LABEL}>
+                          Parent Fee Payments
+                        </p>
+                        <h3 className="mt-1 text-lg font-bold text-slate-900">
+                          {parentFeePayments.length} payment
+                          {parentFeePayments.length === 1 ? "" : "s"} need
+                          review
+                        </h3>
+                      </div>
+                    </div>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                      Parents have paid fees through the parent portal. Review
+                      these in Fees & Payments before sending receipts or
+                      reconciling balances.
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <div className="rounded-2xl border border-emerald-100 bg-white/80 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-600">
+                          Recent total
+                        </p>
+                        <p className="mt-1 text-2xl font-bold text-emerald-800">
+                          {formatFeeAmount(parentFeePaymentTotal)}
+                        </p>
+                      </div>
+                      {hasFeature("fees_payments") && (
+                        <Link
+                          to="/admin/fees"
+                          className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                        >
+                          Review in Fees & Payments
+                          <ArrowUpRight size={16} className="ml-2" />
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="w-full min-w-0 lg:max-w-md">
+                    <div className="space-y-2">
+                      {visibleParentFeePayments.map((payment) => (
+                        <div
+                          key={payment.id}
+                          className="rounded-2xl border border-white/80 bg-white/86 px-4 py-3 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-800">
+                                {payment.studentName}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {payment.className} / {payment.feeName}
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-sm font-bold text-emerald-700">
+                                {formatFeeAmount(payment.amountPaid)}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-slate-400">
+                                Parent portal
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {parentFeePayments.length >
+                      visibleParentFeePayments.length && (
+                      <p className="mt-3 text-xs font-medium text-emerald-700">
+                        Showing {visibleParentFeePayments.length} of{" "}
+                        {parentFeePayments.length} recent parent payments.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Bottom Section: Recent Students & Notices */}
           <div

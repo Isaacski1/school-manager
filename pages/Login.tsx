@@ -15,6 +15,9 @@ import {
   signInWithEmailAndPassword,
   signInWithCustomToken,
   signOut,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
 } from "firebase/auth";
 import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff, Phone } from "lucide-react";
 import schoolLogo from "../logo/apple-icon-180x180.png";
@@ -60,6 +63,9 @@ const Login = () => {
   const [parentError, setParentError] = useState("");
   const [parentSuccess, setParentSuccess] = useState("");
   const parentRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
+
+  // Persistence State
+  const [rememberMe, setRememberMe] = useState(true);
 
   const isMfaFlow = Boolean(mfaResolver);
   const mfaHints = useMemo(() => mfaResolver?.hints || [], [mfaResolver]);
@@ -197,6 +203,12 @@ const Login = () => {
     setFormError("");
 
     try {
+      // Set persistence based on rememberMe preference
+      await setPersistence(
+        auth,
+        rememberMe ? browserLocalPersistence : browserSessionPersistence
+      );
+
       await signInWithEmailAndPassword(auth, normalizeEmailInput(email), password);
 
       try {
@@ -373,6 +385,12 @@ const Login = () => {
         throw new Error(data.error || "Invalid login credentials.");
       }
 
+      // Set persistence based on rememberMe preference
+      await setPersistence(
+        auth,
+        rememberMe ? browserLocalPersistence : browserSessionPersistence
+      );
+
       await signInWithCustomToken(auth, data.token);
 
       await safeLogSecurityLogin({
@@ -481,7 +499,7 @@ const Login = () => {
         roleLabel=""
         schoolName={splashName}
         schoolLogoUrl={splashLogo}
-        hideDefaultBranding={Boolean(lastSchoolId || splashName || splashLogo)}
+        hideDefaultBranding={Boolean(splashName || splashLogo)}
       />
     );
   }
@@ -666,6 +684,19 @@ const Login = () => {
                         />
                       </div>
                     </div>
+                  </div>
+
+                  <div className="flex items-center">
+                    <input
+                      id="parent-remember-me"
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="h-4 w-4 text-[#0B4A82] focus:ring-[#1160A8] border-slate-300 rounded cursor-pointer"
+                    />
+                    <label htmlFor="parent-remember-me" className="ml-2 block text-sm text-slate-600 cursor-pointer font-medium">
+                      Remember me
+                    </label>
                   </div>
 
                   {parentError && (
@@ -884,6 +915,19 @@ const Login = () => {
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  id="remember-me"
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="h-4 w-4 text-[#0B4A82] focus:ring-[#1160A8] border-slate-300 rounded cursor-pointer"
+                />
+                <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-600 cursor-pointer font-medium">
+                  Remember me
+                </label>
               </div>
 
               <div className="flex items-center justify-between">

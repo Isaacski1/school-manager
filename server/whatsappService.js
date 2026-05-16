@@ -22,10 +22,44 @@ let client = null;
 let clientStatus = "disconnected";
 let currentQrBase64 = null;
 let lastError = null;
+let initializing = false;
 
 // Utility functions for safety and timing
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const randomDelay = () => 3000 + Math.random() * 4000; // 3-7 second delay between broadcast messages
+const BROADCAST_BATCH_SIZE = 25;
+const BROADCAST_BATCH_PAUSE_MS = 10 * 60 * 1000;
+const BROADCAST_MIN_DELAY_MS = 45 * 1000;
+const BROADCAST_MAX_DELAY_MS = 120 * 1000;
+
+const waitForReady = async (timeoutMs = 45000) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (clientStatus === "ready") return true;
+    if (clientStatus === "qr_ready") return false;
+    await sleep(1000);
+  }
+  return clientStatus === "ready";
+};
+
+export const ensureWhatsAppReady = async () => {
+  if (clientStatus === "ready") {
+    return { ready: true, status: clientStatus };
+  }
+
+  if (!client || clientStatus === "error" || clientStatus === "disconnected") {
+    console.log(`[WhatsApp] Auto-reconnect requested from status: ${clientStatus}`);
+    await disconnectWhatsApp();
+    initWhatsAppClient();
+  }
+
+  const ready = await waitForReady();
+  return {
+    ready,
+    status: clientStatus,
+    qr: currentQrBase64,
+    lastError,
+  };
+};
 
 export const getWhatsAppStatus = () => ({
   status: clientStatus,
@@ -71,16 +105,28 @@ export const initWhatsAppClient = () => {
     clientStatus = "error";
     return;
   }
+  if (initializing) {
+    console.log("[WhatsApp] Initialization already in progress.");
+    return;
+  }
   if (client && (clientStatus === "ready" || clientStatus === "connecting" || clientStatus === "qr_ready")) {
     return;
   }
 
+  initializing = true;
   clientStatus = "connecting";
   currentQrBase64 = null;
+  lastError = null;
   console.log("[WhatsApp] Initializing client...");
 
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: "./whatsapp-session" }),
+    // Use a remote web version cache to bypass outdated local WhatsApp Web versions that cause "Couldn't link device"
+    webVersionCache: {
+      type: "remote",
+      remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
+    },
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     puppeteer: {
       headless: true,
       args: [
@@ -128,18 +174,21 @@ export const initWhatsAppClient = () => {
   });
 
   client.on("ready", () => {
+    initializing = false;
     clientStatus = "ready";
     currentQrBase64 = null;
     console.log("[WhatsApp] ✅ Client ready.");
   });
 
   client.on("auth_failure", (msg) => {
+    initializing = false;
     clientStatus = "error";
     lastError = `Authentication failed: ${msg}`;
     console.error("[WhatsApp] Auth failure:", msg);
   });
 
   client.on("disconnected", (reason) => {
+    initializing = false;
     clientStatus = "disconnected";
     client = null;
     currentQrBase64 = null;
@@ -147,9 +196,14 @@ export const initWhatsAppClient = () => {
   });
 
   client.initialize().catch((err) => {
+    initializing = false;
     clientStatus = "error";
-    lastError = `Initialization error: ${err.message}`;
-    console.error("[WhatsApp] Init error:", err.message);
+    client = null;
+    const message = err?.message || String(err);
+    lastError = /browser is already running/i.test(message)
+      ? "WhatsApp session is already open in another server/browser process. Stop the old Node/Chrome process, then connect again."
+      : `Initialization error: ${message}`;
+    console.error("[WhatsApp] Init error:", message);
   });
 };
 
@@ -158,6 +212,7 @@ export const disconnectWhatsApp = async () => {
     try { await client.destroy(); } catch (_) {}
     client = null;
   }
+  initializing = false;
   clientStatus = "disconnected";
   currentQrBase64 = null;
 };
@@ -196,6 +251,14 @@ const normalizePhone = (phone) => {
   return digits;
 };
 
+const applySpintax = (text) => {
+  if (!text) return text;
+  return text.replace(/{([^{}]+)}/g, (match, contents) => {
+    const choices = contents.split('|');
+    return choices[Math.floor(Math.random() * choices.length)];
+  });
+};
+
 export const sendWhatsAppMessage = async (phone, message) => {
   if (!client || clientStatus !== "ready") {
     return { success: false, phone, error: "WhatsApp client not connected." };
@@ -209,11 +272,12 @@ export const sendWhatsAppMessage = async (phone, message) => {
     const chatId = `${digits}@c.us`;
     console.log(`[WhatsApp] Sending → ${chatId}`);
 
-    // Simulate Human Behavior: Typing...
+    // Simulate Human Behavior: Typing duration based on message length (approx 40 chars per second, max 10s)
+    const typeDuration = Math.min(10000, Math.max(2000, (message.length / 40) * 1000));
     try {
       const chat = await client.getChatById(chatId);
       await chat.sendStateTyping();
-      await sleep(2000 + Math.random() * 2000); // Type for 2-4 seconds
+      await sleep(typeDuration + Math.random() * 1000); 
     } catch (_) {
       // Fallback if chat state fails
       await sleep(2000);
@@ -221,11 +285,11 @@ export const sendWhatsAppMessage = async (phone, message) => {
 
     await client.sendMessage(chatId, message);
     console.log(`[WhatsApp] ✅ Sent to ${chatId}`);
-    return { success: true, phone };
+    return { success: true, phone, message };
   } catch (err) {
     const msg = err?.message || String(err);
     console.error(`[WhatsApp] ❌ ${phone}: ${msg}`);
-    return { success: false, phone, error: msg };
+    return { success: false, phone, error: msg, message };
   }
 };
 
@@ -292,11 +356,30 @@ export const sendWhatsAppToSelf = async (message) => {
 
 export const broadcastWhatsAppMessages = async (phones, message, progressCallback) => {
   const results = [];
+  let count = 0;
+  
   for (const phone of phones) {
-    const result = await sendWhatsAppMessage(phone, message);
+    count++;
+    
+    // 1. Spintax parsing for anti-spam message variation
+    const spintaxedMessage = applySpintax(message);
+    
+    // 2. Send the message
+    const result = await sendWhatsAppMessage(phone, spintaxedMessage);
     results.push(result);
-    if (progressCallback) progressCallback(result);
-    await sleep(randomDelay());
+    if (progressCallback) await progressCallback({ ...result, count, total: phones.length });
+    
+    // 3. Batching & Pacing Logic
+    if (count < phones.length) {
+      if (count % BROADCAST_BATCH_SIZE === 0) {
+        console.log(`[WhatsApp] Batch limit reached. Pausing for 10 minutes to reduce ban risk...`);
+        if (progressCallback) await progressCallback({ type: "pause", duration: BROADCAST_BATCH_PAUSE_MS });
+        await sleep(BROADCAST_BATCH_PAUSE_MS);
+      } else {
+        const delay = BROADCAST_MIN_DELAY_MS + Math.random() * (BROADCAST_MAX_DELAY_MS - BROADCAST_MIN_DELAY_MS);
+        await sleep(delay);
+      }
+    }
   }
   return results;
 };

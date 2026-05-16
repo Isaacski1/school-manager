@@ -370,7 +370,7 @@ const StudentHistory = () => {
               className={`rounded-lg px-2 py-2 text-center text-[11px] font-semibold border ${
                 present
                   ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                  : "border-sky-200 bg-sky-50 text-sky-700"
+                  : "border-red-200 bg-red-50 text-red-700"
               }`}
             >
               {formatMonth(date)}
@@ -999,8 +999,8 @@ const StudentHistory = () => {
                       <div className="w-2.5 h-2.5 bg-emerald-300 rounded-full" />
                       Present
                     </span>
-                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 font-semibold text-sky-700">
-                      <div className="w-2.5 h-2.5 bg-sky-300 rounded-full" />
+                    <span className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-1 font-semibold text-red-700">
+                      <div className="w-2.5 h-2.5 bg-red-300 rounded-full" />
                       Absent
                     </span>
                   </div>
@@ -1023,11 +1023,11 @@ const StudentHistory = () => {
                       {attendancePresent ?? "-"}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4">
-                    <p className="text-xs uppercase tracking-wide text-sky-500">
+                  <div className="rounded-2xl border border-red-100 bg-red-50/70 p-4">
+                    <p className="text-xs uppercase tracking-wide text-red-500">
                       Days Absent
                     </p>
-                    <p className="mt-2 text-2xl font-bold text-sky-700">
+                    <p className="mt-2 text-2xl font-bold text-red-700">
                       {attendanceAbsent ?? "-"}
                     </p>
                   </div>

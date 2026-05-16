@@ -14,6 +14,7 @@ export interface User {
   phoneNumber?: string;
   assignedClassIds?: string[];
   linkedStudentIds?: string[];
+  studentIds?: string[];
   status: "active" | "inactive" | "trial_active";
   emailVerified?: boolean;
   createdAt?: Date;
@@ -61,6 +62,21 @@ export interface School {
       updatedAt?: Date | number | null;
       updatedBy?: string | null;
     };
+  };
+  smsWallet?: {
+    balance: number;
+    lastRechargeAt?: Date | number | null;
+  };
+  paymentSettings?: {
+    method?: "Bank" | "MoMo";
+    status?: "pending" | "active" | "error";
+    subaccountCode?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountName?: string;
+    momoNetwork?: string;
+    momoNumber?: string;
+    momoName?: string;
   };
   limits?: {
     maxStudents?: number;
