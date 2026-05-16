@@ -52,6 +52,11 @@ const LOCAL_DEV_ORIGINS = [
   "http://127.0.0.1:5173",
 ];
 
+const PRODUCTION_APP_ORIGINS = [
+  "https://schoolmanagergh.com",
+  "https://www.schoolmanagergh.com",
+];
+
 const normalizeOriginValue = (value) => String(value || "").trim().replace(/\/$/, "");
 
 const collectOrigins = (...values) =>
@@ -75,6 +80,7 @@ const configuredOrigins = collectOrigins(
 
 const allowedOrigins = new Set([
   ...LOCAL_DEV_ORIGINS.map((origin) => normalizeOriginValue(origin)),
+  ...PRODUCTION_APP_ORIGINS.map((origin) => normalizeOriginValue(origin)),
   ...configuredOrigins.filter((origin) => !origin.includes("*")),
 ]);
 
