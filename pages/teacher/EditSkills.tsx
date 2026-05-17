@@ -5,6 +5,7 @@ import { db } from "../../services/mockDb";
 import { Student, StudentSkills } from "../../types";
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM } from "../../constants";
 import { Save, Edit } from "lucide-react";
+import UserAvatar from "../../components/UserAvatar";
 import { logActivity } from "../../services/activityLog";
 
 const skillOptions = [
@@ -267,9 +268,7 @@ const EditSkills = () => {
                   <tr key={student.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-800">
                       <div className="flex items-center">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-600 mr-3">
-                          {student.name.charAt(0)}
-                        </div>
+                        <UserAvatar user={student} size="sm" className="mr-3" />
                         {student.name}
                       </div>
                     </td>

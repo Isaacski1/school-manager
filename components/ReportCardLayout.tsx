@@ -6,22 +6,75 @@ import { calculateGrade, getGradeColor } from "../constants";
 import { Save, GraduationCap, BarChart2, Star, MessageSquare } from "lucide-react";
 
 const SectionHeader = ({ icon: Icon, title }: { icon: any; title: string }) => (
-  <div className="flex items-center gap-2 mb-2 w-full whitespace-nowrap leading-none">
-    <div className="inline-flex h-[15px] w-[15px] items-center justify-center shrink-0 leading-none">
-      <Icon
-        size={15}
-        strokeWidth={2.2}
-        className="text-primary-600 block shrink-0"
-        style={{ display: "block", transform: "translateY(0.5px)" }}
-      />
-    </div>
-    <h3
-      className="text-[12px] font-bold text-primary-800 uppercase tracking-wider leading-none shrink-0 m-0 p-0"
-      style={{ lineHeight: "15px" }}
+  <div
+    style={{
+      width: "100%",
+      marginBottom: "8px",
+      whiteSpace: "nowrap",
+      lineHeight: "15px",
+    }}
+  >
+    <table
+      style={{
+        width: "100%",
+        borderCollapse: "collapse",
+        tableLayout: "auto",
+      }}
     >
-      {title}
-    </h3>
-    <div className="flex-1 h-[2px] bg-primary-100/70 ml-1 self-center"></div>
+      <tbody>
+        <tr>
+          <td
+            style={{
+              width: "17px",
+              padding: 0,
+              verticalAlign: "middle",
+            }}
+          >
+            <Icon
+              size={15}
+              strokeWidth={2.2}
+              color="#2563eb"
+              style={{
+                display: "block",
+                width: "15px",
+                height: "15px",
+              }}
+            />
+          </td>
+          <td
+            style={{
+              width: "1%",
+              padding: "0 8px 0 0",
+              color: "#1e40af",
+              fontSize: "12px",
+              fontWeight: 700,
+              letterSpacing: "0.05em",
+              lineHeight: "15px",
+              textTransform: "uppercase",
+              verticalAlign: "middle",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </td>
+          <td
+            style={{
+              padding: 0,
+              verticalAlign: "middle",
+            }}
+          >
+            <div
+              style={{
+                height: "2px",
+                width: "100%",
+                backgroundColor: "#dbeafe",
+                opacity: 0.7,
+              }}
+            />
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 );
 

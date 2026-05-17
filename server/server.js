@@ -7746,6 +7746,56 @@ app.post("/api/billing/webhook", async (req, res) => {
     const schoolId = metadata.schoolId;
     const paymentReference = data?.reference || metadata?.reference;
 
+    if (
+      paymentReference &&
+      String(paymentReference).startsWith("PAYROLL-") &&
+      (event.event === "transfer.success" || event.event === "transfer.failed")
+    ) {
+      const payrollStatus =
+        event.event === "transfer.success" ? "success" : "failed";
+      const payrollPaymentSnap = await admin
+        .firestore()
+        .collection("payrollPayments")
+        .where("transferReference", "==", paymentReference)
+        .limit(1)
+        .get();
+
+      if (!payrollPaymentSnap.empty) {
+        const paymentRef = payrollPaymentSnap.docs[0].ref;
+        const paymentData = payrollPaymentSnap.docs[0].data() || {};
+        await paymentRef.set(
+          {
+            status: payrollStatus,
+            failureReason:
+              payrollStatus === "failed"
+                ? data?.reason || data?.gateway_response || "Transfer failed"
+                : null,
+            paidAt:
+              payrollStatus === "success"
+                ? admin.firestore.FieldValue.serverTimestamp()
+                : paymentData.paidAt || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            webhookEvent: event.event,
+          },
+          { merge: true },
+        );
+
+        if (payrollStatus === "success") {
+          try {
+            await sendStaffPayrollNotification(paymentRef.id);
+          } catch (notificationError) {
+            console.error("[Payroll notification] Error:", notificationError?.message || notificationError);
+          }
+        }
+
+        if (paymentData.payrollRunId) {
+          await refreshPayrollRunStatus(paymentData.payrollRunId);
+        }
+      }
+
+      return res.status(200).send("OK");
+    }
+
     if (!schoolId) {
       return res.status(200).send("No schoolId on webhook metadata");
     }
@@ -7862,6 +7912,690 @@ app.post("/api/billing/webhook", async (req, res) => {
   } catch (error) {
     console.error("Webhook error:", error.message);
     res.status(500).send("Webhook error");
+  }
+});
+
+const maskAccountNumber = (value) => {
+  const raw = String(value || "").replace(/\s+/g, "");
+  if (raw.length <= 4) return raw ? "****" : "";
+  return `${raw.slice(0, 3)}****${raw.slice(-3)}`;
+};
+
+const toMoneyAmount = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+};
+
+const resolveSchoolAdmin = async (req, res) => {
+  const userSnap = await admin.firestore().collection("users").doc(req.user.uid).get();
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  if (user.role !== "school_admin" || !user.schoolId) {
+    res.status(403).json({ error: "Forbidden. Only school admins can manage payroll." });
+    return null;
+  }
+  return { uid: req.user.uid, ...user };
+};
+
+const refreshPayrollRunStatus = async (payrollRunId) => {
+  const db = admin.firestore();
+  const paymentsSnap = await db
+    .collection("payrollPayments")
+    .where("payrollRunId", "==", payrollRunId)
+    .get();
+  const payments = paymentsSnap.docs.map((docSnap) => docSnap.data() || {});
+  const successCount = payments.filter((p) => p.status === "success").length;
+  const failedCount = payments.filter((p) => p.status === "failed").length;
+  const pendingCount = payments.filter((p) =>
+    ["pending", "otp", "draft"].includes(String(p.status || "")),
+  ).length;
+  let status = "processing";
+  if (payments.length && successCount === payments.length) status = "completed";
+  else if (payments.length && failedCount === payments.length) status = "failed";
+  else if (payments.length && pendingCount === 0) status = "partial";
+
+  await db.collection("payrollRuns").doc(payrollRunId).set(
+    {
+      status,
+      successCount,
+      failedCount,
+      pendingCount,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+};
+
+const callPaystack = async (path, options = {}) => {
+  if (!PAYSTACK_SECRET_KEY) {
+    throw new Error("PAYSTACK_SECRET_KEY is not set in the environment.");
+  }
+  if (!isLivePaystackSecret()) {
+    throw new Error("Server Paystack configuration is still in test mode.");
+  }
+
+  const response = await fetch(`https://api.paystack.co${path}`, {
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.status === false) {
+    throw new Error(data.message || `Paystack request failed with ${response.status}`);
+  }
+  return data;
+};
+
+const STAFF_PAYROLL_ENABLED =
+  String(process.env.ENABLE_STAFF_PAYROLL || "").trim().toLowerCase() === "true";
+
+const requireStaffPayrollEnabled = (req, res, next) => {
+  if (!STAFF_PAYROLL_ENABLED) {
+    return res.status(503).json({
+      error: "Staff Payroll is coming soon and is not enabled for this deployment.",
+    });
+  }
+  next();
+};
+
+const formatGhsAmount = (amount) =>
+  `GHS ${Number(amount || 0).toLocaleString("en-GH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const normalizeSmsPhone = (phone) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("233")) return digits;
+  if (digits.startsWith("0")) return `233${digits.slice(1)}`;
+  return digits;
+};
+
+const sendSmsWithWallet = async ({ schoolId, phone, message }) => {
+  const arkeselKey = process.env.ARKESEL_API_KEY;
+  if (!arkeselKey) {
+    return { success: false, skipped: true, error: "ARKESEL_API_KEY is not configured." };
+  }
+
+  const normalizedPhone = normalizeSmsPhone(phone);
+  if (!normalizedPhone) {
+    return { success: false, skipped: true, error: "No valid staff phone number." };
+  }
+
+  const db = admin.firestore();
+  const schoolRef = db.collection("schools").doc(String(schoolId));
+  const reservation = await db.runTransaction(async (tx) => {
+    const schoolSnap = await tx.get(schoolRef);
+    const balance = Number(schoolSnap.data()?.smsWallet?.balance || 0);
+    if (balance < 1) {
+      return { reserved: false, balance };
+    }
+    tx.update(schoolRef, { "smsWallet.balance": balance - 1 });
+    return { reserved: true, balance };
+  });
+
+  if (!reservation.reserved) {
+    return { success: false, skipped: true, error: "SMS wallet has no credits." };
+  }
+
+  try {
+    const smsRes = await fetch("https://sms.arkesel.com/api/v2/sms/send", {
+      method: "POST",
+      headers: {
+        "api-key": arkeselKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: process.env.ARKESEL_SENDER_ID || "SCHOOL",
+        message,
+        recipients: [normalizedPhone],
+      }),
+    });
+    const smsData = await smsRes.json().catch(() => ({}));
+    if (!smsRes.ok || smsData.status !== "success") {
+      await schoolRef.update({
+        "smsWallet.balance": admin.firestore.FieldValue.increment(1),
+      });
+      return {
+        success: false,
+        error: smsData.message || `Arkesel failed with ${smsRes.status}`,
+      };
+    }
+    return { success: true, provider: "arkesel", phone: normalizedPhone };
+  } catch (error) {
+    await schoolRef.update({
+      "smsWallet.balance": admin.firestore.FieldValue.increment(1),
+    });
+    return { success: false, error: error.message || "SMS send failed." };
+  }
+};
+
+const sendStaffPayrollNotification = async (paymentId) => {
+  const db = admin.firestore();
+  const paymentRef = db.collection("payrollPayments").doc(String(paymentId));
+  const paymentSnap = await paymentRef.get();
+  if (!paymentSnap.exists) return { success: false, skipped: true, error: "Payment not found." };
+
+  const payment = paymentSnap.data() || {};
+  if (payment.status !== "success") {
+    return { success: false, skipped: true, error: "Payment is not successful yet." };
+  }
+  if (payment.notificationStatus === "sent") {
+    return { success: true, skipped: true, channel: payment.notificationChannel || null };
+  }
+
+  let staffPhone = String(payment.staffPhoneNumber || "").trim();
+  if (!staffPhone && payment.staffId) {
+    const staffSnap = await db.collection("users").doc(String(payment.staffId)).get();
+    staffPhone = String(staffSnap.data()?.phoneNumber || "").trim();
+  }
+  if (!staffPhone) {
+    await paymentRef.set(
+      {
+        notificationStatus: "skipped",
+        notificationError: "No staff phone number on profile.",
+        notificationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return { success: false, skipped: true, error: "No staff phone number." };
+  }
+
+  const [schoolSnap, runSnap] = await Promise.all([
+    db.collection("schools").doc(String(payment.schoolId)).get(),
+    payment.payrollRunId
+      ? db.collection("payrollRuns").doc(String(payment.payrollRunId)).get()
+      : Promise.resolve(null),
+  ]);
+  const schoolName = schoolSnap.data()?.name || "Your school";
+  const period = runSnap?.exists ? runSnap.data()?.period : "";
+  const referenceText = payment.transferReference
+    ? ` Reference: ${payment.transferReference}.`
+    : "";
+  const message = [
+    `Hello ${payment.staffName || "Staff"},`,
+    `${schoolName} has paid your staff salary${period ? ` for ${period}` : ""}.`,
+    `Amount: ${formatGhsAmount(payment.amount)}.`,
+    `Please check your bank or MoMo account.${referenceText}`,
+  ].join(" ");
+
+  await paymentRef.set(
+    {
+      notificationStatus: "sending",
+      notificationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  let whatsappResult = { success: false, skipped: true, error: "WhatsApp not attempted." };
+  try {
+    const svc = await loadWhatsAppService();
+    const readiness = svc?.ensureWhatsAppReady
+      ? await svc.ensureWhatsAppReady()
+      : { ready: false, status: "unavailable" };
+    if (svc?.sendWhatsAppMessage && readiness.ready) {
+      whatsappResult = await svc.sendWhatsAppMessage(staffPhone, message);
+    } else {
+      whatsappResult = {
+        success: false,
+        skipped: true,
+        error: `WhatsApp is not ready (${readiness.status || "unavailable"}).`,
+      };
+    }
+  } catch (error) {
+    whatsappResult = { success: false, error: error.message || "WhatsApp send failed." };
+  }
+
+  if (whatsappResult.success) {
+    await paymentRef.set(
+      {
+        notificationStatus: "sent",
+        notificationChannel: "whatsapp",
+        notificationPhone: normalizeSmsPhone(staffPhone),
+        notificationSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationError: null,
+      },
+      { merge: true },
+    );
+    return { success: true, channel: "whatsapp" };
+  }
+
+  const smsResult = await sendSmsWithWallet({
+    schoolId: payment.schoolId,
+    phone: staffPhone,
+    message,
+  });
+
+  await paymentRef.set(
+    {
+      notificationStatus: smsResult.success ? "sent" : "failed",
+      notificationChannel: smsResult.success ? "sms" : null,
+      notificationPhone: normalizeSmsPhone(staffPhone),
+      notificationSentAt: smsResult.success
+        ? admin.firestore.FieldValue.serverTimestamp()
+        : payment.notificationSentAt || null,
+      notificationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      notificationError: smsResult.success
+        ? null
+        : smsResult.error || whatsappResult.error || "Notification failed.",
+      whatsappNotificationError: whatsappResult.error || null,
+      smsNotificationError: smsResult.error || null,
+    },
+    { merge: true },
+  );
+
+  return smsResult.success
+    ? { success: true, channel: "sms" }
+    : { success: false, error: smsResult.error || whatsappResult.error };
+};
+
+app.get("/api/payroll/banks", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    const type = String(req.query.type || "mobile_money").trim();
+    if (!["mobile_money", "ghipss"].includes(type)) {
+      return res.status(400).json({ error: "Invalid payout account type." });
+    }
+
+    const data = await callPaystack(
+      `/bank?currency=GHS&type=${encodeURIComponent(type)}`,
+    );
+    const banks = Array.isArray(data.data)
+      ? data.data.map((bank) => ({
+          name: bank.name,
+          code: bank.code,
+          type: bank.type || type,
+        }))
+      : [];
+    return res.json({ success: true, banks });
+  } catch (error) {
+    console.error("[Payroll banks] Error:", error);
+    return res.status(500).json({ error: error.message || "Failed to load payout providers." });
+  }
+});
+
+app.get("/api/payroll/overview", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    const db = admin.firestore();
+    const [profilesSnap, runsSnap, paymentsSnap] = await Promise.all([
+      db.collection("staffPaymentProfiles").where("schoolId", "==", caller.schoolId).get(),
+      db.collection("payrollRuns").where("schoolId", "==", caller.schoolId).get(),
+      db.collection("payrollPayments").where("schoolId", "==", caller.schoolId).get(),
+    ]);
+
+    const mapDoc = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
+    const byCreatedDesc = (a, b) =>
+      Number(b.createdAt?.toMillis?.() || b.createdAt || 0) -
+      Number(a.createdAt?.toMillis?.() || a.createdAt || 0);
+
+    return res.json({
+      success: true,
+      profiles: profilesSnap.docs.map(mapDoc),
+      runs: runsSnap.docs.map(mapDoc).sort(byCreatedDesc).slice(0, 20),
+      payments: paymentsSnap.docs.map(mapDoc).sort(byCreatedDesc).slice(0, 100),
+    });
+  } catch (error) {
+    console.error("[Payroll overview] Error:", error);
+    return res.status(500).json({ error: "Failed to load payroll overview." });
+  }
+});
+
+app.post("/api/payroll/profiles", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    const {
+      staffId,
+      staffName,
+      staffEmail,
+      staffPhoneNumber,
+      paymentMethod,
+      accountName,
+      accountNumber,
+      bankCode,
+      bankName,
+      salaryAmount,
+    } = req.body || {};
+
+    if (!staffId || !staffName || !accountName || !accountNumber || !bankCode) {
+      return res.status(400).json({ error: "Staff name and payout account details are required." });
+    }
+    if (!["mobile_money", "ghipss"].includes(String(paymentMethod))) {
+      return res.status(400).json({ error: "Choose Mobile Money or Bank Account." });
+    }
+    const salary = toMoneyAmount(salaryAmount);
+    if (salary <= 0) {
+      return res.status(400).json({ error: "Enter a valid salary amount." });
+    }
+
+    const staffSnap = await admin.firestore().collection("users").doc(String(staffId)).get();
+    const staff = staffSnap.exists ? staffSnap.data() || {} : {};
+    if (staff.schoolId !== caller.schoolId || staff.role !== "teacher") {
+      return res.status(403).json({ error: "This staff member does not belong to your school." });
+    }
+
+    const recipientPayload = {
+      type: paymentMethod,
+      name: accountName,
+      account_number: String(accountNumber).replace(/\s+/g, ""),
+      bank_code: bankCode,
+      currency: "GHS",
+      metadata: {
+        schoolId: caller.schoolId,
+        staffId,
+        staffName,
+      },
+    };
+    const recipientData = await callPaystack("/transferrecipient", {
+      method: "POST",
+      body: recipientPayload,
+    });
+    const recipientCode = recipientData?.data?.recipient_code;
+    if (!recipientCode) {
+      return res.status(400).json({ error: "Paystack did not return a transfer recipient code." });
+    }
+
+    const profileRef = admin.firestore().collection("staffPaymentProfiles").doc(String(staffId));
+    const profile = {
+      schoolId: caller.schoolId,
+      staffId: String(staffId),
+      staffName: String(staffName).trim(),
+      staffEmail: staffEmail || staff.email || null,
+      staffPhoneNumber: String(staffPhoneNumber || staff.phoneNumber || "").trim() || null,
+      paymentMethod,
+      accountName: String(accountName).trim(),
+      accountNumberMasked: maskAccountNumber(accountNumber),
+      bankCode: String(bankCode).trim(),
+      bankName: String(bankName || bankCode).trim(),
+      salaryAmount: salary,
+      recipientCode,
+      isVerified: true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: caller.uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await profileRef.set(profile, { merge: true });
+    await logActivity({
+      eventType: "staff_payroll_profile_saved",
+      schoolId: caller.schoolId,
+      actorUid: caller.uid,
+      actorRole: "school_admin",
+      entityId: String(staffId),
+      meta: { staffName, paymentMethod, bankName, salary },
+    });
+    return res.json({ success: true, profile: { id: profileRef.id, ...profile } });
+  } catch (error) {
+    console.error("[Payroll profile] Error:", error);
+    return res.status(500).json({ error: error.message || "Failed to save payroll profile." });
+  }
+});
+
+app.post("/api/payroll/runs", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    const period = String(req.body?.period || "").trim();
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!period) return res.status(400).json({ error: "Payroll period is required." });
+    if (!items.length) return res.status(400).json({ error: "Select at least one staff member." });
+
+    const db = admin.firestore();
+    const duplicateSnap = await db
+      .collection("payrollRuns")
+      .where("schoolId", "==", caller.schoolId)
+      .where("period", "==", period)
+      .where("status", "in", ["draft", "processing", "completed", "partial"])
+      .limit(1)
+      .get();
+    if (!duplicateSnap.empty) {
+      return res.status(400).json({ error: "A payroll run already exists for this period." });
+    }
+
+    const runRef = db.collection("payrollRuns").doc();
+    const payments = [];
+    let totalAmount = 0;
+    const batch = db.batch();
+
+    for (const item of items) {
+      const profileSnap = await db.collection("staffPaymentProfiles").doc(String(item.staffId)).get();
+      if (!profileSnap.exists) continue;
+      const profile = profileSnap.data() || {};
+      if (profile.schoolId !== caller.schoolId || !profile.recipientCode) continue;
+      const allowance = toMoneyAmount(item.allowance || 0);
+      const deduction = toMoneyAmount(item.deduction || 0);
+      const baseAmount = toMoneyAmount(item.amount || profile.salaryAmount);
+      const netPay = Math.max(0, toMoneyAmount(baseAmount + allowance - deduction));
+      if (netPay <= 0) continue;
+      totalAmount += netPay;
+      const paymentRef = db.collection("payrollPayments").doc();
+      const payment = {
+        id: paymentRef.id,
+        schoolId: caller.schoolId,
+        payrollRunId: runRef.id,
+        staffId: profile.staffId,
+        staffName: profile.staffName,
+        staffPhoneNumber: profile.staffPhoneNumber || null,
+        amount: netPay,
+        baseAmount,
+        allowance,
+        deduction,
+        recipientCode: profile.recipientCode,
+        status: "draft",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      payments.push(payment);
+      batch.set(paymentRef, payment);
+    }
+
+    if (!payments.length || totalAmount <= 0) {
+      return res.status(400).json({ error: "No valid staff payment profiles were selected." });
+    }
+
+    const run = {
+      id: runRef.id,
+      schoolId: caller.schoolId,
+      period,
+      status: "draft",
+      totalAmount: toMoneyAmount(totalAmount),
+      staffCount: payments.length,
+      createdBy: caller.uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    batch.set(runRef, run);
+    await batch.commit();
+    await logActivity({
+      eventType: "payroll_run_created",
+      schoolId: caller.schoolId,
+      actorUid: caller.uid,
+      actorRole: "school_admin",
+      entityId: runRef.id,
+      meta: { period, totalAmount: run.totalAmount, staffCount: payments.length },
+    });
+    return res.json({ success: true, run, payments });
+  } catch (error) {
+    console.error("[Payroll run create] Error:", error);
+    return res.status(500).json({ error: error.message || "Failed to create payroll run." });
+  }
+});
+
+app.post("/api/payroll/runs/:runId/pay", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    if (String(req.body?.confirmation || "").trim().toUpperCase() !== "PAY STAFF") {
+      return res.status(400).json({ error: "Type PAY STAFF to confirm this payroll payout." });
+    }
+
+    const db = admin.firestore();
+    const runRef = db.collection("payrollRuns").doc(String(req.params.runId));
+    const runSnap = await runRef.get();
+    if (!runSnap.exists) return res.status(404).json({ error: "Payroll run not found." });
+    const run = runSnap.data() || {};
+    if (run.schoolId !== caller.schoolId) return res.status(403).json({ error: "Forbidden." });
+    if (run.status !== "draft") {
+      return res.status(400).json({ error: "Only draft payroll runs can be paid." });
+    }
+
+    const paymentsSnap = await db
+      .collection("payrollPayments")
+      .where("payrollRunId", "==", runRef.id)
+      .where("schoolId", "==", caller.schoolId)
+      .get();
+    const paymentDocs = paymentsSnap.docs.filter((docSnap) => docSnap.data()?.status === "draft");
+    if (!paymentDocs.length) {
+      return res.status(400).json({ error: "No draft payments found for this payroll run." });
+    }
+
+    await runRef.set(
+      {
+        status: "processing",
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processedBy: caller.uid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    const results = [];
+    for (const paymentDoc of paymentDocs) {
+      const payment = paymentDoc.data() || {};
+      const reference = `PAYROLL-${runRef.id.slice(0, 8)}-${paymentDoc.id.slice(0, 8)}-${Date.now()}`;
+      try {
+        const transferData = await callPaystack("/transfer", {
+          method: "POST",
+          body: {
+            source: "balance",
+            amount: Math.round(Number(payment.amount || 0) * 100),
+            recipient: payment.recipientCode,
+            reference,
+            reason: `Staff salary - ${run.period}`,
+            currency: "GHS",
+          },
+        });
+        const status = transferData?.data?.status || "pending";
+        await paymentDoc.ref.set(
+          {
+            status,
+            transferReference: reference,
+            paystackTransferCode: transferData?.data?.transfer_code || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        if (status === "success") {
+          try {
+            await sendStaffPayrollNotification(paymentDoc.id);
+          } catch (notificationError) {
+            console.error("[Payroll notification] Error:", notificationError?.message || notificationError);
+          }
+        }
+        results.push({ id: paymentDoc.id, ...payment, status, transferReference: reference });
+      } catch (transferError) {
+        await paymentDoc.ref.set(
+          {
+            status: "failed",
+            transferReference: reference,
+            failureReason: transferError.message || "Transfer failed",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        results.push({
+          id: paymentDoc.id,
+          ...payment,
+          status: "failed",
+          transferReference: reference,
+          failureReason: transferError.message || "Transfer failed",
+        });
+      }
+    }
+
+    await refreshPayrollRunStatus(runRef.id);
+    const refreshedRun = await runRef.get();
+    await logActivity({
+      eventType: "payroll_run_processed",
+      schoolId: caller.schoolId,
+      actorUid: caller.uid,
+      actorRole: "school_admin",
+      entityId: runRef.id,
+      meta: { period: run.period, totalAmount: run.totalAmount, staffCount: paymentDocs.length },
+    });
+    return res.json({
+      success: true,
+      run: { id: refreshedRun.id, ...refreshedRun.data() },
+      payments: results,
+    });
+  } catch (error) {
+    console.error("[Payroll run pay] Error:", error);
+    return res.status(500).json({ error: error.message || "Failed to process payroll." });
+  }
+});
+
+app.post("/api/payroll/payments/:paymentId/finalize", authMiddleware, requireStaffPayrollEnabled, async (req, res) => {
+  try {
+    const caller = await resolveSchoolAdmin(req, res);
+    if (!caller) return;
+    const otp = String(req.body?.otp || "").trim();
+    if (!otp) return res.status(400).json({ error: "Transfer OTP is required." });
+
+    const db = admin.firestore();
+    const paymentRef = db.collection("payrollPayments").doc(String(req.params.paymentId));
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) return res.status(404).json({ error: "Payroll payment not found." });
+    const payment = paymentSnap.data() || {};
+    if (payment.schoolId !== caller.schoolId) return res.status(403).json({ error: "Forbidden." });
+    if (payment.status !== "otp" || !payment.paystackTransferCode) {
+      return res.status(400).json({ error: "This payroll payment is not waiting for an OTP." });
+    }
+
+    const finalizeData = await callPaystack("/transfer/finalize_transfer", {
+      method: "POST",
+      body: {
+        transfer_code: payment.paystackTransferCode,
+        otp,
+      },
+    });
+    const status = finalizeData?.data?.status || "pending";
+    await paymentRef.set(
+      {
+        status,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        finalizedBy: caller.uid,
+      },
+      { merge: true },
+    );
+    if (status === "success") {
+      try {
+        await sendStaffPayrollNotification(paymentRef.id);
+      } catch (notificationError) {
+        console.error("[Payroll notification] Error:", notificationError?.message || notificationError);
+      }
+    }
+    if (payment.payrollRunId) {
+      await refreshPayrollRunStatus(payment.payrollRunId);
+    }
+    await logActivity({
+      eventType: "payroll_transfer_finalized",
+      schoolId: caller.schoolId,
+      actorUid: caller.uid,
+      actorRole: "school_admin",
+      entityId: paymentRef.id,
+      meta: { payrollRunId: payment.payrollRunId, staffId: payment.staffId, status },
+    });
+    const updatedSnap = await paymentRef.get();
+    return res.json({ success: true, payment: { id: updatedSnap.id, ...updatedSnap.data() } });
+  } catch (error) {
+    console.error("[Payroll transfer finalize] Error:", error);
+    return res.status(500).json({ error: error.message || "Failed to finalize payroll transfer." });
   }
 });
 

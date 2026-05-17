@@ -62,12 +62,12 @@ export const getFilteredClasses = (schoolType?: string) => {
   if (type.includes("senior high")) {
     return CLASSES_LIST.filter(c => c.level === "SHS");
   }
+  if (type.includes("basic school")) {
+    // Basic School usually includes Creche through JHS
+    return CLASSES_LIST.filter(c => ["CRECHE", "NURSERY", "KG", "PRIMARY", "JHS"].includes(c.level));
+  }
   if (type.includes("nursery") || type.includes("kindergarten")) {
     return CLASSES_LIST.filter(c => ["CRECHE", "NURSERY", "KG"].includes(c.level));
-  }
-  if (type.includes("basic school")) {
-    // Basic School usually includes Nursery through JHS
-    return CLASSES_LIST.filter(c => ["NURSERY", "KG", "PRIMARY", "JHS"].includes(c.level));
   }
 
   return CLASSES_LIST;

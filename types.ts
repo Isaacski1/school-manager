@@ -30,6 +30,7 @@ export interface User {
   forcedLogoutBy?: string | null;
   roleUpdatedAt?: Date | number | null;
   roleUpdatedBy?: string | null;
+  photoUrl?: string;
 }
 
 export interface School {
@@ -167,6 +168,70 @@ export interface FinanceSettings {
   financeVersion: "v1" | "v2";
   onboardingMode?: OnboardingMode;
   onboardingDate?: string | null;
+}
+
+export type StaffPaymentMethod = "mobile_money" | "ghipss";
+export type PayrollRunStatus =
+  | "draft"
+  | "processing"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
+export type PayrollPaymentStatus =
+  | "draft"
+  | "pending"
+  | "success"
+  | "failed"
+  | "otp";
+
+export interface StaffPaymentProfile {
+  id: string;
+  schoolId: string;
+  staffId: string;
+  staffName: string;
+  staffEmail?: string | null;
+  staffPhoneNumber?: string | null;
+  paymentMethod: StaffPaymentMethod;
+  accountName: string;
+  accountNumberMasked: string;
+  bankCode: string;
+  bankName: string;
+  salaryAmount: number;
+  recipientCode?: string | null;
+  isVerified: boolean;
+  createdAt?: Date | number | null;
+  updatedAt?: Date | number | null;
+  updatedBy?: string | null;
+}
+
+export interface PayrollRun {
+  id: string;
+  schoolId: string;
+  period: string;
+  status: PayrollRunStatus;
+  totalAmount: number;
+  staffCount: number;
+  createdBy: string;
+  createdAt: Date | number;
+  updatedAt?: Date | number | null;
+  processedAt?: Date | number | null;
+}
+
+export interface PayrollPayment {
+  id: string;
+  schoolId: string;
+  payrollRunId: string;
+  staffId: string;
+  staffName: string;
+  amount: number;
+  recipientCode?: string | null;
+  transferReference?: string | null;
+  status: PayrollPaymentStatus;
+  failureReason?: string | null;
+  paidAt?: Date | number | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number | null;
 }
 
 export type BroadcastType = "GENERAL" | "SYSTEM_UPDATE" | "MAINTENANCE";
@@ -384,12 +449,49 @@ export interface Student {
   gender: "Male" | "Female";
   dob: string;
   classId: string;
+  
+  // Student Information (Ghana Standard)
+  homeTown?: string;
+  region?: string;
+  languagesSpoken?: string;
+  previousSchool?: string;
+  reasonForLeaving?: string;
+  dateOfLastAttendance?: string;
+  residentialAddress?: string;
+  digitalAddress?: string; // G.P.A Address
+  chronicDisease?: string;
+
+  // Father Information
+  fatherName?: string;
+  fatherOccupation?: string;
+  fatherPhone?: string;
+  fatherEducation?: string;
+  fatherAddress?: string;
+  fatherWhatsApp?: string;
+  fatherEmail?: string;
+
+  // Mother Information
+  motherName?: string;
+  motherOccupation?: string;
+  motherPhone?: string;
+  motherEducation?: string;
+  motherAddress?: string;
+  motherWhatsApp?: string;
+  motherEmail?: string;
+
+  // Guardian Information
   guardianName: string;
   guardianPhone: string;
   guardianEmail?: string;
+  guardianOccupation?: string;
+  guardianEducation?: string;
+  guardianAddress?: string;
+  guardianWhatsApp?: string;
+
   parentId?: string;
   studentStatus?: "graduated" | "stopped" | "active";
   createdAt?: Date | number;
+  photoUrl?: string;
 }
 
 export interface AttendanceRecord {

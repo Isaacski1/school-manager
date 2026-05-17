@@ -28,6 +28,7 @@ const ManageBackups = lazy(() => import("./pages/admin/ManageBackups"));
 const Timetable = lazy(() => import("./pages/admin/Timetable"));
 const Billing = lazy(() => import("./pages/admin/Billing"));
 const FeesPayments = lazy(() => import("./pages/admin/FeesPayments"));
+const StaffPayroll = lazy(() => import("./pages/admin/StaffPayroll"));
 const ActivityMonitor = lazy(() => import("./pages/admin/ActivityMonitor"));
 const TeacherDashboard = lazy(() => import("./pages/teacher/TeacherDashboard"));
 const Attendance = lazy(() => import("./pages/teacher/Attendance"));
@@ -60,6 +61,7 @@ import WhatsAppBroadcastProgress from "./components/WhatsAppBroadcastProgress";
 const MarketingHome = lazy(() => import("./pages/public/MarketingHome"));
 const Pricing = lazy(() => import("./pages/public/Pricing"));
 const BookDemo = lazy(() => import("./pages/public/BookDemo"));
+const DemoVideos = lazy(() => import("./pages/public/DemoVideos"));
 const GetStarted = lazy(() => import("./pages/public/GetStarted"));
 const VerifyEmail = lazy(() => import("./pages/public/VerifyEmail"));
 const Features = lazy(() => import("./pages/public/Features"));
@@ -200,7 +202,7 @@ const AppContent = () => {
   const currentPath = location.pathname === "/" && location.hash
     ? getPathFromHash(location.hash)
     : location.pathname;
-  const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
+  const isPublicRoute = ["/", "/features", "/pricing", "/book-demo", "/demos", "/get-started", "/verify-email", "/email-verified", "/login"].includes(currentPath);
 
   const isSchoolUser = user?.role === UserRole.SCHOOL_ADMIN || user?.role === UserRole.TEACHER || user?.role === UserRole.PARENT;
   
@@ -477,6 +479,7 @@ const AppRoutes = ({
       {/* Public Marketing Pages */}
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/book-demo" element={<BookDemo />} />
+      <Route path="/demos" element={<DemoVideos />} />
       <Route path="/get-started" element={<GetStarted />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/features" element={<Features />} />
@@ -657,6 +660,17 @@ const AppRoutes = ({
             requiredFeature="fees_payments"
           >
             <FeesPayments />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/payroll"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SCHOOL_ADMIN]}
+            requiredFeature="teacher_management"
+          >
+            <StaffPayroll />
           </ProtectedRoute>
         }
       />

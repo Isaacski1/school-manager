@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { createTeacher } from "../../services/backendApi";
@@ -550,7 +551,10 @@ const ManageTeachers = () => {
                       }`}
                     >
                       <td className="px-6 py-3 font-medium text-slate-800">
-                        {teacher.fullName}
+                        <div className="flex items-center gap-3">
+                          <UserAvatar user={teacher} size="sm" />
+                          <span>{teacher.fullName}</span>
+                        </div>
                       </td>
 
                       <td className="px-6 py-3 flex items-center">

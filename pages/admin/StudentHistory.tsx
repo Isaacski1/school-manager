@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 // @ts-ignore - html2pdf.js doesn't have proper types
 import html2pdf from "html2pdf.js";
+import UserAvatar from "../../components/UserAvatar";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
@@ -440,7 +441,7 @@ const StudentHistory = () => {
                   <div
                     className={`h-12 w-12 rounded-2xl bg-white shadow-sm ring-1 ${accentStyles.ring} flex items-center justify-center text-lg font-bold text-slate-700`}
                   >
-                    {student.name.charAt(0)}
+                    <UserAvatar user={student} size="lg" className="!rounded-2xl shadow-sm" />
                   </div>
                   <div>
                     <p className="text-lg font-bold text-slate-900">
@@ -675,7 +676,7 @@ const StudentHistory = () => {
               <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-white text-lg font-bold text-slate-700 ring-1 ring-slate-200">
-                    {studentToDelete.name.charAt(0)}
+                    <UserAvatar user={studentToDelete} size="lg" className="!rounded-2xl shadow-sm" />
                   </div>
                   <div className="min-w-0">
                     <p className="truncate text-base font-bold text-slate-900">
@@ -767,7 +768,7 @@ const StudentHistory = () => {
                   </p>
                   <div className="mt-2 flex items-center gap-3">
                     <div className="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center text-lg font-bold shadow-sm">
-                      {viewStudent.name.charAt(0)}
+                      <UserAvatar user={viewStudent} size="lg" className="!rounded-2xl shadow-sm" />
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-slate-800">

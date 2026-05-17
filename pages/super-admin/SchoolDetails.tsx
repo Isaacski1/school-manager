@@ -57,6 +57,7 @@ type SchoolFormState = {
   code: string;
   phone: string;
   address: string;
+  schoolType: string;
   logoUrl: string;
   status: "active" | "inactive" | "trial_active";
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
@@ -114,6 +115,13 @@ const SPECIAL_PRICING_SOFT_LIMIT = 5;
 const SCHOOLS_CACHE_KEY = "super_admin_schools_page_1_v1";
 const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
 const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
+const SCHOOL_TYPE_OPTIONS = [
+  "Primary School",
+  "Junior High School",
+  "Senior High School",
+  "Basic School (Nursery to JHS)",
+  "Nursery/Kindergarten",
+];
 
 const PLAN_META: Record<
   SchoolFormState["plan"],
@@ -359,6 +367,7 @@ const SchoolDetails = () => {
           code: schoolData.code || "",
           phone: schoolData.phone || "",
           address: schoolData.address || "",
+          schoolType: schoolData.schoolType || "",
           logoUrl: schoolData.logoUrl || "",
           status: schoolData.status || "active",
           plan: schoolData.plan || "trial",
@@ -640,6 +649,7 @@ const SchoolDetails = () => {
           code: formState.code.trim(),
           phone: formState.phone.trim(),
           address: formState.address.trim(),
+          schoolType: formState.schoolType.trim(),
           logoUrl: nextLogoUrl,
           status: formState.status,
           plan: formState.plan,
@@ -664,6 +674,7 @@ const SchoolDetails = () => {
               code: formState.code.trim(),
               phone: formState.phone.trim(),
               address: formState.address.trim(),
+              schoolType: formState.schoolType.trim(),
               logoUrl: nextLogoUrl,
               status: formState.status,
               plan: formState.plan,
@@ -701,6 +712,7 @@ const SchoolDetails = () => {
       code: school.code || "",
       phone: school.phone || "",
       address: school.address || "",
+      schoolType: school.schoolType || "",
       logoUrl: school.logoUrl || "",
       status: school.status || "active",
       plan: school.plan || "trial",
@@ -1144,6 +1156,11 @@ const SchoolDetails = () => {
                         value: school.code || "Not assigned",
                         icon: Globe,
                       },
+                      {
+                        label: "School type",
+                        value: school.schoolType || "Not selected",
+                        icon: GraduationCap,
+                      },
                     ].map((item) => {
                       const Icon = item.icon;
                       return (
@@ -1381,6 +1398,27 @@ const SchoolDetails = () => {
                             <option value="inactive">Inactive</option>
                             <option value="trial_active">Trial Active</option>
                           </select>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className={LABEL_CLASS}>School Type</label>
+                          <select
+                            value={formState.schoolType}
+                            onChange={(e) =>
+                              handleFormChange("schoolType", e.target.value)
+                            }
+                            className={INPUT_CLASS}
+                          >
+                            <option value="">Select school type</option>
+                            {SCHOOL_TYPE_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="mt-2 text-xs leading-5 text-slate-500">
+                            This controls which class levels appear in the
+                            school's dashboard and admin workflows.
+                          </p>
                         </div>
                         <div className="md:col-span-2">
                           <label className={LABEL_CLASS}>Address</label>

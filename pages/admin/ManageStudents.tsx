@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { useSchool } from "../../context/SchoolContext";
@@ -13,6 +14,7 @@ import {
   getGradeColor,
   getFilteredClasses,
 } from "../../constants";
+
 import {
   Plus,
   Trash2,
@@ -47,6 +49,36 @@ const ManageStudents = () => {
     gender: "Male",
     classId: defaultClassId,
     dob: "",
+    homeTown: "",
+    region: "",
+    languagesSpoken: "",
+    previousSchool: "",
+    reasonForLeaving: "",
+    dateOfLastAttendance: "",
+    residentialAddress: "",
+    digitalAddress: "",
+    chronicDisease: "",
+    fatherName: "",
+    fatherOccupation: "",
+    fatherPhone: "",
+    fatherEducation: "",
+    fatherAddress: "",
+    fatherWhatsApp: "",
+    fatherEmail: "",
+    motherName: "",
+    motherOccupation: "",
+    motherPhone: "",
+    motherEducation: "",
+    motherAddress: "",
+    motherWhatsApp: "",
+    motherEmail: "",
+    guardianName: "",
+    guardianPhone: "",
+    guardianEmail: "",
+    guardianOccupation: "",
+    guardianEducation: "",
+    guardianAddress: "",
+    guardianWhatsApp: "",
   });
 
   // Performance Data (Shared for both View Modal and Edit Modal)
@@ -68,6 +100,39 @@ const ManageStudents = () => {
   const [promotionTermNumber, setPromotionTermNumber] = useState<1 | 2 | 3>(1);
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [selectedPromoteIds, setSelectedPromoteIds] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const compressImageToBase64 = (file: File, maxPx = 300, quality = 0.75): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingPhoto(true);
+    try {
+      const base64 = await compressImageToBase64(file);
+      setFormData(prev => ({ ...prev, photoUrl: base64 }));
+      showToast("Photo ready! Save the student to apply it.", { type: "success" });
+    } catch (error) {
+      console.error("Photo upload error:", error);
+      showToast("Failed to process photo.", { type: "error" });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const fetchData = async () => {
     if (!schoolId) {
@@ -171,7 +236,41 @@ const ManageStudents = () => {
   const handleOpenAdd = () => {
     setPerformanceData(null);
     const selectedClass = filterClass !== "all" ? filterClass : defaultClassId;
-    setFormData({ gender: "Male", classId: selectedClass, dob: "" });
+    setFormData({
+      gender: "Male",
+      classId: selectedClass,
+      dob: "",
+      homeTown: "",
+      region: "",
+      languagesSpoken: "",
+      previousSchool: "",
+      reasonForLeaving: "",
+      dateOfLastAttendance: "",
+      residentialAddress: "",
+      digitalAddress: "",
+      chronicDisease: "",
+      fatherName: "",
+      fatherOccupation: "",
+      fatherPhone: "",
+      fatherEducation: "",
+      fatherAddress: "",
+      fatherWhatsApp: "",
+      fatherEmail: "",
+      motherName: "",
+      motherOccupation: "",
+      motherPhone: "",
+      motherEducation: "",
+      motherAddress: "",
+      motherWhatsApp: "",
+      motherEmail: "",
+      guardianName: "",
+      guardianPhone: "",
+      guardianEmail: "",
+      guardianOccupation: "",
+      guardianEducation: "",
+      guardianAddress: "",
+      guardianWhatsApp: "",
+    });
     setEditingId(null);
     setShowModal(true);
   };
@@ -204,7 +303,41 @@ const ManageStudents = () => {
 
   const handleClose = () => {
     setShowModal(false);
-    setFormData({ gender: "Male", classId: defaultClassId, dob: "" });
+    setFormData({
+      gender: "Male",
+      classId: defaultClassId,
+      dob: "",
+      homeTown: "",
+      region: "",
+      languagesSpoken: "",
+      previousSchool: "",
+      reasonForLeaving: "",
+      dateOfLastAttendance: "",
+      residentialAddress: "",
+      digitalAddress: "",
+      chronicDisease: "",
+      fatherName: "",
+      fatherOccupation: "",
+      fatherPhone: "",
+      fatherEducation: "",
+      fatherAddress: "",
+      fatherWhatsApp: "",
+      fatherEmail: "",
+      motherName: "",
+      motherOccupation: "",
+      motherPhone: "",
+      motherEducation: "",
+      motherAddress: "",
+      motherWhatsApp: "",
+      motherEmail: "",
+      guardianName: "",
+      guardianPhone: "",
+      guardianEmail: "",
+      guardianOccupation: "",
+      guardianEducation: "",
+      guardianAddress: "",
+      guardianWhatsApp: "",
+    });
     setEditingId(null);
     setPerformanceData(null);
   };
@@ -416,22 +549,27 @@ const ManageStudents = () => {
 
     setIsSaving(true);
     try {
-      if (editingId) {
-        const normalizePhone = (p: string) => {
-          if (!p) return "";
-          let cleaned = p.trim().replace(/\s+/g, "");
-          if (!cleaned.startsWith("+")) {
-            if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
-            else cleaned = "+233" + cleaned;
-          }
-          return cleaned;
-        };
+      const normalizePhone = (p: string) => {
+        if (!p) return "";
+        let cleaned = p.trim().replace(/\s+/g, "");
+        if (!cleaned.startsWith("+")) {
+          if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
+          else cleaned = "+233" + cleaned;
+        }
+        return cleaned;
+      };
 
+      if (editingId) {
         const updatedStudent: Student = {
           ...(formData as Student),
           id: editingId,
           schoolId: schoolId || (formData as Student).schoolId,
+          fatherPhone: normalizePhone(formData.fatherPhone || ""),
+          fatherWhatsApp: normalizePhone(formData.fatherWhatsApp || ""),
+          motherPhone: normalizePhone(formData.motherPhone || ""),
+          motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
+          guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
         };
         await db.updateStudent(updatedStudent);
         showToast("Student updated successfully.", { type: "success" });
@@ -455,25 +593,20 @@ const ManageStudents = () => {
           return;
         }
 
-        const normalizePhone = (p: string) => {
-          if (!p) return "";
-          let cleaned = p.trim().replace(/\s+/g, "");
-          if (!cleaned.startsWith("+")) {
-            if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
-            else cleaned = "+233" + cleaned;
-          }
-          return cleaned;
-        };
-
         const newStudent: Student = {
+          ...(formData as any),
           id: Math.random().toString(36).substr(2, 9),
-          name: formData.name,
+          name: formData.name!,
           gender: formData.gender as "Male" | "Female",
           dob: formData.dob || "",
           classId: formData.classId,
           schoolId: schoolId || (school as any)?.id || "",
-          guardianName: formData.guardianName || "",
+          fatherPhone: normalizePhone(formData.fatherPhone || ""),
+          fatherWhatsApp: normalizePhone(formData.fatherWhatsApp || ""),
+          motherPhone: normalizePhone(formData.motherPhone || ""),
+          motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
+          guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
           createdAt: Date.now(),
         };
         await db.addStudent(newStudent);
@@ -756,9 +889,7 @@ const ManageStudents = () => {
 
                       <div className="relative flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                          <div className="h-11 w-11 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-semibold">
-                            {student.name.charAt(0)}
-                          </div>
+                          <UserAvatar user={student} size="md" />
                           <div>
                             <p className="font-semibold text-slate-900">
                               {student.name}
@@ -880,214 +1011,441 @@ const ManageStudents = () => {
       {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="mb-6 border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">
-                {editingId ? "Edit Student Details" : "Add New Student"}
-              </h3>
-              <p className="text-xs text-slate-500">
-                Keep student records accurate and up to date.
-              </p>
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="mb-6 border-b border-slate-100 pb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">
+                  {editingId ? "Edit Student Details" : "Student Admission Form"}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Fill in all required information for accurate records.
+                </p>
+              </div>
+              <button onClick={handleClose} className="p-2 hover:bg-slate-100 rounded-full">
+                <X size={24} className="text-slate-400" />
+              </button>
             </div>
 
-            {/* Quick Performance Summary within Edit Modal */}
-            {editingId && (
-              <div className="mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-slate-700">
-                    Attendance Summary
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Current Term Performance
-                  </p>
-                </div>
-                <div className="text-right">
-                  {performanceData ? (
-                    <>
-                      <span className="text-xl font-bold text-emerald-600">
-                        {performanceData.attendance.percentage}%
-                      </span>
-                      <p className="text-xs text-slate-500">
-                        {performanceData.attendance.present}/
-                        {performanceData.attendance.total} Days
-                      </p>
-                    </>
-                  ) : (
-                    <span className="text-xs text-slate-400">
-                      Loading data...
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Personal Info Section */}
+            <form onSubmit={handleSubmit} className="space-y-8">
+              {/* 1. Student / Pupil Information */}
               <div className="space-y-4">
-                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide">
-                  Personal Information
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-[10px]">1</div>
+                  Student / Pupil Information
                 </h4>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {/* Photo Upload */}
+                  <div className="lg:col-span-3 flex justify-center mb-4">
+                    <div className="relative group">
+                      <div className="w-24 h-24 rounded-full border-2 border-slate-200 p-1 bg-white flex items-center justify-center overflow-hidden">
+                        {formData.photoUrl ? (
+                          <img src={formData.photoUrl} alt="Student" className="w-full h-full object-cover rounded-full" />
+                        ) : (
+                          <UserIcon size={40} className="text-slate-300" />
+                        )}
+                      </div>
+                      <label className="absolute inset-0 flex items-center justify-center bg-black/40 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity">
+                        <div className="text-center">
+                          <Edit size={16} className="mx-auto mb-1" />
+                          <span className="text-[10px] font-bold uppercase">Upload</span>
+                        </div>
+                        <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} disabled={uploadingPhoto} />
+                      </label>
+                      {uploadingPhoto && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-white/60 rounded-full">
+                          <div className="h-5 w-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder-slate-400"
-                    value={formData.name || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, name: e.target.value })
-                    }
-                    placeholder="e.g. Kwame Nkrumah Jnr"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                  <div className="lg:col-span-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Student Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.name || ""}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="Full Name"
+                    />
+                  </div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">
-                      Gender
-                    </label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Gender</label>
                     <select
-                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-slate-900"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
                       value={formData.gender}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          gender: e.target.value as any,
-                        })
-                      }
+                      onChange={(e) => setFormData({ ...formData, gender: e.target.value as any })}
                     >
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">
-                      Date of Birth
-                    </label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Date of Birth</label>
                     <input
                       type="date"
                       className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                       value={formData.dob || ""}
-                      onChange={(e) =>
-                        setFormData({ ...formData, dob: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
                     />
                   </div>
-                </div>
-              </div>
-
-              {/* Academic Info */}
-              <div className="space-y-4 pt-2">
-                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide">
-                  Academic Info
-                </h4>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">
-                    Assigned Class
-                  </label>
-                  <select
-                    className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-slate-900"
-                    value={formData.classId}
-                    onChange={(e) =>
-                      setFormData({ ...formData, classId: e.target.value })
-                    }
-                  >
-                    {availableClasses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Guardian Info */}
-              <div className="space-y-4 pt-2">
-                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide">
-                  Guardian Information
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">
-                      Guardian Name
-                    </label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Home Town</label>
                     <input
                       type="text"
-                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder-slate-400"
-                      value={formData.guardianName || ""}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          guardianName: e.target.value,
-                        })
-                      }
-                      placeholder="e.g. Mr. John Doe"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.homeTown || ""}
+                      onChange={(e) => setFormData({ ...formData, homeTown: e.target.value })}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">
-                      Phone Number
-                    </label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Region</label>
                     <input
-                      type="tel"
-                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder-slate-400"
-                      value={formData.guardianPhone || ""}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          guardianPhone: e.target.value,
-                        })
-                      }
-                      placeholder="e.g. 024 123 4567"
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.region || ""}
+                      onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Language(s) Spoken</label>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.languagesSpoken || ""}
+                      onChange={(e) => setFormData({ ...formData, languagesSpoken: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Assigned Class</label>
+                    <select
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                      value={formData.classId}
+                      onChange={(e) => setFormData({ ...formData, classId: e.target.value })}
+                    >
+                      {availableClasses.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="lg:col-span-3">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Previous School Attended</label>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.previousSchool || ""}
+                      onChange={(e) => setFormData({ ...formData, previousSchool: e.target.value })}
+                    />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Reason(s) for leaving last school</label>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.reasonForLeaving || ""}
+                      onChange={(e) => setFormData({ ...formData, reasonForLeaving: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Date of last attendance</label>
+                    <input
+                      type="date"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.dateOfLastAttendance || ""}
+                      onChange={(e) => setFormData({ ...formData, dateOfLastAttendance: e.target.value })}
+                    />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Residential Address</label>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.residentialAddress || ""}
+                      onChange={(e) => setFormData({ ...formData, residentialAddress: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">G.P.A Address (Digital)</label>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                      value={formData.digitalAddress || ""}
+                      onChange={(e) => setFormData({ ...formData, digitalAddress: e.target.value })}
+                      placeholder="e.g. AK-123-4567"
+                    />
+                  </div>
+                  <div className="lg:col-span-3">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Any Chronic Disease / Abnormality</label>
+                    <textarea
+                      className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none min-h-[80px]"
+                      value={formData.chronicDisease || ""}
+                      onChange={(e) => setFormData({ ...formData, chronicDisease: e.target.value })}
+                      placeholder="Specify if any, or 'None'"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-100">
+              {/* 2. Parent Information */}
+              <div className="space-y-6 pt-4 border-t border-slate-100">
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-[10px]">2</div>
+                  Parent / Guardian Information
+                </h4>
+
+                {/* Father Info */}
+                <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                  <h5 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                    Father's Information
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Father's Name</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherName || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherName: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Occupation</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherOccupation || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherOccupation: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Telephone</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherPhone || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherPhone: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">WhatsApp Number</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherWhatsApp || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherWhatsApp: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherEmail || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherEmail: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Level of Education</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherEducation || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherEducation: e.target.value })}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Residential Address</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.fatherAddress || ""}
+                        onChange={(e) => setFormData({ ...formData, fatherAddress: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mother Info */}
+                <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                  <h5 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-rose-500"></div>
+                    Mother's Information
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Mother's Name</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherName || ""}
+                        onChange={(e) => setFormData({ ...formData, motherName: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Occupation</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherOccupation || ""}
+                        onChange={(e) => setFormData({ ...formData, motherOccupation: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Telephone</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherPhone || ""}
+                        onChange={(e) => setFormData({ ...formData, motherPhone: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">WhatsApp Number</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherWhatsApp || ""}
+                        onChange={(e) => setFormData({ ...formData, motherWhatsApp: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherEmail || ""}
+                        onChange={(e) => setFormData({ ...formData, motherEmail: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Level of Education</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherEducation || ""}
+                        onChange={(e) => setFormData({ ...formData, motherEducation: e.target.value })}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Residential Address</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.motherAddress || ""}
+                        onChange={(e) => setFormData({ ...formData, motherAddress: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Guardian Info */}
+                <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                  <h5 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                    Guardian's Information
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Guardian's Name</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianName || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianName: e.target.value })}
+                        placeholder="Required if no parent info"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Occupation</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianOccupation || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianOccupation: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Telephone</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianPhone || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianPhone: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">WhatsApp Number</label>
+                      <input
+                        type="tel"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianWhatsApp || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianWhatsApp: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianEmail || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianEmail: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Level of Education</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianEducation || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianEducation: e.target.value })}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Residential Address</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                        value={formData.guardianAddress || ""}
+                        onChange={(e) => setFormData({ ...formData, guardianAddress: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-10 pt-6 border-t border-slate-100 sticky bottom-0 bg-white pb-2">
                 <button
                   type="button"
                   onClick={handleClose}
-                  className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+                  className="px-6 py-3 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className={`px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-medium shadow-sm transition-colors ${isSaving ? "opacity-60 cursor-not-allowed hover:bg-emerald-600" : "hover:bg-emerald-700"}`}
+                  className={`px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95 ${isSaving ? "opacity-60 cursor-not-allowed hover:bg-emerald-600" : "hover:bg-emerald-700 hover:-translate-y-0.5"}`}
                 >
                   {isSaving ? (
                     <span className="flex items-center">
                       <svg
-                        className="animate-spin h-4 w-4 mr-2 text-white"
+                        className="animate-spin h-5 w-5 mr-3 text-white"
                         xmlns="http://www.w3.org/2000/svg"
                         fill="none"
                         viewBox="0 0 24 24"
                       >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                        ></circle>
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                        ></path>
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
                       </svg>
-                      {editingId ? "Updating..." : "Saving..."}
+                      {editingId ? "Updating..." : "Admitting Student..."}
                     </span>
                   ) : editingId ? (
-                    "Update Student"
+                    "Save Changes"
                   ) : (
-                    "Save Student"
+                    "Complete Admission"
                   )}
                 </button>
               </div>
@@ -1318,9 +1676,7 @@ const ManageStudents = () => {
             <div className="p-6 border-b border-slate-100 flex flex-col gap-4 bg-gradient-to-r from-slate-50 via-white to-emerald-50 sticky top-0 z-10">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-sm">
-                    {viewStudent.name.charAt(0)}
-                  </div>
+                  <UserAvatar user={viewStudent} size="xl" className="shadow-sm !rounded-2xl" />
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">
                       {viewStudent.name}

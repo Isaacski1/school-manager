@@ -5,11 +5,16 @@ import { db } from "../../services/mockDb";
 import { Student, StudentRemark } from "../../types";
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM } from "../../constants";
 import { Save, MessageSquare } from "lucide-react";
+import UserAvatar from "../../components/UserAvatar";
 import { logActivity } from "../../services/activityLog";
 
 const WriteRemarks = () => {
   const { user } = useAuth();
-  const assignedClassIds = user?.assignedClassIds || [];
+  const assignedClassIds = (user?.assignedClassIds || []).sort((a, b) => {
+    const indexA = CLASSES_LIST.findIndex((c) => c.id === a);
+    const indexB = CLASSES_LIST.findIndex((c) => c.id === b);
+    return indexA - indexB;
+  });
   const schoolId = user?.schoolId || null;
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
@@ -227,9 +232,7 @@ const WriteRemarks = () => {
             students.map((student) => (
               <div key={student.id} className="p-4 border-b last:border-b-0">
                 <div className="flex items-center mb-2">
-                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-600 mr-3">
-                    {student.name.charAt(0)}
-                  </div>
+                  <UserAvatar user={student} size="md" className="mr-3" />
                   <div>
                     <p className="font-medium text-slate-800">{student.name}</p>
                     <p className="text-xs text-slate-400">

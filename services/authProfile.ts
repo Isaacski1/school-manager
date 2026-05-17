@@ -102,6 +102,7 @@ export async function loadUserProfile(
       studentIds: customClaims.studentIds || [],
       status: userStatus,
       emailVerified: firebaseUser.emailVerified,
+      photoUrl: userData.photoUrl || undefined,
       createdAt: userData.createdAt?.toDate() || new Date(),
     };
   } else {

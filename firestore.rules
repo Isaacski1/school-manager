@@ -156,13 +156,16 @@ service cloud.firestore {
       allow read: if isAuthenticated() && request.auth.uid == userId;
 
       // Users can update only safe fields on their own profile
-      allow update: if isAuthenticated() &&
-                       request.auth.uid == userId &&
-                       request.resource.data.role == resource.data.role &&
-                       (
-                         request.resource.data.schoolId == resource.data.schoolId ||
-                         resource.data.role == 'parent'
-                       );
+      allow update: if isAuthenticated() && request.auth.uid == userId && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl']) ||
+        (
+          request.resource.data.get('role', '') == resource.data.get('role', '') &&
+          (
+            request.resource.data.get('schoolId', '') == resource.data.get('schoolId', '') ||
+            resource.data.get('role', '') == 'parent'
+          )
+        )
+      );
 
       // Teachers can read their own profile (redundant but explicit)
       allow read: if isTeacher() && request.auth.uid == userId;
@@ -439,37 +442,17 @@ service cloud.firestore {
         (maxStudentsForSchool(request.resource.data.schoolId) == null ||
          maxStudentsForSchool(request.resource.data.schoolId) <= 0 ||
          studentsCountForSchool(request.resource.data.schoolId) <
-           maxStudentsForSchool(request.resource.data.schoolId)) &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "name",
-          "gender",
-          "dob",
-          "classId",
-          "guardianName",
-          "guardianPhone",
-          "studentStatus",
-          "createdAt"
-        ]);
+           maxStudentsForSchool(request.resource.data.schoolId));
 
       allow read: if isSuperAdmin() || 
                      schoolScopedRead(resource.data.schoolId) || 
                      isParentOf(resource.data.guardianPhone);
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "name",
-          "gender",
-          "dob",
-          "classId",
-          "guardianName",
-          "guardianPhone",
-          "studentStatus",
-          "createdAt"
-        ]);
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || 
+         ((isSchoolAdmin() || isTeacher()) && userSchoolId() == request.resource.data.schoolId)) &&
+        isActiveSchoolId(request.resource.data.schoolId) &&
+        (!resource.data.keys().hasAny(['schoolId']) || resource.data.schoolId == request.resource.data.schoolId);
 
       allow delete: if schoolScopedDelete(resource.data.schoolId);
     }

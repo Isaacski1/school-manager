@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { TeacherAttendanceAnalytics } from "../../types";
@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   CheckCircle,
 } from "lucide-react";
+import UserAvatar from "../../components/UserAvatar";
 
 const TeacherAttendanceStats = () => {
   const { school } = useSchool();
@@ -154,9 +155,7 @@ const TeacherAttendanceStats = () => {
                     {/* Teacher Header */}
                     <div className="mb-4 sm:mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex min-w-0 items-start gap-3 sm:gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#0B4A82] border-2 border-[#E6F0FA] flex items-center justify-center text-white font-bold text-lg shadow-lg shrink-0">
-                          {teacher.teacherName.charAt(0)}
-                        </div>
+                        <UserAvatar user={{ ...teacher, name: teacher.teacherName }} size="lg" className="shrink-0 shadow-lg border-2 border-[#E6F0FA]" />
                         <div className="min-w-0">
                           <h3 className="text-lg sm:text-xl font-bold text-slate-800 break-words">
                             {teacher.teacherName}

@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
@@ -435,6 +436,7 @@ const AdminDashboard = () => {
   const availableClasses = React.useMemo(() => {
     return getFilteredClasses(school?.schoolType);
   }, [school?.schoolType]);
+  const schoolTypeLabel = school?.schoolType || "All school levels";
 
   const [stats, setStats] = useState({
     students: 0,
@@ -697,13 +699,23 @@ const AdminDashboard = () => {
   const [editFormData, setEditFormData] = useState<Partial<Student>>({});
 
   const summaryCacheKey = useMemo(
-    () => (schoolId ? `admin_dashboard_summary_${schoolId}` : ""),
-    [schoolId],
+    () =>
+      schoolId
+        ? `admin_dashboard_summary_${schoolId}_${encodeURIComponent(
+            schoolTypeLabel,
+          )}`
+        : "",
+    [schoolId, schoolTypeLabel],
   );
 
   const heavyCacheKey = useMemo(
-    () => (schoolId ? `admin_dashboard_heavy_${schoolId}` : ""),
-    [schoolId],
+    () =>
+      schoolId
+        ? `admin_dashboard_heavy_${schoolId}_${encodeURIComponent(
+            schoolTypeLabel,
+          )}`
+        : "",
+    [schoolId, schoolTypeLabel],
   );
 
   const cachedHeavy = useMemo(() => {
@@ -721,6 +733,10 @@ const AdminDashboard = () => {
       return null;
     }
   }, [heavyCacheKey]);
+
+  useEffect(() => {
+    setStats((prev) => ({ ...prev, classes: availableClasses.length }));
+  }, [availableClasses.length]);
 
   const currentAttendanceAverage = useMemo(() => {
     const classPctList = stats.classAttendance.map((c) => c.percentage || 0);
@@ -2609,10 +2625,18 @@ const AdminDashboard = () => {
   );
 
   const StudentEnrollCard = () => {
-    const topClassActivity = [...stats.classAttendance]
-      .sort((left, right) => right.percentage - left.percentage)
-      .slice(0, 4);
-    const hasClassActivity = topClassActivity.length > 0;
+    const classAttendanceById = new Map(
+      stats.classAttendance.map((entry) => [entry.id, entry]),
+    );
+    const classActivity = availableClasses.map((classItem) => {
+      const attendance = classAttendanceById.get(classItem.id);
+      return {
+        id: classItem.id,
+        className: classItem.name,
+        percentage: attendance?.percentage ?? 0,
+      };
+    });
+    const hasClassActivity = classActivity.length > 0;
 
     return (
       <div className="relative overflow-hidden rounded-[28px] border border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,251,235,0.96),rgba(255,255,255,0.94),rgba(255,237,213,0.92))] p-5 sm:p-6 shadow-[0_18px_42px_-30px_rgba(217,119,6,0.22)]">
@@ -2662,7 +2686,7 @@ const AdminDashboard = () => {
                     Class activity
                   </span>
                   <span className="mt-1 block text-[11px] text-slate-400">
-                    Top attendance rates
+                    Class attendance rates
                   </span>
                 </div>
                 <div className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-100">
@@ -2671,8 +2695,8 @@ const AdminDashboard = () => {
               </div>
 
               {hasClassActivity ? (
-                <div className="space-y-2.5">
-                  {topClassActivity.map((c) => {
+                <div className="max-h-44 space-y-2.5 overflow-y-auto pr-1.5 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.75)_transparent]">
+                  {classActivity.map((c) => {
                     const percentage = Math.min(
                       100,
                       Math.max(0, Math.round(c.percentage || 0)),
@@ -3574,6 +3598,10 @@ const AdminDashboard = () => {
                       : "Data up to date"}
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
+                    <GraduationCap size={14} />
+                    {schoolTypeLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
                     {totalSchoolDays ?? fallbackSchoolDays.days} school days
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
@@ -3961,11 +3989,11 @@ const AdminDashboard = () => {
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-bold text-red-600">
-                              {alert.teacherName.charAt(0)}
-                            </span>
-                          </div>
+
+
+                          <UserAvatar user={{ name: alert.teacherName } as any} size="sm" className="shadow-sm ring-1 ring-red-100" />
+
+
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-800">
                               {alert.teacherName}
@@ -4045,11 +4073,11 @@ const AdminDashboard = () => {
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-bold text-blue-700">
-                              {alert.teacherName.charAt(0)}
-                            </span>
-                          </div>
+
+
+                          <UserAvatar user={{ name: alert.teacherName } as any} size="sm" className="shadow-sm ring-1 ring-blue-100" />
+
+
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-800">
                               {alert.teacherName}
@@ -4403,11 +4431,11 @@ const AdminDashboard = () => {
                           className="hover:bg-slate-50 transition-colors"
                         >
                           <td className="px-6 py-4 font-medium text-slate-800 flex items-center align-middle">
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs text-white mr-3 shadow-sm ${s.gender === "Male" ? "bg-amber-400" : "bg-[#0B4A82]"}`}
-                            >
-                              {s.name.charAt(0)}
-                            </div>
+
+
+
+                            <UserAvatar user={s} size="sm" className="mr-3 shadow-sm" />
+
                             <div>
                               <p>{s.name}</p>
                               <p className="text-[10px] text-slate-400 uppercase">
@@ -4932,9 +4960,9 @@ const AdminDashboard = () => {
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
             <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-2xl font-bold text-slate-500 shadow-inner">
-                  {viewStudent.name.charAt(0)}
-                </div>
+
+                <UserAvatar user={viewStudent} size="xl" className="shadow-inner" />
+
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
                     {viewStudent.name}

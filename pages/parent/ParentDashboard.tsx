@@ -9,6 +9,7 @@ import { Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
 import { LogOut, User as UserIcon, Calendar, FileText, CreditCard, MessageSquare, BookOpen, Clock, Activity } from "lucide-react";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import AttendanceView from "../../components/parent/AttendanceView";
 import FeesView from "../../components/parent/FeesView";
 import ReportCardView from "../../components/parent/ReportCardView";
@@ -208,8 +209,8 @@ export default function ParentDashboard() {
                     : `You have ${students.length} children enrolled.`}
                 </p>
               </div>
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-                <UserIcon size={22} className="text-white" />
+              <div className="shrink-0">
+                <UserAvatar user={user} size="lg" className="ring-4 ring-white/10" />
               </div>
             </div>
 
@@ -238,11 +239,11 @@ export default function ParentDashboard() {
                       : "border-slate-100 hover:border-slate-200"
                   }`}
                 >
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl ${
-                    selectedStudentId === student.id ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-400"
-                  }`}>
-                    {student.name.charAt(0)}
-                  </div>
+                  <UserAvatar 
+                    user={student} 
+                    size="md" 
+                    className={selectedStudentId === student.id ? "ring-2 ring-slate-800" : ""} 
+                  />
                   <div>
                     <div className="font-semibold text-slate-900">{student.name}</div>
                     <div className="text-sm text-slate-500">{CLASSES_LIST.find(c => c.id === student.classId)?.name || student.classId}</div>
@@ -261,11 +262,11 @@ export default function ParentDashboard() {
                       : "border-slate-200 hover:border-blue-200 bg-slate-50/50"
                   }`}
                 >
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl ${
-                    selectedStudentId === student.id ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-400"
-                  }`}>
-                    {student.name.charAt(0)}
-                  </div>
+                  <UserAvatar 
+                    user={student} 
+                    size="md" 
+                    className={selectedStudentId === student.id ? "ring-2 ring-blue-600" : "opacity-70"} 
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-slate-900 truncate">{student.name}</div>
                     <div className="text-[10px] uppercase tracking-wider font-bold text-blue-600 flex items-center gap-1">

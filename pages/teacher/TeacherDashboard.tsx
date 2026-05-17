@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
@@ -2017,8 +2018,11 @@ const TeacherDashboard = () => {
             <div className="p-6">
               <div className="space-y-4 max-h-96 overflow-y-auto">
                 {studentsForRemarks.map((student) => (
-                  <div key={student.id} className="border rounded p-4">
-                    <h4 className="font-semibold mb-2">{student.name}</h4>
+                  <div key={student.id} className="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
+                    <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                      <UserAvatar user={student} size="sm" />
+                      <h4 className="font-bold text-slate-800">{student.name}</h4>
+                    </div>
                     <div className="mb-2">
                       <label className="block text-sm font-medium mb-1">
                         Behavior Tag
@@ -2206,8 +2210,11 @@ const TeacherDashboard = () => {
             <div className="p-6">
               <div className="space-y-4 max-h-96 overflow-y-auto">
                 {studentsForSkills.map((student) => (
-                  <div key={student.id} className="border rounded p-4">
-                    <h4 className="font-semibold mb-3">{student.name}</h4>
+                  <div key={student.id} className="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
+                    <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                      <UserAvatar user={student} size="sm" />
+                      <h4 className="font-bold text-slate-800">{student.name}</h4>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       {SKILLS_LIST.map((skill) => (
                         <div key={skill}>

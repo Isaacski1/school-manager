@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Sparkles, Users, Heart, ChevronDown, Star, Quote, MessageCircle, Bell, Wallet, X } from "lucide-react";
+import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Sparkles, Users, Heart, ChevronDown, MessageCircle, Bell, Wallet, X } from "lucide-react";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { db } from "../../services/mockDb";
 
@@ -56,29 +56,145 @@ const faqs = [
   }
 ];
 
-const reviews = [
+const showcaseScreens = [
   {
-    name: "Dr. Kwesi Appiah",
-    role: "Proprietor, Alpha Preparatory",
-    content: "School Manager GH has completely transformed how we handle attendance and reports. The automation saves us hours of manual work every week.",
-    rating: 5,
-    avatar: "/avatar-kwesi.png"
+    title: "Admin dashboard",
+    description: "Track attendance, staff activity, payments, and school operations from one command center.",
+    accent: "#38BDF8",
+    metrics: ["Attendance", "Students", "Fees"],
+    rows: ["Today overview", "Teacher approvals", "Recent payments"],
   },
   {
-    name: "Sarah Mensah",
-    role: "Administrator, Beacon International",
-    content: "The fees and payments module is a game changer. Our fee collection has improved by 40% since we started using the parent portal for payments.",
-    rating: 5,
-    avatar: "/avatar-sarah.png"
+    title: "Parent dashboard",
+    description: "Give parents a clear view of attendance, results, fees, and school updates from their phone.",
+    accent: "#22C55E",
+    metrics: ["Attendance", "Reports", "Fees"],
+    rows: ["Child summary", "Latest remarks", "Fee balance"],
   },
   {
-    name: "Ebenezer Tetteh",
-    role: "Senior Teacher, Delta Schools",
-    content: "As a teacher, I love how quickly I can enter assessments. The automated report cards are professional and save me so much stress at the end of term.",
-    rating: 5,
-    avatar: "/avatar-ebenezer.png"
-  }
+    title: "Fee payment page",
+    description: "Record fee payments, monitor balances, and keep finance work organized by term.",
+    accent: "#F59E0B",
+    metrics: ["Paid", "Balance", "Invoices"],
+    rows: ["Payment history", "Outstanding fees", "Receipt actions"],
+  },
+  {
+    title: "Report card page",
+    description: "Generate professional report cards with grades, remarks, skills, and term summaries.",
+    accent: "#A78BFA",
+    metrics: ["Grades", "Remarks", "PDF"],
+    rows: ["Academic performance", "Skills summary", "Teacher remarks"],
+  },
+  {
+    title: "Attendance page",
+    description: "Capture daily student and teacher attendance with quick visibility into missing records.",
+    accent: "#06B6D4",
+    metrics: ["Present", "Absent", "Rate"],
+    rows: ["Class register", "Daily status", "Attendance trend"],
+  },
 ];
+
+const trustMetrics = [
+  { label: "Students Managed", value: 1280, suffix: "+" },
+  { label: "Fee Transactions", value: 4200, suffix: "+" },
+  { label: "Reports Generated", value: 3100, suffix: "+" },
+  { label: "Parent Notifications Sent", value: 9600, suffix: "+" },
+];
+
+const operationalTrustCards = [
+  {
+    icon: BookOpen,
+    title: "Faster report generation",
+    desc: "Turn assessments, remarks, skills, and term records into ready-to-share reports with less manual formatting.",
+  },
+  {
+    icon: Wallet,
+    title: "Transparent fee tracking",
+    desc: "Track paid, partial, and outstanding balances by learner, class, term, and payment channel.",
+  },
+  {
+    icon: Bell,
+    title: "Instant WhatsApp alerts",
+    desc: "Notify admins and parents quickly when payments, announcements, or school updates need attention.",
+  },
+  {
+    icon: MessageCircle,
+    title: "Easier parent communication",
+    desc: "Give parents a cleaner way to follow attendance, fees, report cards, and school notices from their phones.",
+  },
+];
+
+const ghanaComparisonCards = [
+  "WhatsApp payment alerts",
+  "Ghana-friendly fee tracking",
+  "Report cards for KG to JHS",
+  "Parent portal access",
+  "Mobile money compatibility",
+];
+
+const primaryCtaStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 10,
+  padding: "16px 34px",
+  borderRadius: 999,
+  background: "linear-gradient(135deg, #22D3EE 0%, #38BDF8 38%, #2563EB 100%)",
+  color: "white",
+  fontWeight: 800,
+  fontSize: 16,
+  textDecoration: "none",
+  boxShadow: "0 18px 42px rgba(56,189,248,0.34)",
+  border: "1px solid rgba(255,255,255,0.22)",
+  transition: "transform 180ms ease, box-shadow 180ms ease, filter 180ms ease",
+};
+
+const secondaryCtaStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 10,
+  padding: "15px 30px",
+  borderRadius: 999,
+  background: "rgba(255,255,255,0.1)",
+  color: "white",
+  fontWeight: 750,
+  fontSize: 15,
+  textDecoration: "none",
+  border: "1.5px solid rgba(255,255,255,0.22)",
+  backdropFilter: "blur(10px)",
+  transition: "transform 180ms ease, background 180ms ease, border-color 180ms ease",
+};
+
+const AnimatedCounter: React.FC<{ value: number; suffix?: string }> = ({
+  value,
+  suffix = "",
+}) => {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    let frameId = 0;
+    const duration = 1200;
+    const startedAt = performance.now();
+
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(Math.round(value * eased));
+      if (progress < 1) frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [value]);
+
+  return (
+    <>
+      {displayValue.toLocaleString()}
+      {suffix}
+    </>
+  );
+};
 
 const MarketingHome = () => {
   const [partnerSchools, setPartnerSchools] = useState<any[]>([
@@ -230,17 +346,16 @@ const MarketingHome = () => {
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <Link
-                    to="/get-started"
+                    to="/book-demo"
                     onClick={() => setShowPopup(false)}
+                    className="primary-cta"
                     style={{
-                      padding: "16px 24px", borderRadius: 999,
-                      background: "linear-gradient(135deg, #0B4A82, #1E40AF)",
-                      color: "white", fontWeight: 700, textDecoration: "none",
-                      textAlign: "center", fontSize: 16,
-                      boxShadow: "0 8px 24px rgba(11,74,130,0.3)"
+                      ...primaryCtaStyle,
+                      width: "100%",
+                      textAlign: "center",
                     }}
                   >
-                    Start Your Free Trial
+                    Book Free Demo
                   </Link>
                   <button
                     onClick={() => setShowPopup(false)}
@@ -298,18 +413,19 @@ const MarketingHome = () => {
         @media (max-width: 640px) {
           .features-header { text-align: center !important; }
           .feature-card { padding: 24px !important; }
+          .showcase-section { padding: 72px 16px !important; }
+          .showcase-grid { grid-template-columns: 1fr !important; gap: 18px !important; }
+          .showcase-card { padding: 14px !important; border-radius: 22px !important; }
+          .showcase-preview { min-height: 190px !important; }
+          .showcase-preview-body { padding: 14px !important; }
+          .showcase-header { margin-bottom: 36px !important; }
           .about-stats-grid { grid-template-columns: 1fr !important; gap: 32px !important; }
           .impact-badge { left: auto !important; right: 12px !important; bottom: 12px !important; padding: 8px 12px !important; gap: 8px !important; border-radius: 12px !important; }
           .impact-badge div:first-child { width: 28px !important; height: 28px !important; }
           .impact-badge div:first-child svg { width: 16px !important; height: 16px !important; }
           .impact-badge p:first-of-type { font-size: 14px !important; }
           .impact-badge p:last-child { font-size: 10px !important; }
-          .testimonial-card { padding: 32px 24px !important; border-radius: 24px !important; text-align: center !important; align-items: center !important; }
-          .testimonial-card .stars-container { justify-content: center !important; }
-          .testimonial-card p { font-size: 16px !important; margin-bottom: 24px !important; }
-          .testimonial-author-container { flex-direction: column !important; text-align: center !important; gap: 12px !important; }
-          .testimonial-quote-icon { top: 20px !important; right: 24px !important; width: 32px !important; height: 32px !important; }
-          .testimonials-grid { grid-template-columns: 1fr !important; max-width: 400px !important; margin: 0 auto !important; }
+          .trust-card-grid, .ghana-comparison-grid, .trust-metrics-grid { grid-template-columns: 1fr !important; }
           .faq-button { padding: 18px 20px !important; }
           .faq-button span { font-size: 16px !important; }
           .faq-answer { padding: 0 20px 18px !important; font-size: 14px !important; }
@@ -330,6 +446,40 @@ const MarketingHome = () => {
         .ticker-wrapper:hover {
           animation-play-state: paused;
         }
+        .showcase-card {
+          transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease, background 220ms ease;
+        }
+        .showcase-card:hover {
+          transform: translateY(-8px);
+          border-color: rgba(147,197,253,0.45) !important;
+          background: rgba(255,255,255,0.08) !important;
+          box-shadow: 0 26px 70px rgba(0,0,0,0.28);
+        }
+        .showcase-card:hover .showcase-preview {
+          transform: translateY(-3px) scale(1.01);
+        }
+        .showcase-preview {
+          transition: transform 220ms ease;
+        }
+        .primary-cta:hover {
+          transform: translateY(-3px) scale(1.025);
+          filter: brightness(1.08);
+          box-shadow: 0 24px 54px rgba(56,189,248,0.46) !important;
+        }
+        .secondary-cta:hover {
+          transform: translateY(-2px);
+          background: rgba(255,255,255,0.16) !important;
+          border-color: rgba(255,255,255,0.34) !important;
+        }
+        .trust-card, .ghana-comparison-card, .trust-metric-card {
+          transition: transform 220ms ease, border-color 220ms ease, background 220ms ease, box-shadow 220ms ease;
+        }
+        .trust-card:hover, .ghana-comparison-card:hover, .trust-metric-card:hover {
+          transform: translateY(-6px);
+          border-color: rgba(147,197,253,0.38) !important;
+          background: rgba(255,255,255,0.075) !important;
+          box-shadow: 0 22px 60px rgba(0,0,0,0.22);
+        }
       `}</style>
 
       {/* ── HERO ── */}
@@ -345,23 +495,23 @@ const MarketingHome = () => {
             </motion.div>
 
             <motion.h1 variants={fadeUp} style={{ fontSize: "clamp(34px, 5vw, 60px)", fontWeight: 800, lineHeight: 1.1, color: "white", margin: "0 0 20px 0" }}>
-              The #1 School<br />
+              Automate report cards,<br />
               <span style={{ background: "linear-gradient(90deg, #93C5FD, #67E8F9)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>
-                Management System
+                fee tracking, and parent
               </span><br />
-              in Ghana
+              communication in one platform.
             </motion.h1>
 
             <motion.p variants={fadeUp} style={{ fontSize: "clamp(16px, 2vw, 18px)", lineHeight: 1.7, color: "rgba(255,255,255,0.8)", margin: "0 0 36px 0", maxWidth: 520 }}>
-              The most affordable and comprehensive school management system in Ghana. Manage attendance, assessments, fees, and parent communication in one premium platform built for real Ghanaian school teams.
+              Reduce manual work for Ghanaian schools by bringing assessments, fee records, attendance, parent updates, and daily admin tasks into one organized workspace.
             </motion.p>
 
             <motion.div variants={fadeUp} className="hero-buttons" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <Link to="/get-started" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "white", color: "#0B4A82", fontWeight: 700, textDecoration: "none", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-                Register Your School <ArrowRight size={16} />
+              <Link to="/book-demo" className="primary-cta" style={primaryCtaStyle}>
+                Book Free Demo <ArrowRight size={18} />
               </Link>
-              <Link to="/book-demo" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "rgba(255,255,255,0.1)", color: "white", fontWeight: 700, textDecoration: "none", border: "1.5px solid rgba(255,255,255,0.2)", backdropFilter: "blur(8px)" }}>
-                Book a Demo
+              <Link to="/get-started" className="secondary-cta" style={secondaryCtaStyle}>
+                Register Your School
               </Link>
             </motion.div>
           </motion.div>
@@ -390,6 +540,35 @@ const MarketingHome = () => {
               </div>
             </motion.div>
           </motion.div>
+        </div>
+      </section>
+
+      <section style={{ padding: "34px 24px 28px", background: "rgba(255,255,255,0.025)", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="trust-metrics-grid" style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+          {trustMetrics.map((metric) => (
+            <motion.div
+              key={metric.label}
+              initial={{ opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="trust-metric-card"
+              style={{
+                borderRadius: 22,
+                border: "1px solid rgba(255,255,255,0.1)",
+                background: "rgba(255,255,255,0.045)",
+                backdropFilter: "blur(16px)",
+                padding: "22px 18px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "clamp(24px, 3vw, 34px)", fontWeight: 850, color: "white", lineHeight: 1 }}>
+                <AnimatedCounter value={metric.value} suffix={metric.suffix} />
+              </div>
+              <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.54)" }}>
+                {metric.label}
+              </div>
+            </motion.div>
+          ))}
         </div>
       </section>
 
@@ -487,6 +666,96 @@ const MarketingHome = () => {
         </div>
       </section>
 
+      {/* â”€â”€ PRODUCT SHOWCASE â”€â”€ */}
+      <section className="showcase-section" style={{ padding: "96px 24px", background: "linear-gradient(180deg, rgba(4,18,34,0) 0%, rgba(11,74,130,0.12) 50%, rgba(4,18,34,0) 100%)" }}>
+        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+          <div className="showcase-header" style={{ textAlign: "center", marginBottom: 56 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#93C5FD", margin: "0 0 12px 0", letterSpacing: "0.12em" }}>Product preview</p>
+            <h2 style={{ fontSize: "clamp(28px, 4vw, 46px)", fontWeight: 800, color: "white", margin: "0 0 14px 0", lineHeight: 1.15 }}>
+              See School Manager GH in Action
+            </h2>
+            <p style={{ fontSize: 16, color: "rgba(255,255,255,0.62)", margin: "0 auto", maxWidth: 680, lineHeight: 1.7 }}>
+              Explore the core screens schools use to manage daily operations, communicate with parents, and reduce repetitive admin work.
+            </p>
+          </div>
+
+          <div className="showcase-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 22 }}>
+            {showcaseScreens.map((screen) => (
+              <motion.div
+                key={screen.title}
+                initial={{ opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-80px" }}
+                transition={{ duration: 0.45 }}
+                className="showcase-card"
+                style={{
+                  background: "rgba(255,255,255,0.055)",
+                  border: "1.5px solid rgba(255,255,255,0.1)",
+                  borderRadius: 26,
+                  padding: 16,
+                  overflow: "hidden",
+                  backdropFilter: "blur(18px)",
+                }}
+              >
+                <div
+                  className="showcase-preview"
+                  style={{
+                    minHeight: 214,
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    background: "linear-gradient(145deg, rgba(255,255,255,0.98), rgba(226,232,240,0.94))",
+                    boxShadow: "inset 0 0 0 1px rgba(15,23,42,0.08)",
+                  }}
+                >
+                  <div style={{ height: 32, display: "flex", alignItems: "center", gap: 6, padding: "0 14px", borderBottom: "1px solid rgba(15,23,42,0.08)", background: "rgba(248,250,252,0.9)" }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444" }} />
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B" }} />
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22C55E" }} />
+                    <div style={{ height: 8, width: 86, borderRadius: 999, background: "rgba(15,23,42,0.08)", marginLeft: "auto" }} />
+                  </div>
+
+                  <div className="showcase-preview-body" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                      <div>
+                        <div style={{ width: 120, height: 9, borderRadius: 999, background: "#0B4A82", marginBottom: 8 }} />
+                        <div style={{ width: 72, height: 7, borderRadius: 999, background: "rgba(15,23,42,0.16)" }} />
+                      </div>
+                      <div style={{ width: 34, height: 34, borderRadius: 12, background: `${screen.accent}22`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ width: 14, height: 14, borderRadius: 5, background: screen.accent }} />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 16 }}>
+                      {screen.metrics.map((metric, idx) => (
+                        <div key={metric} style={{ borderRadius: 12, padding: "10px 8px", background: idx === 0 ? `${screen.accent}1f` : "rgba(15,23,42,0.045)", border: "1px solid rgba(15,23,42,0.06)" }}>
+                          <div style={{ height: 7, width: "70%", borderRadius: 999, background: idx === 0 ? screen.accent : "rgba(15,23,42,0.18)", marginBottom: 8 }} />
+                          <div style={{ fontSize: 9, fontWeight: 700, color: "#475569", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{metric}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {screen.rows.map((row, idx) => (
+                        <div key={row} style={{ display: "grid", gridTemplateColumns: "18px 1fr 42px", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 11, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(15,23,42,0.06)" }}>
+                          <span style={{ width: 18, height: 18, borderRadius: 6, background: idx === 0 ? `${screen.accent}33` : "rgba(15,23,42,0.08)" }} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row}</span>
+                          <span style={{ height: 7, borderRadius: 999, background: idx === 0 ? screen.accent : "rgba(15,23,42,0.14)" }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: "18px 4px 2px" }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 800, color: "white", margin: "0 0 8px 0" }}>{screen.title}</h3>
+                  <p style={{ fontSize: 14, lineHeight: 1.65, color: "rgba(255,255,255,0.64)", margin: 0 }}>{screen.description}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section style={{ padding: "64px 24px" }}>
         <div style={{ maxWidth: 1280, margin: "0 auto" }}>
           <div className="features-header" style={{ textAlign: "center", marginBottom: 56 }}>
@@ -523,7 +792,10 @@ const MarketingHome = () => {
             <div className="teacher-card-content" style={{ padding: "60px 50px" }}>
               <h2 style={{ fontSize: "clamp(26px, 4vw, 48px)", fontWeight: 800, color: "white", marginBottom: 24, lineHeight: 1.2 }}>Empowering teachers to <span style={{ color: "#93C5FD" }}>focus on teaching.</span></h2>
               <p style={{ fontSize: 18, color: "rgba(255,255,255,0.8)", marginBottom: 32 }}>Automate the boring stuff. From digital attendance to term reports.</p>
-              <Link to="/get-started" style={{ display: "inline-flex", padding: "14px 28px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, textDecoration: "none" }}>Get Started</Link>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <Link to="/book-demo" className="primary-cta" style={primaryCtaStyle}>Book Free Demo</Link>
+                <Link to="/get-started" className="secondary-cta" style={secondaryCtaStyle}>Register Your School</Link>
+              </div>
             </div>
             <div className="teacher-card-img" style={{ minHeight: 400 }}>
               <img src="/img-teacher-2.PNG" alt="Teacher" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -532,61 +804,89 @@ const MarketingHome = () => {
         </div>
       </section>
 
-      <section style={{ padding: "100px 24px", background: "linear-gradient(180deg, rgba(4,18,34,0) 0%, rgba(11,74,130,0.05) 100%)" }}>
+      <section style={{ padding: "100px 24px", background: "linear-gradient(180deg, rgba(4,18,34,0) 0%, rgba(11,74,130,0.08) 100%)" }}>
         <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 64 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#93C5FD", margin: "0 0 12px 0" }}>Testimonials</p>
-            <h2 style={{ fontSize: "clamp(28px, 4vw, 44px)", fontWeight: 800, color: "white", margin: 0 }}>Trusted by educators</h2>
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#93C5FD", margin: "0 0 12px 0", letterSpacing: "0.12em" }}>Operational trust</p>
+            <h2 style={{ fontSize: "clamp(28px, 4vw, 44px)", fontWeight: 800, color: "white", margin: "0 0 14px 0" }}>Why Schools Choose School Manager GH</h2>
+            <p style={{ fontSize: 16, color: "rgba(255,255,255,0.62)", margin: "0 auto", maxWidth: 680, lineHeight: 1.7 }}>
+              Practical tools for the work schools repeat every day: reports, fees, communication, attendance, and parent visibility.
+            </p>
           </div>
 
-          <div className="testimonials-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 32, justifyContent: "center" }}>
-            {reviews.map((r, idx) => (
-              <motion.div 
-                key={idx}
-                initial="hidden"
-                whileInView="show"
-                viewport={{ once: true }}
-                variants={fadeUp}
-                className="testimonial-card"
-                style={{ 
-                  background: "rgba(255,255,255,0.03)", 
-                  borderRadius: 32, 
-                  padding: 40, 
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  position: "relative",
-                  display: "flex",
-                  flexDirection: "column"
-                }}
-              >
-                <div className="testimonial-quote-icon" style={{ position: "absolute", top: 32, right: 40, opacity: 0.1 }}>
-                  <Quote size={48} color="white" className="testimonial-quote-icon-svg" />
-                </div>
-                
-                <div className="stars-container" style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-                  {[...Array(r.rating)].map((_, i) => (
-                    <Star key={i} size={16} fill="#FACC15" color="#FACC15" />
-                  ))}
-                </div>
-
-                <p style={{ fontSize: 18, lineHeight: 1.8, color: "rgba(255,255,255,0.8)", marginBottom: 32, flexGrow: 1 }}>
-                  "{r.content}"
-                </p>
-
-                <div className="testimonial-author-container" style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <img 
-                    src={r.avatar} 
-                    alt={r.name} 
-                    style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} 
-                    loading="lazy"
-                    decoding="async"
-                  />
-                  <div>
-                    <h4 style={{ fontSize: 17, fontWeight: 700, color: "white", margin: "0 0 4px 0" }}>{r.name}</h4>
-                    <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", margin: 0 }}>{r.role}</p>
+          <div className="trust-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 22 }}>
+            {operationalTrustCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <motion.div
+                  key={card.title}
+                  initial={{ opacity: 0, y: 24 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  className="trust-card"
+                  style={{
+                    background: "rgba(255,255,255,0.045)",
+                    borderRadius: 26,
+                    padding: 26,
+                    border: "1.5px solid rgba(255,255,255,0.1)",
+                    backdropFilter: "blur(18px)",
+                  }}
+                >
+                  <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(147,197,253,0.13)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+                    <Icon size={24} color="#93C5FD" />
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                  <h3 style={{ fontSize: 19, fontWeight: 800, color: "white", margin: "0 0 10px 0" }}>{card.title}</h3>
+                  <p style={{ fontSize: 14, lineHeight: 1.7, color: "rgba(255,255,255,0.66)", margin: 0 }}>{card.desc}</p>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section style={{ padding: "88px 24px", background: "rgba(255,255,255,0.025)" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.1fr", gap: 36, alignItems: "center" }} className="ghana-comparison-grid">
+            <div>
+              <p style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#93C5FD", margin: "0 0 12px 0", letterSpacing: "0.12em" }}>Local fit</p>
+              <h2 style={{ fontSize: "clamp(28px, 4vw, 44px)", fontWeight: 800, color: "white", margin: "0 0 18px 0", lineHeight: 1.15 }}>Built Specifically for Ghanaian Schools</h2>
+              <p style={{ fontSize: 16, color: "rgba(255,255,255,0.66)", lineHeight: 1.75, margin: "0 0 28px 0" }}>
+                School Manager GH focuses on the operational details Ghanaian schools actually need, from WhatsApp communication to term-based fee handling and mobile-friendly parent access.
+              </p>
+              <Link to="/book-demo" className="primary-cta" style={primaryCtaStyle}>Book Free Demo <ArrowRight size={18} /></Link>
+            </div>
+
+            <div style={{ display: "grid", gap: 14 }}>
+              {ghanaComparisonCards.map((feature, index) => (
+                <motion.div
+                  key={feature}
+                  initial={{ opacity: 0, x: 24 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: index * 0.05 }}
+                  className="ghana-comparison-card"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "42px 1fr auto",
+                    alignItems: "center",
+                    gap: 14,
+                    borderRadius: 22,
+                    padding: "16px 18px",
+                    background: "rgba(255,255,255,0.052)",
+                    border: "1.5px solid rgba(255,255,255,0.1)",
+                    backdropFilter: "blur(16px)",
+                  }}
+                >
+                  <div style={{ width: 42, height: 42, borderRadius: 14, background: index % 2 === 0 ? "rgba(34,211,238,0.14)" : "rgba(34,197,94,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <CheckCircle size={20} color={index % 2 === 0 ? "#67E8F9" : "#86EFAC"} />
+                  </div>
+                  <span style={{ color: "white", fontSize: 16, fontWeight: 750 }}>{feature}</span>
+                  <span style={{ borderRadius: 999, padding: "5px 10px", background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Included
+                  </span>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -654,8 +954,8 @@ const MarketingHome = () => {
       <section className="final-cta-section" style={{ padding: "100px 24px", textAlign: "center" }}>
         <h2 style={{ fontSize: "clamp(32px, 5vw, 56px)", fontWeight: 800, color: "white", marginBottom: 24 }}>Ready to modernize your school?</h2>
         <div className="final-cta-buttons" style={{ display: "flex", gap: 16, justifyContent: "center" }}>
-          <Link to="/get-started" style={{ padding: "16px 36px", borderRadius: 999, background: "#0B4A82", color: "white", fontWeight: 700, textDecoration: "none" }}>Register Your School</Link>
-          <Link to="/book-demo" style={{ padding: "16px 36px", borderRadius: 999, background: "rgba(255,255,255,0.05)", color: "white", fontWeight: 700, textDecoration: "none", border: "1px solid rgba(255,255,255,0.2)" }}>Schedule a Demo</Link>
+          <Link to="/book-demo" className="primary-cta" style={primaryCtaStyle}>Book Free Demo <ArrowRight size={18} /></Link>
+          <Link to="/get-started" className="secondary-cta" style={secondaryCtaStyle}>Register Your School</Link>
         </div>
       </section>
     </PublicSiteLayout>

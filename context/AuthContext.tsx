@@ -49,6 +49,7 @@ interface AuthContextType {
   authLoading: boolean;
   error: React.ReactNode | null;
   logout: () => void;
+  updateUser: (patch: Partial<User>) => void;
   isAuthenticated: boolean;
 }
 
@@ -242,6 +243,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
+  const updateUser = (patch: Partial<User>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -250,6 +255,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         authLoading,
         error,
         logout,
+        updateUser,
         isAuthenticated: !!user,
       }}
     >

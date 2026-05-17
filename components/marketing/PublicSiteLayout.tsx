@@ -1,4 +1,4 @@
-import React, { useEffect, useState, memo } from "react";
+import React, { useEffect, useRef, useState, memo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Menu, X, ArrowUp } from "lucide-react";
@@ -13,24 +13,49 @@ const navLinks = [
   { href: "/features", label: "Features" },
   { href: "/pricing", label: "Pricing" },
   { href: "/blog", label: "Blog" },
-  { href: "/book-demo", label: "Book Demo" },
+  { href: "/demos", label: "Watch Demos" },
 ];
 
-
+const whatsappHref = `https://wa.me/233201008784?text=${encodeURIComponent(
+  "Hello, I would like a demo of School Manager GH.",
+)}`;
 
 const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const scrolledRef = useRef(false);
+  const showScrollTopRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     const onScroll = () => {
-      setScrolled(window.scrollY > 16);
-      setShowScrollTop(window.scrollY > 400);
+      if (scrollFrameRef.current !== null) return;
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        const nextScrolled = window.scrollY > 16;
+        const nextShowScrollTop = window.scrollY > 400;
+
+        if (scrolledRef.current !== nextScrolled) {
+          scrolledRef.current = nextScrolled;
+          setScrolled(nextScrolled);
+        }
+
+        if (showScrollTopRef.current !== nextShowScrollTop) {
+          showScrollTopRef.current = nextShowScrollTop;
+          setShowScrollTop(nextShowScrollTop);
+        }
+      });
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    onScroll();
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
@@ -41,9 +66,9 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
     <div className="min-h-screen font-sans relative overflow-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#041222", color: "white" }}>
       
       {/* Animated Glowing Orbs (Fixed background) */}
-      <div className="fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 0, willChange: "transform" }}></div>
-      <div className="fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0, willChange: "transform" }}></div>
-      <div className="fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0, willChange: "transform" }}></div>
+      <div className="marketing-orb fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 0 }}></div>
+      <div className="marketing-orb fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0 }}></div>
+      <div className="marketing-orb fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0 }}></div>
 
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
@@ -108,19 +133,32 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
               Login
             </Link>
             <Link
-              to="/get-started"
+              to="/book-demo"
               style={{
-                padding: "10px 22px", borderRadius: 999, fontSize: 14, fontWeight: 700,
-                background: "linear-gradient(135deg, #0B4A82 0%, #1160A8 100%)",
+                padding: "11px 24px", borderRadius: 999, fontSize: 14, fontWeight: 800,
+                background: "linear-gradient(135deg, #22D3EE 0%, #38BDF8 38%, #2563EB 100%)",
                 color: "white", textDecoration: "none",
                 display: "flex", alignItems: "center", gap: 8,
-                boxShadow: "0 4px 16px rgba(11,74,130,0.3)",
+                boxShadow: "0 12px 28px rgba(56,189,248,0.32)",
                 transition: "all 0.2s",
               }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(11,74,130,0.4)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(11,74,130,0.3)"; }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px) scale(1.02)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 18px 38px rgba(56,189,248,0.44)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0) scale(1)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 28px rgba(56,189,248,0.32)"; }}
             >
-              Register Your School <ArrowRight size={15} />
+              Book Free Demo <ArrowRight size={15} />
+            </Link>
+            <Link
+              to="/get-started"
+              style={{
+                padding: "10px 18px", borderRadius: 999, fontSize: 14, fontWeight: 700,
+                border: "1.5px solid rgba(255,255,255,0.2)", color: "white", textDecoration: "none",
+                background: "rgba(255,255,255,0.06)",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.12)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.06)"; }}
+            >
+              Register Your School
             </Link>
           </div>
 
@@ -167,14 +205,25 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
                 ))}
                 <Link to="/login" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600, color: "white", border: "1.5px solid rgba(255,255,255,0.2)", textDecoration: "none", textAlign: "center" }}>Login</Link>
                 <Link
+                  to="/book-demo"
+                  style={{
+                    padding: "14px 16px", borderRadius: 12, fontWeight: 800,
+                    background: "linear-gradient(135deg, #22D3EE 0%, #38BDF8 38%, #2563EB 100%)",
+                    color: "white", textDecoration: "none", textAlign: "center", fontSize: 14,
+                  }}
+                >
+                  Book Free Demo
+                </Link>
+                <Link
                   to="/get-started"
                   style={{
                     padding: "13px 16px", borderRadius: 12, fontSize: 14, fontWeight: 700,
-                    background: "linear-gradient(135deg, #0B4A82 0%, #1160A8 100%)",
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1.5px solid rgba(255,255,255,0.18)",
                     color: "white", textDecoration: "none", textAlign: "center",
                   }}
                 >
-                  Register Your School →
+                  Register Your School
                 </Link>
               </div>
             </motion.div>
@@ -196,11 +245,35 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         .animate-blob {
           animation: blob 12s infinite alternate ease-in-out;
         }
+        .marketing-orb {
+          backface-visibility: hidden;
+          contain: layout paint style;
+          transform: translateZ(0);
+          will-change: transform;
+        }
         .animation-delay-2000 {
           animation-delay: 2s;
         }
         .animation-delay-4000 {
           animation-delay: 4s;
+        }
+        @keyframes whatsappPulse {
+          0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.42), 0 18px 42px rgba(0,0,0,0.34); }
+          70% { box-shadow: 0 0 0 16px rgba(37, 211, 102, 0), 0 18px 42px rgba(0,0,0,0.34); }
+          100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0), 0 18px 42px rgba(0,0,0,0.34); }
+        }
+        .whatsapp-float {
+          animation: whatsappPulse 2.4s infinite;
+        }
+        .whatsapp-float:hover {
+          transform: translateY(-3px) scale(1.04);
+          background: rgba(37, 211, 102, 0.96) !important;
+        }
+        @supports (content-visibility: auto) {
+          .marketing-main > section:not(:first-child) {
+            content-visibility: auto;
+            contain-intrinsic-size: 760px;
+          }
         }
         @media (max-width: 1024px) {
           .desktop-nav, .desktop-ctas { display: none !important; }
@@ -214,7 +287,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         }
       `}</style>
 
-      <main className="relative" style={{ zIndex: 10 }}>{children}</main>
+      <main className="relative marketing-main" style={{ zIndex: 10 }}>{children}</main>
 
       {/* Footer */}
       <footer style={{ background: "linear-gradient(180deg, rgba(4, 18, 34, 0.8) 0%, rgba(4, 18, 34, 1) 100%)", color: "white", paddingTop: 64, paddingBottom: 40, position: "relative", zIndex: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
@@ -233,7 +306,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
 
             <div>
               <p style={{ fontWeight: 700, fontSize: 14, marginBottom: 16, color: "rgba(255,255,255,0.9)" }}>Platform</p>
-              {[["Home", "/"], ["Features", "/features"], ["Pricing", "/pricing"], ["Book Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
+              {[["Home", "/"], ["Features", "/features"], ["Pricing", "/pricing"], ["Watch Demos", "/demos"], ["Book Free Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
                 <Link key={href} to={href} style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10, transition: "color 0.2s" }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "white"}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"}
@@ -262,6 +335,46 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         </div>
       </footer>
 
+      <a
+        href={whatsappHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Chat on WhatsApp"
+        className="whatsapp-float"
+        style={{
+          position: "fixed",
+          right: 24,
+          bottom: 24,
+          width: 62,
+          height: 62,
+          borderRadius: 999,
+          background: "rgba(37, 211, 102, 0.9)",
+          color: "white",
+          border: "1px solid rgba(255,255,255,0.34)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 120,
+          transition: "transform 180ms ease, background 180ms ease",
+          textDecoration: "none",
+        }}
+      >
+        <svg
+          width="31"
+          height="31"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            fill="currentColor"
+            d="M16.04 3.2C9.02 3.2 3.32 8.86 3.32 15.82c0 2.24.6 4.43 1.74 6.35L3.2 28.8l6.83-1.79a12.8 12.8 0 0 0 6.01 1.5c7.02 0 12.72-5.66 12.72-12.62S23.06 3.2 16.04 3.2Zm0 23.18c-1.9 0-3.76-.51-5.38-1.48l-.39-.23-4.05 1.06 1.08-3.93-.26-.41a10.38 10.38 0 0 1-1.6-5.57c0-5.79 4.75-10.49 10.6-10.49s10.6 4.7 10.6 10.49-4.75 10.56-10.6 10.56Zm5.8-7.85c-.32-.16-1.88-.92-2.17-1.03-.29-.1-.5-.16-.72.16-.21.32-.82 1.03-1.01 1.24-.19.21-.37.24-.69.08-.32-.16-1.35-.49-2.57-1.57-.95-.84-1.59-1.89-1.78-2.21-.19-.32-.02-.49.14-.65.15-.15.32-.37.48-.56.16-.19.21-.32.32-.53.1-.21.05-.4-.03-.56-.08-.16-.72-1.72-.98-2.36-.26-.62-.52-.54-.72-.55h-.61c-.21 0-.56.08-.85.4-.29.32-1.12 1.08-1.12 2.64s1.15 3.07 1.3 3.28c.16.21 2.27 3.43 5.5 4.81.77.33 1.37.53 1.84.68.77.24 1.47.21 2.02.13.62-.09 1.88-.76 2.14-1.49.27-.74.27-1.37.19-1.5-.08-.13-.29-.21-.61-.37Z"
+          />
+        </svg>
+      </a>
+
       {/* Scroll to Top Button */}
       <AnimatePresence>
         {showScrollTop && (
@@ -272,7 +385,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             style={{
               position: "fixed",
-              bottom: 24,
+              bottom: 96,
               right: 24,
               width: 56,
               height: 56,

@@ -14,10 +14,15 @@ import {
   Clock,
   XCircle,
 } from "lucide-react";
+import UserAvatar from "../../components/UserAvatar";
 
 const Attendance = () => {
   const { user } = useAuth();
-  const assignedClassIds = user?.assignedClassIds || [];
+  const assignedClassIds = (user?.assignedClassIds || []).sort((a, b) => {
+    const indexA = CLASSES_LIST.findIndex((c) => c.id === a);
+    const indexB = CLASSES_LIST.findIndex((c) => c.id === b);
+    return indexA - indexB;
+  });
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const schoolId = user?.schoolId || null;
 
@@ -548,15 +553,7 @@ const Attendance = () => {
                 onClick={() => !isBlocked && togglePresence(student.id)}
               >
                 <div className="flex items-center gap-4">
-                  <div
-                    className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${
-                      isPresent
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-rose-100 text-rose-700"
-                    }`}
-                  >
-                    {student.name.charAt(0)}
-                  </div>
+                  <UserAvatar user={student} size="md" />
                   <div>
                     <p className="font-semibold text-slate-900">
                       {student.name}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
+import schoolLogo from "../../logo/apple-icon-180x180.png";
 import Layout from "../../components/Layout";
+import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { logActivity } from "../../services/activityLog";
@@ -44,7 +46,7 @@ import {
   getDocsFromServer,
 } from "firebase/firestore";
 import { firestore } from "../../services/firebase";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
 
 const getClassGroupKey = (name: string) => {
   const normalized = name.toLowerCase();
@@ -58,7 +60,7 @@ const getClassGroupKey = (name: string) => {
 };
 
 const SystemSettings = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const { school } = useSchool();
   const schoolId = requireSchoolId(user);
   const isTrialPlan = (school as any)?.plan === "trial";
@@ -122,8 +124,9 @@ const SystemSettings = () => {
     null,
   );
 
-  // Logo Upload State
+  // Logo/Photo Upload State
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const classGroups = React.useMemo(() => {
     const groups: Record<string, ClassRoom[]> = {
@@ -391,17 +394,62 @@ const SystemSettings = () => {
     }
   };
 
+  /** Compress an image File to a base64 JPEG string (max 300×300, ~30 KB). */
+  const compressImageToBase64 = (file: File, maxPx = 300, quality = 0.7): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+
+  const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploadingPhoto(true);
+    try {
+      const base64 = await compressImageToBase64(file);
+      await db.updateUserProfilePhoto(user.id, base64);
+      updateUser({ photoUrl: base64 }); // update in-memory user so avatar refreshes immediately
+      showToast("Profile photo updated successfully!", { type: "success" });
+
+      await logActivity({
+        schoolId,
+        actorUid: user.id,
+        actorRole: user.role,
+        eventType: "profile_photo_updated",
+        entityId: user.id,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user.fullName || "",
+        },
+      });
+    } catch (error) {
+      console.error("Profile photo upload error:", error);
+      showToast("Failed to upload profile photo.", { type: "error" });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadingLogo(true);
     try {
-      const storage = getStorage();
-      const storageRef = ref(storage, `logos/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(storageRef);
-      const updatedConfig = { ...config, schoolId, logoUrl: downloadURL };
+      // Compress logo to max 400px, stored as base64 in Firestore (free, no Storage needed)
+      const base64 = await compressImageToBase64(file, 400, 0.8);
+      const updatedConfig = { ...config, schoolId, logoUrl: base64 };
       setConfig(updatedConfig);
       await db.updateSchoolConfig(updatedConfig);
       showToast("Logo uploaded successfully!", { type: "success" });
@@ -832,6 +880,70 @@ const SystemSettings = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column */}
           <div className="space-y-8">
+            {/* Profile & Logo Customization */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <span className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                  <Shield size={18} />
+                </span>
+                Profile & Branding
+              </h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Personal Profile Photo */}
+                <div className="flex flex-col items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <p className="text-sm font-semibold text-slate-700 mb-4">Your Profile Photo</p>
+                  <div className="relative group">
+                    <UserAvatar user={user} size="xl" className="ring-4 ring-white shadow-lg" />
+                    <label className="absolute inset-0 flex items-center justify-center bg-black/40 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity">
+                      <div className="text-center">
+                        <Edit size={20} className="mx-auto mb-1" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Change</span>
+                      </div>
+                      <input type="file" className="hidden" accept="image/*" onChange={handleProfilePhotoUpload} disabled={uploadingPhoto} />
+                    </label>
+                    {uploadingPhoto && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/60 rounded-full">
+                        <div className="h-6 w-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-4 text-center">
+                    This photo will be visible to other staff and parents.
+                  </p>
+                </div>
+
+                {/* School Logo */}
+                <div className="flex flex-col items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <p className="text-sm font-semibold text-slate-700 mb-4">School Logo</p>
+                  <div className="relative group">
+                    <div className="h-24 w-24 rounded-2xl bg-white p-2 shadow-lg border border-slate-100 flex items-center justify-center overflow-hidden">
+                      <img
+                        src={config.logoUrl || schoolLogo}
+                        alt="School Logo"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                    <label className="absolute inset-0 flex items-center justify-center bg-black/40 text-white opacity-0 group-hover:opacity-100 rounded-2xl cursor-pointer transition-opacity">
+                      <div className="text-center">
+                        <Edit size={20} className="mx-auto mb-1" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Upload</span>
+                      </div>
+                      <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} disabled={uploadingLogo} />
+                    </label>
+                    {uploadingLogo && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/60 rounded-2xl">
+                        <div className="h-6 w-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-4 text-center">
+                    Used on report cards, receipts, and dashboards.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* General Config */}
             <div className="bg-sky-100 rounded-2xl shadow-sm border border-slate-100 p-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

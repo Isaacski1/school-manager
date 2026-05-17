@@ -3977,6 +3977,16 @@ class FirestoreService {
       return [];
     }
   }
+
+  async updateUserProfilePhoto(uid: string, photoUrl: string): Promise<void> {
+    if (!uid) return;
+    await setDoc(doc(firestore, "users", uid), { photoUrl }, { merge: true });
+  }
+
+  async updateStudentPhoto(studentId: string, photoUrl: string): Promise<void> {
+    if (!studentId) return;
+    await updateDoc(doc(firestore, "students", studentId), { photoUrl });
+  }
 }
 
 export const db = new FirestoreService();

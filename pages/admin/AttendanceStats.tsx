@@ -3,6 +3,7 @@ import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { AlertTriangle, CheckCircle, HelpCircle } from "lucide-react";
+import UserAvatar from "../../components/UserAvatar";
 import { useSchool } from "../../context/SchoolContext";
 import {
   collectHolidayDateKeys,
@@ -13,6 +14,7 @@ interface StudentAttendanceStats {
   id: string;
   name: string;
   gender: string;
+  photoUrl?: string;
   presentDays: number;
   totalDays: number;
   percentage: number;
@@ -110,6 +112,7 @@ const AttendanceStats = () => {
             id: student.id,
             name: student.name,
             gender: student.gender,
+            photoUrl: student.photoUrl,
             presentDays: presentCount,
             totalDays: totalSchoolDays,
             percentage: pct,
@@ -240,11 +243,7 @@ const AttendanceStats = () => {
                         >
                           <td className="px-6 py-4">
                             <div className="flex items-center">
-                              <div
-                                className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white mr-3 shadow-sm ${s.gender === "Male" ? "bg-[#0B4A82]" : "bg-pink-500"}`}
-                              >
-                                {s.name.charAt(0)}
-                              </div>
+                              <UserAvatar user={s} size="sm" className="mr-3" />
                               <div>
                                 <p className="font-semibold text-slate-800 flex items-center">
                                   {s.name}

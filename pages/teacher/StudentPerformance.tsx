@@ -100,7 +100,11 @@ const buildTermRecords = (
 const StudentPerformance = () => {
   const { user } = useAuth();
   const schoolId = user?.schoolId || "";
-  const assignedClassIds = (user as any)?.assignedClassIds || [];
+  const assignedClassIds = ((user as any)?.assignedClassIds || []).sort((a: string, b: string) => {
+    const indexA = CLASSES_LIST.findIndex((c) => c.id === a);
+    const indexB = CLASSES_LIST.findIndex((c) => c.id === b);
+    return indexA - indexB;
+  });
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [students, setStudents] = useState<Student[]>([]);

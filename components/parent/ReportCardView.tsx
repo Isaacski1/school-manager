@@ -469,7 +469,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                           <h3 className="font-bold text-slate-800">Term {report.term} - {report.academicYear}</h3>
                           <p className="text-sm text-slate-500">{summary.length} subject(s)</p>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <div className={`px-4 py-2 rounded-lg font-bold ${getGradeColor(termGrade.grade)}`}>
                             Average: {termGrade.grade} ({termAverage.toFixed(1)}%)
                           </div>
@@ -478,10 +478,12 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                               handleTermChange(String(report.term));
                               setTimeout(handleDownload, 100);
                             }}
-                            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                            disabled={isDownloading}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                             title="Download this report card"
                           >
                             <Download size={18} />
+                            <span>{isDownloading ? "Downloading..." : "Download Report Card"}</span>
                           </button>
                         </div>
                       </div>

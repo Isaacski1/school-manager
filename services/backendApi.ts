@@ -316,6 +316,86 @@ export async function getAdminMfaPolicyStatus(): Promise<AdminMfaPolicyStatus> {
   return apiRequest("/api/auth/admin-mfa-policy", { method: "GET" });
 }
 
+export type PayrollBank = {
+  name: string;
+  code: string;
+  type?: string;
+};
+
+export type StaffPayrollProfilePayload = {
+  staffId: string;
+  staffName: string;
+  staffEmail?: string | null;
+  staffPhoneNumber?: string | null;
+  paymentMethod: "mobile_money" | "ghipss";
+  accountName: string;
+  accountNumber: string;
+  bankCode: string;
+  bankName: string;
+  salaryAmount: number;
+};
+
+export async function getPayrollBanks(type: "mobile_money" | "ghipss") {
+  const query = buildQueryString({ type });
+  return apiRequest<{ success: boolean; banks: PayrollBank[] }>(
+    `/api/payroll/banks${query}`,
+    { method: "GET" },
+  );
+}
+
+export async function getPayrollOverview() {
+  return apiRequest<{
+    success: boolean;
+    profiles: any[];
+    runs: any[];
+    payments: any[];
+  }>("/api/payroll/overview", { method: "GET" });
+}
+
+export async function saveStaffPayrollProfile(
+  payload: StaffPayrollProfilePayload,
+) {
+  return apiRequest<{ success: boolean; profile: any }>(
+    "/api/payroll/profiles",
+    { body: payload },
+  );
+}
+
+export async function createPayrollRun(payload: {
+  period: string;
+  items: Array<{
+    staffId: string;
+    allowance?: number;
+    deduction?: number;
+    amount?: number;
+  }>;
+}) {
+  return apiRequest<{ success: boolean; run: any; payments: any[] }>(
+    "/api/payroll/runs",
+    { body: payload },
+  );
+}
+
+export async function processPayrollRun(payload: {
+  payrollRunId: string;
+  confirmation: string;
+}) {
+  return apiRequest<{ success: boolean; run: any; payments: any[] }>(
+    `/api/payroll/runs/${encodeURIComponent(payload.payrollRunId)}/pay`,
+    { body: { confirmation: payload.confirmation } },
+  );
+}
+
+export async function finalizePayrollTransfer(payload: {
+  paymentId: string;
+  otp: string;
+}) {
+  return apiRequest<{ success: boolean; payment: any }>(
+    `/api/payroll/payments/${encodeURIComponent(payload.paymentId)}/finalize`,
+    { body: { otp: payload.otp } },
+  );
+}
+
 export type SuperAdminDashboardOverview = {
   success: boolean;
   cached?: boolean;

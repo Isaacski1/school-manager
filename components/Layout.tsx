@@ -21,6 +21,8 @@ import { db } from "../services/mockDb";
 import { firestore } from "../services/firebase";
 import { UserRole, SystemNotification } from "../types";
 import Toast from "./Toast";
+import UserAvatar from "./UserAvatar";
+import { showToast } from "../services/toast";
 
 import {
   LogOut,
@@ -48,6 +50,7 @@ import {
   History,
   Activity,
   BadgeDollarSign,
+  HandCoins,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -65,7 +68,7 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ children, title }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { school } = useSchool();
   const activeSchoolId = useMemo(() => 
     school?.id ||
@@ -94,6 +97,41 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const notificationsPollRef = useRef(true);
   const notificationRef = useRef<HTMLDivElement>(null);
+
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const compressImageToBase64 = (file: File, maxPx = 300, quality = 0.7): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+
+  const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploadingPhoto(true);
+    try {
+      const base64 = await compressImageToBase64(file);
+      await db.updateUserProfilePhoto(user.id, base64);
+      updateUser({ photoUrl: base64 });
+      showToast("Profile photo updated successfully!", { type: "success" });
+    } catch (error) {
+      console.error("Profile photo upload error:", error);
+      showToast("Failed to upload profile photo.", { type: "error" });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -620,6 +658,9 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/fees" icon={<CreditCard size={18} />} label="Fees & Payments" />
               )}
+              {hasFeature("teacher_management") && (
+                <NavItem href="/admin/payroll" icon={<HandCoins size={18} />} label="Staff Payroll" />
+              )}
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/payment-settings" icon={<Wallet size={18} />} label="Online Payment" />
               )}
@@ -759,6 +800,17 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <div className="hidden sm:block text-right">
                   <p className="text-sm font-semibold text-slate-700">{user?.fullName || "User"}</p>
                   <p className="text-xs text-slate-500 capitalize">{user?.role?.replace("_", " ") || "User"}</p>
+                </div>
+                <div className="relative group cursor-pointer shrink-0">
+                  <UserAvatar user={user} size="md" />
+                  <label className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity overflow-hidden" title="Change Profile Photo">
+                    {uploadingPhoto ? (
+                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Edit size={14} />
+                    )}
+                    <input type="file" className="hidden" accept="image/*" onChange={handleProfilePhotoUpload} disabled={uploadingPhoto} />
+                  </label>
                 </div>
               </div>
             </div>
