@@ -1,8 +1,13 @@
 import React from "react";
-import { User, Student } from "../types";
+
+interface AvatarUser {
+  name?: string;
+  fullName?: string;
+  photoUrl?: string;
+}
 
 interface UserAvatarProps {
-  user?: User | Student | null;
+  user?: AvatarUser | null;
   name?: string;
   photoUrl?: string;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
@@ -16,7 +21,7 @@ const UserAvatar: React.FC<UserAvatarProps> = ({
   size = "md",
   className = "",
 }) => {
-  const avatarName = name || user?.name || (user as User)?.fullName || "User";
+  const avatarName = name || user?.name || user?.fullName || "User";
   const avatarPhoto = photoUrl || user?.photoUrl;
 
   const sizeClasses = {

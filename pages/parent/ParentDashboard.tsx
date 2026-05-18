@@ -31,6 +31,83 @@ export default function ParentDashboard() {
     return sessionStorage.getItem("parentDashboard_selectedStudentId") || null;
   });
 
+  const getPhoneVariants = (phone: string) => {
+    const trimmed = String(phone || "").trim();
+    const digits = trimmed.replace(/\D/g, "");
+    const variants = new Set<string>([trimmed, digits]);
+
+    if (digits.startsWith("233") && digits.length === 12) {
+      variants.add(`+${digits}`);
+      variants.add(`0${digits.slice(3)}`);
+      variants.add(digits.slice(3));
+    } else if (digits.startsWith("0") && digits.length === 10) {
+      variants.add(`233${digits.slice(1)}`);
+      variants.add(`+233${digits.slice(1)}`);
+      variants.add(digits.slice(1));
+    } else if (digits.length === 9) {
+      variants.add(`233${digits}`);
+      variants.add(`+233${digits}`);
+      variants.add(`0${digits}`);
+    }
+
+    return Array.from(variants).filter(Boolean);
+  };
+
+  const normalizeDigits = (value: string) => String(value || "").replace(/\D/g, "");
+
+  const phoneMatches = (left?: string, right?: string) => {
+    const leftDigits = normalizeDigits(left || "");
+    const rightDigits = normalizeDigits(right || "");
+    return Boolean(
+      leftDigits &&
+        rightDigits &&
+        (leftDigits === rightDigits ||
+          leftDigits.endsWith(rightDigits) ||
+          rightDigits.endsWith(leftDigits)),
+    );
+  };
+
+  const getLoggedInParentContact = (student?: Student | null) => {
+    const claimedRole = (user as any)?.parentContactRole as
+      | "father"
+      | "mother"
+      | "guardian"
+      | undefined;
+    const claimedName = String((user as any)?.parentContactName || "").trim();
+    if (claimedRole && claimedName) {
+      return {
+        role: claimedRole,
+        label:
+          claimedRole === "father"
+            ? "Father"
+            : claimedRole === "mother"
+              ? "Mother"
+              : "Guardian",
+        name: claimedName,
+      };
+    }
+
+    const loginPhone = user?.phoneNumber || user?.id || "";
+    if (student && phoneMatches(loginPhone, student.fatherPhone)) {
+      return { role: "father", label: "Father", name: student.fatherName || "Father" };
+    }
+    if (student && phoneMatches(loginPhone, student.motherPhone)) {
+      return { role: "mother", label: "Mother", name: student.motherName || "Mother" };
+    }
+    if (student && phoneMatches(loginPhone, student.guardianPhone)) {
+      return { role: "guardian", label: "Guardian", name: student.guardianName || "Guardian" };
+    }
+
+    return {
+      role: "guardian",
+      label: "Parent / Guardian",
+      name:
+        user?.fullName && user.fullName !== "Parent / Guardian"
+          ? user.fullName
+          : "Parent / Guardian",
+    };
+  };
+
   useEffect(() => {
     async function fetchLinkedStudents() {
       if (!isAuthenticated || !user) {
@@ -53,17 +130,13 @@ export default function ParentDashboard() {
         const seenIds = new Set<string>();
 
         // 1. DISCOVERY VIA PHONE NUMBER
-        const queries = [
-          getDocs(query(studentsRef, where("guardianPhone", "==", phoneToMatch)))
-        ];
-        
-        // Handle variations of phone formats (with/without plus, local prefix)
-        if (phoneToMatch.startsWith("+")) {
-          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", phoneToMatch.substring(1)))));
-        }
-        if (phoneToMatch.startsWith("+233")) {
-          queries.push(getDocs(query(studentsRef, where("guardianPhone", "==", "0" + phoneToMatch.substring(4)))));
-        }
+        const phoneVariants = getPhoneVariants(phoneToMatch);
+        const contactFields = ["fatherPhone", "motherPhone", "guardianPhone"];
+        const queries = contactFields.flatMap((field) =>
+          phoneVariants.map((variant) =>
+            getDocs(query(studentsRef, where(field, "==", variant))),
+          ),
+        );
 
         const snapshots = await Promise.all(queries);
         snapshots.forEach(snapshot => {
@@ -161,6 +234,7 @@ export default function ParentDashboard() {
   };
 
   const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
+  const loggedInParentContact = getLoggedInParentContact(selectedStudent);
 
   if (loading) {
     return (
@@ -197,13 +271,10 @@ export default function ParentDashboard() {
               <div>
                 <p className="text-slate-400 text-xs sm:text-sm mb-0.5">Welcome back,</p>
                 <h1 className="text-white text-lg sm:text-xl font-bold leading-tight">
-                  {(selectedStudent as any)?.guardianName?.trim()
-                    ? (selectedStudent as any).guardianName
-                    : user?.fullName && user.fullName !== "Parent / Guardian"
-                      ? user.fullName
-                      : "Parent / Guardian"}
+                  {loggedInParentContact.name}
                 </h1>
                 <p className="text-slate-400 text-xs mt-1">
+                  {loggedInParentContact.label} dashboard ·{" "}
                   {students.length === 1
                     ? `You have 1 child enrolled.`
                     : `You have ${students.length} children enrolled.`}
@@ -319,4 +390,3 @@ export default function ParentDashboard() {
     </Layout>
   );
 }
-

@@ -1112,11 +1112,12 @@ class FirestoreService {
     await setDoc(doc(firestore, "settings", schoolId), config);
     
     // Also sync logo and name to the public 'schools' profile for the marketing site
-    if (data.logoUrl || data.schoolName) {
+    if (data.logoUrl || data.schoolName || data.notificationSettings) {
       // Execute in background to keep the main settings update fast
       setDoc(doc(firestore, "schools", schoolId), {
         ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
         ...(data.schoolName ? { name: data.schoolName } : {}),
+        ...(data.notificationSettings ? { notificationSettings: data.notificationSettings } : {}),
         updatedAt: Date.now()
       }, { merge: true }).catch((err) => {
         console.warn("Failed to sync profile to public schools collection (background task)", err);

@@ -640,10 +640,11 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
     console.log(`[Auth] Parent login attempt for phone: ${normalizedPhone}, DOB: ${dob}`);
 
     // Generate phone variants to check (normalized, local 0..., and raw digits)
-    const phoneVariants = [normalizedPhone, rawPhone];
+    const phoneVariants = [normalizedPhone, rawPhone, normalizedPhone.replace(/^\+/, "")];
     if (normalizedPhone.startsWith("+233")) {
       phoneVariants.push("0" + normalizedPhone.substring(4));
       phoneVariants.push(normalizedPhone.substring(4));
+      phoneVariants.push("233" + normalizedPhone.substring(4));
     }
     // Remove duplicates and empty strings
     const uniquePhoneVariants = [...new Set(phoneVariants.filter(Boolean))];
@@ -657,16 +658,24 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
     ];
 
     const startTime = Date.now();
-    // Query by phone variants (Firestore 'in' limit is 10, we have ~4)
+    // Query by phone variants across all admission contact fields.
     const studentsRef = admin.firestore().collection("students");
-    const snapshot = await studentsRef
-      .where("guardianPhone", "in", uniquePhoneVariants)
-      .get();
+    const phoneFields = ["fatherPhone", "motherPhone", "guardianPhone"];
+    const snapshots = await Promise.all(
+      phoneFields.map((field) =>
+        studentsRef.where(field, "in", uniquePhoneVariants.slice(0, 10)).get(),
+      ),
+    );
+    const studentDocsById = new Map();
+    snapshots.forEach((snapshot) => {
+      snapshot.docs.forEach((doc) => studentDocsById.set(doc.id, doc));
+    });
+    const candidateDocs = Array.from(studentDocsById.values());
     
-    console.log(`[Auth] Phone query found ${snapshot.size} potential matches in ${Date.now() - startTime}ms.`);
+    console.log(`[Auth] Phone query found ${candidateDocs.length} potential matches in ${Date.now() - startTime}ms.`);
 
     // Filter by DOB in memory to handle different date formats
-    const matches = snapshot.docs.filter(doc => {
+    const matches = candidateDocs.filter(doc => {
       const studentDob = String(doc.data().dob || "").trim();
       return dobVariants.includes(studentDob);
     });
@@ -678,9 +687,40 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
       });
     }
 
+    const normalizeDigits = (value) => String(value || "").replace(/\D/g, "");
+    const loginDigits = normalizeDigits(normalizedPhone);
+    const phoneMatchesLogin = (value) => {
+      const digits = normalizeDigits(value);
+      return (
+        loginDigits &&
+        digits &&
+        (loginDigits === digits ||
+          loginDigits.endsWith(digits) ||
+          digits.endsWith(loginDigits))
+      );
+    };
+    const firstMatchData = matches[0].data() || {};
+    const matchedContact = phoneMatchesLogin(firstMatchData.fatherPhone)
+      ? {
+          role: "father",
+          name: firstMatchData.fatherName || "Father",
+          phone: firstMatchData.fatherPhone,
+        }
+      : phoneMatchesLogin(firstMatchData.motherPhone)
+        ? {
+            role: "mother",
+            name: firstMatchData.motherName || "Mother",
+            phone: firstMatchData.motherPhone,
+          }
+        : {
+            role: "guardian",
+            name: firstMatchData.guardianName || "Guardian",
+            phone: firstMatchData.guardianPhone,
+          };
+
     // Match found! Grant access to ALL students associated with this phone number
     // This allows parents with multiple children to manage all of them with one login
-    const allChildren = snapshot.docs;
+    const allChildren = candidateDocs;
     const uid = normalizedPhone;
     const schoolIds = [...new Set(allChildren.map(doc => doc.data().schoolId))].filter(Boolean);
     const studentIds = allChildren.map(doc => doc.id);
@@ -690,7 +730,10 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
     const customToken = await admin.auth().createCustomToken(uid, {
       role: "parent",
       schoolIds: schoolIds,
-      studentIds: studentIds
+      studentIds: studentIds,
+      parentContactRole: matchedContact.role,
+      parentContactName: matchedContact.name,
+      parentPhone: matchedContact.phone || normalizedPhone,
     });
 
     return res.json({
@@ -9610,18 +9653,13 @@ const loadWhatsAppService = async () => {
  * Returns current WhatsApp connection status and QR code if pending.
  */
 app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
-  try {
-    const svc = await loadWhatsAppService();
-    if (!svc) return res.status(503).json({ error: "WhatsApp service failed to load. Check server logs for details." });
-    const info = svc.getWhatsAppStatus();
-    if (!info.available) {
-      return res.status(503).json({ error: "whatsapp-web.js not loaded. Run: npm install whatsapp-web.js qrcode --legacy-peer-deps" });
-    }
-    return res.json({ status: info.status, qr: info.qr });
-  } catch (err) {
-    console.error("[WhatsApp status]", err.message);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.json({
+    status: "centralized",
+    qr: null,
+    centralNumber: "+233201008784",
+    message:
+      "School-owned WhatsApp QR pairing is temporarily disabled. Notifications use the centralized School Manager GH WhatsApp service.",
+  });
 });
 
 /**
@@ -9629,14 +9667,10 @@ app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
  * Initializes the WhatsApp client and starts QR generation.
  */
 app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
-  try {
-    const svc = await loadWhatsAppService();
-    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable. Ensure whatsapp-web.js is installed." });
-    svc.initWhatsAppClient();
-    return res.json({ success: true, message: "WhatsApp client initializing..." });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(410).json({
+    error:
+      "WhatsApp QR pairing is disabled for Version 1. Configure Notification Settings instead.",
+  });
 });
 
 /**
@@ -9644,19 +9678,10 @@ app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
  * Requests a pairing code for a specific phone number.
  */
 app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
-  try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ error: "Phone number is required for pairing code." });
-
-    const svc = await loadWhatsAppService();
-    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
-
-    const code = await svc.requestPairingCode(phone);
-    return res.json({ success: true, code });
-  } catch (err) {
-    console.error("[WhatsApp Pairing]", err.message);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(410).json({
+    error:
+      "Pairing codes are disabled for Version 1 centralized notifications.",
+  });
 });
 
 /**
@@ -9664,14 +9689,10 @@ app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
  * Disconnects and destroys the WhatsApp session.
  */
 app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
-  try {
-    const svc = await loadWhatsAppService();
-    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
-    await svc.disconnectWhatsApp();
-    return res.json({ success: true, message: "WhatsApp disconnected." });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  return res.json({
+    success: true,
+    message: "No school-owned WhatsApp session is active in Version 1.",
+  });
 });
 
 /**
@@ -9679,18 +9700,10 @@ app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
  * Disconnects and deletes the local session folder.
  */
 app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
-  try {
-    const svc = await loadWhatsAppService();
-    if (!svc) return res.status(503).json({ error: "WhatsApp service unavailable." });
-    const result = await svc.clearWhatsAppSession();
-    if (result.success) {
-      return res.json({ success: true, message: "Session cleared successfully." });
-    } else {
-      return res.status(500).json({ error: result.error });
-    }
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  return res.json({
+    success: true,
+    message: "School-owned WhatsApp sessions are disabled in Version 1.",
+  });
 });
 
 /**
@@ -9709,6 +9722,12 @@ const normalizeBroadcastPhone = (phone) => {
 };
 
 app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
+  return res.status(410).json({
+    error:
+      "WhatsApp broadcasting is temporarily disabled for production stability. Payment and invoice notifications use the centralized School Manager GH WhatsApp service.",
+  });
+
+  /*
   // Validate caller is a school_admin
   const { uid } = req.user;
   try {
@@ -9914,6 +9933,7 @@ app.post("/api/whatsapp/broadcast", authMiddleware, async (req, res) => {
     console.error("[WhatsApp Broadcast] Error:", err.message);
     return res.status(500).json({ error: err.message });
   }
+  */
 });
 
 /**
@@ -10081,15 +10101,22 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
     const role = userData.role || req.user.role;
     if (role === "parent") {
       const parentPhone = String(userData.phoneNumber || req.user.phoneNumber || req.user.uid || "");
-      const guardianPhone = String(studentData.guardianPhone || "");
       const normalized = (value) => String(value || "").replace(/\D/g, "");
+      const studentContactPhones = [
+        studentData.fatherPhone,
+        studentData.motherPhone,
+        studentData.guardianPhone,
+      ]
+        .map(normalized)
+        .filter(Boolean);
+      const normalizedParentPhone = normalized(parentPhone);
       const phoneMatches =
-        normalized(parentPhone) &&
-        normalized(guardianPhone) &&
-        (
-          normalized(parentPhone) === normalized(guardianPhone) ||
-          normalized(parentPhone).endsWith(normalized(guardianPhone)) ||
-          normalized(guardianPhone).endsWith(normalized(parentPhone))
+        normalizedParentPhone &&
+        studentContactPhones.some(
+          (studentPhone) =>
+            normalizedParentPhone === studentPhone ||
+            normalizedParentPhone.endsWith(studentPhone) ||
+            studentPhone.endsWith(normalizedParentPhone),
         );
       const linkedStudentIds = [
         ...(Array.isArray(userData.linkedStudentIds) ? userData.linkedStudentIds : []),
@@ -10174,10 +10201,200 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
  * POST /api/payments/send-invoice
  */
 
+const SCHOOL_MANAGER_GH_WHATSAPP_NUMBER = "233201008784";
+
+const writeNotificationLog = async ({ schoolId, recipient, type, status, errorMessage = "", metadata = {} }) => {
+  try {
+    await admin.firestore().collection("notification_logs").add({
+      schoolId: schoolId || null,
+      recipient: recipient || "",
+      type,
+      status,
+      errorMessage,
+      metadata,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn("[NotificationLog] Failed:", err.message);
+  }
+};
+
+const writeAdminNotification = async (schoolId, message) => {
+  if (!schoolId) return;
+  try {
+    const id = `${schoolId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await admin.firestore().collection("admin_notifications").doc(id).set({
+      id,
+      schoolId,
+      message,
+      createdAt: Date.now(),
+      isRead: false,
+      type: "system",
+    });
+  } catch (err) {
+    console.warn("[AdminNotification] Failed:", err.message);
+  }
+};
+
+const enqueueWhatsAppRetry = async (payload) => {
+  try {
+    await admin.firestore().collection("whatsapp_retry_queue").add({
+      ...payload,
+      status: "pending",
+      attempts: 0,
+      maxAttempts: 3,
+      nextAttemptAt: Date.now() + 10 * 60 * 1000,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn("[WhatsAppRetryQueue] Failed:", err.message);
+  }
+};
+
+const resolvePaymentNotificationRecipients = (studentData, body) => {
+  const candidates = [
+    body.fatherPhone,
+    studentData?.fatherPhone,
+    studentData?.fatherWhatsApp,
+    body.motherPhone,
+    studentData?.motherPhone,
+    studentData?.motherWhatsApp,
+    body.guardianPhone,
+    studentData?.guardianPhone,
+    studentData?.guardianWhatsApp,
+  ];
+  return [...new Set(candidates.map(normalizeBroadcastPhone).filter((phone) => /^233\d{9}$/.test(phone)))];
+};
+
 // Send Payment Invoice via WhatsApp
 // POST /api/payments/send-invoice
 app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
   try {
+    {
+      const { studentId, schoolId, amount, reference, base64Pdf, studentName, feeName, adminPhone } = req.body || {};
+      if (!studentId || !base64Pdf) {
+        return res.status(400).json({ error: "Student ID and PDF data are required." });
+      }
+
+      const db = admin.firestore();
+      const studentSnap = await db.collection("students").doc(String(studentId)).get();
+      const studentData = studentSnap.exists ? studentSnap.data() || {} : {};
+      const resolvedSchoolId = String(schoolId || studentData.schoolId || "").trim();
+      const [settingsSnap, schoolSnap] = await Promise.all([
+        resolvedSchoolId ? db.collection("settings").doc(resolvedSchoolId).get() : Promise.resolve(null),
+        resolvedSchoolId ? db.collection("schools").doc(resolvedSchoolId).get() : Promise.resolve(null),
+      ]);
+      const settings = settingsSnap?.exists ? settingsSnap.data() || {} : {};
+      const schoolData = schoolSnap?.exists ? schoolSnap.data() || {} : {};
+      const notificationSettings = settings.notificationSettings || {};
+
+      if (
+        notificationSettings.enableWhatsAppNotifications === false ||
+        (notificationSettings.enablePaymentAlerts === false &&
+          notificationSettings.enableInvoiceNotifications === false)
+      ) {
+        await writeNotificationLog({
+          schoolId: resolvedSchoolId,
+          recipient: "",
+          type: "payment_invoice",
+          status: "skipped",
+          metadata: { reason: "Notification settings disabled", reference, studentId },
+        });
+        return res.json({ success: true, skipped: true });
+      }
+
+      const cleanBase64 = base64Pdf.includes("base64,") ? base64Pdf.split("base64,")[1] : base64Pdf;
+      const payloadSize = cleanBase64.length;
+      if (payloadSize < 1000) {
+        return res.status(400).json({ error: "Invalid PDF payload (too small)." });
+      }
+
+      const svc = await loadWhatsAppService();
+      const statusInfo = svc?.getWhatsAppStatus ? svc.getWhatsAppStatus() : { status: "unavailable" };
+      if (!svc || statusInfo.status !== "ready") {
+        const errorMessage = `Central WhatsApp session is not ready (${statusInfo.status}).`;
+        await writeNotificationLog({
+          schoolId: resolvedSchoolId,
+          recipient: "multiple",
+          type: "payment_invoice",
+          status: "queued",
+          errorMessage,
+          metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
+        });
+        await writeAdminNotification(
+          resolvedSchoolId,
+          `WhatsApp notification queued for ${studentName || studentData.name || "student"} because the central sender is not ready.`,
+        );
+        await enqueueWhatsAppRetry({
+          schoolId: resolvedSchoolId,
+          type: "payment_invoice",
+          payload: { ...req.body, schoolId: resolvedSchoolId },
+          lastError: errorMessage,
+        });
+        return res.json({ success: true, queued: true, whatsappStatus: statusInfo.status });
+      }
+
+      const schoolName = settings.schoolName || schoolData.name || "School Manager GH";
+      const effectiveStudentName = studentName || studentData.name || "Student";
+      const caption = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\n\nInvoice attached.\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
+      const filename = `Invoice_${reference}.pdf`;
+      const mimetype = "application/pdf";
+      const results = [];
+
+      if (notificationSettings.enableInvoiceNotifications !== false) {
+        const recipients = resolvePaymentNotificationRecipients(studentData, req.body);
+        for (const recipient of recipients) {
+          const result = await svc.sendWhatsAppMedia(recipient, caption, cleanBase64, filename, mimetype);
+          results.push({ recipient, ...result });
+          await writeNotificationLog({
+            schoolId: resolvedSchoolId,
+            recipient,
+            type: "payment_invoice_parent",
+            status: result.success ? "sent" : "failed",
+            errorMessage: result.error || "",
+            metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
+          });
+          if (!result.success) {
+            await enqueueWhatsAppRetry({
+              schoolId: resolvedSchoolId,
+              recipient,
+              type: "payment_invoice_parent",
+              payload: { caption, cleanBase64, filename, mimetype },
+              lastError: result.error || "Send failed",
+            });
+          }
+        }
+      }
+
+      const adminRecipient = normalizeBroadcastPhone(
+        notificationSettings.adminWhatsAppNumber || adminPhone || schoolData.phone || settings.phone || "",
+      );
+      if (notificationSettings.enablePaymentAlerts !== false && /^233\d{9}$/.test(adminRecipient)) {
+        const adminMessage = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\nFee: ${feeName || "School Fees"}\nReference: ${reference}\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
+        const adminResult = await svc.sendWhatsAppMessage(adminRecipient, adminMessage);
+        results.push({ recipient: adminRecipient, ...adminResult });
+        await writeNotificationLog({
+          schoolId: resolvedSchoolId,
+          recipient: adminRecipient,
+          type: "payment_alert_admin",
+          status: adminResult.success ? "sent" : "failed",
+          errorMessage: adminResult.error || "",
+          metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
+        });
+      }
+
+      if (results.some((result) => !result.success)) {
+        await writeAdminNotification(
+          resolvedSchoolId,
+          `Some WhatsApp payment notifications failed for ${effectiveStudentName}. They were added to the retry queue.`,
+        );
+      }
+
+      return res.json({ success: true, size: payloadSize, results });
+    }
+
     const { studentId, amount, reference, base64Pdf, studentName, guardianPhone, feeName, adminPhone } = req.body;
     console.log(`[Invoice] Received request payload for: ${studentName}`);
     if (!guardianPhone || !base64Pdf) {
@@ -10257,7 +10474,15 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
     return res.json({ success: true, size: payloadSize });
   } catch (error) {
     console.error("Error sending WhatsApp invoice:", error);
-    return res.status(500).json({ error: "Internal server error." });
+    await writeNotificationLog({
+      schoolId: req.body?.schoolId || null,
+      recipient: "multiple",
+      type: "payment_invoice",
+      status: "failed",
+      errorMessage: error?.message || "Internal server error.",
+      metadata: { reference: req.body?.reference, studentId: req.body?.studentId },
+    });
+    return res.json({ success: true, queued: true, warning: "Notification failed and was logged for review." });
   }
 });
 
@@ -10336,12 +10561,24 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3001;
+const shouldAutoInitWhatsApp = () => {
+  const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(setting)) return true;
+  if (["0", "false", "no", "off"].includes(setting)) return false;
+  return false;
+};
+
 const server = app.listen(PORT);
 
 server.on("listening", async () => {
   console.log(`Server running on port ${PORT}`);
 
   // Auto-initialize WhatsApp on startup if possible
+  if (!shouldAutoInitWhatsApp()) {
+    console.log("[WhatsApp] Auto-initialization skipped. Set WHATSAPP_AUTO_INIT=true to enable startup connection.");
+    return;
+  }
+
   try {
     const svc = await loadWhatsAppService();
     if (svc) {

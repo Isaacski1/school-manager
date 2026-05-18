@@ -32,6 +32,7 @@ import {
   History,
   Settings,
   Shield,
+  Bell,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -109,8 +110,16 @@ const SystemSettings = () => {
     isPromotionalTerm: true,
     gradingScale: { A: 80, B: 70, C: 60, D: 45 },
     positionRule: "total",
+    notificationSettings: {
+      adminWhatsAppNumber: "",
+      enableWhatsAppNotifications: true,
+      enablePaymentAlerts: true,
+      enableInvoiceNotifications: true,
+    },
   });
   const [savingConfig, setSavingConfig] = useState(false);
+  const [savingNotificationSettings, setSavingNotificationSettings] =
+    useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false); // New state
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayReason, setNewHolidayReason] = useState("");
@@ -182,8 +191,35 @@ const SystemSettings = () => {
           : true,
       gradingScale: data.gradingScale || { A: 80, B: 70, C: 60, D: 45 },
       positionRule: data.positionRule || "total",
+      notificationSettings: {
+        adminWhatsAppNumber:
+          data.notificationSettings?.adminWhatsAppNumber || "",
+        enableWhatsAppNotifications:
+          data.notificationSettings?.enableWhatsAppNotifications ?? true,
+        enablePaymentAlerts:
+          data.notificationSettings?.enablePaymentAlerts ?? true,
+        enableInvoiceNotifications:
+          data.notificationSettings?.enableInvoiceNotifications ?? true,
+      },
     }));
   };
+
+  const normalizeGhanaPhoneNumber = (value: string) => {
+    let digits = String(value || "").replace(/\D/g, "");
+    if (digits.startsWith("0") && digits.length === 10) {
+      digits = `233${digits.slice(1)}`;
+    } else if (digits.length === 9) {
+      digits = `233${digits}`;
+    } else if (digits.startsWith("233") && digits.length === 12) {
+      digits = digits;
+    }
+    return digits;
+  };
+
+  const isValidGhanaPhoneNumber = (value: string) =>
+    /^233(20|23|24|25|26|27|28|29|50|53|54|55|56|57|59)\d{7}$/.test(
+      normalizeGhanaPhoneNumber(value),
+    );
 
   useEffect(() => {
     fetchNotices();
@@ -249,6 +285,58 @@ const SystemSettings = () => {
           actorName: user?.fullName || "",
         },
       }).catch(() => {});
+    }
+  };
+
+  const handleSaveNotificationSettings = async () => {
+    const settings = config.notificationSettings || {};
+    const normalizedAdminPhone = normalizeGhanaPhoneNumber(
+      settings.adminWhatsAppNumber || "",
+    );
+
+    if (
+      settings.enableWhatsAppNotifications &&
+      !isValidGhanaPhoneNumber(normalizedAdminPhone)
+    ) {
+      showToast("Enter a valid Ghana WhatsApp number.", { type: "error" });
+      return;
+    }
+
+    const nextConfig = {
+      ...config,
+      schoolId,
+      notificationSettings: {
+        adminWhatsAppNumber: normalizedAdminPhone,
+        enableWhatsAppNotifications: Boolean(
+          settings.enableWhatsAppNotifications,
+        ),
+        enablePaymentAlerts: Boolean(settings.enablePaymentAlerts),
+        enableInvoiceNotifications: Boolean(settings.enableInvoiceNotifications),
+      },
+    };
+
+    setSavingNotificationSettings(true);
+    try {
+      setConfig(nextConfig);
+      await db.updateSchoolConfig(nextConfig);
+      showToast("Notification settings saved.", { type: "success" });
+      logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "notification_settings_updated",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      }).catch(() => {});
+    } catch (error: any) {
+      console.error("Failed to save notification settings", error);
+      showToast("Failed to save notification settings.", { type: "error" });
+    } finally {
+      setSavingNotificationSettings(false);
     }
   };
 
@@ -941,6 +1029,114 @@ const SystemSettings = () => {
                     Used on report cards, receipts, and dashboards.
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* Notification Settings */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <span className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                      <Bell size={18} />
+                    </span>
+                    Notification Settings
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Messages are sent through School Manager GH WhatsApp
+                    Service +233201008784.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveNotificationSettings}
+                  disabled={savingNotificationSettings}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {savingNotificationSettings ? (
+                    <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {savingNotificationSettings ? "Saving..." : "Save"}
+                </button>
+              </div>
+
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Admin WhatsApp Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={
+                      config.notificationSettings?.adminWhatsAppNumber || ""
+                    }
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        notificationSettings: {
+                          ...(config.notificationSettings || {}),
+                          adminWhatsAppNumber: e.target.value,
+                        },
+                      })
+                    }
+                    onBlur={(e) =>
+                      setConfig({
+                        ...config,
+                        notificationSettings: {
+                          ...(config.notificationSettings || {}),
+                          adminWhatsAppNumber: normalizeGhanaPhoneNumber(
+                            e.target.value,
+                          ),
+                        },
+                      })
+                    }
+                    placeholder="0541234567"
+                    className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Local Ghana numbers are saved as international digits, for
+                    example 0201008784 becomes 233201008784.
+                  </p>
+                </div>
+
+                {[
+                  {
+                    key: "enableWhatsAppNotifications",
+                    label: "Enable WhatsApp Notifications",
+                  },
+                  { key: "enablePaymentAlerts", label: "Enable Payment Alerts" },
+                  {
+                    key: "enableInvoiceNotifications",
+                    label: "Enable Invoice Notifications",
+                  },
+                ].map((item) => (
+                  <label
+                    key={item.key}
+                    className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
+                  >
+                    <span className="text-sm font-medium text-slate-700">
+                      {item.label}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(
+                        (config.notificationSettings as any)?.[item.key],
+                      )}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          notificationSettings: {
+                            ...(config.notificationSettings || {}),
+                            [item.key]: e.target.checked,
+                          },
+                        })
+                      }
+                      className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                  </label>
+                ))}
               </div>
             </div>
 

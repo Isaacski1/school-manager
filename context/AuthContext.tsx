@@ -15,12 +15,17 @@ import {
   updateDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { loadUserProfile } from "../services/authProfile";
+import {
+  isOfflineAuthProfileError,
+  loadCachedUserProfile,
+  loadUserProfile,
+} from "../services/authProfile";
 import { safeLogAnalyticsEvent } from "../services/analytics";
 import { logActivity } from "../services/activityLog";
 
 const SENSITIVE_STORAGE_PREFIXES = [
   "school_",
+  "cached_user_profile_",
   "finance_page_",
   "financeFilters",
   "admin_dashboard_",
@@ -156,6 +161,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             });
           } else {
             console.error("Error fetching user profile:", err);
+
+            if (isOfflineAuthProfileError(err)) {
+              const cachedProfile = loadCachedUserProfile(firebaseUser.uid);
+              if (cachedProfile) {
+                console.info("[Auth] Using cached user profile while offline", {
+                  uid: firebaseUser.uid,
+                  role: cachedProfile.role,
+                });
+                setUser(cachedProfile);
+                if (cachedProfile.schoolId) {
+                  localStorage.setItem("lastSchoolId", cachedProfile.schoolId);
+                  localStorage.setItem("activeSchoolId", cachedProfile.schoolId);
+                }
+                setError(null);
+                setAuthLoading(false);
+                setLoading(false);
+                return;
+              }
+            }
+
             setUser(null);
 
             // Improved Error Handling

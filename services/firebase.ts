@@ -4,7 +4,11 @@ import {
   initializeAppCheck,
 } from "firebase/app-check";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 import { getStorage } from "firebase/storage";
 
@@ -71,7 +75,11 @@ const firebaseFunctionsRegion =
 // Initialize Firebase
 const app = firebaseApp.initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const firestore = getFirestore(app);
+export const firestore = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});
 export const storage = getStorage(app);
 export const functions = firebaseFunctionsRegion
   ? getFunctions(app, firebaseFunctionsRegion)

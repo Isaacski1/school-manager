@@ -96,6 +96,38 @@ const WhatsAppBroadcast: React.FC = () => {
       </Layout>
     );
   }
+
+  return (
+    <Layout title="WhatsApp Notifications">
+      <div className="max-w-2xl mx-auto mt-10 sm:mt-16 px-4">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
+          <div className="flex items-start gap-4">
+            <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <WhatsAppIcon size={24} />
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
+                WhatsApp Broadcast is temporarily disabled
+              </h1>
+              <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+                School Manager GH now uses the centralized WhatsApp Business
+                service +233201008784 for payment and invoice notifications.
+                QR pairing, school-owned WhatsApp sessions, and bulk broadcast
+                controls are disabled for Version 1 production stability.
+              </p>
+              <Link
+                to="/admin/settings"
+                className="mt-5 inline-flex items-center justify-center rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                Open Notification Settings
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
+
   const [waStatus, setWaStatus] = useState<WaStatus>("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);

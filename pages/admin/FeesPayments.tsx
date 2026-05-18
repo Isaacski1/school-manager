@@ -492,14 +492,11 @@ const FeesPayments: React.FC = () => {
       openingBalance: string;
     };
   }>({});
+  const [savingOpeningRowKey, setSavingOpeningRowKey] = useState<string | null>(
+    null,
+  );
   const [selectedOpeningFeeId, setSelectedOpeningFeeId] = useState<string>("");
   const [bulkOpeningClassId, setBulkOpeningClassId] = useState<string>("");
-  const [bulkOpeningStatus, setBulkOpeningStatus] = useState<
-    "Paid" | "Part-paid" | "Unpaid"
-  >("Paid");
-  const [bulkOpeningPaidAmount, setBulkOpeningPaidAmount] =
-    useState<string>("");
-  const [bulkOpeningBalance, setBulkOpeningBalance] = useState<string>("");
   const [onboardingMode, setOnboardingMode] =
     useState<OnboardingMode>("fresh_start");
   const [onboardingDate, setOnboardingDate] = useState("");
@@ -1890,9 +1887,12 @@ const FeesPayments: React.FC = () => {
     });
   }, [visibleLedgers, students, ledgerRows, selectedClassId]);
 
+  const getOpeningFormKey = (ledgerId: string, feeId?: string) =>
+    feeId ? `${ledgerId}::${feeId}` : ledgerId;
+
   const resolveOpeningForm = (ledgerId: string, feeId?: string) => {
     const existing = ledgers.find((ledger) => ledger.id === ledgerId);
-    const key = feeId ? `${ledgerId}::${feeId}` : ledgerId;
+    const key = getOpeningFormKey(ledgerId, feeId);
     const feeEntry = feeId
       ? existing?.fees.find((fee) => fee.feeId === feeId)
       : undefined;
@@ -1943,59 +1943,36 @@ const FeesPayments: React.FC = () => {
     }
   };
 
-  const applyBulkOpeningStatus = async () => {
-    if (!schoolId || !bulkOpeningClassId) return;
-    if (!selectedOpeningFeeId && fees.length === 0) {
-      showToast("Create a fee before applying opening status.", {
-        type: "error",
-      });
-      return;
-    }
-    try {
-      const targetStudents = students.filter(
-        (student) => student.classId === bulkOpeningClassId,
-      );
-      const targetFeeIds = selectedOpeningFeeId
-        ? [selectedOpeningFeeId]
-        : fees.map((fee) => fee.id);
-      const nextEntries: typeof openingLedgerForm = { ...openingLedgerForm };
-      targetStudents.forEach((student) => {
-        const ledgerId = buildLedgerId(
-          schoolId,
-          student.id,
-          academicYear,
-          term,
-        );
-        targetFeeIds.forEach((feeId) => {
-          const key = `${ledgerId}::${feeId}`;
-          nextEntries[key] = {
-            openingStatus: bulkOpeningStatus,
-            openingPaidAmount: bulkOpeningPaidAmount,
-            openingBalance: bulkOpeningBalance,
-          };
-        });
-      });
-      setOpeningLedgerForm(nextEntries);
-      showToast("Bulk opening status applied.", { type: "success" });
-    } catch (error) {
-      console.error("Failed to apply bulk opening status", error);
-      showToast("Failed to apply bulk opening status.", { type: "error" });
-    }
-  };
-
   const saveBulkOpeningBalances = async () => {
     if (!schoolId) return;
     const entries = Object.entries(openingLedgerForm);
     if (entries.length === 0) return;
     const formMap = new Map(entries);
     const ledgersToUpdate = ledgers.filter((ledger) =>
+      formMap.has(ledger.id) ||
       ledger.fees.some((fee) => formMap.has(`${ledger.id}::${fee.feeId}`)),
     );
     for (const ledger of ledgersToUpdate) {
+      const ledgerForm = formMap.get(ledger.id);
       const updatedFees = ledger.fees.map((fee) => {
         const key = `${ledger.id}::${fee.feeId}`;
         const form = formMap.get(key);
-        if (!form) return fee;
+        if (!form) {
+          if (!ledgerForm) return fee;
+          return fee === ledger.fees[0]
+            ? {
+                ...fee,
+                openingStatus: ledgerForm.openingStatus,
+                openingPaidAmount: Number(ledgerForm.openingPaidAmount || 0),
+                openingBalance: Number(ledgerForm.openingBalance || 0),
+              }
+            : {
+                ...fee,
+                openingStatus: "Unpaid" as const,
+                openingPaidAmount: 0,
+                openingBalance: 0,
+              };
+        }
         return {
           ...fee,
           openingStatus: form.openingStatus,
@@ -2040,6 +2017,9 @@ const FeesPayments: React.FC = () => {
     feeId?: string,
   ) => {
     if (!schoolId) return;
+    const formKey = getOpeningFormKey(ledger.id, feeId);
+    if (savingOpeningRowKey === formKey) return;
+    setSavingOpeningRowKey(formKey);
     const form = resolveOpeningForm(ledger.id, feeId);
     const openingPaidAmount = Number(form.openingPaidAmount || 0);
     const openingBalance = Number(form.openingBalance || 0);
@@ -2054,7 +2034,21 @@ const FeesPayments: React.FC = () => {
               }
             : fee,
         )
-      : ledger.fees;
+      : ledger.fees.map((fee, index) =>
+          index === 0
+            ? {
+                ...fee,
+                openingStatus: form.openingStatus,
+                openingPaidAmount,
+                openingBalance,
+              }
+            : {
+                ...fee,
+                openingStatus: "Unpaid" as const,
+                openingPaidAmount: 0,
+                openingBalance: 0,
+              },
+        );
     const totalDue = updatedFees.reduce((sum, fee) => sum + fee.amount, 0);
     const openingPaidTotal = updatedFees.reduce(
       (sum, fee) => sum + (fee.openingPaidAmount || 0),
@@ -2085,11 +2079,21 @@ const FeesPayments: React.FC = () => {
     };
     try {
       await db.upsertStudentLedger(updatedLedger);
+      setOpeningLedgerForm((prev) => ({
+        ...prev,
+        [formKey]: {
+          openingStatus: updatedLedger.openingStatus,
+          openingPaidAmount: String(updatedLedger.openingPaidAmount || 0),
+          openingBalance: String(updatedLedger.openingBalance || 0),
+        },
+      }));
       showToast("Opening status saved.", { type: "success" });
       await fetchData();
     } catch (error) {
       console.error("Failed to save opening status", error);
       showToast("Failed to save opening status.", { type: "error" });
+    } finally {
+      setSavingOpeningRowKey(null);
     }
   };
 
@@ -3301,38 +3305,88 @@ const FeesPayments: React.FC = () => {
                   <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
                     <button
                       onClick={() => setShowOnboardingWizard(true)}
-                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-indigo-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-indigo-100 bg-indigo-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:shadow-md"
                     >
-                      <Users size={18} className="text-indigo-600" />
-                      <span className="text-[11px] font-semibold text-slate-900">Onboarding</span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm transition group-hover:bg-indigo-600 group-hover:text-white">
+                        <Users size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900">
+                          Finance Onboarding
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          Set opening balances and starting date.
+                        </span>
+                      </span>
                     </button>
                     <button
                       onClick={() => scrollToSection(feeSetupRef)}
-                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-rose-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-rose-100 bg-rose-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-rose-200 hover:bg-white hover:shadow-md"
                     >
-                      <Plus size={18} className="text-rose-600" />
-                      <span className="text-[11px] font-semibold text-slate-900">Add Fee</span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-sm transition group-hover:bg-rose-600 group-hover:text-white">
+                        <Plus size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900">
+                          Add Fee Item
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          Create tuition, PTA, admission, or custom fees.
+                        </span>
+                      </span>
                     </button>
                     <button
                       onClick={() => scrollToSection(recordPaymentRef)}
-                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-emerald-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-emerald-100 bg-emerald-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md"
                     >
-                      <Banknote size={18} className="text-emerald-600" />
-                      <span className="text-[11px] font-semibold text-slate-900">Record</span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-sm transition group-hover:bg-emerald-600 group-hover:text-white">
+                        <Banknote size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900">
+                          Record Payment
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          Enter cash, MoMo, or bank payments for a student.
+                        </span>
+                      </span>
                     </button>
                     <button
                       onClick={handleExportReport}
-                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-amber-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                      disabled={isExporting}
+                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-amber-100 bg-amber-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-amber-200 hover:bg-white hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:bg-amber-50/45 disabled:hover:shadow-none"
                     >
-                      <Download size={18} className="text-amber-600" />
-                      <span className="text-[11px] font-semibold text-slate-900">Export</span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-amber-600 shadow-sm transition group-hover:bg-amber-600 group-hover:text-white group-disabled:bg-white group-disabled:text-amber-600">
+                        {isExporting ? (
+                          <RefreshCw size={18} className="animate-spin" />
+                        ) : (
+                          <Download size={18} />
+                        )}
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900">
+                          Export Report
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          Download the current fee records as CSV.
+                        </span>
+                      </span>
                     </button>
                     <button
                       onClick={() => navigate("/admin/payment-settings")}
-                      className="inline-flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-[22px] border border-blue-100 bg-white p-3 text-center transition hover:-translate-y-0.5 hover:shadow-md"
+                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-blue-100 bg-blue-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-white hover:shadow-md"
                     >
-                      <CreditCard size={18} className="text-blue-600" />
-                      <span className="text-[11px] font-semibold text-slate-900">Online</span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm transition group-hover:bg-blue-600 group-hover:text-white">
+                        <CreditCard size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900">
+                          Online Payments
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          Configure payment links and collection settings.
+                        </span>
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -4726,22 +4780,39 @@ const FeesPayments: React.FC = () => {
 
                 <div className="flex-1 overflow-y-auto px-6 py-6">
                   <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                    {[1, 2, 3, 4].map((step) => (
+                    {[
+                      { step: 1, label: "Start date" },
+                      { step: 2, label: "Fee rules" },
+                      { step: 3, label: "Assignments" },
+                      { step: 4, label: "Opening balances" },
+                    ].map(({ step, label }) => (
                       <div
                         key={step}
-                        className={`rounded-full border px-3 py-1 ${
+                        className={`rounded-full border px-3 py-1.5 ${
                           onboardingStep === step
                             ? "border-indigo-600 bg-indigo-50 text-indigo-700"
                             : "border-slate-200"
                         }`}
                       >
-                        Step {step}
+                        Step {step}: {label}
                       </div>
                     ))}
                   </div>
 
                   {onboardingStep === 1 && (
-                    <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="mt-6 space-y-4">
+                      <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+                        <p className="text-sm font-semibold text-slate-900">
+                          Tell the system when finance tracking should begin.
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          Use this when the school already has students who paid
+                          some fees before you started using School Manager. The
+                          next steps let you enter those old paid amounts and
+                          balances once, so future reports start correctly.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <label className="text-xs text-slate-500">
                           Onboarding Mode
@@ -4761,8 +4832,8 @@ const FeesPayments: React.FC = () => {
                           </option>
                         </select>
                         <p className="mt-1 text-[11px] text-slate-400">
-                          Fresh start uses opening balances; full history keeps
-                          past transactions.
+                          Fresh Start is best when you only want to enter what
+                          was already paid and owed before the start date.
                         </p>
                       </div>
                       <div>
@@ -4775,6 +4846,10 @@ const FeesPayments: React.FC = () => {
                           onChange={(e) => setOnboardingDate(e.target.value)}
                           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                         />
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          Payments before this date should be entered as opening
+                          paid or opening balance in Step 4.
+                        </p>
                       </div>
                       <div className="sm:col-span-2">
                         <button
@@ -4794,45 +4869,121 @@ const FeesPayments: React.FC = () => {
                           )}
                         </button>
                       </div>
+                      </div>
                     </div>
                   )}
 
                   {onboardingStep === 2 && (
-                    <div className="mt-6">
-                      <p className="text-sm text-slate-600">
-                        Configure fee frequency and applicability in the Fee
-                        Setup section. One-time fees can be set to apply only to
-                        new students to avoid inflating expected balances.
-                      </p>
-                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-400">
-                        Tip: Set Admission fee as One-time + New students only to charge only students added on or after the school reopen date.
+                    <div className="mt-6 space-y-4">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                        <p className="text-sm font-semibold text-slate-900">
+                          Confirm how each fee should behave.
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          Before entering balances, make sure each fee has the
+                          correct frequency and audience. For example, tuition
+                          is usually charged every term, while admission is
+                          usually charged once for new students only.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Frequency
+                          </p>
+                          <p className="mt-2 text-sm text-slate-700">
+                            Choose one-time, per term, or per year.
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Applies to
+                          </p>
+                          <p className="mt-2 text-sm text-slate-700">
+                            Charge all students, a class, selected students, or
+                            new students only.
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Amount
+                          </p>
+                          <p className="mt-2 text-sm text-slate-700">
+                            Check that the fee amount is the amount students
+                            should be billed.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => scrollToSection(feeSetupRef)}
+                        className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
+                      >
+                        Go to Fee Setup
+                      </button>
+                      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-500">
+                        Tip: Set Admission as One-time + New students only when
+                        it should not be added to old students.
                       </div>
                     </div>
                   )}
 
                   {onboardingStep === 3 && (
-                    <div className="mt-6">
-                      <p className="text-sm text-slate-600">
-                        Assign fees to all students, specific classes, or
-                        selected students. Use the "Applies To" field in Fee
-                        Setup.
-                      </p>
+                    <div className="mt-6 space-y-4">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                        <p className="text-sm font-semibold text-slate-900">
+                          Check who each fee is assigned to.
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          The system creates each student ledger from the fee
+                          assignments. If a student is missing a fee, their
+                          expected amount and balance will be wrong.
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">
+                          What to review
+                        </p>
+                        <div className="mt-3 grid grid-cols-1 gap-3 text-sm text-slate-600 sm:grid-cols-3">
+                          <p>All-student fees are applied to every active student.</p>
+                          <p>Class fees only affect students in the selected class.</p>
+                          <p>Selected-student fees only affect the students chosen.</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => scrollToSection(feeSetupRef)}
+                        className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
+                      >
+                        Review Fee Assignments
+                      </button>
                     </div>
                   )}
 
                   {onboardingStep === 4 && (
                     <div className="mt-6 space-y-4">
+                      <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+                        <p className="text-sm font-semibold text-slate-900">
+                          Enter each student's starting payment position.
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          Opening Paid means money the student already paid
+                          before the onboarding date. Opening Balance means the
+                          amount the student still owed before the onboarding
+                          date. These figures are not new payments; they are the
+                          starting point for accurate balances.
+                        </p>
+                      </div>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
                         <p className="text-sm font-semibold text-slate-900">
-                          Bulk Opening Status
+                          Choose the students to review
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Sets opening balances for all students in a class to
-                          reflect payments made before onboarding.
+                          Select a fee and class to narrow the list. Paid and
+                          balance amounts are entered per student below because
+                          each student can have a different amount.
                         </p>
                         <div className="mt-3">
                           <label className="text-xs text-slate-500">
-                            Filter Fee for Opening Status
+                            Fee to update
                           </label>
                           <select
                             value={selectedOpeningFeeId}
@@ -4841,7 +4992,7 @@ const FeesPayments: React.FC = () => {
                             }
                             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                           >
-                            <option value="">All fees (bulk)</option>
+                            <option value="">All fees for each student</option>
                             {fees.map((fee) => (
                               <option key={fee.id} value={fee.id}>
                                 {fee.feeName}
@@ -4849,7 +5000,7 @@ const FeesPayments: React.FC = () => {
                             ))}
                           </select>
                         </div>
-                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <div>
                             <label className="text-xs text-slate-500">
                               Class
@@ -4869,77 +5020,35 @@ const FeesPayments: React.FC = () => {
                               ))}
                             </select>
                           </div>
-                          <div>
-                            <label className="text-xs text-slate-500">
-                              Status
-                            </label>
-                            <select
-                              value={bulkOpeningStatus}
-                              onChange={(e) =>
-                                setBulkOpeningStatus(
-                                  e.target.value as
-                                    | "Paid"
-                                    | "Part-paid"
-                                    | "Unpaid",
-                                )
-                              }
-                              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                            >
-                              <option value="Paid">Paid</option>
-                              <option value="Part-paid">Part-paid</option>
-                              <option value="Unpaid">Unpaid</option>
-                            </select>
+                          <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-3 text-xs leading-5 text-slate-500">
+                            This section only filters the student rows. It will
+                            not copy one payment amount to the whole class.
                           </div>
-                          <div>
-                            <label className="text-xs text-slate-500">
-                              Opening Paid
-                            </label>
-                            <input
-                              value={bulkOpeningPaidAmount}
-                              onChange={(e) =>
-                                setBulkOpeningPaidAmount(e.target.value)
-                              }
-                              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                              placeholder="0"
-                            />
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              Amount already paid before onboarding.
-                            </p>
-                          </div>
-                          <div>
-                            <label className="text-xs text-slate-500">
-                              Opening Balance
-                            </label>
-                            <input
-                              value={bulkOpeningBalance}
-                              onChange={(e) =>
-                                setBulkOpeningBalance(e.target.value)
-                              }
-                              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                              placeholder="0"
-                            />
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              Remaining amount owed before onboarding.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <button
-                            onClick={applyBulkOpeningStatus}
-                            className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
-                          >
-                            Apply to Class
-                          </button>
                         </div>
                       </div>
 
                       <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            Student opening balances
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Review each student, adjust paid and balance amounts,
+                            then save the row. Use 0 where nothing was paid or
+                            owed before onboarding.
+                          </p>
+                        </div>
                         {onboardingLedgers
                           .filter(({ ledger }) =>
                             selectedOpeningFeeId
                               ? ledger.fees.some(
                                   (fee) => fee.feeId === selectedOpeningFeeId,
                                 )
+                              : true,
+                          )
+                          .filter(({ ledger }) =>
+                            bulkOpeningClassId
+                              ? ledger.classId === bulkOpeningClassId
                               : true,
                           )
                           .map(({ ledger, student }) => {
@@ -4952,12 +5061,18 @@ const FeesPayments: React.FC = () => {
                               ledger.id,
                               feeMatch?.feeId,
                             );
+                            const formKey = getOpeningFormKey(
+                              ledger.id,
+                              feeMatch?.feeId,
+                            );
+                            const isSavingThisOpeningRow =
+                              savingOpeningRowKey === formKey;
                             return (
                               <div
                                 key={ledger.id}
-                                className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                                className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-[minmax(160px,1.2fr)_minmax(150px,0.9fr)_minmax(130px,0.75fr)_minmax(130px,0.75fr)_auto] lg:items-center"
                               >
-                                <div className="min-w-[160px]">
+                                <div className="min-w-0">
                                   <p className="text-sm font-semibold text-slate-900">
                                     {student?.name || ledger.studentId}
                                   </p>
@@ -4967,7 +5082,7 @@ const FeesPayments: React.FC = () => {
                                     )?.name || ""}
                                   </p>
                                 </div>
-                                <div>
+                                <div className="min-w-0">
                                   <label className="text-xs text-slate-500">
                                     Status
                                   </label>
@@ -4976,7 +5091,7 @@ const FeesPayments: React.FC = () => {
                                     onChange={(e) =>
                                       setOpeningLedgerForm((prev) => ({
                                         ...prev,
-                                        [`${ledger.id}::${feeMatch?.feeId}`]: {
+                                        [formKey]: {
                                           ...form,
                                           openingStatus: e.target.value as
                                             | "Paid"
@@ -4992,8 +5107,8 @@ const FeesPayments: React.FC = () => {
                                     <option value="Unpaid">Unpaid</option>
                                   </select>
                                 </div>
-                                <div>
-                                  <label className="text-xs text-slate-500">
+                                <div className="min-w-0">
+                                  <label className="block text-xs text-slate-500">
                                     Opening Paid
                                   </label>
                                   <input
@@ -5001,17 +5116,20 @@ const FeesPayments: React.FC = () => {
                                     onChange={(e) =>
                                       setOpeningLedgerForm((prev) => ({
                                         ...prev,
-                                        [`${ledger.id}::${feeMatch?.feeId}`]: {
+                                        [formKey]: {
                                           ...form,
                                           openingPaidAmount: e.target.value,
                                         },
                                       }))
                                     }
-                                    className="mt-1 w-24 rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                                   />
+                                  <p className="mt-1 text-[10px] text-slate-400">
+                                    Already paid
+                                  </p>
                                 </div>
-                                <div>
-                                  <label className="text-xs text-slate-500">
+                                <div className="min-w-0">
+                                  <label className="block text-xs text-slate-500">
                                     Opening Balance
                                   </label>
                                   <input
@@ -5019,25 +5137,40 @@ const FeesPayments: React.FC = () => {
                                     onChange={(e) =>
                                       setOpeningLedgerForm((prev) => ({
                                         ...prev,
-                                        [`${ledger.id}::${feeMatch?.feeId}`]: {
+                                        [formKey]: {
                                           ...form,
                                           openingBalance: e.target.value,
                                         },
                                       }))
                                     }
-                                    className="mt-1 w-24 rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                                   />
+                                  <p className="mt-1 text-[10px] text-slate-400">
+                                    Still owed
+                                  </p>
                                 </div>
                                 <button
+                                  type="button"
                                   onClick={() =>
                                     saveOpeningStatusForLedger(
                                       ledger,
                                       feeMatch?.feeId,
                                     )
                                   }
-                                  className="ml-auto rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
+                                  disabled={isSavingThisOpeningRow}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 sm:col-span-2 lg:col-span-1 lg:w-auto"
                                 >
-                                  Save
+                                  {isSavingThisOpeningRow ? (
+                                    <>
+                                      <RefreshCw
+                                        size={14}
+                                        className="animate-spin"
+                                      />
+                                      Saving...
+                                    </>
+                                  ) : (
+                                    "Save"
+                                  )}
                                 </button>
                               </div>
                             );

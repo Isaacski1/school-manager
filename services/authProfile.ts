@@ -7,6 +7,52 @@ export interface UserProfile extends User {
   // Additional fields if needed
 }
 
+const USER_PROFILE_CACHE_PREFIX = "cached_user_profile_";
+
+const getUserProfileCacheKey = (uid: string) => `${USER_PROFILE_CACHE_PREFIX}${uid}`;
+
+export const cacheUserProfile = (profile: UserProfile) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      getUserProfileCacheKey(profile.id),
+      JSON.stringify({
+        ...profile,
+        createdAt:
+          profile.createdAt instanceof Date
+            ? profile.createdAt.toISOString()
+            : profile.createdAt,
+        cachedAt: new Date().toISOString(),
+      }),
+    );
+  } catch (error) {
+    console.warn("[Auth] Failed to cache user profile", error);
+  }
+};
+
+export const loadCachedUserProfile = (uid: string): UserProfile | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(getUserProfileCacheKey(uid));
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    return {
+      ...cached,
+      createdAt: cached.createdAt ? new Date(cached.createdAt) : new Date(),
+    };
+  } catch (error) {
+    console.warn("[Auth] Failed to load cached user profile", error);
+    return null;
+  }
+};
+
+export const isOfflineAuthProfileError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return (
+    typeof navigator !== "undefined" && !navigator.onLine
+  ) || /offline|network|failed to fetch|unavailable|client is offline/i.test(message);
+};
+
 /**
  * Load user profile from Firestore users collection
  */
@@ -16,7 +62,7 @@ export async function loadUserProfile(
   // 1. Fetch Custom Claims (roles, studentIds, etc.) immediately
   let customClaims: any = {};
   try {
-    const idTokenResult = await firebaseUser.getIdTokenResult(true); // Force refresh to get latest claims
+    const idTokenResult = await firebaseUser.getIdTokenResult(); // Allows cached auth state to work offline.
     customClaims = idTokenResult.claims || {};
     console.info("[Auth] Extracted custom claims:", customClaims);
   } catch (e) {
@@ -91,7 +137,7 @@ export async function loadUserProfile(
       }
     }
 
-    return {
+    const profile = {
       id: firebaseUser.uid,
       fullName: userData.fullName || firebaseUser.displayName || "User",
       email: firebaseUser.email || "",
@@ -105,6 +151,8 @@ export async function loadUserProfile(
       photoUrl: userData.photoUrl || undefined,
       createdAt: userData.createdAt?.toDate() || new Date(),
     };
+    cacheUserProfile(profile);
+    return profile;
   } else {
     // If the user signed in with a phone number and doesn't have an explicit user record,
     // they are considered a Parent automatically.
@@ -112,19 +160,23 @@ export async function loadUserProfile(
     const isPhoneUid = firebaseUser.uid && firebaseUser.uid.startsWith("+") && firebaseUser.uid.length > 8;
 
     if (firebaseUser.phoneNumber || isPhoneUid) {
-      return {
+      const profile = {
         id: firebaseUser.uid,
-        fullName: "Parent / Guardian",
+        fullName: customClaims.parentContactName || "Parent / Guardian",
         email: "",
         role: UserRole.PARENT,
         schoolId: null,
-        phoneNumber: firebaseUser.phoneNumber || firebaseUser.uid,
+        phoneNumber: customClaims.parentPhone || firebaseUser.phoneNumber || firebaseUser.uid,
         studentIds: customClaims.studentIds || [],
+        parentContactRole: customClaims.parentContactRole,
+        parentContactName: customClaims.parentContactName,
         assignedClassIds: [],
-        status: "active",
+        status: "active" as const,
         emailVerified: false,
         createdAt: new Date(),
       };
+      cacheUserProfile(profile);
+      return profile;
     }
     // Account not provisioned - throw error
     throw new Error("ACCOUNT_NOT_PROVISIONED");

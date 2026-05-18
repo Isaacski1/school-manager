@@ -879,6 +879,13 @@ const ManageStudents = () => {
                   const className =
                     availableClasses.find((c) => c.id === student.classId)?.name ||
                     student.classId;
+                  const primaryContact = student.fatherPhone
+                    ? { label: "Father Number", name: student.fatherName, phone: student.fatherPhone }
+                    : student.motherPhone
+                      ? { label: "Mother Number", name: student.motherName, phone: student.motherPhone }
+                      : student.guardianPhone
+                        ? { label: "Guardian Number", name: student.guardianName, phone: student.guardianPhone }
+                        : { label: "Parent Number", name: "", phone: "" };
                   return (
                     <div
                       key={student.id}
@@ -925,13 +932,13 @@ const ManageStudents = () => {
                         </div>
                         <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                            Guardian
+                            {primaryContact.label}
                           </p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">
-                            {student.guardianName || "-"}
+                            {primaryContact.name || primaryContact.phone || "-"}
                           </p>
                           <p className="text-[11px] text-slate-400">
-                            {student.guardianPhone || ""}
+                            {primaryContact.name ? primaryContact.phone : ""}
                           </p>
                         </div>
                       </div>

@@ -31,6 +31,8 @@ export interface User {
   roleUpdatedAt?: Date | number | null;
   roleUpdatedBy?: string | null;
   photoUrl?: string;
+  parentContactRole?: "father" | "mother" | "guardian";
+  parentContactName?: string;
 }
 
 export interface School {
@@ -340,6 +342,12 @@ export interface SchoolConfig {
     D: number;
   };
   positionRule?: "total" | "average" | "subject";
+  notificationSettings?: {
+    adminWhatsAppNumber?: string;
+    enableWhatsAppNotifications?: boolean;
+    enablePaymentAlerts?: boolean;
+    enableInvoiceNotifications?: boolean;
+  };
 }
 
 export type BackupType =

@@ -64,7 +64,7 @@ const ToastContainer: React.FC = () => {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed right-4 top-20 z-60 flex flex-col gap-3">
+    <div className="fixed right-4 top-20 z-[9999] flex flex-col gap-3">
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} onClose={handleClose} />
       ))}

@@ -501,7 +501,16 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
       }
       
 
-      if (student.guardianPhone) {
+      const hasNotificationPhone = Boolean(
+        student.fatherPhone ||
+          student.motherPhone ||
+          student.guardianPhone ||
+          student.fatherWhatsApp ||
+          student.motherWhatsApp ||
+          student.guardianWhatsApp,
+      );
+
+      if (hasNotificationPhone) {
         console.log("[Invoice] Starting Flash Capture Invoicing...");
         
         // Make it visible and keep it there for a moment to force a browser paint
@@ -592,8 +601,11 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
               ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
             },
             body: JSON.stringify({
+              schoolId: student.schoolId,
               studentId: student.id,
               studentName: student.name,
+              fatherPhone: student.fatherPhone,
+              motherPhone: student.motherPhone,
               guardianPhone: student.guardianPhone,
               adminPhone: school?.phone,
               amount,
@@ -608,11 +620,18 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             throw new Error(errData.error || `Server returned ${response.status}`);
           }
 
-          console.log("[Invoice] WhatsApp transmission triggered successfully.");
-          showToast("Invoice sent to WhatsApp!", { type: "success" });
+          const result = await response.json().catch(() => ({}));
+          console.log("[Invoice] WhatsApp notification handled:", result);
+          if (result.queued) {
+            showToast("Payment saved. WhatsApp notification queued.", { type: "info" });
+          } else if (result.skipped) {
+            showToast("Payment saved. WhatsApp notifications are disabled.", { type: "info" });
+          } else {
+            showToast("Payment saved and WhatsApp notification processed.", { type: "success" });
+          }
         } catch (captureError: any) {
           console.error("[Invoice] Capture/Send failed:", captureError);
-          showToast(captureError.message || "Failed to send WhatsApp invoice.", { type: "error" });
+          showToast("Payment saved. WhatsApp notification will need review.", { type: "warning" });
           if (document.body.contains(container)) {
             document.body.removeChild(container);
           }
