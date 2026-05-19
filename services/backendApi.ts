@@ -667,6 +667,19 @@ export async function initiateSchoolBilling(payload: {
   });
 }
 
+export async function initiateSmsTopup(payload: {
+  amount: number;
+  currency?: "GHS";
+  metadata?: Record<string, any>;
+}): Promise<{
+  authorizationUrl: string;
+  reference: string;
+}> {
+  return apiRequest("/api/billing/sms-initiate", {
+    body: payload,
+  });
+}
+
 export async function verifySchoolPayment(payload: {
   reference: string;
 }): Promise<{

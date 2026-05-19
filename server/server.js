@@ -825,6 +825,117 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * Send SMS Reminders via Arkesel
+ * POST /api/admin/reminders/send
+ */
+app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
+  try {
+    const { message, phones } = req.body;
+    const { uid } = req.user;
+
+    // 1. Verify caller is admin
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (!userData || userData.role !== "school_admin") {
+      return res.status(403).json({ error: "Forbidden: Only school admins can send reminders." });
+    }
+
+    if (!message || !phones || !Array.isArray(phones) || phones.length === 0) {
+      return res.status(400).json({ error: "Message and at least one phone number are required." });
+    }
+
+    const schoolId = userData.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: "School not linked to admin." });
+    }
+
+    const schoolDoc = await admin.firestore().collection("schools").doc(schoolId).get();
+    if (!schoolDoc.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
+
+    const schoolData = schoolDoc.data();
+    const walletBalance = schoolData?.smsWallet?.balance ?? 0;
+    const ratePerSms = 0.05; // 5 pesewas per SMS
+    
+    // Format phones to international format (233...)
+    const formattedPhones = phones.map(p => {
+      let clean = String(p).replace(/\D/g, "");
+      if (clean.startsWith("0")) clean = "233" + clean.substring(1);
+      return clean;
+    });
+
+    const totalCost = formattedPhones.length * ratePerSms;
+
+    if (walletBalance < totalCost) {
+      return res.status(400).json({ 
+        error: `Insufficient SMS wallet balance. Sending requires GH₵ ${totalCost.toFixed(2)}, but your current balance is GH₵ ${walletBalance.toFixed(2)}. Please top up.` 
+      });
+    }
+
+    const ARKESEL_API_KEY = process.env.ARKESEL_API_KEY;
+    const ARKESEL_SENDER_ID = process.env.ARKESEL_SENDER_ID || "SMGH";
+
+    let smsData;
+
+    if (!ARKESEL_API_KEY) {
+      console.warn("⚠️ ARKESEL_API_KEY is not configured. Mocking successful SMS delivery for testing.");
+      smsData = { status: "success", message: "Mock SMS sent successfully (development mode)." };
+    } else {
+      // Call Arkesel v2 API
+      const smsResponse = await fetch("https://sms.arkesel.com/api/v2/sms/send", {
+        method: "POST",
+        headers: {
+          "api-key": ARKESEL_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sender: ARKESEL_SENDER_ID,
+          message: message,
+          recipients: formattedPhones
+        })
+      });
+
+      smsData = await smsResponse.json();
+
+      if (!smsResponse.ok) {
+        console.error("Arkesel SMS Error:", smsData);
+        return res.status(400).json({ error: smsData.message || "Failed to send SMS via Arkesel." });
+      }
+    }
+
+    // Deduct the cost from SMS balance
+    await admin.firestore().collection("schools").doc(userData.schoolId).set({
+      smsWallet: {
+        balance: admin.firestore.FieldValue.increment(-totalCost),
+        lastSendAt: Date.now()
+      }
+    }, { merge: true });
+
+    // Record audit log in Firestore
+    await admin.firestore().collection("reminders").add({
+      schoolId: userData.schoolId,
+      sentBy: uid,
+      message,
+      recipientCount: formattedPhones.length,
+      cost: totalCost,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "success",
+      apiResponse: smsData
+    });
+
+    return res.json({
+      success: true,
+      message: "Reminders sent successfully."
+    });
+
+  } catch (error) {
+    console.error("SMS Reminders Error:", error);
+    return res.status(500).json({ error: "Internal server error during SMS sending." });
+  }
+});
+
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
@@ -7643,6 +7754,112 @@ app.post(
 );
 
 /**
+ * Initialize SMS balance Top Up via Paystack central keys
+ * POST /api/billing/sms-initiate
+ */
+app.post(
+  "/api/billing/sms-initiate",
+  authLimiter,
+  authMiddleware,
+  schoolAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { uid, email } = req.user;
+      const { amount, currency = "GHS", metadata = {} } = req.body;
+
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ error: "Invalid top up amount." });
+      }
+
+      const userDoc = await admin
+        .firestore()
+        .collection("users")
+        .doc(uid)
+        .get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User profile not found" });
+      }
+
+      const userData = userDoc.data();
+      const schoolId = userData.schoolId;
+      if (!schoolId) {
+        return res.status(400).json({ error: "School not linked to admin" });
+      }
+
+      const schoolDoc = await admin
+        .firestore()
+        .collection("schools")
+        .doc(schoolId)
+        .get();
+      if (!schoolDoc.exists) {
+        return res.status(404).json({ error: "School not found" });
+      }
+
+      const reference = `sms_${schoolId}_${Date.now()}`;
+      const payload = {
+        email: email || userData.email,
+        amount: Math.round(Number(amount) * 100), // convert to pesewas/kobo
+        currency,
+        reference,
+        callback_url: PAYSTACK_CALLBACK_URL || undefined,
+        metadata: {
+          schoolId,
+          adminUid: uid,
+          reference,
+          type: "sms_topup",
+          ...metadata,
+        },
+      };
+
+      const response = await paystackRequest(
+        "/transaction/initialize",
+        "POST",
+        payload,
+      );
+
+      await admin
+        .firestore()
+        .collection("payments")
+        .doc(reference)
+        .set(
+          {
+            reference,
+            amount: Math.round(Number(amount) * 100),
+            currency,
+            status: "pending",
+            schoolId,
+            schoolName: schoolDoc.data()?.name || "",
+            adminUid: uid,
+            adminEmail: email || userData.email || "",
+            module: "billing",
+            type: "sms_topup",
+            category: "sms_topup",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+      await logActivity({
+        eventType: "sms_wallet_topup_initiated",
+        schoolId,
+        actorUid: uid,
+        actorRole: "school_admin",
+        entityId: reference,
+        meta: { amount, currency, reference },
+      });
+
+      res.json({
+        authorizationUrl: response.data.authorization_url,
+        reference: response.data.reference,
+      });
+    } catch (error) {
+      console.error("SMS Topup initiate error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+/**
  * Verify and backfill a payment status by reference
  * POST /api/billing/verify
  */
@@ -7675,6 +7892,7 @@ app.post(
         return res.status(403).json({ error: "Forbidden" });
       }
 
+      const isSmsTopup = paymentData?.type === "sms_topup";
       const verification = await verifyPaystackTransaction(reference);
       const data = verification?.data || {};
       const mappedStatus = String(data.status || "pending");
@@ -7693,13 +7911,42 @@ app.post(
             schoolId,
             verifiedAt: Date.now(),
             module: "billing",
-            type: "subscription",
-            category: "subscription",
+            type: isSmsTopup ? "sms_topup" : "subscription",
+            category: isSmsTopup ? "sms_topup" : "subscription",
           },
           { merge: true },
         );
 
       if (mappedStatus === "success") {
+        if (isSmsTopup) {
+          const amountGhs = (paymentData.amount || 0) / 100;
+          await admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId)
+            .set(
+              {
+                smsWallet: {
+                  balance: admin.firestore.FieldValue.increment(amountGhs),
+                  lastTopupAt: Date.now(),
+                },
+              },
+              { merge: true },
+            );
+          await logActivity({
+            eventType: "sms_wallet_topup_success",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "school_admin",
+            entityId: reference,
+            meta: { status: mappedStatus, amount: amountGhs },
+          });
+          return res.json({
+            success: true,
+            status: mappedStatus,
+            reference,
+          });
+        }
         await admin
           .firestore()
           .collection("schools")
@@ -7730,6 +7977,21 @@ app.post(
       }
 
       if (["failed", "abandoned"].includes(mappedStatus)) {
+        if (isSmsTopup) {
+          await logActivity({
+            eventType: "sms_wallet_topup_failed",
+            schoolId,
+            actorUid: req.user.uid,
+            actorRole: "school_admin",
+            entityId: reference,
+            meta: { status: mappedStatus },
+          });
+          return res.json({
+            success: false,
+            status: mappedStatus,
+            reference,
+          });
+        }
         await admin
           .firestore()
           .collection("schools")

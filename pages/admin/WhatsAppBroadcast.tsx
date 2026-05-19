@@ -6,6 +6,7 @@ import { firestore } from "../../services/firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { showToast } from "../../services/toast";
 import { resolveFeaturePlan } from "../../services/featureAccess";
+import { CLASSES_LIST } from "../../constants";
 import { Link } from "react-router-dom";
 import {
   Send, Users, CheckCircle2, XCircle,
@@ -385,9 +386,14 @@ const WhatsAppBroadcast: React.FC = () => {
           const d = doc.data() as any;
           const phone = String(d.guardianPhone || d.parentPhone || d.guardian_phone || d.contactPhone || "").trim();
           const name = String(d.guardianName || d.parentName || d.guardian_name || d.contactName || "Parent").trim();
+          let className = d.class || d.className || d.classLevel || d.grade;
+          if (d.classId) {
+             const found = CLASSES_LIST.find(c => c.id === d.classId);
+             if (found) className = found.name;
+          }
           if (phone && !seen.has(phone)) {
             seen.add(phone);
-            list.push({ name, phone, class: d.class || d.className || d.classLevel || d.grade });
+            list.push({ name, phone, class: className });
           }
         });
         setParents(list);
@@ -416,7 +422,15 @@ const WhatsAppBroadcast: React.FC = () => {
       groups.set(label, current);
       return groups;
     }, new Map<string, ParentContact[]>())
-  ).sort(([a], [b]) => a.localeCompare(b));
+  ).sort(([a], [b]) => {
+    if (a === "No Class") return 1;
+    if (b === "No Class") return -1;
+    const idxA = CLASSES_LIST.findIndex((c) => c.name === a);
+    const idxB = CLASSES_LIST.findIndex((c) => c.name === b);
+    if (idxA === -1) return 1;
+    if (idxB === -1) return -1;
+    return idxA - idxB;
+  });
 
   const selectClassGroup = (label: string, contacts: ParentContact[]) => {
     setClassFilter(label === "All School" ? "All" : label);

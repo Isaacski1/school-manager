@@ -3605,8 +3605,7 @@ const AdminDashboard = () => {
                     {totalSchoolDays ?? fallbackSchoolDays.days} school days
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/12 px-3 py-1.5 text-xs font-medium text-white/90 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)]">
-                    {totalSchoolWeeks ?? fallbackSchoolDays.weeks} teaching
-                    weeks
+                    {totalSchoolWeeks ?? fallbackSchoolDays.weeks} teaching weeks
                   </span>
                 </div>
 

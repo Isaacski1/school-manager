@@ -670,6 +670,9 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {false && hasFeature("whatsapp_broadcast") && (
                 <NavItem href="/admin/whatsapp" icon={<WhatsAppIcon size={18} />} label="WhatsApp Broadcast" />
               )}
+              {hasFeature("whatsapp_broadcast") && (
+                <NavItem href="/admin/reminders" icon={<MessageSquare size={18} />} label="SMS Reminders" />
+              )}
               {hasFeature("student_history") && (
                 <NavItem href="/admin/student-history" icon={<History size={18} />} label="Student History" />
               )}
