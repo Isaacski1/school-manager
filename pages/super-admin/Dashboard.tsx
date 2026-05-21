@@ -70,6 +70,7 @@ import {
   Tooltip,
   BarChart,
   Bar,
+  ResponsiveContainer,
 } from "recharts";
 
 // Premium Card Component
@@ -634,26 +635,70 @@ const ChartTooltip: React.FC<{
   payload?: any[];
   label?: string;
   currency?: string;
-}> = ({ active, payload, label, currency = "GHS" }) => {
+  trendData?: any[];
+}> = ({ active, payload, label, currency = "GHS", trendData = [] }) => {
   if (!active || !payload?.length) return null;
-  const resolvedLabel = payload[0]?.payload?.tooltipLabel ?? label;
+  const currentItem = payload[0]?.payload;
+  const resolvedLabel = currentItem?.tooltipLabel ?? label;
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
-      <div className="font-semibold text-slate-800 mb-1">{resolvedLabel}</div>
-      {payload.map((entry, idx) => (
-        <div key={`${entry.name}-${idx}`} className="flex items-center gap-2">
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
-            style={{ backgroundColor: entry.color }}
-          />
-          <span className="text-slate-500">{entry.name}:</span>
-          <span className="font-semibold text-slate-800">
-            {entry.name?.toLowerCase().includes("revenue")
-              ? formatCurrency(entry.value || 0, currency)
-              : entry.value}
-          </span>
-        </div>
-      ))}
+    <div className="rounded-2xl border border-slate-100 bg-white/95 backdrop-blur-md p-4 shadow-xl text-xs min-w-[200px] transition-all duration-150">
+      <div className="font-bold text-slate-800 mb-2.5 border-b border-slate-100 pb-2 flex items-center justify-between">
+        <span>{resolvedLabel}</span>
+      </div>
+      <div className="space-y-3">
+        {payload.map((entry, idx) => {
+          const isRevenue = entry.dataKey === "revenue";
+          const dataKey = entry.dataKey;
+          
+          let changePercentage = null;
+          if (currentItem && trendData.length > 0) {
+            const currentIndex = trendData.findIndex(item => item.label === currentItem.label);
+            if (currentIndex > 0) {
+              const prevItem = trendData[currentIndex - 1];
+              const prevVal = Number(prevItem[dataKey]) || 0;
+              const currentVal = Number(currentItem[dataKey]) || 0;
+              if (prevVal > 0) {
+                changePercentage = ((currentVal - prevVal) / prevVal) * 100;
+              } else if (currentVal > 0) {
+                changePercentage = 100;
+              } else {
+                changePercentage = 0;
+              }
+            }
+          }
+
+          return (
+            <div key={`${entry.name}-${idx}`} className="space-y-1">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  <span className="text-slate-500 font-medium">{entry.name}:</span>
+                </div>
+                <span className="font-extrabold text-slate-900">
+                  {isRevenue
+                    ? formatCurrency(entry.value || 0, currency)
+                    : `${entry.value} txns`}
+                </span>
+              </div>
+              
+              {changePercentage !== null && (
+                <div className="flex items-center gap-1.5 pl-4 text-[10px]">
+                  <span className={`font-bold flex items-center gap-0.5 ${
+                    changePercentage >= 0 ? "text-emerald-600" : "text-rose-500"
+                  }`}>
+                    {changePercentage >= 0 ? "▲ +" : "▼ "}{changePercentage.toFixed(1)}%
+                  </span>
+                  <span className="text-slate-400">vs last month</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -764,6 +809,7 @@ const EarningsOverview: React.FC<{
   kpis,
 }) => {
   const [revenueRange, setRevenueRange] = useState<RevenueRangeValue>(12);
+  const [chartMetric, setChartMetric] = useState<"revenue" | "count">("revenue");
 
   const normalizedBillingPayments = useMemo(() => {
     return billingPayments.map((payment) => {
@@ -851,6 +897,10 @@ const EarningsOverview: React.FC<{
     return revenueTrend.slice(-revenueRange);
   }, [revenueRange, revenueTrend]);
 
+  const hasVisibleRevenueTrend = useMemo(() => {
+    return filteredRevenueTrend.some((item) => Number(item[chartMetric]) > 0);
+  }, [chartMetric, filteredRevenueTrend]);
+
   const revenueDateSpan = useMemo(() => {
     const start = filteredRevenueTrend[0]?.date;
     const end = filteredRevenueTrend[filteredRevenueTrend.length - 1]?.date;
@@ -862,6 +912,32 @@ const EarningsOverview: React.FC<{
       });
     return `${formatMonth(start)} - ${formatMonth(end)}`;
   }, [filteredRevenueTrend]);
+
+  const rangeStats = useMemo(() => {
+    if (!filteredRevenueTrend || filteredRevenueTrend.length === 0) {
+      return { total: 0, average: 0, peakValue: 0, peakLabel: "N/A", growth: 0 };
+    }
+
+    const values = filteredRevenueTrend.map(item => Number(item[chartMetric]) || 0);
+    const total = values.reduce((sum, val) => sum + val, 0);
+    const average = total / filteredRevenueTrend.length;
+
+    let peakValue = 0;
+    let peakLabel = "N/A";
+    filteredRevenueTrend.forEach(item => {
+      const val = Number(item[chartMetric]) || 0;
+      if (val >= peakValue) {
+        peakValue = val;
+        peakLabel = item.label;
+      }
+    });
+
+    const latest = values[values.length - 1] || 0;
+    const prev = values[values.length - 2] || 0;
+    const growth = prev > 0 ? ((latest - prev) / prev) * 100 : latest > 0 ? 100 : 0;
+
+    return { total, average, peakValue, peakLabel, growth };
+  }, [filteredRevenueTrend, chartMetric]);
 
   const paymentStatusTrend = useMemo(() => {
     const buckets = buildRollingMonths(6);
@@ -1323,13 +1399,14 @@ const EarningsOverview: React.FC<{
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <Card className="xl:col-span-2 p-4 sm:p-6">
-          <div className="flex flex-col gap-3 mb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
-              <h4 className="text-lg font-semibold text-slate-900">
-                Revenue Flow ({revenueRange} months)
+              <h4 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <TrendingUp size={20} className="text-[#0B4A82]" />
+                Financial Flow Analysis
               </h4>
-              <p className="text-xs text-slate-500">
-                Successful billing collections with monthly momentum
+              <p className="text-xs text-slate-500 mt-0.5">
+                Monitor platform billing trends, collection volume, and transaction frequencies
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
                 <span>
@@ -1343,37 +1420,127 @@ const EarningsOverview: React.FC<{
                 </span>
               </div>
             </div>
-            <div className="inline-flex w-fit rounded-full border border-slate-200 bg-white p-1 shadow-sm">
-              {REVENUE_RANGE_OPTIONS.map((option) => {
-                const isActive = revenueRange === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setRevenueRange(option.value)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      isActive
-                        ? "bg-[#0B4A82] text-white"
-                        : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
+            
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+              {/* Metric Selector */}
+              <div className="flex rounded-xl border border-slate-100 bg-slate-50 p-1 shadow-inner w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setChartMetric("revenue")}
+                  className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
+                    chartMetric === "revenue"
+                      ? "bg-white text-[#0B4A82] shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Revenue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartMetric("count")}
+                  className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
+                    chartMetric === "count"
+                      ? "bg-white text-emerald-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Transactions
+                </button>
+              </div>
+
+              {/* Range Selector */}
+              <div className="flex rounded-xl border border-slate-100 bg-slate-50 p-1 shadow-inner w-full sm:w-auto">
+                {REVENUE_RANGE_OPTIONS.map((option) => {
+                  const isActive = revenueRange === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setRevenueRange(option.value)}
+                      className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
+                        isActive
+                          ? "bg-[#0B4A82] text-white shadow-sm"
+                          : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
+          {/* Advanced Performance Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
+              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                {chartMetric === "revenue" ? "Total Revenue" : "Total Txns"}
+              </div>
+              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight">
+                {chartMetric === "revenue"
+                  ? formatCurrency(rangeStats.total)
+                  : `${rangeStats.total} txns`}
+              </div>
+              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
+                For selected {revenueRange} months
+              </div>
+            </div>
+
+            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
+              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Monthly Average
+              </div>
+              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight">
+                {chartMetric === "revenue"
+                  ? formatCurrency(rangeStats.average)
+                  : `${rangeStats.average.toFixed(1)} / mo`}
+              </div>
+              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
+                Prorated monthly trend
+              </div>
+            </div>
+
+            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
+              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Peak Month
+              </div>
+              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight truncate" title={rangeStats.peakLabel}>
+                {chartMetric === "revenue"
+                  ? formatCurrency(rangeStats.peakValue)
+                  : `${rangeStats.peakValue} txns`}
+              </div>
+              <div className="text-[10px] sm:text-xs text-[#0B4A82] font-semibold mt-1 truncate">
+                {rangeStats.peakLabel}
+              </div>
+            </div>
+
+            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
+              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Growth Rate (MoM)
+              </div>
+              <div className={`mt-1.5 text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-1 ${
+                rangeStats.growth >= 0 ? "text-emerald-600" : "text-rose-500"
+              }`}>
+                {rangeStats.growth >= 0 ? "+" : ""}{rangeStats.growth.toFixed(1)}%
+              </div>
+              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
+                Latest month vs. previous
+              </div>
+            </div>
+          </div>
+
           <ChartSurface
             height={288}
-            className="rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-white overflow-hidden"
+            className="rounded-xl border border-slate-100 bg-gradient-to-br from-slate-50/50 to-white overflow-hidden p-2"
           >
-            {filteredRevenueTrend && filteredRevenueTrend.length > 0 ? (
+            {filteredRevenueTrend && filteredRevenueTrend.length > 0 && hasVisibleRevenueTrend ? (
               ({ width, height }) => (
                 <AreaChart
                   width={width}
                   height={height}
                   data={filteredRevenueTrend}
-                  margin={{ left: 40, right: 20, top: 10, bottom: 10 }}
+                  margin={{ left: 10, right: 10, top: 10, bottom: 10 }}
                 >
                   <defs>
                     <linearGradient
@@ -1385,35 +1552,53 @@ const EarningsOverview: React.FC<{
                     >
                       <stop
                         offset="0%"
-                        stopColor="#0B4A82"
-                        stopOpacity={0.35}
+                        stopColor={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
+                        stopOpacity={0.25}
                       />
                       <stop
                         offset="100%"
-                        stopColor="#0B4A82"
-                        stopOpacity={0.05}
+                        stopColor={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
+                        stopOpacity={0.0}
                       />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <CartesianGrid strokeDasharray="4 4" stroke="#F1F5F9" vertical={false} />
                   <XAxis
                     dataKey="axisLabel"
-                    tick={{ fontSize: 11 }}
-                    minTickGap={16}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "#94A3B8", fontWeight: 500 }}
+                    dy={8}
+                    minTickGap={20}
                   />
                   <YAxis
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value) => `${Math.round(value / 1000)}k`}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "#94A3B8", fontWeight: 500 }}
+                    dx={-8}
+                    width={40}
+                    tickFormatter={(value) => 
+                      chartMetric === "revenue"
+                        ? formatCompactCurrency(value)
+                        : value
+                    }
                   />
-                  <Tooltip content={<ChartTooltip />} />
+                  <Tooltip content={<ChartTooltip trendData={revenueTrend} />} />
                   <Area
                     type="monotone"
-                    dataKey="revenue"
-                    name="Revenue"
-                    stroke="#0B4A82"
-                    strokeWidth={2}
+                    dataKey={chartMetric}
+                    name={chartMetric === "revenue" ? "Revenue" : "Transactions"}
+                    stroke={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
+                    strokeWidth={3}
                     fill="url(#revGradient)"
-                    isAnimationActive={false}
+                    activeDot={{
+                      r: 6,
+                      strokeWidth: 2,
+                      stroke: "#ffffff",
+                      fill: chartMetric === "revenue" ? "#0B4A82" : "#10B981",
+                      className: "shadow-lg"
+                    }}
+                    isAnimationActive={true}
                   />
                 </AreaChart>
               )
@@ -1423,8 +1608,8 @@ const EarningsOverview: React.FC<{
                   icon={
                     <BadgeDollarSign className="text-slate-300" size={40} />
                   }
-                  title="No revenue recorded"
-                  description="Successful billing transactions will appear here once schools start paying."
+                  title={`No ${chartMetric === "revenue" ? "revenue" : "transactions"} in this range`}
+                  description={`The chart will draw once successful payments are recorded in the selected ${revenueRange}-month period.`}
                 />
               </div>
             )}

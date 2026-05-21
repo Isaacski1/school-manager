@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { collection, query, getDocs, orderBy, limit } from "firebase/firestore";
+import {
+  collection,
+  collectionGroup,
+  query,
+  getDocs,
+  orderBy,
+  limit,
+} from "firebase/firestore";
 import { firestore } from "../services/firebase";
 import {
   BadgeDollarSign,
@@ -72,48 +79,37 @@ const BillingAnalytics: React.FC<BillingAnalyticsProps> = ({
 
       allPayments = [...allPayments, ...globalPaymentData];
 
-      // Also try to fetch from school-specific payment collections if they exist
-      // This ensures we get payments from schools using the v2 finance system
+      // Also fetch school-specific payment subcollections with one collection
+      // group query. This avoids one query per school as the platform grows.
       try {
-        // Get all schools first
-        const schoolsSnap = await getDocs(collection(firestore, "schools"));
-        const schoolPromises = schoolsSnap.docs.map(async (schoolDoc) => {
-          try {
-            const schoolPaymentsQuery = query(
-              collection(firestore, "schools", schoolDoc.id, "payments"),
-              orderBy("createdAt", "desc"),
-              limit(500),
-            );
-            const schoolPaymentsSnap = await getDocs(schoolPaymentsQuery);
-            return schoolPaymentsSnap.docs.map((doc) => {
-              const data = doc.data();
-              return {
-                id: `${schoolDoc.id}_${doc.id}`,
-                amount: data.amount ?? data.amountPaid ?? 0,
-                status: data.status ?? "pending",
-                createdAt:
-                  data.createdAt ??
-                  data.paidAt ??
-                  data.verifiedAt ??
-                  new Date(),
-                schoolId: schoolDoc.id,
-                feeType: data.feeType ?? data.feeName,
-                method: data.method ?? data.paymentMethod,
-                studentId: data.studentId,
-              } as PaymentRecord;
-            });
-          } catch (err) {
-            // School might not have payments collection or it might be empty
-            return [];
-          }
-        });
-
-        const schoolPaymentsArrays = await Promise.all(schoolPromises);
-        const schoolPayments = schoolPaymentsArrays.flat();
+        const schoolPaymentsQuery = query(
+          collectionGroup(firestore, "payments"),
+          orderBy("createdAt", "desc"),
+          limit(2000),
+        );
+        const schoolPaymentsSnap = await getDocs(schoolPaymentsQuery);
+        const schoolPayments = schoolPaymentsSnap.docs
+          .map((doc) => {
+            const parentSchoolId = doc.ref.parent.parent?.id;
+            if (!parentSchoolId) return null;
+            const data = doc.data();
+            return {
+              id: `${parentSchoolId}_${doc.id}`,
+              amount: data.amount ?? data.amountPaid ?? 0,
+              status: data.status ?? "pending",
+              createdAt:
+                data.createdAt ?? data.paidAt ?? data.verifiedAt ?? new Date(),
+              schoolId: data.schoolId || parentSchoolId,
+              feeType: data.feeType ?? data.feeName,
+              method: data.method ?? data.paymentMethod,
+              studentId: data.studentId,
+            } as PaymentRecord;
+          })
+          .filter((payment): payment is PaymentRecord => Boolean(payment));
         allPayments = [...allPayments, ...schoolPayments];
       } catch (err) {
-        // If fetching school-specific payments fails, continue with global payments
-        console.log("Could not fetch school-specific payments:", err);
+        // If collection group indexing is not ready, continue with global payments.
+        console.log("Could not fetch school-specific payment group:", err);
       }
 
       // Remove duplicates based on payment ID and school

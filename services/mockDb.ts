@@ -2373,7 +2373,7 @@ class FirestoreService {
   async getDashboardStats(schoolId?: string) {
     await this.requireFeature(schoolId, "basic_analytics");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getDashboardStats");
-    const [studentsSnap, usersSnap, attendanceSnap, schoolSnap] = await Promise.all([
+    const [studentsSnap, usersSnap, schoolSnap, config] = await Promise.all([
       getDocs(
         query(
           collection(firestore, "students"),
@@ -2386,26 +2386,66 @@ class FirestoreService {
           where("schoolId", "==", scopedSchoolId),
         ),
       ),
-      getDocs(
-        query(
-          collection(firestore, "attendance"),
-          where("schoolId", "==", scopedSchoolId),
-        ),
-      ),
       getDoc(doc(firestore, "schools", scopedSchoolId)),
+      this.getSchoolConfig(scopedSchoolId),
     ]);
 
     const students = studentsSnap.docs.map((d) => d.data() as Student);
     const users = usersSnap.docs.map((d) => d.data() as User);
-    const config = await this.getSchoolConfig(scopedSchoolId);
     const schoolData = schoolSnap.exists() ? (schoolSnap.data() as School) : null;
     const filteredClasses = getFilteredClasses(schoolData?.schoolType);
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const fallbackStart = new Date(today);
+    fallbackStart.setDate(fallbackStart.getDate() - 120);
+    const fallbackStartKey = `${fallbackStart.getFullYear()}-${String(fallbackStart.getMonth() + 1).padStart(2, "0")}-${String(fallbackStart.getDate()).padStart(2, "0")}`;
+    const attendanceStartDate = config.schoolReopenDate || fallbackStartKey;
+    const attendanceEndDate =
+      config.vacationDate && config.vacationDate < todayKey
+        ? config.vacationDate
+        : todayKey;
+    let attendanceDocs: AttendanceRecord[] = [];
+    try {
+      const attendanceSnap = await getDocs(
+        query(
+          collection(firestore, "attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("date", ">=", attendanceStartDate),
+          where("date", "<=", attendanceEndDate),
+        ),
+      );
+      attendanceDocs = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      console.debug(
+        "[mockDb] getDashboardStats attendance range query failed, using school scoped fallback",
+        error,
+      );
+      try {
+        const fallbackSnap = await getDocs(
+          query(
+            collection(firestore, "attendance"),
+            where("schoolId", "==", scopedSchoolId),
+          ),
+        );
+        attendanceDocs = fallbackSnap.docs
+          .map((d) => d.data() as AttendanceRecord)
+          .filter(
+            (record) =>
+              record.date >= attendanceStartDate &&
+              record.date <= attendanceEndDate,
+          );
+      } catch (fallbackError) {
+        console.debug(
+          "[mockDb] getDashboardStats attendance fallback failed, using empty attendance",
+          fallbackError,
+        );
+        attendanceDocs = [];
+      }
+    }
     const configHolidaySet = new Set(
       (config.holidayDates || []).map((h) => h.date),
     );
-    const attendance = attendanceSnap.docs
-      .map((d) => d.data() as AttendanceRecord)
-      .filter(
+    const attendance = attendanceDocs.filter(
         (record) => !record.isHoliday && !configHolidaySet.has(record.date),
       );
 
@@ -2555,8 +2595,22 @@ class FirestoreService {
     schoolId?: string,
   ): Promise<TeacherAttendanceRecord[]> {
     await this.requireFeature(schoolId, "teacher_attendance");
-    const records = await this.getAllTeacherAttendanceRecords(schoolId);
-    return records.filter((record) => record.approvalStatus === "pending");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAllPendingTeacherAttendance",
+    );
+    const q = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("approvalStatus", "==", "pending"),
+    );
+    const snap = await getDocs(q);
+    return this.dedupeTeacherAttendanceRecords(
+      snap.docs.map((docSnap) => {
+        const data = docSnap.data() as TeacherAttendanceRecord;
+        return { ...data, id: data.id || docSnap.id };
+      }),
+    );
   }
 
   async getAllTeacherAttendance(
@@ -2750,11 +2804,48 @@ class FirestoreService {
 
   async getAllTeacherAttendanceRecords(
     schoolId?: string,
+    startDate?: string,
+    endDate?: string,
   ): Promise<TeacherAttendanceRecord[]> {
     await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAllTeacherAttendanceRecords",
+    );
+    if (startDate && endDate) {
+      try {
+        const q = query(
+          collection(firestore, "teacher_attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("date", ">=", startDate),
+          where("date", "<=", endDate),
+        );
+        const snap = await getDocs(q);
+        return this.dedupeTeacherAttendanceRecords(
+          snap.docs.map((docSnap) => {
+            const data = docSnap.data() as TeacherAttendanceRecord;
+            return { ...data, id: data.id || docSnap.id };
+          }),
+        );
+      } catch (error) {
+        console.debug(
+          "Teacher attendance range query failed, falling back to school scoped read",
+          error,
+        );
+        const fallback = await this.getCollectionBySchoolId<TeacherAttendanceRecord>(
+          "teacher_attendance",
+          scopedSchoolId,
+        );
+        return this.dedupeTeacherAttendanceRecords(
+          fallback.filter(
+            (record) => record.date >= startDate && record.date <= endDate,
+          ),
+        );
+      }
+    }
     return this.getCollectionBySchoolId<TeacherAttendanceRecord>(
       "teacher_attendance",
-      schoolId,
+      scopedSchoolId,
     );
   }
 

@@ -4,7 +4,8 @@ import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
-import { auth } from "../../services/firebase";
+import { auth, storage } from "../../services/firebase";
+import { ref as storageRef, uploadBytes } from "firebase/storage";
 import { createRoot } from "react-dom/client";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -373,12 +374,23 @@ const FeesPayments: React.FC = () => {
           pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
         }
 
-        const reader = new FileReader();
-        const pdfBase64Promise = new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-        });
-        reader.readAsDataURL(pdfBlob);
-        const pdfBase64 = await pdfBase64Promise;
+        let pdfBase64 = "";
+        let invoiceStoragePath = "";
+        try {
+          const safeReference = String(payment.receiptNumber || payment.id || Date.now()).replace(/[^a-z0-9_-]/gi, "_");
+          invoiceStoragePath = `invoice-pdfs/${schoolId || "unknown"}/${student.id}/${safeReference}.pdf`;
+          await uploadBytes(storageRef(storage, invoiceStoragePath), pdfBlob, {
+            contentType: "application/pdf",
+          });
+        } catch (uploadError) {
+          console.warn("[Invoice] Storage upload failed, falling back to base64 payload:", uploadError);
+          const reader = new FileReader();
+          const pdfBase64Promise = new Promise<string>((resolve) => {
+            reader.onloadend = () => resolve(reader.result as string);
+          });
+          reader.readAsDataURL(pdfBlob);
+          pdfBase64 = await pdfBase64Promise;
+        }
 
         root.unmount();
         document.body.removeChild(container);
@@ -397,7 +409,7 @@ const FeesPayments: React.FC = () => {
             adminPhone: school?.phone,
             amount: payment.amountPaid,
             reference: payment.receiptNumber || payment.id,
-            base64Pdf: pdfBase64,
+            ...(invoiceStoragePath ? { invoiceStoragePath } : { base64Pdf: pdfBase64 }),
             feeName: payment.feeName
           })
         });
@@ -672,6 +684,38 @@ const FeesPayments: React.FC = () => {
     setTimeout(() => setActiveQuickExport(null), 600);
   };
 
+  const loadStudentsForFinance = useCallback(
+    async (requestId: number): Promise<Student[]> => {
+      if (!schoolId) return [];
+      const loaded: Student[] = [];
+      let cursorId: string | null = null;
+      let hasMore = true;
+      let renderedFirstPage = false;
+      let safetyCounter = 0;
+
+      while (hasMore && safetyCounter < 500) {
+        const page = await db.getStudentsPage({
+          schoolId,
+          classId: selectedClassId === "all" ? undefined : selectedClassId,
+          pageSize: 250,
+          cursorId,
+        });
+        loaded.push(...page.items);
+        cursorId = page.nextCursor;
+        hasMore = page.hasMore && Boolean(cursorId);
+        safetyCounter += 1;
+
+        if (!renderedFirstPage && requestId === financeRequestIdRef.current) {
+          setStudents(loaded);
+          renderedFirstPage = true;
+        }
+      }
+
+      return loaded;
+    },
+    [schoolId, selectedClassId],
+  );
+
   const fetchPrimaryData = useCallback(async (options?: {
     background?: boolean;
     requestId?: number;
@@ -690,10 +734,7 @@ const FeesPayments: React.FC = () => {
         settings,
         config,
       ] = await Promise.all([
-        db.getStudents(
-          schoolId,
-          selectedClassId === "all" ? undefined : selectedClassId,
-        ),
+        loadStudentsForFinance(requestId),
         db.getFees({
           schoolId,
           academicYear,
@@ -742,6 +783,7 @@ const FeesPayments: React.FC = () => {
     selectedClassId,
     academicYear,
     term,
+    loadStudentsForFinance,
     applyPrimarySnapshot,
     writeFinanceCache,
   ]);

@@ -10,7 +10,8 @@ import { jsPDF } from "jspdf";
 import PaymentModal from "./PaymentModal";
 import InvoiceTemplate from "./InvoiceTemplate";
 import { showToast } from "../../services/toast";
-import { auth } from "../../services/firebase";
+import { auth, storage } from "../../services/firebase";
+import { ref as storageRef, uploadBytes } from "firebase/storage";
 import html2pdf from "html2pdf.js";
 import { API_BASE_URL } from "../../src/config";
 
@@ -577,16 +578,27 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
           }
 
-          // 7. Convert to base64 for transmission
-          const reader = new FileReader();
-          const pdfBase64Promise = new Promise<string>((resolve) => {
-            reader.onloadend = () => {
-              const base64 = reader.result as string;
-              resolve(base64);
-            };
-          });
-          reader.readAsDataURL(pdfBlob);
-          const pdfBase64 = await pdfBase64Promise;
+          // 7. Prefer Storage upload so large PDFs are not sent through JSON.
+          let pdfBase64 = "";
+          let invoiceStoragePath = "";
+          try {
+            const safeReference = String(reference || Date.now()).replace(/[^a-z0-9_-]/gi, "_");
+            invoiceStoragePath = `invoice-pdfs/${student.schoolId || "unknown"}/${student.id}/${safeReference}.pdf`;
+            await uploadBytes(storageRef(storage, invoiceStoragePath), pdfBlob, {
+              contentType: "application/pdf",
+            });
+          } catch (uploadError) {
+            console.warn("[Invoice] Storage upload failed, falling back to base64 payload:", uploadError);
+            const reader = new FileReader();
+            const pdfBase64Promise = new Promise<string>((resolve) => {
+              reader.onloadend = () => {
+                const base64 = reader.result as string;
+                resolve(base64);
+              };
+            });
+            reader.readAsDataURL(pdfBlob);
+            pdfBase64 = await pdfBase64Promise;
+          }
 
           // 8. Clean up DOM
           root.unmount();
@@ -610,7 +622,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
               adminPhone: school?.phone,
               amount,
               reference,
-              base64Pdf: pdfBase64,
+              ...(invoiceStoragePath ? { invoiceStoragePath } : { base64Pdf: pdfBase64 }),
               feeName: feeName || "School Fees"
             })
           });

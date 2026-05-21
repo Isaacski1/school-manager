@@ -13,7 +13,7 @@ import { usePaystackPayment } from "react-paystack";
 type ParentContact = { name: string; phone: string; class?: string; studentName?: string };
 type SendResult = { phone: string; success: boolean; error?: string };
 
-const SMS_COST_PER_MESSAGE = 0.04; // Assume 4 pesewas per SMS, can adjust
+// Dynamic SMS Rate fetched from settings
 const SAFE_BROADCAST_LIMIT = 50;
 
 const TEMPLATES = [
@@ -33,6 +33,28 @@ const Reminders: React.FC = () => {
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const [classFilter, setClassFilter] = useState("All");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Dynamic Rate state
+  const [smsCostPerMessage, setSmsCostPerMessage] = useState(0.05);
+
+  useEffect(() => {
+    const fetchSmsRate = async () => {
+      try {
+        const { doc, getDoc } = await import("firebase/firestore");
+        const docRef = doc(firestore, "settings", "platform_sms");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && typeof data.retailRatePerSms === "number") {
+            setSmsCostPerMessage(data.retailRatePerSms);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch dynamic platform SMS rate from settings, falling back to 0.05:", err);
+      }
+    };
+    fetchSmsRate();
+  }, []);
 
   // Message
   const [message, setMessage] = useState("");
@@ -100,11 +122,13 @@ const Reminders: React.FC = () => {
     if (!school?.id) return;
     setLoadingHistory(true);
     try {
-      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { collection, query, where, orderBy, limit, getDocs } = await import("firebase/firestore");
       const q = query(
         collection(firestore, "payments"),
         where("schoolId", "==", school.id),
-        where("type", "==", "sms_topup")
+        where("type", "==", "sms_topup"),
+        orderBy("createdAt", "desc"),
+        limit(50)
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => {
@@ -130,10 +154,12 @@ const Reminders: React.FC = () => {
     if (!school?.id) return;
     setLoadingBroadcasts(true);
     try {
-      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { collection, query, where, orderBy, limit, getDocs } = await import("firebase/firestore");
       const q = query(
         collection(firestore, "reminders"),
-        where("schoolId", "==", school.id)
+        where("schoolId", "==", school.id),
+        orderBy("createdAt", "desc"),
+        limit(50)
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => {
@@ -339,11 +365,22 @@ const Reminders: React.FC = () => {
     });
   };
 
-  const estimatedCost = selectedPhones.size * SMS_COST_PER_MESSAGE;
+  const estimatedCost = selectedPhones.size * smsCostPerMessage;
   const messageLength = message.length;
   // A standard SMS is 160 characters. Above that, it uses multiple credits.
   const smsParts = messageLength === 0 ? 0 : Math.ceil(messageLength / 160);
   const totalEstimatedCost = estimatedCost * (smsParts || 1);
+  const topupNumericAmount = Number(topupAmount || 0);
+  const topupEstimatedSmsCredits =
+    smsCostPerMessage > 0 && topupNumericAmount > 0
+      ? Math.floor(topupNumericAmount / smsCostPerMessage)
+      : 0;
+
+  const getCreditsForAmount = (amount: string | number) => {
+    const numericAmount = Number(amount || 0);
+    if (!numericAmount || smsCostPerMessage <= 0) return 0;
+    return Math.floor(numericAmount / smsCostPerMessage);
+  };
 
   const handleSend = () => {
     if (!message.trim()) { showToast("Please enter a message.", { type: "error" }); return; }
@@ -836,7 +873,7 @@ const Reminders: React.FC = () => {
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2">
                   <div className="flex justify-between text-xs font-semibold text-slate-500">
                     <span>SMS Segment Rate</span>
-                    <span className="text-slate-800">GHS 0.05 / SMS</span>
+                    <span className="text-slate-800">GHS {smsCostPerMessage.toFixed(2)} / SMS</span>
                   </div>
                   <div className="flex justify-between text-xs font-semibold text-slate-500">
                     <span>Platform Service</span>
@@ -858,7 +895,10 @@ const Reminders: React.FC = () => {
                           onClick={() => setTopupAmount(amt)}
                           className={`py-2 rounded-xl text-xs font-bold transition border ${topupAmount === amt ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
                         >
-                          GH₵ {amt}
+                          <span className="block">GH₵ {amt}</span>
+                          <span className={`mt-0.5 block text-[9px] font-semibold ${topupAmount === amt ? "text-indigo-100" : "text-slate-400"}`}>
+                            {getCreditsForAmount(amt).toLocaleString()} SMS
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -883,10 +923,35 @@ const Reminders: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Credit Estimate */}
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                        SMS credits you will receive
+                      </p>
+                      <p className="mt-1 text-3xl font-extrabold text-emerald-800">
+                        {topupEstimatedSmsCredits.toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-[11px] font-semibold text-emerald-700/80">
+                        Standard 160-character SMS parts
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm border border-emerald-100">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Calculation
+                      </p>
+                      <p className="mt-1 text-xs font-extrabold text-slate-700">
+                        GHS {topupNumericAmount.toFixed(2)} / GHS {smsCostPerMessage.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Info Note */}
                 <div className="flex gap-2.5 bg-indigo-50/60 rounded-2xl p-3 border border-indigo-100 text-xs text-indigo-700 leading-relaxed font-semibold">
                   <ShieldAlert size={16} className="text-indigo-600 shrink-0 mt-0.5" />
-                  <p>Funds go directly to Super Admin wallet. Credits will be allocated immediately to your school wallet upon successful authorization.</p>
+                  <p>Funds go directly to Super Admin wallet. Your school wallet receives the paid amount, and each SMS is charged at the current retail rate.</p>
                 </div>
 
                 {/* Submit button */}
@@ -947,7 +1012,7 @@ const Reminders: React.FC = () => {
                   <div className="h-px bg-slate-200/60 my-2" />
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-500 font-semibold">Rate per SMS Part:</span>
-                    <span className="text-slate-700 font-bold">GHS {SMS_COST_PER_MESSAGE.toFixed(2)}</span>
+                    <span className="text-slate-700 font-bold">GHS {smsCostPerMessage.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-500 font-semibold">Estimated Cost:</span>

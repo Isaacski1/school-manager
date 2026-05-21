@@ -574,9 +574,19 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 label="Analytics"
               />
               <NavItem
+                href="/super-admin/finance"
+                icon={<Wallet size={18} />}
+                label="Finance Flow"
+              />
+              <NavItem
                 href="/super-admin/payments"
                 icon={<BadgeDollarSign size={18} />}
                 label="Payments"
+              />
+              <NavItem
+                href="/super-admin/sms"
+                icon={<MessageSquare size={18} />}
+                label="SMS Resale Manager"
               />
               <NavItem
                 href="/super-admin/backups"
@@ -805,7 +815,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   <p className="text-xs text-slate-500 capitalize">{user?.role?.replace("_", " ") || "User"}</p>
                 </div>
                 <div className="relative group cursor-pointer shrink-0">
-                  <UserAvatar user={user} size="md" />
+                  <UserAvatar user={user} size="lg" />
                   <label className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity overflow-hidden" title="Change Profile Photo">
                     {uploadingPhoto ? (
                       <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

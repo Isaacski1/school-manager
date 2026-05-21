@@ -816,4 +816,69 @@ export async function startPublicSchoolSetup(payload: any): Promise<any> {
 }
 
 
+export interface SuperAdminSmsOverview {
+  success: boolean;
+  provider: {
+    balance: number;
+    error: string | null;
+    senderId: string;
+    apiStatus?: "connected" | "error" | "unconfigured";
+    credits?: {
+      totalCredits: number;
+      availableCredits: number;
+      reservedCredits: number;
+      currency: string;
+      lastUpdated: string;
+    };
+    balanceBreakdown?: {
+      smsBalance: number;
+      voiceBalance: number;
+      ussdBalance: number;
+      totalBalance: number;
+    };
+    lastRefreshed?: string;
+  };
+  config: {
+    retailRatePerSms: number;
+    wholesaleRatePerSms: number;
+    providerSenderId: string;
+    updatedAt?: number;
+    updatedBy?: string;
+  };
+  analytics: {
+    totalSmsSent: number;
+    totalRevenue: number;
+    totalWholesaleCost: number;
+    totalProfitMargin: number;
+  };
+  leaderboard: Array<{
+    schoolId: string;
+    schoolName: string;
+    totalSms: number;
+    totalCost: number;
+  }>;
+  transactions: Array<{
+    id: string;
+    schoolId: string;
+    schoolName: string;
+    amount: number;
+    status: string;
+    reference: string;
+    adminEmail: string;
+    createdAt: number;
+  }>;
+}
+
+export async function getSuperAdminSmsOverview(): Promise<SuperAdminSmsOverview> {
+  return apiRequest("/api/superadmin/sms/overview", { method: "GET" });
+}
+
+export async function updateSuperAdminSmsConfig(payload: {
+  retailRatePerSms: number;
+  wholesaleRatePerSms: number;
+  providerSenderId: string;
+}): Promise<{ success: boolean; message: string }> {
+  return apiRequest("/api/superadmin/sms/config", { body: payload });
+}
+
 export { BACKEND_URL };

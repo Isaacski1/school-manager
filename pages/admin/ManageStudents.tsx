@@ -145,6 +145,7 @@ const ManageStudents = () => {
       let cursorId: string | null = null;
       let hasMore = true;
       let safetyCounter = 0;
+      let renderedFirstPage = false;
 
       while (hasMore && safetyCounter < 500) {
         const page = await db.getStudentsPage({
@@ -156,6 +157,11 @@ const ManageStudents = () => {
         cursorId = page.nextCursor;
         hasMore = page.hasMore && Boolean(cursorId);
         safetyCounter += 1;
+
+        if (!renderedFirstPage) {
+          setStudents(data);
+          renderedFirstPage = true;
+        }
       }
 
       setStudents(data);

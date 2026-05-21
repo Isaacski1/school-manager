@@ -41,6 +41,78 @@ const normalizeWhatsappAddress = (addr) => {
   return clean;
 };
 
+const parseNumericBalance = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const match = String(value).replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+};
+
+const readJsonResponse = async (response) => {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+};
+
+const fetchArkeselBalanceDetails = async (apiKey) => {
+  const primaryRes = await fetch("https://sms.arkesel.com/api/v2/clients/balance-details", {
+    method: "GET",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+  });
+  const primaryData = await readJsonResponse(primaryRes);
+
+  if (primaryRes.ok && primaryData?.status === "success") {
+    const data = primaryData.data || {};
+    const smsBalance = parseNumericBalance(data.sms_balance ?? data.balance);
+    const mainBalance = parseNumericBalance(data.main_balance);
+    return {
+      smsBalance,
+      mainBalance,
+      raw: primaryData,
+      source: "v2",
+    };
+  }
+
+  const fallbackRes = await fetch("https://sms.arkesel.com/sms/api?action=check-balance", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "check-balance",
+      api_key: apiKey,
+      response: "json",
+    }),
+  });
+  const fallbackData = await readJsonResponse(fallbackRes);
+
+  if (fallbackRes.ok && fallbackData && fallbackData.balance !== undefined) {
+    return {
+      smsBalance: parseNumericBalance(fallbackData.balance),
+      mainBalance: parseNumericBalance(fallbackData.main_balance),
+      raw: fallbackData,
+      source: "v1",
+    };
+  }
+
+  const message =
+    fallbackData?.message ||
+    primaryData?.message ||
+    primaryData?.error ||
+    `Arkesel balance request failed with status ${primaryRes.status}`;
+  const error = new Error(message);
+  error.primary = primaryData;
+  error.fallback = fallbackData;
+  throw error;
+};
+
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -756,17 +828,49 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
  */
 app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   try {
-    const { schoolId, businessName, bankCode, accountNumber, contactPhone, method } = req.body;
+    const {
+      schoolId,
+      businessName,
+      bankCode,
+      accountNumber,
+      contactPhone,
+      method,
+      bankName,
+      accountName,
+      momoNetwork,
+      momoNumber,
+      momoName,
+    } = req.body;
     const { uid } = req.user;
 
     // 1. Verify caller is admin of this school
     const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
-    if (!userData || userData.schoolId !== schoolId || userData.role !== "school_admin") {
+    const role = userData?.role || req.user?.role || "";
+    const callerSchoolId = userData?.schoolId || req.user?.schoolId || null;
+    if (
+      !userData ||
+      (role !== "super_admin" && (callerSchoolId !== schoolId || role !== "school_admin"))
+    ) {
       return res.status(403).json({ error: "Forbidden: You are not authorized to setup payments for this school." });
     }
 
-    if (!businessName || !bankCode || !accountNumber) {
+    const resolvedBusinessName =
+      businessName ||
+      (method === "Bank" ? accountName : momoName) ||
+      accountName ||
+      momoName;
+    const resolvedBankCode =
+      bankCode ||
+      (method === "Bank" ? bankName : momoNetwork) ||
+      bankName ||
+      momoNetwork;
+    const resolvedAccountNumber =
+      accountNumber ||
+      (method === "MoMo" ? momoNumber : accountNumber) ||
+      momoNumber;
+
+    if (!schoolId || !resolvedBusinessName || !resolvedBankCode || !resolvedAccountNumber) {
       return res.status(400).json({ error: "Business name, bank, and account number are required." });
     }
 
@@ -785,9 +889,9 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        business_name: businessName,
-        settlement_bank: bankCode,
-        account_number: accountNumber,
+        business_name: resolvedBusinessName,
+        settlement_bank: resolvedBankCode,
+        account_number: resolvedAccountNumber,
         percentage_charge: 0,
         primary_contact_phone: contactPhone || userData.phone || ""
       }),
@@ -805,18 +909,29 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     const subaccountCode = paystackData.data.subaccount_code;
 
     // 3. Store subaccount details in Firestore
+    const resolvedMethod = method || (momoNumber || momoNetwork || momoName ? "MoMo" : "Bank");
+    const paymentSettings = {
+      method: resolvedMethod,
+      status: "active",
+      subaccountCode,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      setupAt: admin.firestore.FieldValue.serverTimestamp(),
+      bankName: resolvedMethod === "Bank" ? (bankName || resolvedBankCode) : null,
+      accountNumber: resolvedMethod === "Bank" ? resolvedAccountNumber : null,
+      accountName: resolvedMethod === "Bank" ? resolvedBusinessName : null,
+      momoNetwork: resolvedMethod === "MoMo" ? (momoNetwork || resolvedBankCode) : null,
+      momoNumber: resolvedMethod === "MoMo" ? resolvedAccountNumber : null,
+      momoName: resolvedMethod === "MoMo" ? resolvedBusinessName : null,
+    };
+
     await admin.firestore().collection("schools").doc(schoolId).update({
-      paymentSettings: {
-        ...req.body,
-        subaccountCode: subaccountCode,
-        setupAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: "active"
-      }
+      paymentSettings
     });
 
     return res.json({
       success: true,
-      subaccountCode: subaccountCode
+      subaccountCode,
+      paymentSettings
     });
 
   } catch (error) {
@@ -855,9 +970,14 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "School not found." });
     }
 
+    // Fetch the global dynamic SMS pricing structure
+    const smsConfigDoc = await admin.firestore().collection("settings").doc("platform_sms").get();
+    const smsConfig = smsConfigDoc.exists ? smsConfigDoc.data() : {};
+    const retailRate = Number(smsConfig.retailRatePerSms ?? 0.05);
+    const wholesaleRate = Number(smsConfig.wholesaleRatePerSms ?? 0.02);
+
     const schoolData = schoolDoc.data();
     const walletBalance = schoolData?.smsWallet?.balance ?? 0;
-    const ratePerSms = 0.05; // 5 pesewas per SMS
     
     // Format phones to international format (233...)
     const formattedPhones = phones.map(p => {
@@ -866,7 +986,7 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
       return clean;
     });
 
-    const totalCost = formattedPhones.length * ratePerSms;
+    const totalCost = formattedPhones.length * retailRate;
 
     if (walletBalance < totalCost) {
       return res.status(400).json({ 
@@ -875,7 +995,7 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
     }
 
     const ARKESEL_API_KEY = process.env.ARKESEL_API_KEY;
-    const ARKESEL_SENDER_ID = process.env.ARKESEL_SENDER_ID || "SMGH";
+    const ARKESEL_SENDER_ID = smsConfig.providerSenderId || process.env.ARKESEL_SENDER_ID || "SMGH";
 
     let smsData;
 
@@ -913,6 +1033,9 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
       }
     }, { merge: true });
 
+    const totalWholesaleCost = formattedPhones.length * wholesaleRate;
+    const totalProfitMargin = totalCost - totalWholesaleCost;
+
     // Record audit log in Firestore
     await admin.firestore().collection("reminders").add({
       schoolId: userData.schoolId,
@@ -920,14 +1043,39 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
       message,
       recipientCount: formattedPhones.length,
       cost: totalCost,
+      wholesaleCost: totalWholesaleCost,
+      profitMargin: totalProfitMargin,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: "success",
       apiResponse: smsData
     });
 
+    const smsSummaryRef = admin.firestore().collection("settings").doc("platform_sms_summary");
+    const schoolSmsUsageRef = admin.firestore().collection("sms_school_usage").doc(userData.schoolId);
+    await Promise.all([
+      smsSummaryRef.set({
+        totalSmsSent: admin.firestore.FieldValue.increment(formattedPhones.length),
+        totalRevenue: admin.firestore.FieldValue.increment(totalCost),
+        totalWholesaleCost: admin.firestore.FieldValue.increment(totalWholesaleCost),
+        totalProfitMargin: admin.firestore.FieldValue.increment(totalProfitMargin),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }),
+      schoolSmsUsageRef.set({
+        schoolId: userData.schoolId,
+        schoolName: schoolData?.name || "Unknown School",
+        totalSms: admin.firestore.FieldValue.increment(formattedPhones.length),
+        totalCost: admin.firestore.FieldValue.increment(totalCost),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }),
+    ]);
+
+    const updatedSchoolDoc = await admin.firestore().collection("schools").doc(userData.schoolId).get();
+    const newBalance = updatedSchoolDoc.data()?.smsWallet?.balance ?? 0;
+
     return res.json({
       success: true,
-      message: "Reminders sent successfully."
+      message: "Reminders sent successfully.",
+      newBalance
     });
 
   } catch (error) {
@@ -5099,6 +5247,13 @@ app.get(
             limit: AUTH_LIMIT_MAX_REQUESTS,
           },
         },
+        backgroundJobs: {
+          invoiceNotifications: {
+            queued: invoiceNotificationQueue.length,
+            active: activeInvoiceNotificationJobs,
+            concurrency: INVOICE_NOTIFICATION_CONCURRENCY,
+          },
+        },
       });
     } catch (error) {
       console.error("System health metrics error:", error.message || error);
@@ -7641,6 +7796,230 @@ app.get(
  * Initialize Paystack subscription for school admin
  * POST /api/billing/initiate
  */
+/**
+ * GET /api/superadmin/sms/overview
+ * Fetch provider status, pricing configs, usage metrics, school consumption, and recharge logs.
+ */
+app.get(
+  "/api/superadmin/sms/overview",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      // 1. Fetch Global config
+      const smsConfigDoc = await admin.firestore().collection("settings").doc("platform_sms").get();
+      const config = smsConfigDoc.exists ? smsConfigDoc.data() : {
+        retailRatePerSms: 0.05,
+        wholesaleRatePerSms: 0.02,
+        providerSenderId: "SMGH"
+      };
+
+      // 2. Fetch real-time Arkesel balance if API key is present
+      const ARKESEL_API_KEY = process.env.ARKESEL_API_KEY;
+      let providerBalance = 0;
+      let providerError = null;
+      let provider;
+
+      if (ARKESEL_API_KEY) {
+        try {
+          const balanceDetails = await fetchArkeselBalanceDetails(ARKESEL_API_KEY);
+          providerBalance = balanceDetails.smsBalance;
+          provider = {
+            balance: providerBalance,
+            error: null,
+            senderId: config.providerSenderId || process.env.ARKESEL_SENDER_ID || "SMGH",
+            apiStatus: "connected",
+            credits: {
+              totalCredits: providerBalance,
+              availableCredits: providerBalance,
+              reservedCredits: 0,
+              currency: "SMS",
+              lastUpdated: new Date().toISOString()
+            },
+            balanceBreakdown: {
+              smsBalance: providerBalance,
+              voiceBalance: 0,
+              ussdBalance: 0,
+              totalBalance: providerBalance
+            },
+            mainBalanceGhs: balanceDetails.mainBalance,
+            source: balanceDetails.source,
+            lastRefreshed: new Date().toISOString()
+          };
+        } catch (err) {
+          providerError = err.message || "Arkesel balance API call failed";
+          provider = {
+            balance: 0,
+            error: providerError,
+            senderId: config.providerSenderId || process.env.ARKESEL_SENDER_ID || "SMGH",
+            apiStatus: "error"
+          };
+        }
+      } else {
+        providerError = "Arkesel API Key not configured in system environment variables.";
+        provider = {
+          balance: 0,
+          error: providerError,
+          senderId: config.providerSenderId || process.env.ARKESEL_SENDER_ID || "SMGH",
+          apiStatus: "unconfigured"
+        };
+      }
+
+      // 3. Fetch Platform analytics & history from bounded summary collections.
+      const summaryDoc = await admin.firestore().collection("settings").doc("platform_sms_summary").get();
+      const summary = summaryDoc.exists ? summaryDoc.data() || {} : {};
+
+      let totalSmsSent = Number(summary.totalSmsSent || 0);
+      let totalRevenue = Number(summary.totalRevenue || 0);
+      let totalWholesaleCost = Number(summary.totalWholesaleCost || 0);
+      let totalProfitMargin = Number(summary.totalProfitMargin || 0);
+
+      // Migration fallback for older data: scan only recent reminder docs if summary is empty.
+      if (!totalSmsSent && !totalRevenue) {
+        const recentRemindersSnap = await admin.firestore()
+          .collection("reminders")
+          .orderBy("createdAt", "desc")
+          .limit(1000)
+          .get()
+          .catch(() => admin.firestore().collection("reminders").limit(1000).get());
+
+        recentRemindersSnap.forEach(doc => {
+          const data = doc.data();
+          const count = Number(data.recipientCount || 0);
+          const cost = Number(data.cost || 0);
+          const wCost = Number(data.wholesaleCost || (count * (config.wholesaleRatePerSms || 0.02)));
+          const profit = Number(data.profitMargin || (cost - wCost));
+
+          totalSmsSent += count;
+          totalRevenue += cost;
+          totalWholesaleCost += wCost;
+          totalProfitMargin += profit;
+        });
+      }
+
+      const usageSnap = await admin.firestore()
+        .collection("sms_school_usage")
+        .orderBy("totalSms", "desc")
+        .limit(100)
+        .get()
+        .catch(() => admin.firestore().collection("sms_school_usage").limit(100).get());
+
+      const leaderboard = usageSnap.docs.map(doc => {
+        const data = doc.data() || {};
+        return {
+          schoolId: data.schoolId || doc.id,
+          schoolName: data.schoolName || "Unknown School",
+          totalSms: Number(data.totalSms || 0),
+          totalCost: Number(data.totalCost || 0)
+        };
+      }).sort((a, b) => b.totalSms - a.totalSms);
+
+      // 4. Fetch only recent recharge transaction history.
+      const paymentsSnap = await admin.firestore()
+        .collection("payments")
+        .where("type", "==", "sms_topup")
+        .orderBy("createdAt", "desc")
+        .limit(100)
+        .get()
+        .catch(() => admin.firestore()
+          .collection("payments")
+          .where("type", "==", "sms_topup")
+          .limit(100)
+          .get());
+
+      const transactions = paymentsSnap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          schoolId: data.schoolId,
+          schoolName: data.schoolName || "Unknown School",
+          amount: data.amount,
+          status: data.status,
+          reference: data.reference,
+          adminEmail: data.adminEmail,
+          createdAt: data.createdAt ? (data.createdAt.toMillis ? data.createdAt.toMillis() : data.createdAt) : Date.now()
+        };
+      }).sort((a, b) => b.createdAt - a.createdAt);
+
+      res.json({
+        success: true,
+        provider: {
+          ...provider,
+          balance: providerBalance,
+          error: providerError,
+          senderId: config.providerSenderId || provider.senderId || "SMGH"
+        },
+        config,
+        analytics: {
+          totalSmsSent,
+          totalRevenue,
+          totalWholesaleCost,
+          totalProfitMargin
+        },
+        leaderboard,
+        transactions
+      });
+
+    } catch (error) {
+      console.error("SMS Overview error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+/**
+ * POST /api/superadmin/sms/config
+ * Update global pricing rate structures and gateway credentials.
+ */
+app.post(
+  "/api/superadmin/sms/config",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const { retailRatePerSms, wholesaleRatePerSms, providerSenderId } = req.body;
+
+      if (retailRatePerSms === undefined || wholesaleRatePerSms === undefined) {
+        return res.status(400).json({ error: "retailRatePerSms and wholesaleRatePerSms are required." });
+      }
+
+      const retail = Number(retailRatePerSms);
+      const wholesale = Number(wholesaleRatePerSms);
+
+      if (isNaN(retail) || retail <= 0 || isNaN(wholesale) || wholesale <= 0) {
+        return res.status(400).json({ error: "Rates must be valid positive numbers." });
+      }
+
+      await admin.firestore().collection("settings").doc("platform_sms").set({
+        retailRatePerSms: retail,
+        wholesaleRatePerSms: wholesale,
+        providerSenderId: providerSenderId || "SMGH",
+        updatedAt: Date.now(),
+        updatedBy: req.user.uid
+      }, { merge: true });
+
+      await logActivity({
+        eventType: "sms_config_updated",
+        schoolId: "system",
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: "platform_sms",
+        meta: { retail, wholesale, providerSenderId }
+      });
+
+      res.json({
+        success: true,
+        message: "SMS pricing configuration updated successfully."
+      });
+    } catch (error) {
+      console.error("SMS Config Update error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 app.post(
   "/api/billing/initiate",
   authLimiter,
@@ -7893,6 +8272,7 @@ app.post(
       }
 
       const isSmsTopup = paymentData?.type === "sms_topup";
+      const wasAlreadySuccessful = String(paymentData?.status || "").toLowerCase() === "success";
       const verification = await verifyPaystackTransaction(reference);
       const data = verification?.data || {};
       const mappedStatus = String(data.status || "pending");
@@ -7920,19 +8300,33 @@ app.post(
       if (mappedStatus === "success") {
         if (isSmsTopup) {
           const amountGhs = (paymentData.amount || 0) / 100;
-          await admin
-            .firestore()
-            .collection("schools")
-            .doc(schoolId)
-            .set(
-              {
-                smsWallet: {
-                  balance: admin.firestore.FieldValue.increment(amountGhs),
-                  lastTopupAt: Date.now(),
+          if (!wasAlreadySuccessful) {
+            await admin
+              .firestore()
+              .collection("schools")
+              .doc(schoolId)
+              .set(
+                {
+                  smsWallet: {
+                    balance: admin.firestore.FieldValue.increment(amountGhs),
+                    lastTopupAt: Date.now(),
+                  },
                 },
-              },
-              { merge: true },
-            );
+                { merge: true },
+              );
+            await admin
+              .firestore()
+              .collection("settings")
+              .doc("platform_sms_summary")
+              .set(
+                {
+                  totalTopupAmount: admin.firestore.FieldValue.increment(amountGhs),
+                  totalTopupCount: admin.firestore.FieldValue.increment(1),
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+              );
+          }
           await logActivity({
             eventType: "sms_wallet_topup_success",
             schoolId,
@@ -8103,6 +8497,68 @@ app.post("/api/billing/webhook", async (req, res) => {
 
     if (!schoolId) {
       return res.status(200).send("No schoolId on webhook metadata");
+    }
+
+    if (event.event === "charge.success" && metadata?.type === "sms_topup") {
+      const amountGhs = Number(data.amount || 0) / 100;
+      const paymentRef = paymentReference
+        ? admin.firestore().collection("payments").doc(paymentReference)
+        : null;
+      const previousPayment = paymentRef ? await paymentRef.get() : null;
+      const wasAlreadySuccessful =
+        previousPayment?.exists &&
+        String(previousPayment.data()?.status || "").toLowerCase() === "success";
+
+      if (paymentRef) {
+        await paymentRef.set(
+          {
+            status: "success",
+            paidAt: Date.now(),
+            gatewayResponse: data.gateway_response || null,
+            channel: data.channel || null,
+            event: event.event,
+            reference: paymentReference,
+            schoolId,
+            module: "billing",
+            type: "sms_topup",
+            category: "sms_topup",
+          },
+          { merge: true },
+        );
+      }
+
+      if (!wasAlreadySuccessful && amountGhs > 0) {
+        await Promise.all([
+          admin.firestore().collection("schools").doc(schoolId).set(
+            {
+              smsWallet: {
+                balance: admin.firestore.FieldValue.increment(amountGhs),
+                lastTopupAt: Date.now(),
+              },
+            },
+            { merge: true },
+          ),
+          admin.firestore().collection("settings").doc("platform_sms_summary").set(
+            {
+              totalTopupAmount: admin.firestore.FieldValue.increment(amountGhs),
+              totalTopupCount: admin.firestore.FieldValue.increment(1),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          ),
+        ]);
+      }
+
+      await logActivity({
+        eventType: "sms_wallet_topup_webhook_success",
+        schoolId,
+        actorUid: null,
+        actorRole: "system",
+        entityId: paymentReference,
+        meta: { reference: paymentReference, event: event.event, amount: amountGhs },
+      });
+
+      return res.status(200).send("OK");
     }
 
     if (event.event === "charge.success") {
@@ -10530,13 +10986,211 @@ const resolvePaymentNotificationRecipients = (studentData, body) => {
   return [...new Set(candidates.map(normalizeBroadcastPhone).filter((phone) => /^233\d{9}$/.test(phone)))];
 };
 
+const resolveInvoicePdfBase64 = async ({ base64Pdf, invoiceStoragePath, invoiceDownloadUrl }) => {
+  if (typeof base64Pdf === "string" && base64Pdf.trim()) {
+    const cleanBase64 = base64Pdf.includes("base64,")
+      ? base64Pdf.split("base64,")[1]
+      : base64Pdf;
+    return {
+      cleanBase64,
+      source: "base64",
+    };
+  }
+
+  const storagePath = String(invoiceStoragePath || "").trim();
+  if (storagePath) {
+    const bucket = admin.storage().bucket();
+    const [buffer] = await bucket.file(storagePath).download();
+    return {
+      cleanBase64: buffer.toString("base64"),
+      source: "storage",
+    };
+  }
+
+  const downloadUrl = String(invoiceDownloadUrl || "").trim();
+  if (downloadUrl) {
+    const response = await fetch(downloadUrl);
+    if (!response.ok) {
+      throw new Error(`Invoice PDF download failed with status ${response.status}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return {
+      cleanBase64: Buffer.from(arrayBuffer).toString("base64"),
+      source: "url",
+    };
+  }
+
+  throw new Error("Student ID and PDF data are required.");
+};
+
+const shouldProcessInvoiceNotificationsInline = () => {
+  const setting = String(process.env.INVOICE_NOTIFICATIONS_INLINE || "")
+    .trim()
+    .toLowerCase();
+  return ["1", "true", "yes", "on"].includes(setting);
+};
+
+const INVOICE_NOTIFICATION_CONCURRENCY = Math.max(
+  1,
+  Math.min(5, Math.floor(parsePositiveNumber(process.env.INVOICE_NOTIFICATION_CONCURRENCY, 1))),
+);
+const invoiceNotificationQueue = [];
+let activeInvoiceNotificationJobs = 0;
+
+const processPaymentInvoiceNotification = async ({
+  svc,
+  resolvedSchoolId,
+  settings,
+  schoolData,
+  studentData,
+  body,
+  cleanBase64,
+  payloadSize,
+}) => {
+  const {
+    amount,
+    reference,
+    studentId,
+    studentName,
+    feeName,
+    adminPhone,
+  } = body || {};
+  const notificationSettings = settings.notificationSettings || {};
+  const schoolName = settings.schoolName || schoolData.name || "School Manager GH";
+  const effectiveStudentName = studentName || studentData.name || "Student";
+  const caption = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\n\nInvoice attached.\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
+  const filename = `Invoice_${reference}.pdf`;
+  const mimetype = "application/pdf";
+  const results = [];
+
+  if (notificationSettings.enableInvoiceNotifications !== false) {
+    const recipients = resolvePaymentNotificationRecipients(studentData, body);
+    for (const recipient of recipients) {
+      const result = await svc.sendWhatsAppMedia(recipient, caption, cleanBase64, filename, mimetype);
+      results.push({ recipient, ...result });
+      await writeNotificationLog({
+        schoolId: resolvedSchoolId,
+        recipient,
+        type: "payment_invoice_parent",
+        status: result.success ? "sent" : "failed",
+        errorMessage: result.error || "",
+        metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER, payloadSize },
+      });
+      if (!result.success) {
+        await enqueueWhatsAppRetry({
+          schoolId: resolvedSchoolId,
+          recipient,
+          type: "payment_invoice_parent",
+          payload: { caption, cleanBase64, filename, mimetype },
+          lastError: result.error || "Send failed",
+        });
+      }
+    }
+  }
+
+  const adminRecipient = normalizeBroadcastPhone(
+    notificationSettings.adminWhatsAppNumber || adminPhone || schoolData.phone || settings.phone || "",
+  );
+  if (notificationSettings.enablePaymentAlerts !== false && /^233\d{9}$/.test(adminRecipient)) {
+    const adminMessage = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\nFee: ${feeName || "School Fees"}\nReference: ${reference}\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
+    const adminResult = await svc.sendWhatsAppMessage(adminRecipient, adminMessage);
+    results.push({ recipient: adminRecipient, ...adminResult });
+    await writeNotificationLog({
+      schoolId: resolvedSchoolId,
+      recipient: adminRecipient,
+      type: "payment_alert_admin",
+      status: adminResult.success ? "sent" : "failed",
+      errorMessage: adminResult.error || "",
+      metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
+    });
+  }
+
+  if (results.some((result) => !result.success)) {
+    await writeAdminNotification(
+      resolvedSchoolId,
+      `Some WhatsApp payment notifications failed for ${effectiveStudentName}. They were added to the retry queue.`,
+    );
+  }
+
+  return results;
+};
+
+const schedulePaymentInvoiceNotification = (job) => {
+  invoiceNotificationQueue.push(job);
+  drainPaymentInvoiceNotificationQueue();
+};
+
+const drainPaymentInvoiceNotificationQueue = () => {
+  while (
+    activeInvoiceNotificationJobs < INVOICE_NOTIFICATION_CONCURRENCY &&
+    invoiceNotificationQueue.length
+  ) {
+    const job = invoiceNotificationQueue.shift();
+    activeInvoiceNotificationJobs += 1;
+    runPaymentInvoiceNotificationJob(job).finally(() => {
+      activeInvoiceNotificationJobs = Math.max(0, activeInvoiceNotificationJobs - 1);
+      drainPaymentInvoiceNotificationQueue();
+    });
+  }
+};
+
+const runPaymentInvoiceNotificationJob = async (job) => {
+  const run = async () => {
+    try {
+      const results = await processPaymentInvoiceNotification(job);
+      console.log(
+        `[Invoice] Background notification completed for ${job.body?.reference || "unknown"} (${results.length} sends).`,
+      );
+    } catch (error) {
+      console.error("[Invoice] Background notification failed:", error?.message || error);
+      await writeNotificationLog({
+        schoolId: job.resolvedSchoolId,
+        recipient: "multiple",
+        type: "payment_invoice",
+        status: "failed",
+        errorMessage: error?.message || "Background notification failed.",
+        metadata: {
+          reference: job.body?.reference,
+          studentId: job.body?.studentId,
+          background: true,
+        },
+      });
+      await enqueueWhatsAppRetry({
+        schoolId: job.resolvedSchoolId,
+        type: "payment_invoice",
+        payload: { ...job.body, schoolId: job.resolvedSchoolId },
+        lastError: error?.message || "Background notification failed.",
+      });
+    }
+  };
+
+  if (typeof setImmediate === "function") {
+    await new Promise((resolve) => setImmediate(resolve));
+    await run();
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await run();
+};
+
 // Send Payment Invoice via WhatsApp
 // POST /api/payments/send-invoice
 app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
   try {
     {
-      const { studentId, schoolId, amount, reference, base64Pdf, studentName, feeName, adminPhone } = req.body || {};
-      if (!studentId || !base64Pdf) {
+      const {
+        studentId,
+        schoolId,
+        amount,
+        reference,
+        base64Pdf,
+        invoiceStoragePath,
+        invoiceDownloadUrl,
+        studentName,
+        feeName,
+        adminPhone,
+      } = req.body || {};
+      if (!studentId || (!base64Pdf && !invoiceStoragePath && !invoiceDownloadUrl)) {
         return res.status(400).json({ error: "Student ID and PDF data are required." });
       }
 
@@ -10567,7 +11221,12 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         return res.json({ success: true, skipped: true });
       }
 
-      const cleanBase64 = base64Pdf.includes("base64,") ? base64Pdf.split("base64,")[1] : base64Pdf;
+      const invoicePdf = await resolveInvoicePdfBase64({
+        base64Pdf,
+        invoiceStoragePath,
+        invoiceDownloadUrl,
+      });
+      const cleanBase64 = invoicePdf.cleanBase64;
       const payloadSize = cleanBase64.length;
       if (payloadSize < 1000) {
         return res.status(400).json({ error: "Invalid PDF payload (too small)." });
@@ -10598,62 +11257,37 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         return res.json({ success: true, queued: true, whatsappStatus: statusInfo.status });
       }
 
-      const schoolName = settings.schoolName || schoolData.name || "School Manager GH";
-      const effectiveStudentName = studentName || studentData.name || "Student";
-      const caption = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\n\nInvoice attached.\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
-      const filename = `Invoice_${reference}.pdf`;
-      const mimetype = "application/pdf";
-      const results = [];
+      const invoiceJob = {
+        svc,
+        resolvedSchoolId,
+        settings,
+        schoolData,
+        studentData,
+        body: req.body,
+        cleanBase64,
+        payloadSize,
+      };
 
-      if (notificationSettings.enableInvoiceNotifications !== false) {
-        const recipients = resolvePaymentNotificationRecipients(studentData, req.body);
-        for (const recipient of recipients) {
-          const result = await svc.sendWhatsAppMedia(recipient, caption, cleanBase64, filename, mimetype);
-          results.push({ recipient, ...result });
-          await writeNotificationLog({
-            schoolId: resolvedSchoolId,
-            recipient,
-            type: "payment_invoice_parent",
-            status: result.success ? "sent" : "failed",
-            errorMessage: result.error || "",
-            metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
-          });
-          if (!result.success) {
-            await enqueueWhatsAppRetry({
-              schoolId: resolvedSchoolId,
-              recipient,
-              type: "payment_invoice_parent",
-              payload: { caption, cleanBase64, filename, mimetype },
-              lastError: result.error || "Send failed",
-            });
-          }
-        }
-      }
-
-      const adminRecipient = normalizeBroadcastPhone(
-        notificationSettings.adminWhatsAppNumber || adminPhone || schoolData.phone || settings.phone || "",
-      );
-      if (notificationSettings.enablePaymentAlerts !== false && /^233\d{9}$/.test(adminRecipient)) {
-        const adminMessage = `School Manager GH Notification\n\n${schoolName}\n\nPayment received successfully for:\nStudent: ${effectiveStudentName}\nAmount: GHS ${amount}\nFee: ${feeName || "School Fees"}\nReference: ${reference}\n\nSent via School Manager GH WhatsApp Service\n+233201008784`;
-        const adminResult = await svc.sendWhatsAppMessage(adminRecipient, adminMessage);
-        results.push({ recipient: adminRecipient, ...adminResult });
+      if (!shouldProcessInvoiceNotificationsInline()) {
         await writeNotificationLog({
           schoolId: resolvedSchoolId,
-          recipient: adminRecipient,
-          type: "payment_alert_admin",
-          status: adminResult.success ? "sent" : "failed",
-          errorMessage: adminResult.error || "",
-          metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER },
+          recipient: "multiple",
+          type: "payment_invoice",
+          status: "queued",
+          metadata: {
+            reference,
+            studentId,
+            centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER,
+            background: true,
+            payloadSize,
+            invoiceSource: invoicePdf.source,
+          },
         });
+        schedulePaymentInvoiceNotification(invoiceJob);
+        return res.json({ success: true, queued: true, background: true, size: payloadSize });
       }
 
-      if (results.some((result) => !result.success)) {
-        await writeAdminNotification(
-          resolvedSchoolId,
-          `Some WhatsApp payment notifications failed for ${effectiveStudentName}. They were added to the retry queue.`,
-        );
-      }
-
+      const results = await processPaymentInvoiceNotification(invoiceJob);
       return res.json({ success: true, size: payloadSize, results });
     }
 

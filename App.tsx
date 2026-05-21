@@ -41,8 +41,10 @@ const ParentDashboard = lazy(() => import("./pages/parent/ParentDashboard"));
 const Schools = lazy(() => import("./pages/super-admin/Schools"));
 const SchoolDetails = lazy(() => import("./pages/super-admin/SchoolDetails"));
 const Dashboard = lazy(() => import("./pages/super-admin/Dashboard"));
+const SmsManager = lazy(() => import("./pages/super-admin/SmsManager"));
 const SuperAdminBackups = lazy(() => import("./pages/super-admin/Backups"));
 const SuperAdminPayments = lazy(() => import("./pages/super-admin/Payments"));
+const SuperAdminFinanceFlow = lazy(() => import("./pages/super-admin/FinanceFlow"));
 const SuperAdminUsers = lazy(() => import("./pages/super-admin/Users"));
 const SuperAdminAnalytics = lazy(() => import("./pages/super-admin/Analytics"));
 const SuperAdminSystemHealth = lazy(() => import("./pages/super-admin/SystemHealth"));
@@ -760,6 +762,26 @@ const AppRoutes = ({
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
             <Layout title="Payments">
               <SuperAdminPayments />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/finance"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <Layout title="Finance Flow">
+              <SuperAdminFinanceFlow />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/sms"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <Layout title="SMS Resale Manager">
+              <SmsManager />
             </Layout>
           </ProtectedRoute>
         }

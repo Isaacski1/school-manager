@@ -12,7 +12,7 @@ import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
-import { collection, onSnapshot, doc, query, where } from "firebase/firestore";
+import { onSnapshot, doc } from "firebase/firestore";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import {
@@ -923,6 +923,9 @@ const AdminDashboard = () => {
       try {
         const localToday = new Date();
         const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
+        const teacherRecordsStartDate = new Date(localToday);
+        teacherRecordsStartDate.setDate(teacherRecordsStartDate.getDate() - 180);
+        const teacherRecordsStart = `${teacherRecordsStartDate.getFullYear()}-${String(teacherRecordsStartDate.getMonth() + 1).padStart(2, "0")}-${String(teacherRecordsStartDate.getDate()).padStart(2, "0")}`;
 
         // Wrap each call to prevent permission errors from blocking the whole dashboard
         const wrapCall = async <T,>(
@@ -932,15 +935,8 @@ const AdminDashboard = () => {
           try {
             return await fn();
           } catch (err) {
-            const msg = String((err as any)?.message || "");
-            if (msg.includes("permission") || msg.includes("insufficient")) {
-              console.warn(
-                "Permission denied for dashboard call, continuing with fallback",
-                err,
-              );
-              return fallback;
-            }
-            throw err;
+            console.warn("Dashboard call failed, continuing with fallback", err);
+            return fallback;
           }
         };
 
@@ -983,7 +979,7 @@ const AdminDashboard = () => {
             [],
           ),
           wrapCall(() => db.getAllPendingTeacherAttendance(schoolId), []),
-          wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId), []),
+          wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId, teacherRecordsStart, today), []),
           wrapCall(() => db.getPayments({ schoolId }), []),
         ]);
 
@@ -1682,6 +1678,8 @@ const AdminDashboard = () => {
         // Only show error message for non-permission issues
         // Permission errors are now handled per-call with fallbacks
         if (
+          !initialDataReady &&
+          !cachedHeavy &&
           typeof message === "string" &&
           !(
             message.includes("permission-denied") ||
@@ -2154,54 +2152,7 @@ const AdminDashboard = () => {
   // Real-time listeners: refresh stats when attendance, assessments, or config change
   useEffect(() => {
     if (!schoolId || !isAuthenticated) return;
-    const attendanceRef = query(
-      collection(firestore, "attendance"),
-      where("schoolId", "==", schoolId),
-    );
-    const assessmentsRef = query(
-      collection(firestore, "assessments"),
-      where("schoolId", "==", schoolId),
-    );
-    const teacherAttendanceRef = query(
-      collection(firestore, "teacher_attendance"),
-      where("schoolId", "==", schoolId),
-    );
-    const studentsRef = query(
-      collection(firestore, "students"),
-      where("schoolId", "==", schoolId),
-    );
     const configRef = doc(firestore, "settings", schoolId);
-    const unsubAttendance = onSnapshot(attendanceRef, () => {
-      // Keep this lightweight — update class attendance and counters
-      fetchStats().catch((e) =>
-        console.error("Error refreshing stats on attendance change", e),
-      );
-      computeWeekComparison().catch((e) =>
-        console.error("Error refreshing week comparison", e),
-      );
-    });
-    const unsubAssessments = onSnapshot(assessmentsRef, () => {
-      // Refresh summary stats immediately and throttle heavier academic widgets
-      fetchStats().catch((e) =>
-        console.error("Error refreshing stats on assessments change", e),
-      );
-      scheduleHeavyRefresh();
-    });
-    const unsubTeacherAttendance = onSnapshot(teacherAttendanceRef, () => {
-      fetchStats().catch((e) =>
-        console.error("Error refreshing stats on teacher attendance change", e),
-      );
-      fetchPendingTeacherAttendance().catch((e) =>
-        console.error("Error refreshing pending attendance", e),
-      );
-      scheduleHeavyRefresh();
-    });
-    const unsubStudents = onSnapshot(studentsRef, () => {
-      fetchStats().catch((e) =>
-        console.error("Error refreshing stats on student change", e),
-      );
-      scheduleHeavyRefresh();
-    });
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as any;
@@ -2217,13 +2168,9 @@ const AdminDashboard = () => {
       }
     });
     return () => {
-      unsubAttendance();
-      unsubAssessments();
-      unsubStudents();
       unsubConfig();
-      unsubTeacherAttendance();
     };
-  }, [schoolId, attendanceWeek, isAuthenticated]);
+  }, [schoolId, attendanceWeek, isAuthenticated, schoolConfig.currentTerm]);
 
   // Real-time polling effect
   useEffect(() => {
@@ -3527,7 +3474,7 @@ const AdminDashboard = () => {
     </div>
   );
 
-  if (error) {
+  if (error && !initialDataReady && !hasHeavyCache) {
     return (
       <Layout title="Dashboard">
         <div className="flex items-center justify-center h-96 flex-col p-8">
