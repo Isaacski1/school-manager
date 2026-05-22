@@ -122,25 +122,24 @@ const Reminders: React.FC = () => {
     if (!school?.id) return;
     setLoadingHistory(true);
     try {
-      const { collection, query, where, orderBy, limit, getDocs } = await import("firebase/firestore");
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
       const q = query(
         collection(firestore, "payments"),
-        where("schoolId", "==", school.id),
-        where("type", "==", "sms_topup"),
-        orderBy("createdAt", "desc"),
-        limit(50)
+        where("schoolId", "==", school.id)
       );
       const snap = await getDocs(q);
-      const list = snap.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now())
-        };
-      });
-      // Sort locally descending
-      list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      const list = snap.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now())
+          };
+        })
+        .filter((payment: any) => payment.type === "sms_topup")
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, 50);
       setPaymentsHistory(list);
     } catch (err: any) {
       console.error("Error loading payment history:", err);
@@ -154,24 +153,23 @@ const Reminders: React.FC = () => {
     if (!school?.id) return;
     setLoadingBroadcasts(true);
     try {
-      const { collection, query, where, orderBy, limit, getDocs } = await import("firebase/firestore");
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
       const q = query(
         collection(firestore, "reminders"),
-        where("schoolId", "==", school.id),
-        orderBy("createdAt", "desc"),
-        limit(50)
+        where("schoolId", "==", school.id)
       );
       const snap = await getDocs(q);
-      const list = snap.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now())
-        };
-      });
-      // Sort descending by date
-      list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      const list = snap.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now())
+          };
+        })
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, 50);
       setBroadcastsHistory(list);
     } catch (err: any) {
       console.error("Error loading broadcasts history:", err);

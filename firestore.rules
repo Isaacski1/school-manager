@@ -1021,6 +1021,13 @@ service cloud.firestore {
         schoolAdminScopedAccess(resource.data.schoolId);
     }
 
+    // SMS reminders sent by school admins
+    match /reminders/{reminderId} {
+      allow read: if isSuperAdmin() || schoolAdminScopedAccess(resource.data.schoolId);
+      allow create: if schoolAdminScopedAccess(request.resource.data.schoolId);
+      allow update, delete: if isSuperAdmin();
+    }
+
     // Activity logs for analytics and auditing
     match /activity_logs/{logId} {
       // Creation of logs: allowed if authenticated and either super_admin or creating for your own school
