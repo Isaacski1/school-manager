@@ -837,7 +837,7 @@ const Reminders: React.FC = () => {
 
         {/* Top Up Wallet Modal */}
         {topupModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-3 sm:p-4">
             {/* Backdrop */}
             <div 
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
@@ -845,8 +845,8 @@ const Reminders: React.FC = () => {
             />
             
             {/* Content Container */}
-            <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-200">
-              <div className="p-6 space-y-6">
+            <div className="relative my-4 max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl border border-slate-100 bg-white shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="p-5 sm:p-6 space-y-5 sm:space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">

@@ -225,40 +225,43 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     }).format(normalized);
   };
 
-  const getSuperAdminDismissedKey = () =>
-    `superAdminDismissedNotifications:${user?.id || "unknown"}`;
-  const getSuperAdminReadKey = () =>
-    `superAdminReadNotifications:${user?.id || "unknown"}`;
+  const notificationScope = isSuperAdmin
+    ? "superAdmin"
+    : `schoolAdmin:${activeSchoolId || "unknown"}`;
+  const getDismissedNotificationsKey = () =>
+    `dismissedNotifications:${notificationScope}:${user?.id || "unknown"}`;
+  const getReadNotificationsKey = () =>
+    `readNotifications:${notificationScope}:${user?.id || "unknown"}`;
 
-  const loadSuperAdminDismissed = () => {
+  const loadDismissedNotifications = () => {
     try {
-      const raw = localStorage.getItem(getSuperAdminDismissedKey());
+      const raw = localStorage.getItem(getDismissedNotificationsKey());
       return raw ? (JSON.parse(raw) as string[]) : [];
     } catch {
       return [];
     }
   };
 
-  const saveSuperAdminDismissed = (ids: string[]) => {
+  const saveDismissedNotifications = (ids: string[]) => {
     try {
-      localStorage.setItem(getSuperAdminDismissedKey(), JSON.stringify(ids));
+      localStorage.setItem(getDismissedNotificationsKey(), JSON.stringify(ids));
     } catch {
       // ignore storage errors
     }
   };
 
-  const loadSuperAdminRead = () => {
+  const loadReadNotifications = () => {
     try {
-      const raw = localStorage.getItem(getSuperAdminReadKey());
+      const raw = localStorage.getItem(getReadNotificationsKey());
       return raw ? (JSON.parse(raw) as string[]) : [];
     } catch {
       return [];
     }
   };
 
-  const saveSuperAdminRead = (ids: string[]) => {
+  const saveReadNotifications = (ids: string[]) => {
     try {
-      localStorage.setItem(getSuperAdminReadKey(), JSON.stringify(ids));
+      localStorage.setItem(getReadNotificationsKey(), JSON.stringify(ids));
     } catch {
       // ignore storage errors
     }
@@ -271,6 +274,85 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? Date.now() : parsed.getTime();
   };
+
+  const formatActivityNotificationMessage = (activity: any) => {
+    const actionType = String(activity.actionType || activity.eventType || "activity");
+    const role = String(activity.role || activity.actorRole || "User").replace(/_/g, " ");
+    const actor = activity.userName || activity.metadata?.actorName || activity.metadata?.email || role;
+    const module = activity.module || activity.metadata?.module || "the system";
+    const description = activity.description || activity.metadata?.description || "";
+
+    switch (actionType) {
+      case "user_login":
+        return `${actor} signed in.`;
+      case "teacher_attendance_marked":
+      case "teacher_attendance_submitted":
+        return `${actor} submitted teacher attendance.`;
+      case "attendance_saved":
+      case "student_attendance_marked":
+        return `${actor} marked student attendance.`;
+      case "assessment_saved":
+      case "assessment_updated":
+        return `${actor} updated assessment records.`;
+      case "remarks_saved":
+      case "student_remarks_saved":
+        return `${actor} saved student remarks.`;
+      case "student_skills_saved":
+        return `${actor} updated student skills.`;
+      case "fee_payment_recorded":
+        return `${actor} recorded a fee payment.`;
+      default:
+        return description || `${actor} performed an activity in ${module}.`;
+    }
+  };
+
+  const isSmsTopupPayment = (payment: any) => {
+    const values = [
+      payment.type,
+      payment.category,
+      payment.paymentType,
+      payment.metadata?.type,
+    ].map((value) => String(value || "").toLowerCase());
+    return values.some((value) => value.includes("sms_topup"));
+  };
+
+  const isBillingPlanPayment = (payment: any) => {
+    const values = [
+      payment.type,
+      payment.category,
+      payment.paymentType,
+      payment.module,
+      payment.metadata?.type,
+    ].map((value) => String(value || "").toLowerCase());
+    return values.some((value) =>
+      value === "subscription" ||
+      value === "billing" ||
+      value === "school_billing" ||
+      value.includes("subscription") ||
+      value.includes("billing"),
+    );
+  };
+
+  const formatPaymentNotificationMessage = (payment: any) => {
+    const schoolName = payment.schoolName || payment.metadata?.schoolName || "A school";
+    const amount = formatPaymentAmount(Number(payment.amount || 0), payment.currency || "GHS");
+    const status = String(payment.status || "pending").toLowerCase();
+    const statusLabel =
+      status === "success" || status === "paid"
+        ? "completed"
+        : status === "failed"
+          ? "failed"
+          : "started";
+
+    if (isSmsTopupPayment(payment)) {
+      return `${schoolName} ${statusLabel} an SMS wallet top-up${amount ? ` of ${amount}` : ""}.`;
+    }
+
+    return `${schoolName} ${statusLabel} a billing plan payment${amount ? ` of ${amount}` : ""}.`;
+  };
+
+  const isLocalNotification = (id: string) =>
+    id.startsWith("activity:") || id.startsWith("payment:");
 
   // Fetch Notifications for Admin / Super Admin
   useEffect(() => {
@@ -288,22 +370,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       }
     }
 
-    let notificationsQuery;
-
-    if (isSuperAdmin) {
-      notificationsQuery = query(
-        collection(firestore, "admin_notifications"),
-        orderBy("createdAt", "desc"),
-        limit(20),
-      );
-    } else {
-      notificationsQuery = query(
-        collection(firestore, "admin_notifications"),
-        where("schoolId", "==", currentSchoolId),
-        orderBy("createdAt", "desc"),
-        limit(20),
-      );
-    }
+    const notificationsQuery = isSuperAdmin
+      ? query(collection(firestore, "payments"), orderBy("createdAt", "desc"), limit(50))
+      : query(
+          collection(firestore, "schools", currentSchoolId, "activityLogs"),
+          orderBy("timestamp", "desc"),
+          limit(30),
+        );
 
     const setupSubscription = (q: any) => {
       return onSnapshot(
@@ -311,22 +384,30 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         (snap: any) => {
           if (!notificationsPollRef.current) return;
 
-          const dismissedIds = isSuperAdmin ? new Set(loadSuperAdminDismissed()) : new Set();
-          const readIds = isSuperAdmin ? new Set(loadSuperAdminRead()) : new Set();
+          const dismissedIds = new Set(loadDismissedNotifications());
+          const readIds = new Set(loadReadNotifications());
 
           const notes: SystemNotification[] = snap.docs
-            .filter((doc: any) => !isSuperAdmin || !dismissedIds.has(doc.id))
             .map((docSnap: any) => {
-              const notice = docSnap.data() as any;
+              const row = docSnap.data() as any;
+              const id = isSuperAdmin ? `payment:${docSnap.id}` : `activity:${docSnap.id}`;
+              if (dismissedIds.has(id)) return null;
+              if (isSuperAdmin && !isSmsTopupPayment(row) && !isBillingPlanPayment(row)) return null;
+
               return {
-                id: docSnap.id,
-                schoolId: notice.schoolId || activeSchoolId || "system",
-                message: notice.message || "System notification",
-                createdAt: toTimestamp(notice.createdAt),
-                isRead: isSuperAdmin ? readIds.has(docSnap.id) : Boolean(notice.isRead),
-                type: notice.type || "system",
+                id,
+                schoolId: row.schoolId || activeSchoolId || "system",
+                message: isSuperAdmin
+                  ? formatPaymentNotificationMessage(row)
+                  : formatActivityNotificationMessage(row),
+                createdAt: toTimestamp(isSuperAdmin ? row.createdAt : row.timestamp),
+                isRead: readIds.has(id),
+                type: isSuperAdmin
+                  ? isSmsTopupPayment(row) ? "system" : "assessment"
+                  : row.module === "Attendance" ? "attendance" : "system",
               };
             })
+            .filter(Boolean)
             .sort((a, b) => b.createdAt - a.createdAt);
 
           setNotifications(notes);
@@ -338,8 +419,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           
           if (message.includes("index") || message.includes("composite")) {
             const fallbackQuery = isSuperAdmin 
-              ? query(collection(firestore, "admin_notifications"), limit(40))
-              : query(collection(firestore, "admin_notifications"), where("schoolId", "==", currentSchoolId), limit(40));
+              ? query(collection(firestore, "payments"), limit(80))
+              : query(collection(firestore, "schools", currentSchoolId, "activityLogs"), limit(40));
             
             unsubscribe = setupSubscription(fallbackQuery);
           } else if (
@@ -362,9 +443,9 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
   const handleMarkRead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isSuperAdmin) {
-      const nextRead = Array.from(new Set([...loadSuperAdminRead(), id]));
-      saveSuperAdminRead(nextRead);
+    if (isSuperAdmin || isLocalNotification(id)) {
+      const nextRead = Array.from(new Set([...loadReadNotifications(), id]));
+      saveReadNotifications(nextRead);
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
       );
@@ -380,14 +461,14 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
   const handleDeleteNotification = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isSuperAdmin) {
+    if (isSuperAdmin || isLocalNotification(id)) {
       const removedWasUnread = notifications.find(
         (n) => n.id === id && !n.isRead,
       );
       const nextDismissed = Array.from(
-        new Set([...loadSuperAdminDismissed(), id]),
+        new Set([...loadDismissedNotifications(), id]),
       );
-      saveSuperAdminDismissed(nextDismissed);
+      saveDismissedNotifications(nextDismissed);
       setNotifications((prev) => prev.filter((n) => n.id !== id));
       setUnreadCount((prev) =>
         removedWasUnread ? Math.max(0, prev - 1) : prev,

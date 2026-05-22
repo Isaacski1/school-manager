@@ -14,6 +14,8 @@ import { auth, storage } from "../../services/firebase";
 import { ref as storageRef, uploadBytes } from "firebase/storage";
 import html2pdf from "html2pdf.js";
 import { API_BASE_URL } from "../../src/config";
+import { useAuth } from "../../context/AuthContext";
+import { logActivity } from "../../services/activityLog";
 
 interface FeesViewProps {
   student: Student;
@@ -22,6 +24,7 @@ interface FeesViewProps {
 
 const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const { school } = useSchool();
+  const { user } = useAuth();
   const userSelectedTermRef = useRef(false);
   const [ledgers, setLedgers] = useState<StudentFeeLedger[]>([]);
   const [feeDefinitions, setFeeDefinitions] = useState<FeeDefinition[]>([]);
@@ -487,6 +490,24 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
       for (const p of paymentsToRecord) {
         await db.recordStudentPayment(p as StudentFeePayment);
       }
+
+      await logActivity({
+        schoolId: student.schoolId,
+        actorUid: user?.id || auth.currentUser?.uid || null,
+        actorRole: user?.role || "parent",
+        eventType: "fee_payment_recorded",
+        entityId: student.id,
+        meta: {
+          module: "Fees",
+          status: "success",
+          actorName: user?.fullName || "Parent Portal",
+          studentName: student.name,
+          amount,
+          reference,
+          feeName: feeName || "School Fees",
+          description: `Parent payment received for ${student.name}.`,
+        },
+      });
 
       setLastPaymentInfo({ reference, amount, date: paymentDate });
       
