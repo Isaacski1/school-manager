@@ -61,36 +61,36 @@ const showcaseScreens = [
     title: "Admin dashboard",
     description: "Track attendance, staff activity, payments, and school operations from one command center.",
     accent: "#38BDF8",
-    metrics: ["Attendance", "Students", "Fees"],
-    rows: ["Today overview", "Teacher approvals", "Recent payments"],
+    image: "/product-preview/optimized/admin-dashboard-1200.jpg",
+    imageSmall: "/product-preview/optimized/admin-dashboard-760.jpg",
   },
   {
     title: "Parent dashboard",
     description: "Give parents a clear view of attendance, results, fees, and school updates from their phone.",
     accent: "#22C55E",
-    metrics: ["Attendance", "Reports", "Fees"],
-    rows: ["Child summary", "Latest remarks", "Fee balance"],
+    image: "/product-preview/optimized/parent-dashboard-1200.jpg",
+    imageSmall: "/product-preview/optimized/parent-dashboard-760.jpg",
   },
   {
     title: "Fee payment page",
     description: "Record fee payments, monitor balances, and keep finance work organized by term.",
     accent: "#F59E0B",
-    metrics: ["Paid", "Balance", "Invoices"],
-    rows: ["Payment history", "Outstanding fees", "Receipt actions"],
+    image: "/product-preview/optimized/fees-payment-dashboard-1200.jpg",
+    imageSmall: "/product-preview/optimized/fees-payment-dashboard-760.jpg",
   },
   {
     title: "Report card page",
     description: "Generate professional report cards with grades, remarks, skills, and term summaries.",
     accent: "#A78BFA",
-    metrics: ["Grades", "Remarks", "PDF"],
-    rows: ["Academic performance", "Skills summary", "Teacher remarks"],
+    image: "/product-preview/optimized/report-card-dashboard-1200.jpg",
+    imageSmall: "/product-preview/optimized/report-card-dashboard-760.jpg",
   },
   {
     title: "Attendance page",
     description: "Capture daily student and teacher attendance with quick visibility into missing records.",
     accent: "#06B6D4",
-    metrics: ["Present", "Absent", "Rate"],
-    rows: ["Class register", "Daily status", "Attendance trend"],
+    image: "/product-preview/optimized/attendance-dashboard-1200.jpg",
+    imageSmall: "/product-preview/optimized/attendance-dashboard-760.jpg",
   },
 ];
 
@@ -171,10 +171,36 @@ const AnimatedCounter: React.FC<{ value: number; suffix?: string }> = ({
   suffix = "",
 }) => {
   const [displayValue, setDisplayValue] = useState(0);
+  const [isVisible, setIsVisible] = useState(false);
+  const counterRef = React.useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
+    const node = counterRef.current;
+    if (!node) return;
+
+    if (typeof IntersectionObserver === "undefined") {
+      setIsVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "120px" },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible) return;
     let frameId = 0;
-    const duration = 1200;
+    const duration = 800;
     const startedAt = performance.now();
 
     const tick = (now: number) => {
@@ -186,13 +212,13 @@ const AnimatedCounter: React.FC<{ value: number; suffix?: string }> = ({
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [value]);
+  }, [isVisible, value]);
 
   return (
-    <>
+    <span ref={counterRef}>
       {displayValue.toLocaleString()}
       {suffix}
-    </>
+    </span>
   );
 };
 
@@ -231,17 +257,40 @@ const MarketingHome = () => {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const loadSchools = async () => {
       try {
         const data = await db.getPublicSchools();
-        if (data && data.length > 0) {
+        if (!cancelled && data && data.length > 0) {
           setPartnerSchools(data);
         }
       } catch (err) {
         console.error("Failed to load partner schools", err);
       }
     };
-    loadSchools();
+
+    const runWhenIdle = () => {
+      const browserWindow = window as Window & {
+        requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+
+      if (browserWindow.requestIdleCallback) {
+        const idleId = browserWindow.requestIdleCallback(loadSchools, {
+          timeout: 2500,
+        });
+        return () => browserWindow.cancelIdleCallback?.(idleId);
+      }
+
+      const timer = globalThis.setTimeout(loadSchools, 900);
+      return () => globalThis.clearTimeout(timer);
+    };
+
+    const cleanupIdle = runWhenIdle();
+    return () => {
+      cancelled = true;
+      cleanupIdle?.();
+    };
   }, []);
 
   return (
@@ -414,10 +463,9 @@ const MarketingHome = () => {
           .features-header { text-align: center !important; }
           .feature-card { padding: 24px !important; }
           .showcase-section { padding: 72px 16px !important; }
-          .showcase-grid { grid-template-columns: 1fr !important; gap: 18px !important; }
-          .showcase-card { padding: 14px !important; border-radius: 22px !important; }
-          .showcase-preview { min-height: 190px !important; }
-          .showcase-preview-body { padding: 14px !important; }
+          .showcase-grid { grid-template-columns: 1fr !important; gap: 22px !important; }
+          .showcase-card { padding: 12px !important; border-radius: 22px !important; }
+          .showcase-preview { aspect-ratio: 2.08 / 1 !important; min-height: 0 !important; }
           .showcase-header { margin-bottom: 36px !important; }
           .about-stats-grid { grid-template-columns: 1fr !important; gap: 32px !important; }
           .impact-badge { left: auto !important; right: 12px !important; bottom: 12px !important; padding: 8px 12px !important; gap: 8px !important; border-radius: 12px !important; }
@@ -456,7 +504,7 @@ const MarketingHome = () => {
           box-shadow: 0 26px 70px rgba(0,0,0,0.28);
         }
         .showcase-card:hover .showcase-preview {
-          transform: translateY(-3px) scale(1.01);
+          transform: translateY(-3px) scale(1.012);
         }
         .showcase-preview {
           transition: transform 220ms ease;
@@ -601,7 +649,7 @@ const MarketingHome = () => {
 
       {/* ── ABOUT SCHOOL MANAGER GH ── */}
       <section style={{ padding: "100px 24px", background: "linear-gradient(180deg, rgba(4,18,34,0) 0%, rgba(11,74,130,0.1) 50%, rgba(4,18,34,0) 100%)" }}>
-        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1440, margin: "0 auto" }}>
           <div className="responsive-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 80, alignItems: "center" }}>
             <motion.div initial="hidden" whileInView="show" viewport={{ once: true }} variants={stagger}>
               <motion.div variants={fadeUp} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(147, 197, 253, 0.1)", border: "1px solid rgba(147, 197, 253, 0.2)", borderRadius: 999, padding: "8px 16px", marginBottom: 24 }}>
@@ -679,7 +727,7 @@ const MarketingHome = () => {
             </p>
           </div>
 
-          <div className="showcase-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 22 }}>
+          <div className="showcase-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 28 }}>
             {showcaseScreens.map((screen) => (
               <motion.div
                 key={screen.title}
@@ -692,7 +740,7 @@ const MarketingHome = () => {
                   background: "rgba(255,255,255,0.055)",
                   border: "1.5px solid rgba(255,255,255,0.1)",
                   borderRadius: 26,
-                  padding: 16,
+                  padding: 18,
                   overflow: "hidden",
                   backdropFilter: "blur(18px)",
                 }}
@@ -700,50 +748,37 @@ const MarketingHome = () => {
                 <div
                   className="showcase-preview"
                   style={{
-                    minHeight: 214,
+                    aspectRatio: "2.08 / 1",
                     borderRadius: 18,
                     overflow: "hidden",
-                    background: "linear-gradient(145deg, rgba(255,255,255,0.98), rgba(226,232,240,0.94))",
-                    boxShadow: "inset 0 0 0 1px rgba(15,23,42,0.08)",
+                    background: "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.9))",
+                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
+                    position: "relative",
                   }}
                 >
-                  <div style={{ height: 32, display: "flex", alignItems: "center", gap: 6, padding: "0 14px", borderBottom: "1px solid rgba(15,23,42,0.08)", background: "rgba(248,250,252,0.9)" }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444" }} />
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B" }} />
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22C55E" }} />
-                    <div style={{ height: 8, width: 86, borderRadius: 999, background: "rgba(15,23,42,0.08)", marginLeft: "auto" }} />
-                  </div>
-
-                  <div className="showcase-preview-body" style={{ padding: 16 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                      <div>
-                        <div style={{ width: 120, height: 9, borderRadius: 999, background: "#0B4A82", marginBottom: 8 }} />
-                        <div style={{ width: 72, height: 7, borderRadius: 999, background: "rgba(15,23,42,0.16)" }} />
-                      </div>
-                      <div style={{ width: 34, height: 34, borderRadius: 12, background: `${screen.accent}22`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: 14, height: 14, borderRadius: 5, background: screen.accent }} />
-                      </div>
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 16 }}>
-                      {screen.metrics.map((metric, idx) => (
-                        <div key={metric} style={{ borderRadius: 12, padding: "10px 8px", background: idx === 0 ? `${screen.accent}1f` : "rgba(15,23,42,0.045)", border: "1px solid rgba(15,23,42,0.06)" }}>
-                          <div style={{ height: 7, width: "70%", borderRadius: 999, background: idx === 0 ? screen.accent : "rgba(15,23,42,0.18)", marginBottom: 8 }} />
-                          <div style={{ fontSize: 9, fontWeight: 700, color: "#475569", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{metric}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {screen.rows.map((row, idx) => (
-                        <div key={row} style={{ display: "grid", gridTemplateColumns: "18px 1fr 42px", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 11, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(15,23,42,0.06)" }}>
-                          <span style={{ width: 18, height: 18, borderRadius: 6, background: idx === 0 ? `${screen.accent}33` : "rgba(15,23,42,0.08)" }} />
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row}</span>
-                          <span style={{ height: 7, borderRadius: 999, background: idx === 0 ? screen.accent : "rgba(15,23,42,0.14)" }} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <img
+                    src={screen.image}
+                    srcSet={`${screen.imageSmall} 760w, ${screen.image} 1200w`}
+                    sizes="(max-width: 640px) calc(100vw - 56px), (max-width: 1024px) calc(100vw - 96px), 680px"
+                    alt={`${screen.title} preview`}
+                    loading="lazy"
+                    decoding="async"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      objectPosition: "top center",
+                      display: "block",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      pointerEvents: "none",
+                      boxShadow: `inset 0 0 0 1px ${screen.accent}44`,
+                    }}
+                  />
                 </div>
 
                 <div style={{ padding: "18px 4px 2px" }}>

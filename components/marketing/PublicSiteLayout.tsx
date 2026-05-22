@@ -30,28 +30,43 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
   const scrollFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
+    const getScrollTop = () =>
+      window.scrollY ||
+      document.documentElement.scrollTop ||
+      document.body.scrollTop ||
+      0;
+
+    const updateScrollState = () => {
+      const scrollTop = getScrollTop();
+      const nextScrolled = scrollTop > 16;
+      const nextShowScrollTop = scrollTop > 400;
+
+      if (scrolledRef.current !== nextScrolled) {
+        scrolledRef.current = nextScrolled;
+        setScrolled(nextScrolled);
+      }
+
+      if (showScrollTopRef.current !== nextShowScrollTop) {
+        showScrollTopRef.current = nextShowScrollTop;
+        setShowScrollTop(nextShowScrollTop);
+      }
+    };
+
     const onScroll = () => {
       if (scrollFrameRef.current !== null) return;
       scrollFrameRef.current = window.requestAnimationFrame(() => {
         scrollFrameRef.current = null;
-        const nextScrolled = window.scrollY > 16;
-        const nextShowScrollTop = window.scrollY > 400;
-
-        if (scrolledRef.current !== nextScrolled) {
-          scrolledRef.current = nextScrolled;
-          setScrolled(nextScrolled);
-        }
-
-        if (showScrollTopRef.current !== nextShowScrollTop) {
-          showScrollTopRef.current = nextShowScrollTop;
-          setShowScrollTop(nextShowScrollTop);
-        }
+        updateScrollState();
       });
     };
+
     window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
+    document.addEventListener("scroll", onScroll, { passive: true });
+    updateScrollState();
+
     return () => {
       window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("scroll", onScroll);
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);
       }
@@ -60,15 +75,35 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
 
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      const scrollTop =
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+      const nextScrolled = scrollTop > 16;
+      const nextShowScrollTop = scrollTop > 400;
+      scrolledRef.current = nextScrolled;
+      showScrollTopRef.current = nextShowScrollTop;
+      setScrolled(nextScrolled);
+      setShowScrollTop(nextShowScrollTop);
+    });
+
+    return () => window.cancelAnimationFrame(id);
+  }, [location.pathname]);
+
   const isActive = (href: string) => location.pathname === href;
 
   return (
     <div className="min-h-screen font-sans relative overflow-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#041222", color: "white" }}>
       
-      {/* Animated Glowing Orbs (Fixed background) */}
-      <div className="marketing-orb fixed top-[-10%] left-[-5%] w-[800px] h-[800px] rounded-full animate-blob pointer-events-none" style={{ background: "radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0.4) 30%, rgba(37, 99, 235, 0) 70%)", mixBlendMode: "screen", opacity: 1, zIndex: 0 }}></div>
-      <div className="marketing-orb fixed top-[15%] right-[-10%] w-[900px] h-[900px] rounded-full animate-blob animation-delay-2000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0.3) 30%, rgba(16, 185, 129, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0 }}></div>
-      <div className="marketing-orb fixed bottom-[-15%] left-[10%] w-[1000px] h-[1000px] rounded-full animate-blob animation-delay-4000 pointer-events-none" style={{ background: "radial-gradient(circle, rgba(147, 51, 234, 0.7) 0%, rgba(147, 51, 234, 0.3) 30%, rgba(147, 51, 234, 0) 70%)", mixBlendMode: "screen", opacity: 0.8, zIndex: 0 }}></div>
+      {/* Animated background: transform-only movement keeps it smooth on slower devices. */}
+      <div className="marketing-bg fixed inset-0 pointer-events-none" aria-hidden="true">
+        <div className="marketing-orb marketing-orb-blue animate-blob"></div>
+        <div className="marketing-orb marketing-orb-green animate-blob animation-delay-2000"></div>
+        <div className="marketing-orb marketing-orb-purple animate-blob animation-delay-4000"></div>
+      </div>
 
       {/* Top announcement bar */}
       <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
@@ -238,18 +273,51 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         }
         @keyframes blob {
           0% { transform: translate3d(0, 0, 0) scale(1); }
-          33% { transform: translate3d(120px, -180px, 0) scale(1.4); }
-          66% { transform: translate3d(-100px, 120px, 0) scale(0.7); }
-          100% { transform: translate3d(0, 0, 0) scale(1); }
+          50% { transform: translate3d(7vw, -6vh, 0) scale(1.12); }
+          100% { transform: translate3d(-5vw, 5vh, 0) scale(0.94); }
         }
-        .animate-blob {
-          animation: blob 12s infinite alternate ease-in-out;
+        .marketing-bg {
+          z-index: 0;
+          overflow: hidden;
+          contain: strict;
+          transform: translateZ(0);
+          background:
+            radial-gradient(circle at 12% 20%, rgba(37,99,235,0.24), transparent 34%),
+            radial-gradient(circle at 88% 18%, rgba(16,185,129,0.18), transparent 32%),
+            radial-gradient(circle at 40% 88%, rgba(147,51,234,0.18), transparent 34%);
         }
         .marketing-orb {
+          position: absolute;
+          border-radius: 9999px;
           backface-visibility: hidden;
-          contain: layout paint style;
+          contain: strict;
           transform: translateZ(0);
           will-change: transform;
+          opacity: 0.72;
+        }
+        .marketing-orb-blue {
+          top: -18%;
+          left: -10%;
+          width: 640px;
+          height: 640px;
+          background: radial-gradient(circle, rgba(37,99,235,0.48) 0%, rgba(37,99,235,0.2) 36%, rgba(37,99,235,0) 68%);
+        }
+        .marketing-orb-green {
+          top: 10%;
+          right: -14%;
+          width: 720px;
+          height: 720px;
+          background: radial-gradient(circle, rgba(16,185,129,0.42) 0%, rgba(16,185,129,0.18) 36%, rgba(16,185,129,0) 68%);
+        }
+        .marketing-orb-purple {
+          left: 12%;
+          bottom: -24%;
+          width: 760px;
+          height: 760px;
+          background: radial-gradient(circle, rgba(147,51,234,0.38) 0%, rgba(147,51,234,0.16) 36%, rgba(147,51,234,0) 68%);
+        }
+        .animate-blob {
+          animation: blob 14s infinite alternate ease-in-out;
         }
         .animation-delay-2000 {
           animation-delay: 2s;
@@ -278,12 +346,41 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         @media (max-width: 1024px) {
           .desktop-nav, .desktop-ctas { display: none !important; }
           .mobile-toggle { display: flex !important; }
+          .marketing-orb {
+            opacity: 0.5;
+            animation-duration: 20s;
+          }
+          .marketing-orb-blue { width: 420px; height: 420px; }
+          .marketing-orb-green { width: 460px; height: 460px; }
+          .marketing-orb-purple { width: 500px; height: 500px; }
+          header {
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
+          }
         }
         @media (max-width: 640px) {
+          .marketing-bg {
+            background:
+              radial-gradient(circle at 15% 18%, rgba(37,99,235,0.22), transparent 36%),
+              radial-gradient(circle at 90% 16%, rgba(16,185,129,0.14), transparent 34%),
+              radial-gradient(circle at 48% 90%, rgba(147,51,234,0.15), transparent 38%);
+          }
+          .marketing-orb {
+            opacity: 0.38;
+            animation-duration: 24s;
+          }
           .footer-grid { grid-template-columns: 1fr !important; gap: 32px !important; text-align: center; }
           .footer-branding { grid-column: span 1 !important; }
           .footer-branding div { justify-content: center !important; }
           .footer-branding p { margin: 0 auto 20px auto !important; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .animate-blob {
+            animation-duration: 36s;
+          }
+          .whatsapp-float {
+            animation-duration: 4s;
+          }
         }
       `}</style>
 

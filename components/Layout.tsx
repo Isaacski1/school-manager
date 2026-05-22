@@ -852,7 +852,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   </button>
 
                   {showNotifications && (
-                    <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 max-h-96 overflow-y-auto">
+                    <div className="fixed left-1/2 top-16 z-50 max-h-[min(26rem,calc(100vh-5rem))] w-[calc(100vw-1.5rem)] max-w-sm -translate-x-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 sm:max-w-none sm:translate-x-0">
                       <div className="p-4 border-b border-slate-100">
                         <h3 className="font-semibold text-slate-800">Notifications</h3>
                       </div>
