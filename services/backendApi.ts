@@ -6,6 +6,7 @@
 
 import { getIdTokenWithRetry } from "./authToken";
 import { API_BASE_URL } from "../src/config";
+import { getFriendlyErrorMessage } from "./errorMessages";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -94,7 +95,14 @@ async function apiRequest<T>(
         }
         // For all other errors, throw a generic ApiError
         throw new ApiError(
-          errorData.error || `HTTP ${response.status} ${response.statusText}`,
+          getFriendlyErrorMessage(
+            {
+              message: errorData.error || errorData.message || response.statusText,
+              code: errorData.code,
+              status: response.status,
+            },
+            "The request could not be completed. Please try again.",
+          ),
           errorData.code,
           response.status,
         );
@@ -118,7 +126,7 @@ async function apiRequest<T>(
       // Handle fetch failing entirely
       if (error.name === "TypeError" && error.message === "Failed to fetch") {
         throw new ApiError(
-          `Cannot connect to the backend at ${BACKEND_URL}. Please ensure the server is running.`,
+          "We could not connect to the server. Please check your internet connection and try again.",
           "CONNECTION_FAILED",
         );
       }

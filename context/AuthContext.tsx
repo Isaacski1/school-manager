@@ -22,6 +22,7 @@ import {
 } from "../services/authProfile";
 import { safeLogAnalyticsEvent } from "../services/analytics";
 import { logActivity } from "../services/activityLog";
+import { getFriendlyErrorMessage } from "../services/errorMessages";
 
 const SENSITIVE_STORAGE_PREFIXES = [
   "school_",
@@ -214,27 +215,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               errorMessage.includes("Cloud Firestore API has not been used")
             ) {
               setError(
-                "CRITICAL ERROR: The Firestore Database is not enabled. Go to Firebase Console > Build > Firestore Database > Create Database.",
+                "The database is not ready yet. Please contact support.",
               );
             } else if (
               errorMessage.includes("permission-denied") ||
               errorMessage.includes("Missing or insufficient permissions")
             ) {
               setError(
-                "Permission denied: database access is blocked by the current security rules. Contact your administrator to review the assigned permissions.",
+                "You do not have permission to access this account. Please contact your school administrator.",
               );
             } else if (
               errorMessage.includes("client is offline") ||
               errorMessage.includes("offline")
             ) {
               setError(
-                "Network Error: Could not connect to the database. Check your internet connection.",
+                "We could not connect to the database. Please check your internet connection and try again.",
               );
             } else {
-              setError(
-                "Failed to load user profile. Please try refreshing the page. Error: " +
-                  errorMessage,
-              );
+              setError(getFriendlyErrorMessage(
+                err,
+                "We could not load your account. Please refresh the page or contact support if it continues.",
+              ));
             }
           }
         }

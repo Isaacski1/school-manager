@@ -23,6 +23,7 @@ import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff, Phone } from "lucide-
 import schoolLogo from "../logo/apple-icon-180x180.png";
 import SplashScreen from "../components/SplashScreen";
 import { API_BASE_URL } from "../src/config";
+import { getFriendlyErrorMessage } from "../services/errorMessages";
 
 const Login = () => {
   const {
@@ -233,18 +234,18 @@ const Login = () => {
         userAgent: navigator.userAgent,
       });
 
-      let msg = "Invalid email or password. Please try again.";
+      let msg = "The email or password is not correct. Please try again.";
       
       if (isMfaEnrollmentRequiredError(err)) {
-        msg = err.message || "Your role requires MFA. Please enroll a second factor.";
+        msg = "Your account needs extra sign-in security. Please contact your administrator to set it up.";
       } else if (err?.code === "auth/too-many-requests") {
-        msg = "Too many attempts. Please try again later.";
+        msg = "Too many attempts. Please wait a few minutes, then try again.";
       } else if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password") {
-        msg = "Invalid email or password.";
+        msg = "The email or password is not correct. Please try again.";
       } else if (err?.code === "auth/invalid-email") {
-        msg = "Invalid email format.";
+        msg = "Please enter a valid email address.";
       } else if (err?.message) {
-        msg = err.message;
+        msg = getFriendlyErrorMessage(err, msg);
       }
 
       if (err?.code === "auth/multi-factor-auth-required") {
@@ -287,9 +288,9 @@ const Login = () => {
       console.error("MFA code send failed", err);
       let msg = "Failed to send verification code. Please try again.";
       if (err?.code === "auth/too-many-requests") {
-        msg = "Too many attempts. Please try again later.";
+        msg = "Too many attempts. Please wait a few minutes, then try again.";
       } else if (err?.message) {
-        msg = err.message;
+        msg = getFriendlyErrorMessage(err, msg);
       }
       setMfaError(msg);
     } finally {
@@ -400,10 +401,13 @@ const Login = () => {
       });
     } catch (err: any) {
       console.error("Parent Custom Login failed", err);
-      let msg = err.message || "Failed to sign in. Please check your credentials and try again.";
+      let msg = getFriendlyErrorMessage(
+        err,
+        "We could not sign you in. Please check your phone number and date of birth, then try again.",
+      );
       
       if (err?.code === "auth/invalid-custom-token") {
-        msg = "Authentication system error. Please contact support.";
+        msg = "We could not complete sign in right now. Please contact the school office or support.";
       }
       
       setParentError(msg);
@@ -431,6 +435,8 @@ const Login = () => {
       let msg = "Failed to send reset email. Please try again.";
       if (err?.code === "auth/user-not-found") {
         msg = "No account found with this email.";
+      } else {
+        msg = getFriendlyErrorMessage(err, msg);
       }
       setFormError(msg);
     } finally {
