@@ -95,6 +95,8 @@ Open http://localhost:3000 in your browser
    - Click "Add Environment Variable"
    - `FIREBASE_PROJECT_ID` = `noble-care-management-system`
    - `FIREBASE_SERVICE_ACCOUNT_KEY` = (paste your full JSON key)
+   - `ARKESEL_API_KEY` = (paste your Arkesel API key)
+   - `ARKESEL_SENDER_ID` = (your approved sender ID, for example `SchoolMgr`)
 5. **Deploy!** Click "Deploy Service"
 6. **Get URL:** Render gives you something like `https://noble-care-academy-backend.onrender.com`
 
@@ -196,6 +198,13 @@ npm install
 - If local: http://API_BASE_URL/health should return `{"status":"ok"}`
 - If production: check Render/Railway deployment logs
 - Verify `VITE_BACKEND_URL` in `.env.local` matches your actual backend URL
+
+### SMS gateway shows "unconfigured" in production
+
+- Confirm the production backend has `ARKESEL_API_KEY` set in Render/Railway environment variables.
+- Confirm `ARKESEL_SENDER_ID` matches the approved sender ID.
+- Restart or redeploy the backend after changing environment variables.
+- Local `.env` and `server/.env` files are ignored by git and are not deployed automatically.
 
 ---
 

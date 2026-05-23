@@ -7857,7 +7857,7 @@ app.get(
           };
         }
       } else {
-        providerError = "Arkesel API Key not configured in system environment variables.";
+        providerError = "Arkesel API key is not configured on the backend server. Set ARKESEL_API_KEY in the production backend environment variables and restart the service.";
         provider = {
           balance: 0,
           error: providerError,

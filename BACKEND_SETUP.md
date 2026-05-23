@@ -166,6 +166,8 @@ npm run dev
 | `PORT`                         | 3001                                            | Backend server port   |
 | `FIREBASE_PROJECT_ID`          | noble-care-management-system                    | Your Firebase project |
 | `FIREBASE_SERVICE_ACCOUNT_KEY` | Service account JSON                            | From Firebase console |
+| `ARKESEL_API_KEY`              | Arkesel API key                                 | Required for live SMS gateway balance and sending |
+| `ARKESEL_SENDER_ID`            | SchoolMgr                                       | Approved Arkesel sender ID |
 | `VITE_BACKEND_URL`             | http://API_BASE_URL (dev) or https://... (prod) | Frontend uses this    |
 
 ---
@@ -195,6 +197,13 @@ npm install firebase-admin
 - Verify `.env` file has `FIREBASE_SERVICE_ACCOUNT_KEY`
 - Ensure it's valid JSON
 - Use single line or properly escaped JSON
+
+### SMS gateway shows "unconfigured" in production
+
+- Add `ARKESEL_API_KEY` to the deployed backend service environment variables.
+- Add `ARKESEL_SENDER_ID` with your approved sender ID.
+- Redeploy or restart the backend after saving the variables.
+- Do not add these values to frontend `VITE_*` variables; they must stay server-side only.
 
 ---
 
