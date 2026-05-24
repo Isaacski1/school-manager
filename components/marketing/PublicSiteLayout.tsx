@@ -271,20 +271,31 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
           background-color: #041222;
           color: white;
         }
-        @keyframes blob {
-          0% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(7vw, -6vh, 0) scale(1.12); }
-          100% { transform: translate3d(-5vw, 5vh, 0) scale(0.94); }
+        @keyframes blobBlue {
+          0% { transform: translate3d(-4vw, -2vh, 0) scale(1); }
+          35% { transform: translate3d(12vw, 7vh, 0) scale(1.08); }
+          70% { transform: translate3d(2vw, 18vh, 0) scale(0.96); }
+          100% { transform: translate3d(-7vw, 5vh, 0) scale(1.04); }
+        }
+        @keyframes blobGreen {
+          0% { transform: translate3d(4vw, 2vh, 0) scale(1); }
+          40% { transform: translate3d(-10vw, 10vh, 0) scale(1.06); }
+          75% { transform: translate3d(-4vw, -8vh, 0) scale(0.98); }
+          100% { transform: translate3d(7vw, 4vh, 0) scale(1.03); }
+        }
+        @keyframes blobPurple {
+          0% { transform: translate3d(0, 5vh, 0) scale(1); }
+          45% { transform: translate3d(10vw, -7vh, 0) scale(1.07); }
+          80% { transform: translate3d(-8vw, -3vh, 0) scale(0.97); }
+          100% { transform: translate3d(4vw, 8vh, 0) scale(1.04); }
         }
         .marketing-bg {
           z-index: 0;
           overflow: hidden;
-          contain: strict;
+          contain: paint;
           transform: translateZ(0);
           background:
-            radial-gradient(circle at 12% 20%, rgba(37,99,235,0.24), transparent 34%),
-            radial-gradient(circle at 88% 18%, rgba(16,185,129,0.18), transparent 32%),
-            radial-gradient(circle at 40% 88%, rgba(147,51,234,0.18), transparent 34%);
+            linear-gradient(135deg, #041222 0%, #082f49 48%, #041222 100%);
         }
         .marketing-orb {
           position: absolute;
@@ -293,31 +304,31 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
           contain: strict;
           transform: translateZ(0);
           will-change: transform;
-          opacity: 0.72;
+          opacity: 0.78;
         }
         .marketing-orb-blue {
-          top: -18%;
-          left: -10%;
-          width: 640px;
-          height: 640px;
-          background: radial-gradient(circle, rgba(37,99,235,0.48) 0%, rgba(37,99,235,0.2) 36%, rgba(37,99,235,0) 68%);
+          top: -12%;
+          left: -8%;
+          width: min(52vw, 520px);
+          height: min(52vw, 520px);
+          background: radial-gradient(circle, rgba(37,99,235,0.64) 0%, rgba(37,99,235,0.28) 42%, rgba(37,99,235,0) 70%);
+          animation: blobBlue 20s infinite alternate ease-in-out;
         }
         .marketing-orb-green {
-          top: 10%;
-          right: -14%;
-          width: 720px;
-          height: 720px;
-          background: radial-gradient(circle, rgba(16,185,129,0.42) 0%, rgba(16,185,129,0.18) 36%, rgba(16,185,129,0) 68%);
+          top: 14%;
+          right: -10%;
+          width: min(54vw, 560px);
+          height: min(54vw, 560px);
+          background: radial-gradient(circle, rgba(16,185,129,0.56) 0%, rgba(16,185,129,0.24) 42%, rgba(16,185,129,0) 70%);
+          animation: blobGreen 24s infinite alternate ease-in-out;
         }
         .marketing-orb-purple {
           left: 12%;
-          bottom: -24%;
-          width: 760px;
-          height: 760px;
-          background: radial-gradient(circle, rgba(147,51,234,0.38) 0%, rgba(147,51,234,0.16) 36%, rgba(147,51,234,0) 68%);
-        }
-        .animate-blob {
-          animation: blob 14s infinite alternate ease-in-out;
+          bottom: -18%;
+          width: min(56vw, 580px);
+          height: min(56vw, 580px);
+          background: radial-gradient(circle, rgba(147,51,234,0.52) 0%, rgba(147,51,234,0.22) 42%, rgba(147,51,234,0) 70%);
+          animation: blobPurple 28s infinite alternate ease-in-out;
         }
         .animation-delay-2000 {
           animation-delay: 2s;
@@ -347,12 +358,11 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
           .desktop-nav, .desktop-ctas { display: none !important; }
           .mobile-toggle { display: flex !important; }
           .marketing-orb {
-            opacity: 0.5;
-            animation-duration: 20s;
+            opacity: 0.56;
           }
-          .marketing-orb-blue { width: 420px; height: 420px; }
-          .marketing-orb-green { width: 460px; height: 460px; }
-          .marketing-orb-purple { width: 500px; height: 500px; }
+          .marketing-orb-blue { width: 360px; height: 360px; }
+          .marketing-orb-green { width: 390px; height: 390px; }
+          .marketing-orb-purple { width: 420px; height: 420px; }
           header {
             backdrop-filter: blur(10px) !important;
             -webkit-backdrop-filter: blur(10px) !important;
@@ -361,14 +371,21 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         @media (max-width: 640px) {
           .marketing-bg {
             background:
-              radial-gradient(circle at 15% 18%, rgba(37,99,235,0.22), transparent 36%),
-              radial-gradient(circle at 90% 16%, rgba(16,185,129,0.14), transparent 34%),
-              radial-gradient(circle at 48% 90%, rgba(147,51,234,0.15), transparent 38%);
+              linear-gradient(135deg, #041222 0%, #082f49 48%, #041222 100%);
           }
           .marketing-orb {
-            opacity: 0.38;
-            animation-duration: 24s;
+            opacity: 0.44;
           }
+          .marketing-orb-blue { width: 280px; height: 280px; }
+          .marketing-orb-green { width: 300px; height: 300px; }
+          .marketing-orb-purple { width: 320px; height: 320px; }
+        }
+        @media (max-width: 640px), (pointer: coarse) {
+          .marketing-orb-blue { animation-duration: 28s; }
+          .marketing-orb-green { animation-duration: 32s; }
+          .marketing-orb-purple { animation-duration: 36s; }
+        }
+        @media (max-width: 640px) {
           .footer-grid { grid-template-columns: 1fr !important; gap: 32px !important; text-align: center; }
           .footer-branding { grid-column: span 1 !important; }
           .footer-branding div { justify-content: center !important; }
@@ -376,7 +393,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
         }
         @media (prefers-reduced-motion: reduce) {
           .animate-blob {
-            animation-duration: 36s;
+            animation-duration: 48s;
           }
           .whatsapp-float {
             animation-duration: 4s;

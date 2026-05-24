@@ -222,13 +222,56 @@ const AnimatedCounter: React.FC<{ value: number; suffix?: string }> = ({
   );
 };
 
+const getSchoolInitials = (name: string) =>
+  String(name || "SM")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "SM";
+
+const SchoolLogoMark: React.FC<{ school: any }> = ({ school }) => {
+  if (school.logoUrl) {
+    return (
+      <img
+        src={school.logoUrl}
+        alt={school.name}
+        loading="lazy"
+        decoding="async"
+        style={{ height: 32, maxWidth: 120, objectFit: "contain" }}
+      />
+    );
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "linear-gradient(135deg, #38BDF8, #2563EB)",
+        color: "white",
+        fontSize: 11,
+        fontWeight: 800,
+        boxShadow: "0 10px 24px rgba(37,99,235,0.24)",
+      }}
+    >
+      {getSchoolInitials(school.name)}
+    </div>
+  );
+};
+
 const MarketingHome = () => {
   const [partnerSchools, setPartnerSchools] = useState<any[]>([
-    { id: "f1", name: "Alpha Preparatory", logoUrl: "https://api.dicebear.com/7.x/initials/svg?seed=AP&backgroundColor=0B4A82" },
-    { id: "f2", name: "Beacon International", logoUrl: "https://api.dicebear.com/7.x/initials/svg?seed=BI&backgroundColor=1160A8" },
-    { id: "f3", name: "Crystal Academy", logoUrl: "https://api.dicebear.com/7.x/initials/svg?seed=CA&backgroundColor=1E40AF" },
-    { id: "f4", name: "Delta Schools", logoUrl: "https://api.dicebear.com/7.x/initials/svg?seed=DS&backgroundColor=2563EB" },
-    { id: "f5", name: "Elite Scholars", logoUrl: "https://api.dicebear.com/7.x/initials/svg?seed=ES&backgroundColor=3B82F6" }
+    { id: "f1", name: "Alpha Preparatory" },
+    { id: "f2", name: "Beacon International" },
+    { id: "f3", name: "Crystal Academy" },
+    { id: "f4", name: "Delta Schools" },
+    { id: "f5", name: "Elite Scholars" }
   ]);
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
   const [showPopup, setShowPopup] = useState(false);
@@ -631,14 +674,14 @@ const MarketingHome = () => {
               {/* First set of logos */}
               {partnerSchools.map((school) => (
                 <div key={`${school.id}-1`} style={{ display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap" }}>
-                  <img src={school.logoUrl} alt={school.name} loading="lazy" decoding="async" style={{ height: 32 }} />
+                  <SchoolLogoMark school={school} />
                   <span style={{ fontWeight: 600, color: "white", fontSize: 14 }}>{school.name}</span>
                 </div>
               ))}
               {/* Duplicated set of logos for seamless loop */}
               {partnerSchools.map((school) => (
                 <div key={`${school.id}-2`} style={{ display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap" }}>
-                  <img src={school.logoUrl} alt={school.name} loading="lazy" decoding="async" style={{ height: 32 }} />
+                  <SchoolLogoMark school={school} />
                   <span style={{ fontWeight: 600, color: "white", fontSize: 14 }}>{school.name}</span>
                 </div>
               ))}

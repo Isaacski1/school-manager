@@ -29,10 +29,16 @@ const BookDemo = () => {
     }
     setLoading(true);
     try {
-      await submitBookDemoRequest({ ...form, source: "book_demo_page" });
+      const response = await submitBookDemoRequest({ ...form, source: "book_demo_page" });
       setDone(true);
-    } catch {
-      showToast("Something went wrong. Please try again.", { type: "error" });
+      if (response?.whatsappUrl) {
+        const opened = window.open(response.whatsappUrl, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          window.location.href = response.whatsappUrl;
+        }
+      }
+    } catch (error: any) {
+      showToast(error?.message || "Something went wrong. Please try again.", { type: "error" });
     } finally {
       setLoading(false);
     }

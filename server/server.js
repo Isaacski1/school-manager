@@ -1093,9 +1093,11 @@ const APP_ENV = process.env.APP_ENV || "development";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const DEMO_NOTIFY_EMAIL =
-  process.env.DEMO_NOTIFY_EMAIL || "isaacskiwebdev@gmail.com";
+  process.env.DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const DEMO_NOTIFY_WHATSAPP =
-  process.env.DEMO_NOTIFY_WHATSAPP || "+233549175604";
+  process.env.DEMO_NOTIFY_WHATSAPP || "+233201008784";
+const TRIAL_NOTIFY_EMAIL =
+  process.env.TRIAL_NOTIFY_EMAIL || DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "School Manager GH";
@@ -1148,6 +1150,13 @@ const formatDemoRequestText = (demoDoc) => {
     lines.push("", `Message: ${demoDoc.message}`);
   }
   return lines.join("\n");
+};
+
+const buildDemoWhatsappUrl = (demoDoc) => {
+  const phone = String(DEMO_NOTIFY_WHATSAPP || "")
+    .replace(/^whatsapp:/i, "")
+    .replace(/\D/g, "");
+  return `https://wa.me/${phone}?text=${encodeURIComponent(formatDemoRequestText(demoDoc))}`;
 };
 
 const formatDemoRequestHtml = (demoDoc) => {
@@ -1219,54 +1228,9 @@ const sendDemoEmailNotification = async (demoDoc) => {
   return { sent: true, provider: "resend", id: body?.id || null };
 };
 
-const sendDemoWhatsappNotification = async (demoDoc) => {
-  if (
-    !TWILIO_ACCOUNT_SID ||
-    !TWILIO_AUTH_TOKEN ||
-    !TWILIO_WHATSAPP_FROM ||
-    !DEMO_NOTIFY_WHATSAPP
-  ) {
-    return {
-      sent: false,
-      skipped: true,
-      reason:
-        "Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, or DEMO_NOTIFY_WHATSAPP.",
-    };
-  }
-
-  const form = new URLSearchParams();
-  form.set("From", normalizeWhatsappAddress(TWILIO_WHATSAPP_FROM));
-  form.set("To", normalizeWhatsappAddress(DEMO_NOTIFY_WHATSAPP));
-  form.set("Body", formatDemoRequestText(demoDoc));
-
-  const auth = Buffer.from(
-    `${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`,
-  ).toString("base64");
-  const response = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
-      TWILIO_ACCOUNT_SID,
-    )}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: form,
-    },
-  );
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(body?.message || `Twilio failed with ${response.status}`);
-  }
-  return { sent: true, provider: "twilio", sid: body?.sid || null };
-};
-
 const sendDemoNotifications = async (demoDoc) => {
-  const [emailResult, whatsappResult] = await Promise.allSettled([
+  const [emailResult] = await Promise.allSettled([
     sendDemoEmailNotification(demoDoc),
-    sendDemoWhatsappNotification(demoDoc),
   ]);
 
   const normalizeResult = (result) =>
@@ -1280,12 +1244,21 @@ const sendDemoNotifications = async (demoDoc) => {
 
   const notifications = {
     email: normalizeResult(emailResult),
-    whatsapp: normalizeResult(whatsappResult),
+    whatsapp: {
+      sent: false,
+      skipped: true,
+      provider: "direct_whatsapp_link",
+      url: buildDemoWhatsappUrl(demoDoc),
+      reason: "Demo WhatsApp alerts use the direct WhatsApp Business link, not Twilio.",
+    },
   };
 
   console.info("[BookDemo] notification results", notifications);
   return notifications;
 };
+
+const summarizeNotificationFailure = (result = {}) =>
+  result.reason || result.error || (result.skipped ? "Skipped" : "Not sent");
 
 const buildAiSystemPrompt = (dataContext) => {
   const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
@@ -9766,12 +9739,26 @@ app.post("/api/public/book-demo", async (req, res) => {
       source,
     } = req.body;
 
+    const safeFullName = String(fullName || "").trim();
+    const safeSchoolName = String(schoolName || "").trim();
+    const safeEmail = String(email || "").trim().toLowerCase();
+
+    if (!safeFullName || !safeSchoolName || !safeEmail) {
+      return res.status(400).json({
+        error: "Full name, school name, and email are required.",
+      });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail)) {
+      return res.status(400).json({ error: "Please enter a valid email address." });
+    }
+
     const demoDoc = {
-      fullName: String(fullName || "").trim(),
-      schoolName: String(schoolName || "").trim(),
+      fullName: safeFullName,
+      schoolName: safeSchoolName,
       role: String(role || "").trim(),
       phone: String(phone || "").trim(),
-      email: String(email || "").trim().toLowerCase(),
+      email: safeEmail,
       studentCount: Number(studentCount) || 0,
       schoolType: String(schoolType || "").trim(),
       preferredDate: String(preferredDate || "").trim(),
@@ -9792,9 +9779,20 @@ app.post("/api/public/book-demo", async (req, res) => {
       { merge: true },
     );
 
+    if (!notifications.email?.sent) {
+      console.warn("[BookDemo] request saved but owner email was not delivered", {
+        demoRequestId: demoRef.id,
+        email: summarizeNotificationFailure(notifications.email),
+      });
+    }
+
     res.json({
       success: true,
-      message: "Demo request received",
+      message: notifications.email?.sent
+        ? "Demo request received"
+        : "Demo request received. Owner email was not delivered, but WhatsApp link is available.",
+      demoRequestId: demoRef.id,
+      whatsappUrl: notifications.whatsapp?.url,
       notifications,
     });
   } catch (error) {
@@ -10051,6 +10049,62 @@ app.post("/api/public/start-trial", async (req, res) => {
     const safeAdminName  = String(adminFullName || "").trim() || "Unknown";
     const safeSchoolType = String(schoolType || "").trim() || "Not specified";
     const safeSchoolPhone = String(schoolPhone || "").trim() || "Not provided";
+    const safeSchoolEmail = String(schoolEmail || "").trim().toLowerCase() || "Not provided";
+    const safeAddress = String(address || "").trim() || "Not provided";
+    const safeStudentEstimate = studentEstimate || "Not provided";
+    const safeFeaturePlan = String(featurePlan || "starter").toUpperCase();
+    const safeBillingCycle = String(plan || "trial").toUpperCase();
+    const safeAcademicYear = String(academicYear || "").trim() || "N/A";
+    const safeCurrentTerm = String(currentTerm || "").trim() || "N/A";
+
+    const trialNotificationText = [
+      "New School Registration",
+      "",
+      `School: ${safeSchoolName}`,
+      `School Email: ${safeSchoolEmail}`,
+      `School Phone: ${safeSchoolPhone}`,
+      `Address: ${safeAddress}`,
+      `School Type: ${safeSchoolType}`,
+      `Estimated Students: ${safeStudentEstimate}`,
+      "",
+      `Admin Name: ${safeAdminName}`,
+      `Admin Email: ${safeEmail}`,
+      "",
+      `Feature Plan: ${safeFeaturePlan}`,
+      `Billing Cycle: ${safeBillingCycle}`,
+      `Academic Year: ${safeAcademicYear}`,
+      `Current Term: ${safeCurrentTerm}`,
+      "",
+      `School ID: ${schoolId}`,
+    ].join("\n");
+
+    const trialNotificationHtml = `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+        <h2 style="margin:0 0 16px">New School Registration</h2>
+        <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:680px">
+          ${[
+            ["School", safeSchoolName],
+            ["School Email", safeSchoolEmail],
+            ["School Phone", safeSchoolPhone],
+            ["Address", safeAddress],
+            ["School Type", safeSchoolType],
+            ["Estimated Students", safeStudentEstimate],
+            ["Admin Name", safeAdminName],
+            ["Admin Email", safeEmail],
+            ["Feature Plan", safeFeaturePlan],
+            ["Billing Cycle", safeBillingCycle],
+            ["Academic Year", safeAcademicYear],
+            ["Current Term", safeCurrentTerm],
+            ["School ID", schoolId],
+          ].map(([label, value]) => `
+            <tr>
+              <td style="border:1px solid #e2e8f0;font-weight:700;background:#f8fafc;width:180px">${escapeHtml(label)}</td>
+              <td style="border:1px solid #e2e8f0">${escapeHtml(value || "Not provided")}</td>
+            </tr>
+          `).join("")}
+        </table>
+      </div>
+    `;
 
     // 1. WhatsApp alert to super admin via Twilio
     const sendTrialWhatsapp = async () => {
@@ -10067,30 +10121,10 @@ app.post("/api/public/start-trial", async (req, res) => {
         });
         return { sent: false, skipped: true };
       }
-      const body = [
-        "🎉 *New Free Trial Registration*",
-        "",
-        `🏫 School: ${safeSchoolName}`,
-        `📍 Address: ${String(address || "").trim() || "Not provided"}`,
-        `📞 Phone: ${safeSchoolPhone}`,
-        `🏷️ Type: ${safeSchoolType}`,
-        `👥 Est. Students: ${studentEstimate || "Not provided"}`,
-        "",
-        `👤 Admin: ${safeAdminName}`,
-        `📧 Email: ${safeEmail}`,
-        "",
-        `💎 Feature Plan: ${String(featurePlan || "starter").toUpperCase()}`,
-        `💳 Billing Cycle: ${String(plan || "trial").toUpperCase()}`,
-        "",
-        `📅 Academic Year: ${String(academicYear || "").trim() || "N/A"}`,
-        `📚 Term: ${String(currentTerm || "").trim() || "N/A"}`,
-        `🆔 School ID: ${schoolId}`,
-      ].join("\n");
-
       const form = new URLSearchParams();
       form.set("From", normalizeWhatsappAddress(whatsappFrom));
       form.set("To", normalizeWhatsappAddress(whatsappTo));
-      form.set("Body", body);
+      form.set("Body", trialNotificationText);
 
       const authHeader = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64");
       const response = await fetch(
@@ -10114,7 +10148,41 @@ app.post("/api/public/start-trial", async (req, res) => {
       return { sent: true, provider: "twilio", sid: resBody?.sid || null };
     };
 
-    // 2. Welcome + verification guidance email to the new school admin via Resend
+    // 2. Owner email alert with the submitted registration details.
+    const sendTrialOwnerEmail = async () => {
+      const resendKey = process.env.RESEND_API_KEY;
+      const resendFrom = process.env.RESEND_FROM_EMAIL;
+      if (!resendKey || !resendFrom || !TRIAL_NOTIFY_EMAIL) {
+        console.warn("[StartTrial] Owner email skipped: missing Resend or recipient env vars");
+        return { sent: false, skipped: true };
+      }
+      const from = process.env.RESEND_FROM_NAME
+        ? `${process.env.RESEND_FROM_NAME} <${resendFrom}>`
+        : resendFrom;
+
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [TRIAL_NOTIFY_EMAIL],
+          reply_to: safeEmail || undefined,
+          subject: `New School Registration: ${safeSchoolName}`,
+          text: trialNotificationText,
+          html: trialNotificationHtml,
+        }),
+      });
+      const resBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(resBody?.message || `Resend failed with ${response.status}`);
+      }
+      return { sent: true, provider: "resend", id: resBody?.id || null };
+    };
+
+    // 3. Welcome + verification guidance email to the new school admin via Resend
     const sendTrialWelcomeEmail = async () => {
       const resendKey = process.env.RESEND_API_KEY;
       const resendFrom = process.env.RESEND_FROM_EMAIL;
@@ -10208,9 +10276,10 @@ app.post("/api/public/start-trial", async (req, res) => {
       return { sent: true, provider: "resend", id: resBody?.id || null };
     };
 
-    // Fire both notifications concurrently but don't let them block the response
-    const [whatsappResult, welcomeEmailResult] = await Promise.allSettled([
+    // Fire notifications concurrently but don't let them block the response
+    const [whatsappResult, ownerEmailResult, welcomeEmailResult] = await Promise.allSettled([
       sendTrialWhatsapp(),
+      sendTrialOwnerEmail(),
       sendTrialWelcomeEmail(),
     ]);
 
@@ -10221,6 +10290,7 @@ app.post("/api/public/start-trial", async (req, res) => {
 
     const notifications = {
       whatsapp: normalizeResult(whatsappResult),
+      ownerEmail: normalizeResult(ownerEmailResult),
       welcomeEmail: normalizeResult(welcomeEmailResult),
     };
 

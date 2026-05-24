@@ -56,7 +56,7 @@ const DemoVideos = () => {
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.08)"; (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; }}
               >
                 <div style={{ height: 180, background: "rgba(11,74,130,0.4)", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <div style={{ position: "absolute", inset: 0, opacity: 0.3, background: "url(https://images.unsplash.com/photo-1501504905252-473c47e087f8?auto=format&fit=crop&q=80&w=400) center/cover" }} />
+                  <div style={{ position: "absolute", inset: 0, opacity: 0.32, background: "url(/img-school.png) center/cover" }} />
                   <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 1 }}>
                     <div style={{ width: 0, height: 0, borderTop: "10px solid transparent", borderBottom: "10px solid transparent", borderLeft: "15px solid #0B4A82", marginLeft: 4 }} />
                   </div>
