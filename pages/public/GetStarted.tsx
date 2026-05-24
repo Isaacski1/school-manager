@@ -105,6 +105,12 @@ const GetStarted = () => {
         throw new Error("Backend did not return a valid schoolId.");
       }
       setShowSuccessPopup(true);
+      const failedNotifications = Object.values(response?.notifications || {}).some(
+        (result: any) => !result?.sent,
+      );
+      if (failedNotifications && response?.message) {
+        showToast(response.message, { type: "warning" });
+      }
     } catch (err: any) {
       showToast(err?.message || "Failed to start school setup.", {
         type: "error",

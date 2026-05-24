@@ -1260,6 +1260,30 @@ const sendDemoNotifications = async (demoDoc) => {
 const summarizeNotificationFailure = (result = {}) =>
   result.reason || result.error || (result.skipped ? "Skipped" : "Not sent");
 
+const writeTrialNotificationAudit = async ({ schoolId, adminEmail, schoolName, notifications }) => {
+  try {
+    await admin.firestore().collection("notification_logs").add({
+      schoolId: schoolId || null,
+      recipient: adminEmail || null,
+      type: "start_trial_notifications",
+      status: Object.values(notifications || {}).every((result) => result?.sent)
+        ? "sent"
+        : "partial_or_failed",
+      errorMessage: Object.entries(notifications || {})
+        .filter(([, result]) => !result?.sent)
+        .map(([channel, result]) => `${channel}: ${summarizeNotificationFailure(result)}`)
+        .join("; "),
+      metadata: {
+        schoolName: schoolName || null,
+        notifications,
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (error) {
+    console.warn("[StartTrial] Failed to write notification audit log:", error?.message || error);
+  }
+};
+
 const buildAiSystemPrompt = (dataContext) => {
   const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
 You are a precise operations copilot for the platform owner.
@@ -9994,29 +10018,35 @@ app.post("/api/public/start-trial", async (req, res) => {
         process.env.APP_URL ||
         "https://school-manager-gh.web.app",
     );
-    const appOrigin =
-      requestOrigin && isAllowedOrigin(requestOrigin)
-        ? requestOrigin
-        : configuredAppOrigin;
-    const verificationContinueUrl = `${appOrigin}/?${new URLSearchParams({
-      authAction: "emailVerified",
-      email: safeEmail,
-    }).toString()}`;
     let emailVerificationLink = "";
-    try {
-      emailVerificationLink = await retryFirebaseAdminNetworkCall(
-        "generate trial admin email verification link",
-        () =>
-          admin.auth().generateEmailVerificationLink(safeEmail, {
-            url: verificationContinueUrl,
-            handleCodeInApp: true,
-          }),
-      );
-    } catch (verificationLinkError) {
-      console.error(
-        "[StartTrial] Failed to generate email verification link:",
-        verificationLinkError,
-      );
+    const verificationOrigins = [
+      requestOrigin && isAllowedOrigin(requestOrigin) ? requestOrigin : "",
+      configuredAppOrigin,
+      "https://school-manager-gh.web.app",
+    ].filter((origin, index, origins) => origin && origins.indexOf(origin) === index);
+
+    for (const origin of verificationOrigins) {
+      const verificationContinueUrl = `${origin}/?${new URLSearchParams({
+        authAction: "emailVerified",
+        email: safeEmail,
+      }).toString()}`;
+      try {
+        emailVerificationLink = await retryFirebaseAdminNetworkCall(
+          "generate trial admin email verification link",
+          () =>
+            admin.auth().generateEmailVerificationLink(safeEmail, {
+              url: verificationContinueUrl,
+              handleCodeInApp: true,
+            }),
+        );
+        break;
+      } catch (verificationLinkError) {
+        console.error(
+          "[StartTrial] Failed to generate email verification link for origin:",
+          origin,
+          verificationLinkError?.message || verificationLinkError,
+        );
+      }
     }
 
     const userDoc = {
@@ -10294,14 +10324,27 @@ app.post("/api/public/start-trial", async (req, res) => {
       welcomeEmail: normalizeResult(welcomeEmailResult),
     };
 
+    await writeTrialNotificationAudit({
+      schoolId,
+      adminEmail: safeEmail,
+      schoolName: safeSchoolName,
+      notifications,
+    });
+
     console.info("[StartTrial] notifications", notifications);
+
+    const failedNotifications = Object.entries(notifications)
+      .filter(([, result]) => !result?.sent)
+      .map(([channel, result]) => `${channel}: ${summarizeNotificationFailure(result)}`);
 
     res.json({
       success: true,
       schoolId: schoolId,
       adminUid: userRecord.uid,
       logoUrl: finalLogoUrl,
-      message: "School trial started successfully",
+      message: failedNotifications.length
+        ? `School trial started, but some notifications were not delivered: ${failedNotifications.join("; ")}`
+        : "School trial started successfully",
       notifications,
     });
   } catch (error) {
