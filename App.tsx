@@ -72,6 +72,7 @@ const EmailVerified = lazy(() => import("./pages/public/EmailVerified"));
 const WhatsAppBroadcast = lazy(() => import("./pages/admin/WhatsAppBroadcast"));
 const PaymentSettingsPage = lazy(() => import("./pages/admin/PaymentSettingsPage"));
 const Reminders = lazy(() => import("./pages/admin/Reminders"));
+const OfflineAccess = lazy(() => import("./pages/OfflineAccess"));
 
 const getEmailVerificationRedirect = () => {
   if (typeof window === "undefined") return "";
@@ -511,6 +512,20 @@ const AppRoutes = ({
       />
 
       {/* Admin Routes */}
+      <Route
+        path="/offline"
+        element={
+          <ProtectedRoute
+            allowedRoles={[
+              UserRole.SCHOOL_ADMIN,
+              UserRole.TEACHER,
+              UserRole.PARENT,
+            ]}
+          >
+            <OfflineAccess />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/admin"
         element={

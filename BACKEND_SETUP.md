@@ -16,7 +16,7 @@ npm install --save-dev nodemon
 ### 2. Get Firebase Service Account Key
 
 1. Go to Firebase Console: https://console.firebase.google.com
-2. Select your project: `noble-care-management-system`
+2. Select your project: `school-manager-gh`
 3. Settings (gear icon) → Service Accounts
 4. Click "Generate New Private Key"
 5. Save the JSON file securely
@@ -29,8 +29,8 @@ PORT=3001
 REQUEST_BODY_LIMIT=1mb
 
 # Firebase credentials (from service account JSON)
-FIREBASE_PROJECT_ID=noble-care-management-system
-FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"noble-care-management-system",...}
+FIREBASE_PROJECT_ID=school-manager-gh
+FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"school-manager-gh",...}
 ```
 
 **Important:** Replace the JSON value with your actual service account key content (keep it as a single line or properly escaped).
@@ -72,7 +72,7 @@ The frontend will run on `http://localhost:3000`
    - **Instance type:** Free
 5. Add Environment Variables:
    - `PORT=3001` (Render assigns this automatically)
-   - `FIREBASE_PROJECT_ID=noble-care-management-system`
+   - `FIREBASE_PROJECT_ID=school-manager-gh`
    - `FIREBASE_SERVICE_ACCOUNT_KEY={...paste full JSON...}`
 6. Deploy!
 
@@ -164,7 +164,7 @@ npm run dev
 | Variable                       | Value                                           | Notes                 |
 | ------------------------------ | ----------------------------------------------- | --------------------- |
 | `PORT`                         | 3001                                            | Backend server port   |
-| `FIREBASE_PROJECT_ID`          | noble-care-management-system                    | Your Firebase project |
+| `FIREBASE_PROJECT_ID`          | school-manager-gh                               | Your Firebase project |
 | `FIREBASE_SERVICE_ACCOUNT_KEY` | Service account JSON                            | From Firebase console |
 | `ARKESEL_API_KEY`              | Arkesel API key                                 | Required for live SMS gateway balance and sending |
 | `ARKESEL_SENDER_ID`            | SchoolMgr                                       | Approved Arkesel sender ID |

@@ -51,6 +51,7 @@ import {
   Activity,
   BadgeDollarSign,
   HandCoins,
+  WifiOff,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -727,6 +728,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 icon={<LayoutDashboard size={18} />}
                 label="Dashboard"
               />
+              <NavItem href="/offline" icon={<WifiOff size={18} />} label="Offline Access" />
               {hasFeature("teacher_management") && (
                 <NavItem href="/admin/teachers" icon={<Users size={18} />} label="Teachers" />
               )}
@@ -785,6 +787,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 icon={<LayoutDashboard size={18} />}
                 label="Dashboard"
               />
+              <NavItem href="/offline" icon={<WifiOff size={18} />} label="Offline Access" />
               {hasFeature("attendance") && (
                 <NavItem href="/teacher/attendance" icon={<ClipboardCheck size={18} />} label="Attendance" />
               )}

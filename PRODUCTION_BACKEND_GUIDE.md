@@ -17,7 +17,7 @@ Instead of using Cloud Functions (which require Blaze plan), we now use a **simp
 ### Step 1: Get Firebase Service Account Key
 
 1. Go to https://console.firebase.google.com
-2. Click your project: `noble-care-management-system`
+2. Click your project: `school-manager-gh`
 3. Click ⚙️ Settings → Service Accounts tab
 4. Click "Generate New Private Key"
 5. A JSON file downloads - **keep it safe!**
@@ -28,8 +28,8 @@ Create a file named `.env` in the root directory (same level as server.js):
 
 ```env
 PORT=3001
-FIREBASE_PROJECT_ID=noble-care-management-system
-FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"noble-care-management-system","private_key_id":"...","private_key":"...","client_email":"...","client_id":"...","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"..."}
+FIREBASE_PROJECT_ID=school-manager-gh
+FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"school-manager-gh","private_key_id":"...","private_key":"...","client_email":"...","client_id":"...","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"..."}
 ```
 
 **To get the JSON content:**
@@ -93,7 +93,7 @@ Open http://localhost:3000 in your browser
      - **Instance Type:** Free
 4. **Add Environment Variables:**
    - Click "Add Environment Variable"
-   - `FIREBASE_PROJECT_ID` = `noble-care-management-system`
+   - `FIREBASE_PROJECT_ID` = `school-manager-gh`
    - `FIREBASE_SERVICE_ACCOUNT_KEY` = (paste your full JSON key)
    - `ARKESEL_API_KEY` = (paste your Arkesel API key)
    - `ARKESEL_SENDER_ID` = (your approved sender ID, for example `SchoolMgr`)
