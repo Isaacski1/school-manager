@@ -54,6 +54,10 @@ export const getFriendlyErrorMessage = (
     return "Please enter a valid email address.";
   }
 
+  if (code === "ADMIN_EMAIL_EXISTS") {
+    return "A school admin account already exists with this email. Please verify the email or sign in.";
+  }
+
   if (code === "auth/too-many-requests") {
     return "Too many attempts. Please wait a few minutes, then try again.";
   }

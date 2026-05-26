@@ -10288,7 +10288,11 @@ app.post("/api/public/start-trial", async (req, res) => {
       await retryFirebaseAdminNetworkCall("check trial admin email", () =>
         admin.auth().getUserByEmail(safeEmail),
       );
-      return res.status(400).json({ error: "A user with this email already exists" });
+      return res.status(409).json({
+        error:
+          "A school admin account already exists with this email. Please verify the email or sign in.",
+        code: "ADMIN_EMAIL_EXISTS",
+      });
     } catch (error) {
       if (error.code !== "auth/user-not-found") {
         throw error;

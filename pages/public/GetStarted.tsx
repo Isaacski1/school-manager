@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ArrowRight, CheckCircle2, Lightbulb, Loader2, Rocket, ShieldCheck, UploadCloud, X } from "lucide-react";
+import { signOut } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { showToast } from "../../services/toast";
 import { startPublicSchoolSetup } from "../../services/backendApi";
+import { auth } from "../../services/firebase";
 
 const STEPS = ["School Profile", "Admin Account", "Subscription Plan", "Setup Details", "Review & Launch"];
 
@@ -74,6 +76,10 @@ const GetStarted = () => {
     }
     setLoading(true);
     try {
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
+
       const getBase64 = (file: File): Promise<string> => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -119,6 +125,18 @@ const GetStarted = () => {
         showToast(response.message, { type: "warning" });
       }
     } catch (err: any) {
+      if (err?.code === "ADMIN_EMAIL_EXISTS") {
+        showToast(err.message, { type: "warning" });
+        navigate("/verify-email", {
+          replace: true,
+          state: {
+            email: formData.adminEmail.trim().toLowerCase(),
+            password: formData.password,
+          },
+        });
+        return;
+      }
+
       showToast(err?.message || "Failed to start school setup.", {
         type: "error",
       });
