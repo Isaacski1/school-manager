@@ -294,7 +294,7 @@ const Pricing = () => {
 
         {/* Free trial note */}
         <p style={{ textAlign: "center", marginTop: 32, fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
-          🎉 All plans come with a <strong style={{ color: "white" }}>30-day free trial</strong>. No credit card required.
+          All plans come with a <strong style={{ color: "white" }}>30-day free trial</strong>. No credit card required.
         </p>
       </section>
 

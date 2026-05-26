@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
-import { firestore } from "../../services/firebase";
+import { auth, firestore } from "../../services/firebase";
+import { sendPasswordResetEmail } from "firebase/auth";
 import { useAuth } from "../../context/AuthContext";
 import { clearClientCache } from "../../services/clientCache";
 import {
@@ -18,6 +19,7 @@ import {
 import { School, User, UserRole } from "../../types";
 import {
   createSchoolAdmin,
+  deleteSchoolAdmin,
   resetSchoolAdminPassword,
 } from "../../services/backendApi";
 import { deleteSchool } from "../../services/functions";
@@ -224,6 +226,10 @@ const SchoolDetails = () => {
     password: "",
   });
   const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
+  const [isDeletingAdmin, setIsDeletingAdmin] = useState<string | null>(null);
+  const [showDeleteAdminModal, setShowDeleteAdminModal] = useState(false);
+  const [adminToDelete, setAdminToDelete] = useState<User | null>(null);
+  const [deleteAdminConfirmText, setDeleteAdminConfirmText] = useState("");
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
   const [stats, setStats] = useState({
     students: "0",
@@ -728,18 +734,30 @@ const SchoolDetails = () => {
 
     setIsCreatingAdmin(true);
     try {
+      const passwordValue = adminForm.password.trim();
       const result = await createSchoolAdmin({
         schoolId: resolvedSchoolId,
         fullName: adminForm.fullName.trim(),
         email: adminForm.email.trim(),
-        password: adminForm.password.trim() || undefined,
+        password: passwordValue || undefined,
       });
-      showToast(
-        adminForm.password.trim()
-          ? `Admin created: ${result.email}`
-          : `Admin created: ${result.email}. Reset link sent.`,
-        { type: "success" },
-      );
+
+      let successMessage = `Admin created: ${result.email}`;
+      if (!passwordValue) {
+        try {
+          await sendPasswordResetEmail(auth, adminForm.email.trim());
+          successMessage += ". Reset link sent.";
+        } catch (resetError) {
+          console.warn(
+            "Admin created but failed to send reset email:",
+            resetError,
+          );
+          successMessage +=
+            ". Admin created, but we could not send the password reset email.";
+        }
+      }
+
+      showToast(successMessage, { type: "success" });
       setAdminForm({ fullName: "", email: "", password: "" });
       setShowCreateAdmin(false);
       await fetchSchoolAdmins(resolvedSchoolId);
@@ -796,6 +814,40 @@ const SchoolDetails = () => {
       showToast(error.message || "Failed to update admin status.", {
         type: "error",
       });
+    }
+  };
+
+  const openDeleteAdminModal = (adminUser: User) => {
+    setAdminToDelete(adminUser);
+    setDeleteAdminConfirmText("");
+    setShowDeleteAdminModal(true);
+  };
+
+  const closeDeleteAdminModal = () => {
+    setShowDeleteAdminModal(false);
+    setAdminToDelete(null);
+    setDeleteAdminConfirmText("");
+  };
+
+  const handleDeleteAdmin = async () => {
+    if (!adminToDelete) return;
+    if (deleteAdminConfirmText.trim() !== adminToDelete.email) return;
+
+    setIsDeletingAdmin(adminToDelete.id);
+    try {
+      const result = await deleteSchoolAdmin({ adminUid: adminToDelete.id });
+      setAdminUsers((prev) =>
+        prev.filter((existingAdmin) => existingAdmin.id !== adminToDelete.id),
+      );
+      showToast(`Deleted admin ${result.email}.`, { type: "success" });
+      closeDeleteAdminModal();
+    } catch (error: any) {
+      console.error("Failed to delete admin", error);
+      showToast(error.message || "Failed to delete admin.", {
+        type: "error",
+      });
+    } finally {
+      setIsDeletingAdmin(null);
     }
   };
 
@@ -1265,7 +1317,7 @@ const SchoolDetails = () => {
                               </span>
                             </div>
 
-                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div className="mt-4 grid gap-3 sm:grid-cols-3">
                               <button
                                 onClick={() =>
                                   handleResetAdminPassword(adminUser)
@@ -1285,6 +1337,18 @@ const SchoolDetails = () => {
                                 {adminUser.status === "active"
                                   ? "Disable Admin"
                                   : "Activate Admin"}
+                              </button>
+                              <button
+                                onClick={() => openDeleteAdminModal(adminUser)}
+                                disabled={isDeletingAdmin === adminUser.id}
+                                className="inline-flex items-center justify-center rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <Trash2 size={16} />
+                                <span>
+                                  {isDeletingAdmin === adminUser.id
+                                    ? "Deleting..."
+                                    : "Delete Admin"}
+                                </span>
                               </button>
                             </div>
                           </div>
@@ -2064,6 +2128,59 @@ const SchoolDetails = () => {
                 >
                   Open Reset Link
                 </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showDeleteAdminModal && adminToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_35px_100px_-45px_rgba(220,38,38,0.35)]">
+            <div className="bg-gradient-to-r from-red-50 via-white to-rose-50 p-6">
+              <div className="flex items-start gap-3 text-red-600">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-100">
+                  <ShieldAlert size={18} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-900">
+                    Delete School Admin
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    Confirm deletion of <span className="font-semibold">{adminToDelete.fullName}</span>.
+                    This action is permanent and will remove access immediately.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <label className={LABEL_CLASS}>Type admin email to confirm</label>
+                <input
+                  value={deleteAdminConfirmText}
+                  onChange={(e) => setDeleteAdminConfirmText(e.target.value)}
+                  className={INPUT_CLASS}
+                  placeholder={`Type ${adminToDelete.email}`}
+                />
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  onClick={closeDeleteAdminModal}
+                  className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAdmin}
+                  disabled={
+                    deleteAdminConfirmText.trim() !== adminToDelete.email ||
+                    isDeletingAdmin === adminToDelete.id
+                  }
+                  className="flex-1 rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {isDeletingAdmin === adminToDelete.id
+                    ? "Deleting..."
+                    : "Delete Admin"}
+                </button>
               </div>
             </div>
           </div>

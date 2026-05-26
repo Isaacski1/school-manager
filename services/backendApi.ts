@@ -239,6 +239,18 @@ export async function resetSchoolAdminPassword(payload: {
   });
 }
 
+export async function deleteSchoolAdmin(payload: {
+  adminUid: string;
+}): Promise<{
+  success: boolean;
+  email: string;
+  message: string;
+}> {
+  return apiRequest("/api/superadmin/delete-school-admin", {
+    body: payload,
+  });
+}
+
 /**
  * Update a school admin email via backend
  * REQUIRES: Caller must be super_admin

@@ -25,7 +25,8 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Pencil,
+  Edit,
+  BookOpen,
 } from "lucide-react";
 
 // Firebase imports
@@ -489,7 +490,7 @@ const ManageTeachers = () => {
   return (
     <Layout title="Manage Teachers">
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <h2 className="font-semibold text-slate-800">Staff List</h2>
 
           <button
@@ -503,132 +504,127 @@ const ManageTeachers = () => {
               }
               setShowModal(true);
             }}
-            className="flex items-center bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium"
+            className="flex items-center bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium w-full sm:w-auto justify-center sm:justify-start"
           >
             <Plus size={16} className="mr-2" />
             Add Teacher
           </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Email</th>
-                <th className="px-6 py-3">Account Status</th>
-                <th className="px-6 py-3 whitespace-nowrap">
-                  Assigned Classes
-                </th>
-                <th className="px-6 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
+        <div className="p-4">
+          {teachers.length === 0 ? (
+            <div className="px-6 py-10 text-center text-slate-400">
+              No teachers found for this school.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {teachers.map((teacher) => {
+                const assignedIds = teacher.assignedClassIds || [];
+                const classNames = assignedIds
+                  .map((id) => availableClasses.find((c) => c.id === id)?.name)
+                  .filter(Boolean);
 
-            <tbody className="divide-y divide-slate-100">
-              {teachers.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="px-6 py-8 text-center text-slate-400"
+                const isMissingSchoolId = !teacher.schoolId;
+
+                return (
+                  <div
+                    key={teacher.id}
+                    className={`group relative overflow-hidden rounded-2xl border transition duration-300 hover:-translate-y-1 hover:shadow-md shadow-sm p-5 ${
+                      isMissingSchoolId
+                        ? "border-red-200 bg-red-50"
+                        : "border-slate-200 bg-white"
+                    }`}
                   >
-                    No teachers found for this school.
-                  </td>
-                </tr>
-              ) : (
-                teachers.map((teacher) => {
-                  const assignedIds = teacher.assignedClassIds || [];
-                  const classNames = assignedIds
-                    .map((id) => availableClasses.find((c) => c.id === id)?.name)
-                    .filter(Boolean);
+                    <div className="absolute -top-14 -right-14 h-28 w-28 rounded-full bg-indigo-100/60 blur-2xl" />
+                    <div className="absolute -bottom-16 -left-10 h-32 w-32 rounded-full bg-blue-100/60 blur-2xl" />
 
-                  const isMissingSchoolId = !teacher.schoolId;
-
-                  return (
-                    <tr
-                      key={teacher.id}
-                      className={`hover:bg-slate-50 ${
-                        isMissingSchoolId ? "bg-red-50" : ""
-                      }`}
-                    >
-                      <td className="px-6 py-3 font-medium text-slate-800">
-                        <div className="flex items-center gap-3">
-                          <UserAvatar user={teacher} size="sm" />
-                          <span>{teacher.fullName}</span>
+                    <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
+                      <div className="flex items-center gap-3">
+                        <UserAvatar user={teacher} size="md" />
+                        <div>
+                          <p className="font-semibold text-slate-900 text-sm sm:text-base">
+                            {teacher.fullName}
+                          </p>
+                          <p className="text-xs text-slate-500 truncate">
+                            ID: {teacher.id}
+                          </p>
                         </div>
-                      </td>
+                      </div>
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${
+                        isMissingSchoolId
+                          ? "bg-red-100 text-red-700"
+                          : "bg-emerald-100 text-emerald-700"
+                      }`}>
+                        {isMissingSchoolId ? "⚠ Incomplete" : "✓ Active"}
+                      </span>
+                    </div>
 
-                      <td className="px-6 py-3 flex items-center">
-                        <Mail size={14} className="mr-2 text-slate-400" />
-                        {teacher.email}
-                      </td>
+                    <div className="relative mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600">
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                          Email
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-800 truncate">
+                          {teacher.email}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                          Classes
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-800">
+                          {classNames.length > 0 ? classNames.length : "—"}
+                        </p>
+                      </div>
+                    </div>
 
-                      <td className="px-6 py-3">
-                        {isMissingSchoolId ? (
-                          <div className="flex items-center gap-2">
-                            <AlertCircle size={16} className="text-red-600" />
-                            <span className="text-red-700 font-semibold text-xs">
-                              Missing schoolId
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-emerald-700 text-xs font-medium">
-                            ✓ Complete
+                    {classNames.length > 0 && (
+                      <div className="relative mt-3 flex flex-wrap gap-1">
+                        {classNames.map((name) => (
+                          <span
+                            key={name}
+                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap"
+                          >
+                            {name}
                           </span>
-                        )}
-                      </td>
+                        ))}
+                      </div>
+                    )}
 
-                      <td className="px-6 py-3 min-w-[140px]">
-                        <div className="flex flex-wrap gap-1">
-                          {classNames.length > 0 ? (
-                            classNames.map((name) => (
-                              <span
-                                key={name}
-                                className="inline-flex items-center whitespace-nowrap px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
-                              >
-                                {name}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-slate-400 italic text-xs">
-                              No classes
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-3 text-right flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openEditModal(teacher)}
-                          className="text-blue-600 hover:text-blue-800 p-2 hover:bg-blue-50 rounded-full transition-colors"
-                          title="Edit Assigned Classes"
-                        >
-                          <Pencil size={16} className="pointer-events-none" />
-                        </button>
-
+                    <div className="relative mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        onClick={() => openEditModal(teacher)}
+                        className="inline-flex items-center justify-center sm:justify-start gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 whitespace-nowrap"
+                        title="Edit Assigned Classes"
+                      >
+                        <Edit size={14} />
+                        <span className="hidden sm:inline">Edit Classes</span>
+                        <span className="sm:hidden">Edit</span>
+                      </button>
+                      <div className="flex items-center gap-2">
                         {isMissingSchoolId && (
                           <button
                             onClick={() => setRepairModalUid(teacher.id)}
-                            className="text-orange-600 hover:text-orange-800 p-2 hover:bg-orange-50 rounded-full transition-colors"
+                            className="text-orange-600 hover:text-orange-800 p-2 hover:bg-orange-50 rounded-full transition-colors flex-shrink-0"
                             title="Repair Account"
                           >
                             <Wrench size={16} className="pointer-events-none" />
                           </button>
                         )}
-
                         <button
                           onClick={() => promptDelete(teacher.id)}
-                          className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors"
+                          className="text-rose-500 hover:text-rose-700 p-2 hover:bg-rose-50 rounded-full transition-colors flex-shrink-0 cursor-pointer"
                           title="Remove Teacher"
                         >
                           <Trash2 size={16} className="pointer-events-none" />
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

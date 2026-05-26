@@ -465,6 +465,7 @@ const AdminDashboard = () => {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [heavyLoading, setHeavyLoading] = useState(false);
   const skipSkeletonsOnRefreshRef = React.useRef(false);
+  const isAuthenticatedRef = React.useRef(isAuthenticated);
   const [error, setError] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
@@ -738,6 +739,10 @@ const AdminDashboard = () => {
     setStats((prev) => ({ ...prev, classes: availableClasses.length }));
   }, [availableClasses.length]);
 
+  useEffect(() => {
+    isAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated]);
+
   const currentAttendanceAverage = useMemo(() => {
     const classPctList = stats.classAttendance.map((c) => c.percentage || 0);
     if (classPctList.length === 0) return 0;
@@ -864,7 +869,7 @@ const AdminDashboard = () => {
 
   const fetchSummary = useCallback(
     async (options?: { background?: boolean }) => {
-      if (!schoolId) return;
+      if (!schoolId || !isAuthenticated) return;
       if (!options?.background) setSummaryLoading(true);
       setError(null);
       try {
@@ -910,12 +915,12 @@ const AdminDashboard = () => {
         if (!options?.background) setSummaryLoading(false);
       }
     },
-    [schoolId, summaryCacheKey],
+    [schoolId, summaryCacheKey, isAuthenticated],
   );
 
   const fetchHeavyData = useCallback(
     async (options?: { background?: boolean; force?: boolean }) => {
-      if (!schoolId) return;
+      if (!schoolId || !isAuthenticated) return;
       if (heavyRefreshInFlightRef.current && !options?.force) return;
       heavyRefreshInFlightRef.current = true;
       if (!options?.background) setHeavyLoading(true);
@@ -932,8 +937,11 @@ const AdminDashboard = () => {
           fn: () => Promise<T>,
           fallback: T,
         ): Promise<T> => {
+          if (!isAuthenticatedRef.current) return fallback;
           try {
-            return await fn();
+            const result = await fn();
+            if (!isAuthenticatedRef.current) return fallback;
+            return result;
           } catch (err) {
             console.warn("Dashboard call failed, continuing with fallback", err);
             return fallback;
@@ -1932,9 +1940,9 @@ const AdminDashboard = () => {
   }, [fetchSummary, fetchHeavyData, schoolId]);
 
   // Lightweight stats fetch used by the live updater
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      if (!schoolId) return;
+      if (!schoolId || !isAuthenticatedRef.current) return;
       const dashboardStats = await db.getDashboardStats(schoolId);
       startTransition(() => {
         setStats((prev) => ({
@@ -1967,10 +1975,10 @@ const AdminDashboard = () => {
     } catch (e) {
       console.error("Failed to fetch live stats", e);
     }
-  };
+  }, [schoolId, isAuthenticatedRef, summaryCacheKey, availableClasses, CLASSES_LIST]);
 
   const fetchPendingTeacherAttendance = useCallback(async () => {
-    if (!schoolId) return;
+    if (!schoolId || !isAuthenticatedRef.current) return;
     try {
       const localToday = new Date();
       const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
@@ -2037,12 +2045,14 @@ const AdminDashboard = () => {
 
   // Compute attendance percentage for a given week (monday -> friday)
   const computeAttendanceForWeek = async (monday: Date, friday: Date) => {
+    if (!schoolId || !isAuthenticatedRef.current) return null;
     // For each class, fetch attendance records and compute percent for dates in range
     const results: number[] = [];
     for (const cls of availableClasses) {
+      if (!isAuthenticatedRef.current) return null;
       try {
-        if (!schoolId) return null;
         const records = await db.getClassAttendance(schoolId, cls.id);
+        if (!isAuthenticatedRef.current) return null;
         const inRange = records.filter((r: any) => {
           const parts = r.date.split("-");
           if (parts.length !== 3) return false;
@@ -2144,10 +2154,76 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (!schoolId || !isAuthenticated) return;
-    computeWeekComparison().catch((e) =>
-      console.error("Error computing week comparison", e),
-    );
-  }, [schoolId, attendanceWeek, isAuthenticated]);
+    let active = true;
+
+    const runWeekComparison = async () => {
+      const refDate = attendanceWeek || new Date();
+      const { monday } = getWeekRange(refDate);
+      const thisMonday = monday;
+      const thisFriday = new Date(monday);
+      thisFriday.setDate(monday.getDate() + 4);
+      const lastMonday = new Date(monday);
+      lastMonday.setDate(monday.getDate() - 7);
+      const lastFriday = new Date(lastMonday);
+      lastFriday.setDate(lastMonday.getDate() + 4);
+
+      const computeAttendanceForWeek = async (mondayDate: Date, fridayDate: Date) => {
+        const results: number[] = [];
+        for (const cls of availableClasses) {
+          if (!active) return null;
+          try {
+            if (!schoolId) return null;
+            const records = await db.getClassAttendance(schoolId, cls.id);
+            if (!active) return null;
+            const inRange = records.filter((r: any) => {
+              const parts = r.date.split("-");
+              if (parts.length !== 3) return false;
+              const d = new Date(
+                parseInt(parts[0]),
+                parseInt(parts[1]) - 1,
+                parseInt(parts[2]),
+              );
+              return d >= mondayDate && d <= fridayDate && !r.isHoliday;
+            });
+            const studentsInClass =
+              (await db.getStudents(schoolId, cls.id)).length || 0;
+            if (inRange.length > 0 && studentsInClass > 0) {
+              const totalPossible = inRange.length * studentsInClass;
+              const totalPresent = inRange.reduce(
+                (s: number, r: any) => s + (r.presentStudentIds?.length || 0),
+                0,
+              );
+              results.push(Math.round((totalPresent / totalPossible) * 100));
+            }
+          } catch (e) {
+            if (active) {
+              console.error("Error computing class attendance for", cls.id, e);
+            }
+          }
+        }
+        if (!active || results.length === 0) return null;
+        return Math.round(results.reduce((a, b) => a + b, 0) / results.length);
+      };
+
+      try {
+        const thisPct = await computeAttendanceForWeek(thisMonday, thisFriday);
+        if (!active) return;
+        const lastPct = await computeAttendanceForWeek(lastMonday, lastFriday);
+        if (!active) return;
+        setThisWeekAttendance(thisPct);
+        setLastWeekAttendance(lastPct);
+      } catch (e) {
+        if (active) {
+          console.error("Error computing week comparison", e);
+        }
+      }
+    };
+
+    runWeekComparison();
+    return () => {
+      active = false;
+    };
+  }, [schoolId, attendanceWeek, isAuthenticated, availableClasses]);
 
   // Real-time listeners: refresh stats when attendance, assessments, or config change
   useEffect(() => {
@@ -2174,7 +2250,7 @@ const AdminDashboard = () => {
 
   // Real-time polling effect
   useEffect(() => {
-    if (!realTimeEnabled) {
+    if (!realTimeEnabled || !schoolId || !isAuthenticated) {
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -2199,7 +2275,7 @@ const AdminDashboard = () => {
         pollRef.current = null;
       }
     };
-  }, [realTimeEnabled, fetchPendingTeacherAttendance, schoolId]);
+  }, [realTimeEnabled, fetchPendingTeacherAttendance, fetchStats, schoolId, isAuthenticated]);
 
   useEffect(() => {
     return () => {

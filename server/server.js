@@ -9845,6 +9845,64 @@ app.post(
 );
 
 /**
+ * Delete School Admin
+ * POST /api/superadmin/delete-school-admin
+ */
+app.post(
+  "/api/superadmin/delete-school-admin",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    console.log("Received POST /api/superadmin/delete-school-admin");
+    console.log("Caller (super_admin):", req.user.email);
+
+    try {
+      const { adminUid } = req.body;
+
+      if (!adminUid) {
+        return res.status(400).json({ error: "adminUid is required" });
+      }
+
+      const userRecord = await admin.auth().getUser(adminUid);
+      const userDoc = await admin.firestore().collection("users").doc(adminUid).get();
+      const userData = userDoc.exists ? userDoc.data() : {};
+      const role = String(userData?.role || userRecord.customClaims?.role || "");
+
+      if (role !== "school_admin") {
+        return res
+          .status(403)
+          .json({ error: "Only school admin accounts can be deleted here" });
+      }
+
+      await admin.auth().deleteUser(adminUid);
+      await admin.firestore().collection("users").doc(adminUid).delete();
+
+      await logActivity({
+        eventType: "school_admin_deleted",
+        schoolId: String(userData?.schoolId || ""),
+        actorUid: req.user.uid,
+        actorRole: "super_admin",
+        entityId: adminUid,
+        meta: { email: userRecord.email },
+      });
+
+      clearSuperAdminViewCache();
+      return res.json({
+        success: true,
+        email: userRecord.email,
+        message: "School admin account deleted successfully",
+      });
+    } catch (error) {
+      console.error("Error deleting admin account:", error.message);
+      return res.status(500).json({
+        error: error.message || "Failed to delete admin account",
+      });
+    }
+  },
+);
+
+/**
  * Update School Admin Email
  * POST /api/superadmin/update-school-admin-email
  */

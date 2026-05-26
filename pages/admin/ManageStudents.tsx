@@ -29,6 +29,7 @@ import {
   CheckCircle,
   XCircle,
   ArrowUpRight,
+  FileText,
 } from "lucide-react";
 
 const ManageStudents = () => {
@@ -84,6 +85,9 @@ const ManageStudents = () => {
   // Performance Data (Shared for both View Modal and Edit Modal)
   const [viewStudent, setViewStudent] = useState<Student | null>(null);
   const [performanceData, setPerformanceData] = useState<any>(null);
+  
+  // Admission Form View State
+  const [viewAdmissionStudent, setViewAdmissionStudent] = useState<Student | null>(null);
 
   // Delete Confirmation State
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -217,6 +221,14 @@ const ManageStudents = () => {
   const closeViewModal = () => {
     setViewStudent(null);
     setPerformanceData(null);
+  };
+  
+  const handleViewAdmissionForm = (student: Student) => {
+    setViewAdmissionStudent(student);
+  };
+  
+  const closeAdmissionModal = () => {
+    setViewAdmissionStudent(null);
   };
   // ----------------------------------
 
@@ -900,24 +912,24 @@ const ManageStudents = () => {
                       <div className="absolute -top-14 -right-14 h-28 w-28 rounded-full bg-indigo-100/60 blur-2xl" />
                       <div className="absolute -bottom-16 -left-10 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
 
-                      <div className="relative flex items-center justify-between gap-3">
+                      <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
                         <div className="flex items-center gap-3">
                           <UserAvatar user={student} size="md" />
                           <div>
-                            <p className="font-semibold text-slate-900">
+                            <p className="font-semibold text-slate-900 text-sm sm:text-base">
                               {student.name}
                             </p>
-                            <p className="text-xs text-slate-500">
+                            <p className="text-xs text-slate-500 truncate">
                               ID: {student.id}
                             </p>
                           </div>
                         </div>
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 whitespace-nowrap">
                           {className}
                         </span>
                       </div>
 
-                      <div className="relative mt-4 grid grid-cols-3 gap-3 text-xs text-slate-600">
+                      <div className="relative mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-slate-600">
                         <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
                             Gender
@@ -949,21 +961,34 @@ const ManageStudents = () => {
                         </div>
                       </div>
 
-                      <div className="relative mt-4 flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => handleViewPerformance(student)}
-                          className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-                          title="View Performance"
-                        >
-                          <Eye size={14} />
-                          View
-                        </button>
+                      <div className="relative mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-col xs:flex-row xs:flex-wrap gap-2 sm:gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleViewPerformance(student)}
+                            className="inline-flex items-center justify-center sm:justify-start gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 whitespace-nowrap"
+                            title="View Academic Performance"
+                          >
+                            <Eye size={14} />
+                            <span className="hidden sm:inline">Academic Performance</span>
+                            <span className="sm:hidden">Performance</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleViewAdmissionForm(student)}
+                            className="inline-flex items-center justify-center sm:justify-start gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 whitespace-nowrap"
+                            title="View Admission Form"
+                          >
+                            <FileText size={14} />
+                            <span className="hidden sm:inline">Admission Form</span>
+                            <span className="sm:hidden">Admission</span>
+                          </button>
+                        </div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={() => handleEdit(student)}
-                            className="text-[#1160A8] hover:text-[#0B4A82] p-2 hover:bg-[#E6F0FA] rounded-full transition-colors"
+                            className="text-[#1160A8] hover:text-[#0B4A82] p-2 hover:bg-[#E6F0FA] rounded-full transition-colors flex-shrink-0"
                             title="Edit Details"
                           >
                             <Edit size={16} />
@@ -971,7 +996,7 @@ const ManageStudents = () => {
                           <button
                             type="button"
                             onClick={(e) => promptDelete(student.id, e)}
-                            className="text-rose-500 hover:text-rose-700 p-2 hover:bg-rose-50 rounded-full transition-colors cursor-pointer"
+                            className="text-rose-500 hover:text-rose-700 p-2 hover:bg-rose-50 rounded-full transition-colors cursor-pointer flex-shrink-0"
                             title="Delete Student"
                           >
                             <Trash2 size={16} className="pointer-events-none" />
@@ -986,6 +1011,256 @@ const ManageStudents = () => {
           </div>
         </div>
       </div>
+
+      {/* View Admission Form Modal (Read-Only) */}
+      {viewAdmissionStudent && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-blue-50 sticky top-0 z-10">
+              <div className="flex items-center gap-4">
+                <UserAvatar user={viewAdmissionStudent} size="lg" className="shadow-sm !rounded-xl" />
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">
+                    {viewAdmissionStudent.name} - Admission Form
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">Read-only view of admission information</p>
+                </div>
+              </div>
+              <button
+                onClick={closeAdmissionModal}
+                className="text-slate-400 hover:text-slate-700 bg-white p-2 rounded-full shadow-sm"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-8">
+              {/* 1. Student / Pupil Information */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold">1</div>
+                  Student / Pupil Information
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Full Name</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.name || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Gender</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.gender || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Date of Birth</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">
+                      {viewAdmissionStudent.dob && viewAdmissionStudent.dob !== "" && viewAdmissionStudent.dob !== "2015-01-01"
+                        ? new Date(viewAdmissionStudent.dob).toLocaleDateString("en-US")
+                        : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Class</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">
+                      {CLASSES_LIST.find((c) => c.id === viewAdmissionStudent.classId)?.name || "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Home Town</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.homeTown || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Region</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.region || "-"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Parent/Guardian Information */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold">2</div>
+                  Parent/Guardian Information
+                </h4>
+                
+                {/* Father's Information */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h5 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                    <Users size={16} className="text-emerald-600" />
+                    Father's Information
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Name</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherName || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Occupation</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherOccupation || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Phone</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherPhone || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Email</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherEmail || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Education</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherEducation || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">WhatsApp</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.fatherWhatsApp || "-"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mother's Information */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h5 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                    <Users size={16} className="text-purple-600" />
+                    Mother's Information
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Name</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherName || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Occupation</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherOccupation || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Phone</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherPhone || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Email</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherEmail || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">Education</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherEducation || "-"}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase">WhatsApp</label>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.motherWhatsApp || "-"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Guardian's Information */}
+                {(viewAdmissionStudent.guardianName || viewAdmissionStudent.guardianPhone) && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <h5 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                      <Users size={16} className="text-blue-600" />
+                      Guardian's Information
+                    </h5>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">Name</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianName || "-"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">Occupation</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianOccupation || "-"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">Phone</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianPhone || "-"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">Email</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianEmail || "-"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">Education</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianEducation || "-"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase">WhatsApp</label>
+                        <p className="mt-1 text-sm font-medium text-slate-900">{viewAdmissionStudent.guardianWhatsApp || "-"}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Contact & Location Information */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold">3</div>
+                  Contact & Location Information
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Residential Address</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.residentialAddress || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Digital Address</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.digitalAddress || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Languages Spoken</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.languagesSpoken || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Chronic Disease</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.chronicDisease || "None"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Educational Background */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-emerald-600 uppercase tracking-wide flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold">4</div>
+                  Educational Background
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Previous School</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.previousSchool || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Reason for Leaving</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{viewAdmissionStudent.reasonForLeaving || "-"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase">Date of Last Attendance</label>
+                    <p className="mt-2 text-sm font-medium text-slate-900">
+                      {viewAdmissionStudent.dateOfLastAttendance
+                        ? new Date(viewAdmissionStudent.dateOfLastAttendance).toLocaleDateString("en-US")
+                        : "-"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Message */}
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                <p className="text-sm text-blue-800">
+                  <strong>Note:</strong> This is a read-only view of the student's admission information. To make changes, please use the Edit button on the student card.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Button */}
+            <div className="border-t border-slate-100 bg-slate-50 px-6 py-4 flex justify-end">
+              <button
+                onClick={closeAdmissionModal}
+                className="px-6 py-2 bg-slate-200 text-slate-800 rounded-lg font-semibold hover:bg-slate-300 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteId && (
