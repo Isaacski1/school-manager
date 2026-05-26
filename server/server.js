@@ -6293,9 +6293,11 @@ app.post(
         address: address ? address.trim() : "",
         logoUrl: logoUrl ? logoUrl.trim() : "",
         schoolType: schoolType ? String(schoolType).trim() : "Basic School",
-        status: "active",
+        status: plan === "trial" ? "trial_active" : "active",
         plan,
-        planEndsAt: trialEndsAt,
+        planEndsAt: trialEndsAt
+          ? admin.firestore.Timestamp.fromDate(trialEndsAt)
+          : null,
         featurePlan: featurePlan || "starter",
         billing: {
           startType:
