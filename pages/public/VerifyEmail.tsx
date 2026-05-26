@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, ArrowLeft, ShieldCheck, RefreshCw, CheckCircle2 } from "lucide-react";
 import {
+  ActionCodeSettings,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
@@ -10,6 +12,14 @@ import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { auth } from "../../services/firebase";
 import { showToast } from "../../services/toast";
 import { resendPublicVerificationEmail } from "../../services/backendApi";
+
+const buildEmailVerificationUrl = (email: string) => {
+  const params = new URLSearchParams({
+    authAction: "emailVerified",
+    email,
+  });
+  return `${window.location.origin}/?${params.toString()}`;
+};
 
 const VerifyEmail = () => {
   const navigate = useNavigate();
@@ -41,7 +51,29 @@ const VerifyEmail = () => {
       setResendSuccess(true);
       showToast(result.message || "Verification email sent.", { type: "success" });
     } catch (err: any) {
-      setResendError(err?.message || "Failed to resend verification email.");
+      if (!state.password) {
+        setResendError(err?.message || "Failed to resend verification email.");
+        return;
+      }
+
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
+        const actionSettings: ActionCodeSettings = {
+          url: buildEmailVerificationUrl(state.email.trim().toLowerCase()),
+          handleCodeInApp: true,
+        };
+        await sendEmailVerification(userCredential.user, actionSettings);
+        await clearUnverifiedSession();
+        setResendSuccess(true);
+        showToast("Verification email sent. Please check your inbox, spam, or promotions folder.", { type: "success" });
+      } catch (fallbackErr: any) {
+        await clearUnverifiedSession();
+        setResendError(
+          fallbackErr?.message ||
+            err?.message ||
+            "Failed to resend verification email.",
+        );
+      }
     } finally {
       setResendLoading(false);
     }
