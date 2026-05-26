@@ -10922,6 +10922,35 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         code: linkError?.code || null,
         message,
       });
+
+      // Detect Firebase rate limiting / throttling and enqueue for retry
+      const raw = String(linkError?.message || "").toUpperCase();
+      if (raw.includes("TOO_MANY_ATTEMPTS_TRY_LATER") || raw.includes("RATE_LIMIT")) {
+        try {
+          const queueRef = admin.firestore().collection("email_verification_queue");
+          await queueRef.add({
+            email: safeEmail,
+            displayName,
+            reason: "TOO_MANY_ATTEMPTS_TRY_LATER",
+            attempts: 1,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            nextAttemptAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000)),
+          });
+          console.warn("[VerifyEmail] Enqueued verification email due to rate limit:", safeEmail);
+          return res.status(202).json({
+            success: true,
+            message:
+              "Verification is temporarily rate limited. Your request has been queued and will be retried shortly.",
+          });
+        } catch (queueErr) {
+          console.error("[VerifyEmail] Failed to enqueue verification retry:", queueErr);
+          return res.status(502).json({
+            error: `Firebase could not generate the verification link: ${message}`,
+            code: "VERIFICATION_LINK_FAILED",
+          });
+        }
+      }
+
       return res.status(502).json({
         error: `Firebase could not generate the verification link: ${message}`,
         code: "VERIFICATION_LINK_FAILED",
@@ -10988,15 +11017,20 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         html,
       }),
     });
-    const resBody = await response.json().catch(() => ({}));
+    let resBody = null;
+    try {
+      resBody = await response.json();
+    } catch (parseErr) {
+      resBody = { parseError: true, raw: "(non-json response)" };
+    }
     if (!response.ok) {
       const providerMessage =
-        resBody?.message ||
-        resBody?.error ||
+        (resBody && (resBody.message || resBody.error || JSON.stringify(resBody))) ||
         `Resend failed with ${response.status}`;
       console.error("[VerifyEmail] Resend provider rejected verification email:", {
         status: response.status,
         email: safeEmail,
+        providerResponse: resBody,
         message: providerMessage,
       });
       return res.status(502).json({
@@ -11027,6 +11061,173 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
     });
   }
 });
+
+// Health check endpoint to help diagnose email / Firebase connectivity issues
+app.get("/api/public/health", async (req, res) => {
+  const results = {
+    uptime: process.uptime(),
+    firebaseAdminInitialized: false,
+    firebaseAuthCheck: null,
+    resendConfigured: Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL),
+    resendTestStatus: null,
+  };
+
+  try {
+    results.firebaseAdminInitialized = !!(admin && admin.apps && admin.apps.length > 0);
+  } catch (err) {
+    results.firebaseAdminInitialized = false;
+  }
+
+  // Try a lightweight Firebase Admin call to validate connectivity
+  try {
+    const list = await admin.auth().listUsers(1);
+    results.firebaseAuthCheck = { success: true, usersReturned: (list && list.users && list.users.length) || 0 };
+  } catch (err) {
+    results.firebaseAuthCheck = { success: false, error: String(err?.message || err) };
+  }
+
+  // If Resend is configured, ping the Resend root URL with the API key to get a status code
+  if (results.resendConfigured) {
+    try {
+      const r = await fetch("https://api.resend.com/", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+        // short timeout handled by the host platform
+      });
+      results.resendTestStatus = { ok: r.ok, status: r.status };
+    } catch (err) {
+      results.resendTestStatus = { ok: false, error: String(err?.message || err) };
+    }
+  }
+
+  res.json(results);
+});
+
+// Background worker: process email_verification_queue with controlled rate and backoff
+const EMAIL_QUEUE_POLL_INTERVAL_MS = 30 * 1000; // poll every 30s
+const EMAIL_QUEUE_BATCH_SIZE = 3; // process up to 3 items per poll
+const EMAIL_QUEUE_BASE_DELAY_MS = 5 * 60 * 1000; // 5 minutes base retry
+
+async function processEmailVerificationQueueOnce() {
+  try {
+    const now = admin.firestore.Timestamp.now();
+    const queueRef = admin.firestore().collection("email_verification_queue");
+    const qSnap = await queueRef
+      .where("nextAttemptAt", "<=", now)
+      .orderBy("nextAttemptAt")
+      .limit(EMAIL_QUEUE_BATCH_SIZE)
+      .get();
+
+    if (qSnap.empty) return;
+
+    for (const docSnap of qSnap.docs) {
+      const docId = docSnap.id;
+      const data = docSnap.data();
+      const email = String(data.email || "").toLowerCase();
+      const displayName = String(data.displayName || "");
+      const attempts = Number(data.attempts || 0);
+
+      try {
+        console.log(`[EmailQueue] Processing ${docId} for ${email} (attempt ${attempts + 1})`);
+
+        // Re-check that user exists
+        let userRecord;
+        try {
+          userRecord = await admin.auth().getUserByEmail(email);
+        } catch (err) {
+          console.warn(`[EmailQueue] Auth user not found for ${email}, removing queue item`);
+          await queueRef.doc(docId).delete();
+          continue;
+        }
+
+        // Generate verification link
+        const requestOrigin = normalizeOriginValue(process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || process.env.APP_URL || "https://school-manager-gh.web.app");
+        const verificationContinueUrl = `${requestOrigin}/?${new URLSearchParams({ authAction: "emailVerified", email }).toString()}`;
+        let link = null;
+        try {
+          link = await retryFirebaseAdminNetworkCall("generate queued verification link", () =>
+            admin.auth().generateEmailVerificationLink(email, { url: verificationContinueUrl, handleCodeInApp: true }),
+          );
+        } catch (linkErr) {
+          const raw = String(linkErr?.message || "").toUpperCase();
+          console.warn(`[EmailQueue] generateEmailVerificationLink failed for ${email}:`, raw);
+          // Update attempts and schedule next try with backoff
+          const nextAttempts = attempts + 1;
+          const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
+          const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
+          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(linkErr?.message || linkErr), nextAttemptAt: nextAt });
+          continue;
+        }
+
+        if (!link) {
+          // Unexpected — schedule retry
+          const nextAttempts = attempts + 1;
+          const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
+          const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
+          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: "no-link-generated", nextAttemptAt: nextAt });
+          continue;
+        }
+
+        // Send via Resend
+        try {
+          const resendKey = RESEND_API_KEY;
+          const resendFrom = RESEND_FROM_EMAIL;
+          const from = RESEND_FROM_NAME ? `${RESEND_FROM_NAME} <${resendFrom}>` : resendFrom;
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0f172a">
+              <div style="background:linear-gradient(135deg,#0B4A82,#1160A8);padding:24px;border-radius:12px;text-align:center">
+                <h1 style="color:white;margin:0;font-size:20px">Verify your School Manager GH account</h1>
+              </div>
+              <div style="background:white;padding:20px;border:1px solid #DBEAFE;border-top:none">
+                <p>Hi <strong>${escapeHtml(displayName || email)}</strong>,</p>
+                <p>Click the button below to verify your email address and activate your school workspace.</p>
+                <p style="margin:16px 0"><a href="${escapeHtml(link)}" style="display:inline-block;background:#0B4A82;color:white;text-decoration:none;border-radius:999px;padding:10px 16px;font-size:14px;font-weight:700">Verify Email Address</a></p>
+                <p>If the button does not work, copy and paste this link into your browser:<br/><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>
+              </div>
+            </div>
+          `;
+          const text = `Verify your School Manager GH account: ${link}`;
+          const r = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ from, to: [email], subject: "Verify your School Manager GH account", text, html }),
+          });
+          const respBody = await (async () => { try { return await r.json(); } catch { return null; } })();
+          if (!r.ok) {
+            console.error(`[EmailQueue] Resend failed for ${email}:`, r.status, respBody);
+            // schedule retry
+            const nextAttempts = attempts + 1;
+            const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
+            const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
+            await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: `resend:${r.status}`, nextAttemptAt: nextAt });
+            continue;
+          }
+
+          console.log(`[EmailQueue] Verification email sent for ${email}, removing queue item`);
+          await queueRef.doc(docId).delete();
+          // small pause between sends to avoid hitting limits
+          await new Promise((r) => setTimeout(r, 1000));
+        } catch (sendErr) {
+          console.error(`[EmailQueue] Failed to send verification email for ${email}:`, sendErr);
+          const nextAttempts = attempts + 1;
+          const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
+          const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
+          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(sendErr?.message || sendErr), nextAttemptAt: nextAt });
+          continue;
+        }
+      } catch (itemErr) {
+        console.error("[EmailQueue] Unexpected error processing queue item", itemErr);
+      }
+    }
+  } catch (err) {
+    console.error("[EmailQueue] Worker error:", err);
+  }
+}
+
+// Start periodic worker
+setInterval(() => {
+  void processEmailVerificationQueueOnce();
+}, EMAIL_QUEUE_POLL_INTERVAL_MS);
 
 
 // ─── Paystack Integration Endpoints ──────────────────────────────────────────
