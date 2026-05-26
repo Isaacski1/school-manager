@@ -1084,6 +1084,439 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * Send in-app reminder notices to parent dashboards.
+ * POST /api/admin/parent-notices
+ */
+app.post("/api/admin/parent-notices", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const {
+      message,
+      type = "info",
+      targetStudentIds,
+      targetClassId,
+      targetClassName,
+    } = req.body || {};
+
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const callerData = callerDoc.data();
+    if (!callerData || callerData.role !== "school_admin") {
+      return res.status(403).json({ error: "Forbidden: Only school admins can send parent dashboard notices." });
+    }
+
+    const schoolId = callerData.schoolId;
+    const safeMessage = String(message || "").trim();
+    const safeType = type === "urgent" ? "urgent" : "info";
+    const requestedStudentIds = Array.isArray(targetStudentIds)
+      ? [...new Set(targetStudentIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : [];
+
+    if (!schoolId) {
+      return res.status(400).json({ error: "School not linked to admin." });
+    }
+    if (!safeMessage) {
+      return res.status(400).json({ error: "Message is required." });
+    }
+    if (requestedStudentIds.length === 0) {
+      return res.status(400).json({ error: "Select at least one parent recipient." });
+    }
+
+    const studentRefs = requestedStudentIds.map((id) =>
+      admin.firestore().collection("students").doc(id),
+    );
+    const studentDocs = await admin.firestore().getAll(...studentRefs);
+    const allowedStudentIds = studentDocs
+      .filter((snap) => snap.exists && snap.data()?.schoolId === schoolId)
+      .map((snap) => snap.id);
+
+    if (allowedStudentIds.length === 0) {
+      return res.status(400).json({ error: "No selected students belong to your school." });
+    }
+
+    const noticeRef = admin.firestore().collection("parent_notices").doc();
+    const createdAt = Date.now();
+    const expiresAt = createdAt + 14 * 24 * 60 * 60 * 1000;
+    const date = new Date(createdAt).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+    const noticeDoc = {
+      id: noticeRef.id,
+      schoolId,
+      message: safeMessage,
+      date,
+      type: safeType,
+      targetType: "students",
+      targetClassId: targetClassId ? String(targetClassId) : null,
+      targetClassName: targetClassName ? String(targetClassName) : null,
+      targetStudentIds: allowedStudentIds,
+      recipientCount: allowedStudentIds.length,
+      createdAt,
+      expiresAt,
+      createdBy: uid,
+      createdByName: callerData.fullName || callerData.email || null,
+    };
+
+    await noticeRef.set(noticeDoc);
+
+    return res.json({
+      success: true,
+      notice: noticeDoc,
+      message: "Parent dashboard notice sent successfully.",
+    });
+  } catch (error) {
+    console.error("Parent dashboard notice send error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to send parent dashboard notice.",
+    });
+  }
+});
+
+/**
+ * Load in-app parent notice history for the admin.
+ * GET /api/admin/parent-notices/history
+ */
+app.get("/api/admin/parent-notices/history", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const callerData = callerDoc.data();
+    if (!callerData || callerData.role !== "school_admin") {
+      return res.status(403).json({ error: "Forbidden: Only school admins can view parent notice history." });
+    }
+
+    const schoolId = callerData.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: "School not linked to admin." });
+    }
+
+    const noticesSnap = await admin
+      .firestore()
+      .collection("parent_notices")
+      .where("schoolId", "==", schoolId)
+      .get();
+
+    const noticeIds = noticesSnap.docs.map((docSnap) => docSnap.id);
+    const readsByNotice = new Map();
+
+    const readsSnap = await admin
+      .firestore()
+      .collection("parent_notice_reads")
+      .where("schoolId", "==", schoolId)
+      .get();
+
+    const noticeIdSet = new Set(noticeIds);
+    readsSnap.docs.forEach((readDoc) => {
+      const read = { id: readDoc.id, ...readDoc.data() };
+      if (!noticeIdSet.has(read.noticeId)) return;
+      const existing = readsByNotice.get(read.noticeId) || [];
+      existing.push(read);
+      readsByNotice.set(read.noticeId, existing);
+    });
+
+    const now = Date.now();
+    const notices = noticesSnap.docs
+      .map((docSnap) => {
+        const notice = { id: docSnap.id, ...docSnap.data() };
+        const reads = (readsByNotice.get(docSnap.id) || []).sort(
+          (a, b) => Number(b.readAt || 0) - Number(a.readAt || 0),
+        );
+        return {
+          ...notice,
+          status: notice.expiresAt && Number(notice.expiresAt) <= now ? "expired" : "active",
+          readCount: reads.length,
+          unreadCount: Math.max(0, Number(notice.recipientCount || 0) - reads.length),
+          reads,
+        };
+      })
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+      .slice(0, 100);
+
+    return res.json({ success: true, notices });
+  } catch (error) {
+    console.error("Parent dashboard notice history load error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to load parent dashboard notice history.",
+    });
+  }
+});
+
+/**
+ * Delete one parent dashboard notice and its read receipt history.
+ * DELETE /api/admin/parent-notices/:noticeId
+ */
+app.delete("/api/admin/parent-notices/:noticeId", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const noticeId = String(req.params.noticeId || "").trim();
+    if (!noticeId) {
+      return res.status(400).json({ error: "noticeId is required." });
+    }
+
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const callerData = callerDoc.data();
+    if (!callerData || callerData.role !== "school_admin") {
+      return res.status(403).json({ error: "Forbidden: Only school admins can delete parent notice history." });
+    }
+
+    const schoolId = callerData.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: "School not linked to admin." });
+    }
+
+    const noticeRef = admin.firestore().collection("parent_notices").doc(noticeId);
+    const noticeSnap = await noticeRef.get();
+    if (!noticeSnap.exists || noticeSnap.data()?.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Parent notice not found." });
+    }
+
+    const readsSnap = await admin
+      .firestore()
+      .collection("parent_notice_reads")
+      .where("schoolId", "==", schoolId)
+      .get();
+
+    const matchingReadDocs = readsSnap.docs.filter(
+      (readDoc) => readDoc.data()?.noticeId === noticeId,
+    );
+
+    const deleteBatch = admin.firestore().batch();
+    deleteBatch.delete(noticeRef);
+    matchingReadDocs.slice(0, 450).forEach((readDoc) => {
+      deleteBatch.delete(readDoc.ref);
+    });
+    await deleteBatch.commit();
+
+    return res.json({
+      success: true,
+      deletedReadReceipts: matchingReadDocs.length,
+      message: "Parent notice history deleted.",
+    });
+  } catch (error) {
+    console.error("Parent dashboard notice delete error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to delete parent dashboard notice history.",
+    });
+  }
+});
+
+/**
+ * Load parent dashboard reminder notices for one linked student.
+ * GET /api/parent/notices?schoolId=...&studentId=...&classId=...
+ */
+app.get("/api/parent/notices", authMiddleware, async (req, res) => {
+  try {
+    const schoolId = String(req.query.schoolId || "").trim();
+    const studentId = String(req.query.studentId || "").trim();
+    const classId = String(req.query.classId || "").trim();
+
+    if (!schoolId || !studentId) {
+      return res.status(400).json({ error: "schoolId and studentId are required." });
+    }
+
+    const studentSnap = await admin.firestore().collection("students").doc(studentId).get();
+    if (!studentSnap.exists || studentSnap.data()?.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    const tokenStudentIds = Array.isArray(req.user?.studentIds) ? req.user.studentIds : [];
+    const isLinkedByClaim = tokenStudentIds.includes(studentId);
+    const requesterRole = String(req.user?.role || req.user?.userRole || "").toLowerCase();
+    const requesterUid = String(req.user?.uid || "");
+    const requesterDigits = requesterUid.replace(/\D/g, "");
+    const studentData = studentSnap.data() || {};
+    const contactDigits = [
+      studentData.fatherPhone,
+      studentData.motherPhone,
+      studentData.guardianPhone,
+      studentData.parentPhone,
+    ].map((phone) => String(phone || "").replace(/\D/g, ""));
+    const isLinkedByPhone = contactDigits.some(
+      (phone) =>
+        phone &&
+        requesterDigits &&
+        (phone === requesterDigits ||
+          phone.endsWith(requesterDigits) ||
+          requesterDigits.endsWith(phone)),
+    );
+
+    const callerDoc = await admin.firestore().collection("users").doc(req.user.uid).get();
+    const callerData = callerDoc.exists ? callerDoc.data() || {} : {};
+    const isSchoolStaffForStudent =
+      ["school_admin", "teacher"].includes(String(callerData.role || "").toLowerCase()) &&
+      callerData.schoolId === schoolId;
+    const isLinkedParent =
+      requesterRole === "parent" && (isLinkedByClaim || isLinkedByPhone);
+
+    if (!isLinkedParent && !isSchoolStaffForStudent) {
+      return res.status(403).json({ error: "Forbidden: You can only read notices for linked students." });
+    }
+
+    const noticesSnap = await admin
+      .firestore()
+      .collection("parent_notices")
+      .where("schoolId", "==", schoolId)
+      .get();
+
+    const className = String(req.query.className || "").trim();
+    const now = Date.now();
+    const expiredDocs = noticesSnap.docs.filter((docSnap) => {
+      const expiresAt = Number(docSnap.data()?.expiresAt || 0);
+      return expiresAt > 0 && expiresAt <= now;
+    });
+    if (expiredDocs.length > 0) {
+      const batch = admin.firestore().batch();
+      expiredDocs.slice(0, 450).forEach((docSnap) => batch.delete(docSnap.ref));
+      await batch.commit().catch((error) => {
+        console.warn("Expired parent notice cleanup skipped:", error?.message || error);
+      });
+    }
+
+    const matchedNotices = noticesSnap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      .filter((notice) => {
+        const expiresAt = Number(notice.expiresAt || 0);
+        if (expiresAt > 0 && expiresAt <= now) return false;
+        if (notice.targetType === "all") return true;
+        if (notice.targetType === "class") {
+          return notice.targetClassId === classId || notice.targetClassName === className;
+        }
+        return Array.isArray(notice.targetStudentIds) &&
+          notice.targetStudentIds.includes(studentId);
+      });
+
+    const readRefs = matchedNotices.map((notice) => {
+      const receiptId = crypto
+        .createHash("sha256")
+        .update(`${notice.id}:${studentId}:${req.user.uid}`)
+        .digest("hex");
+      return admin.firestore().collection("parent_notice_reads").doc(receiptId);
+    });
+    const readDocs = readRefs.length ? await admin.firestore().getAll(...readRefs) : [];
+    const readNoticeIds = new Set(
+      readDocs
+        .filter((readDoc) => readDoc.exists)
+        .map((readDoc) => String(readDoc.data()?.noticeId || "")),
+    );
+
+    const notices = matchedNotices
+      .filter((notice) => !readNoticeIds.has(notice.id))
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+      .slice(0, 20);
+
+    return res.json({ success: true, notices });
+  } catch (error) {
+    console.error("Parent dashboard notices load error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to load parent dashboard notices.",
+    });
+  }
+});
+
+/**
+ * Mark a parent dashboard reminder notice as read for the current parent.
+ * POST /api/parent/notices/:noticeId/read
+ */
+app.post("/api/parent/notices/:noticeId/read", authMiddleware, async (req, res) => {
+  try {
+    const noticeId = String(req.params.noticeId || "").trim();
+    const schoolId = String(req.body?.schoolId || "").trim();
+    const studentId = String(req.body?.studentId || "").trim();
+    const parentName = String(req.body?.parentName || "").trim();
+
+    if (!noticeId || !schoolId || !studentId) {
+      return res.status(400).json({ error: "noticeId, schoolId, and studentId are required." });
+    }
+
+    const [noticeSnap, studentSnap] = await Promise.all([
+      admin.firestore().collection("parent_notices").doc(noticeId).get(),
+      admin.firestore().collection("students").doc(studentId).get(),
+    ]);
+
+    if (!noticeSnap.exists || noticeSnap.data()?.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Notice not found." });
+    }
+    if (!studentSnap.exists || studentSnap.data()?.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    const tokenStudentIds = Array.isArray(req.user?.studentIds) ? req.user.studentIds : [];
+    const isLinkedByClaim = tokenStudentIds.includes(studentId);
+    const requesterRole = String(req.user?.role || req.user?.userRole || "").toLowerCase();
+    const requesterUid = String(req.user?.uid || "");
+    const requesterDigits = requesterUid.replace(/\D/g, "");
+    const studentData = studentSnap.data() || {};
+    const contactDigits = [
+      studentData.fatherPhone,
+      studentData.motherPhone,
+      studentData.guardianPhone,
+      studentData.parentPhone,
+    ].map((phone) => String(phone || "").replace(/\D/g, ""));
+    const isLinkedByPhone = contactDigits.some(
+      (phone) =>
+        phone &&
+        requesterDigits &&
+        (phone === requesterDigits ||
+          phone.endsWith(requesterDigits) ||
+          requesterDigits.endsWith(phone)),
+    );
+
+    if (requesterRole !== "parent" || (!isLinkedByClaim && !isLinkedByPhone)) {
+      return res.status(403).json({ error: "Forbidden: You can only mark notices for linked students." });
+    }
+
+    const notice = noticeSnap.data() || {};
+    const now = Date.now();
+    if (notice.expiresAt && Number(notice.expiresAt) <= now) {
+      await noticeSnap.ref.delete().catch(() => {});
+      return res.json({ success: true, message: "Notice expired and was removed." });
+    }
+
+    const targetMatches =
+      notice.targetType === "all" ||
+      (notice.targetType === "class" &&
+        (notice.targetClassId === studentData.classId || notice.targetClassName === studentData.className)) ||
+      (Array.isArray(notice.targetStudentIds) && notice.targetStudentIds.includes(studentId));
+
+    if (!targetMatches) {
+      return res.status(403).json({ error: "Forbidden: Notice is not linked to this student." });
+    }
+
+    const receiptId = crypto
+      .createHash("sha256")
+      .update(`${noticeId}:${studentId}:${req.user.uid}`)
+      .digest("hex");
+    const readAt = now;
+    const readDoc = {
+      noticeId,
+      schoolId,
+      studentId,
+      studentName: studentData.name || studentData.fullName || null,
+      parentUid: req.user.uid,
+      parentName: parentName || req.user.parentContactName || req.user.name || null,
+      parentPhone: req.user.parentPhone || req.user.phone_number || req.user.uid || null,
+      readAt,
+      expiresAt: readAt + 14 * 24 * 60 * 60 * 1000,
+    };
+
+    await admin
+      .firestore()
+      .collection("parent_notice_reads")
+      .doc(receiptId)
+      .set(readDoc, { merge: true });
+
+    return res.json({ success: true, message: "Notice marked as read." });
+  } catch (error) {
+    console.error("Parent dashboard notice mark-read error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to mark parent dashboard notice as read.",
+    });
+  }
+});
+
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";

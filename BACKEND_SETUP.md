@@ -233,3 +233,14 @@ npm install firebase-admin
 7. ✅ Test in production
 
 **Status:** Ready to use! 🚀
+
+<!-- I want you to do this for me. The starter plan:
+1. it shouldn't have Report Card generator
+2. It should only have a maximum of 50 students
+3. It shouldn't have a parent dashboard. So parent cannot access their dashboard because their school system is on Starter plan
+
+And the Standard Plan:
+1. The billing plan should move from GHS200 to GHS300.
+2. If a school want a Termly plan, they should be a 10% discount and Yearly Plan, they should have  20% discount.
+
+The pricing plan should corresponds to the system -->

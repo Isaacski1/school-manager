@@ -593,6 +593,32 @@ service cloud.firestore {
       allow delete: if schoolScopedDelete(resource.data.schoolId);
     }
 
+    // Parent dashboard reminder notices
+    match /parent_notices/{noticeId} {
+      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "message",
+          "date",
+          "type",
+          "targetType",
+          "targetClassId",
+          "targetClassName",
+          "targetStudentIds",
+          "recipientCount",
+          "createdAt",
+          "createdBy",
+          "createdByName"
+        ]);
+
+      allow read: if isSuperAdmin() ||
+        (isAuthenticated() &&
+          (schoolScopedRead(resource.data.schoolId) || isParent()));
+
+      allow update, delete: if schoolScopedDelete(resource.data.schoolId);
+    }
+
     // Student remarks collection
     match /student_remarks/{remarkId} {
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&

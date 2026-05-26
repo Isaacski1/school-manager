@@ -106,7 +106,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
       </div>
 
       {/* Top announcement bar */}
-      <div style={{ background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
+      <div style={{ display: "none", background: "linear-gradient(90deg, #0B4A82 0%, #1160A8 50%, #0B4A82 100%)", padding: "8px 16px", textAlign: "center" }}>
         <p style={{ color: "white", fontSize: "13px", fontWeight: 600, margin: 0 }}>
           🇬🇭 Built for Ghana's schools — <Link to="/get-started" style={{ color: "#93C5FD", textDecoration: "underline" }}>Register your school today</Link>
         </p>

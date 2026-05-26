@@ -5,12 +5,20 @@ import { useAuth } from "../../context/AuthContext";
 import { firestore } from "../../services/firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { showToast } from "../../services/toast";
-import { MessageSquare, Users, Send, Loader2, RefreshCw, AlertTriangle, Sparkles, CreditCard, Wallet, ShieldAlert, ChevronDown, Filter } from "lucide-react";
+import { deleteParentDashboardNotice, getParentDashboardNoticeHistory, sendParentDashboardNotice } from "../../services/backendApi";
+import { MessageSquare, Users, Send, Loader2, RefreshCw, AlertTriangle, Sparkles, CreditCard, Wallet, ShieldAlert, ChevronDown, Filter, CheckCircle2, Inbox, Trash2 } from "lucide-react";
 import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { usePaystackPayment } from "react-paystack";
 
 // Types
-type ParentContact = { name: string; phone: string; class?: string; studentName?: string };
+type ParentContact = {
+  name: string;
+  phone: string;
+  class?: string;
+  classId?: string;
+  studentId: string;
+  studentName?: string;
+};
 type SendResult = { phone: string; success: boolean; error?: string };
 
 // Dynamic SMS Rate fetched from settings
@@ -59,6 +67,9 @@ const Reminders: React.FC = () => {
   // Message
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [parentNoticeMessage, setParentNoticeMessage] = useState("");
+  const [parentNoticeType, setParentNoticeType] = useState<"info" | "urgent">("info");
+  const [sendingParentNotice, setSendingParentNotice] = useState(false);
   
   // Stats
   const [walletBalance, setWalletBalance] = useState<number>(0);
@@ -73,6 +84,9 @@ const Reminders: React.FC = () => {
   const [confirmSendModalOpen, setConfirmSendModalOpen] = useState(false);
   const [broadcastsHistory, setBroadcastsHistory] = useState<any[]>([]);
   const [loadingBroadcasts, setLoadingBroadcasts] = useState(false);
+  const [parentNoticeHistory, setParentNoticeHistory] = useState<any[]>([]);
+  const [loadingParentNoticeHistory, setLoadingParentNoticeHistory] = useState(false);
+  const [deletingParentNoticeId, setDeletingParentNoticeId] = useState<string | null>(null);
 
   useEffect(() => {
     setWalletBalance(school?.smsWallet?.balance || 0);
@@ -178,9 +192,39 @@ const Reminders: React.FC = () => {
     }
   };
 
+  const loadParentNoticeHistory = async () => {
+    if (!school?.id) return;
+    setLoadingParentNoticeHistory(true);
+    try {
+      const response = await getParentDashboardNoticeHistory();
+      setParentNoticeHistory(response.notices || []);
+    } catch (err: any) {
+      console.error("Error loading parent notice history:", err);
+      showToast(err?.message || "Failed to load parent notice history.", { type: "error" });
+    } finally {
+      setLoadingParentNoticeHistory(false);
+    }
+  };
+
+  const handleDeleteParentNotice = async (noticeId: string) => {
+    if (!noticeId || deletingParentNoticeId) return;
+    setDeletingParentNoticeId(noticeId);
+    try {
+      await deleteParentDashboardNotice(noticeId);
+      setParentNoticeHistory((current) => current.filter((notice) => notice.id !== noticeId));
+      showToast("Parent notice history deleted.", { type: "success" });
+    } catch (err: any) {
+      console.error("Error deleting parent notice history:", err);
+      showToast(err?.message || "Failed to delete parent notice history.", { type: "error" });
+    } finally {
+      setDeletingParentNoticeId(null);
+    }
+  };
+
   useEffect(() => {
     loadHistory();
     loadBroadcastsHistory();
+    loadParentNoticeHistory();
   }, [school?.id]);
 
   const paystackConfig = {
@@ -273,23 +317,40 @@ const Reminders: React.FC = () => {
         const snap = await getDocs(q);
         const list: ParentContact[] = [];
         const seen = new Set<string>();
-        snap.docs.forEach((doc) => {
-          const d = doc.data() as any;
-          const phone = String(d.guardianPhone || d.parentPhone || d.guardian_phone || d.contactPhone || "").trim();
-          const name = String(d.guardianName || d.parentName || d.guardian_name || d.contactName || "Parent").trim();
-          const studentName = d.firstName && d.lastName ? `${d.firstName} ${d.lastName}` : "Student";
+        snap.docs.forEach((studentDoc) => {
+          const d = studentDoc.data() as any;
+          const studentName = d.name || (d.firstName && d.lastName ? `${d.firstName} ${d.lastName}` : "Student");
           
           let className = d.class || d.className || d.classLevel || d.grade;
+          let classId = d.classId || "";
           if (d.classId) {
              const found = CLASSES_LIST.find(c => c.id === d.classId);
-             if (found) className = found.name;
+             if (found) {
+               className = found.name;
+               classId = found.id;
+             }
           }
-          
-          const seenKey = `${phone}-${className || "No Class"}`;
-          if (phone && !seen.has(seenKey)) {
+
+          const addContact = (nameValue: any, phoneValue: any) => {
+            const phone = String(phoneValue || "").trim();
+            if (!phone) return;
+            const name = String(nameValue || "Parent").trim();
+            const seenKey = `${phone}-${studentDoc.id}`;
+            if (seen.has(seenKey)) return;
             seen.add(seenKey);
-            list.push({ name, phone, class: className, studentName });
-          }
+            list.push({
+              name,
+              phone,
+              class: className,
+              classId,
+              studentId: studentDoc.id,
+              studentName,
+            });
+          };
+
+          addContact(d.fatherName, d.fatherPhone);
+          addContact(d.motherName, d.motherPhone);
+          addContact(d.guardianName || d.parentName || d.guardian_name || d.contactName, d.guardianPhone || d.parentPhone || d.guardian_phone || d.contactPhone);
         });
         setParents(list);
         setSelectedPhones(new Set());
@@ -438,6 +499,59 @@ const Reminders: React.FC = () => {
     }
   };
 
+  const selectedParentNoticeContacts = parents.filter((parent) =>
+    selectedPhones.has(parent.phone),
+  );
+
+  const selectedParentNoticeStudentIds = Array.from(
+    new Set(selectedParentNoticeContacts.map((parent) => parent.studentId).filter(Boolean)),
+  );
+
+  const handleSendParentNotice = async () => {
+    if (!school?.id) {
+      showToast("School profile is not loaded yet.", { type: "error" });
+      return;
+    }
+    if (!parentNoticeMessage.trim()) {
+      showToast("Please enter a parent dashboard notice.", { type: "error" });
+      return;
+    }
+    if (selectedParentNoticeStudentIds.length === 0) {
+      showToast("Select at least one parent recipient.", { type: "error" });
+      return;
+    }
+
+    setSendingParentNotice(true);
+    try {
+      const selectedClass =
+        classFilter !== "All" && classFilter !== "No Class"
+          ? availableClasses.find((cls) => cls.name === classFilter)
+          : null;
+
+      await sendParentDashboardNotice({
+        message: parentNoticeMessage.trim(),
+        type: parentNoticeType,
+        targetClassId: selectedClass?.id || null,
+        targetClassName: selectedClass?.name || null,
+        targetStudentIds: selectedParentNoticeStudentIds,
+      });
+
+      showToast(
+        `Parent dashboard notice sent to ${selectedParentNoticeStudentIds.length} student profile${selectedParentNoticeStudentIds.length === 1 ? "" : "s"}.`,
+        { type: "success" },
+      );
+      setParentNoticeMessage("");
+      loadParentNoticeHistory();
+    } catch (error: any) {
+      console.error("Failed to send parent dashboard notice:", error);
+      showToast(error?.message || "Failed to send parent dashboard notice.", {
+        type: "error",
+      });
+    } finally {
+      setSendingParentNotice(false);
+    }
+  };
+
   return (
     <Layout title="SMS Reminders">
       <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6 px-0">
@@ -551,6 +665,80 @@ const Reminders: React.FC = () => {
                   <><Send size={15} /> Send SMS (Cost: GHS {totalEstimatedCost.toFixed(2)})</>
                 )}
               </button>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 p-4 sm:p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <div className="mt-0.5 rounded-xl bg-emerald-50 p-2 text-emerald-600">
+                    <MessageSquare size={16} />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-slate-800 text-sm sm:text-base">
+                      Parent Dashboard Notice
+                    </h2>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Send an in-app reminder to selected parents. It appears on their parent dashboard and does not use SMS credits.
+                    </p>
+                  </div>
+                </div>
+                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                  {(["info", "urgent"] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setParentNoticeType(type)}
+                      className={`rounded-full px-3 py-1 text-xs font-bold capitalize transition ${
+                        parentNoticeType === type
+                          ? type === "urgent"
+                            ? "bg-rose-600 text-white shadow-sm"
+                            : "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <textarea
+                value={parentNoticeMessage}
+                onChange={(e) => setParentNoticeMessage(e.target.value)}
+                rows={4}
+                placeholder="Type the reminder parents should see in their dashboard..."
+                className="w-full resize-none rounded-xl border border-slate-200 p-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+              />
+
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-medium text-slate-500">
+                  {selectedParentNoticeStudentIds.length} selected student profile
+                  {selectedParentNoticeStudentIds.length === 1 ? "" : "s"}
+                  {classFilter !== "All" ? ` in ${classFilter}` : ""}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSendParentNotice}
+                  disabled={
+                    sendingParentNotice ||
+                    !parentNoticeMessage.trim() ||
+                    selectedParentNoticeStudentIds.length === 0
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sendingParentNotice ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={15} />
+                      Send to Parent Dashboard
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -831,6 +1019,168 @@ const Reminders: React.FC = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 sm:p-6 transition hover:shadow-md duration-300">
+          <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-4 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <Inbox size={16} />
+              </div>
+              <div>
+                <h2 className="font-bold text-slate-800 text-sm sm:text-base">Parent Notice History</h2>
+                <p className="text-slate-500 text-[11px] font-medium">Track in-app dashboard notices and parent read receipts</p>
+              </div>
+            </div>
+            <button
+              onClick={loadParentNoticeHistory}
+              disabled={loadingParentNoticeHistory}
+              className="p-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1 text-xs font-bold disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loadingParentNoticeHistory ? "animate-spin text-emerald-600" : ""} />
+              {loadingParentNoticeHistory ? "Refreshing..." : "Refresh History"}
+            </button>
+          </div>
+
+          {loadingParentNoticeHistory ? (
+            <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
+              <Loader2 size={24} className="animate-spin text-emerald-600" />
+              <p className="text-xs font-bold">Loading parent notices...</p>
+            </div>
+          ) : parentNoticeHistory.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+              <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center border border-slate-100 text-slate-400">
+                <Inbox size={18} />
+              </div>
+              <p className="text-sm font-bold text-slate-700">No parent notices yet</p>
+              <p className="text-xs max-w-xs leading-relaxed">Parent dashboard notices sent from this page will appear here.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {parentNoticeHistory.map((notice) => {
+                const createdAt = Number(notice.createdAt || 0);
+                const expiresAt = Number(notice.expiresAt || 0);
+                const createdDate = createdAt
+                  ? new Date(createdAt).toLocaleDateString("en-GB", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : notice.date || "Date unknown";
+                const expiresDate = expiresAt
+                  ? new Date(expiresAt).toLocaleDateString("en-GB", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    })
+                  : "Two weeks";
+                const reads = Array.isArray(notice.reads) ? notice.reads.slice(0, 4) : [];
+
+                return (
+                  <div key={notice.id} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              notice.type === "urgent"
+                                ? "bg-rose-100 text-rose-700"
+                                : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {notice.type === "urgent" ? "Urgent" : "Notice"}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              notice.status === "expired"
+                                ? "bg-slate-200 text-slate-600"
+                                : "bg-blue-50 text-blue-700"
+                            }`}
+                          >
+                            {notice.status === "expired" ? "Expired" : "Active"}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            Sent {createdDate}
+                          </span>
+                        </div>
+                        <p className="line-clamp-2 text-sm font-medium leading-5 text-slate-800" title={notice.message}>
+                          {notice.message}
+                        </p>
+                        <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                          Auto deletes after {expiresDate}
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:w-64">
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                            <p className="text-base font-black text-slate-800">{notice.recipientCount || 0}</p>
+                            <p className="text-[10px] font-bold uppercase text-slate-400">Sent</p>
+                          </div>
+                          <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                            <p className="text-base font-black text-emerald-700">{notice.readCount || 0}</p>
+                            <p className="text-[10px] font-bold uppercase text-slate-400">Read</p>
+                          </div>
+                          <div className="rounded-xl border border-amber-100 bg-white px-3 py-2">
+                            <p className="text-base font-black text-amber-700">{notice.unreadCount || 0}</p>
+                            <p className="text-[10px] font-bold uppercase text-slate-400">Unread</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteParentNotice(notice.id)}
+                          disabled={deletingParentNoticeId === notice.id}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-bold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {deletingParentNoticeId === notice.id ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                          Delete history
+                        </button>
+                      </div>
+                    </div>
+
+                    {reads.length > 0 && (
+                      <div className="mt-4 rounded-xl border border-slate-100 bg-white p-3">
+                        <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                          Recent reads
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {reads.map((read: any) => {
+                            const readDate = read.readAt
+                              ? new Date(Number(read.readAt)).toLocaleDateString("en-GB", {
+                                  day: "2-digit",
+                                  month: "short",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : "Date unknown";
+                            return (
+                              <div key={read.id || `${read.studentId}-${read.readAt}`} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-xs font-bold text-slate-700">
+                                    {read.parentName || "Parent"}
+                                  </p>
+                                  <p className="truncate text-[11px] text-slate-500">
+                                    {read.studentName || "Student"}
+                                  </p>
+                                </div>
+                                <span className="shrink-0 text-[10px] font-bold text-slate-400">{readDate}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

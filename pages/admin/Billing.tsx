@@ -139,12 +139,12 @@ const Billing: React.FC = () => {
     const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
 
     // Base monthly prices
-    const BASE_PRICES: Record<string, number> = { starter: 100, standard: 200 };
+    const BASE_PRICES: Record<string, number> = { starter: 100, standard: 300 };
     const base = BASE_PRICES[featurePlan] ?? 100;
 
     // Calculate total based on cycle
     if (billingCycle === "monthly") {
-      return base; // GHS 100 or GHS 200
+      return base; // GHS 100 or GHS 300
     }
 
     if (billingCycle === "termly") {

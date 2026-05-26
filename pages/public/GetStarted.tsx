@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ArrowRight, CheckCircle2, Lightbulb, Loader2, Rocket, ShieldCheck, UploadCloud, X } from "lucide-react";
@@ -51,10 +51,16 @@ const GetStarted = () => {
   const valid = useMemo(() => {
     if (currentStep === 0) return !!(formData.schoolName.trim() && formData.schoolPhone.trim() && formData.schoolEmail.trim());
     if (currentStep === 1) return !!(formData.adminFullName.trim() && formData.adminEmail.trim() && formData.password.length >= 6 && formData.password === formData.confirmPassword);
-    if (currentStep === 2) return !!(formData.plan && formData.featurePlan);
+    if (currentStep === 2) return !!(formData.plan && formData.featurePlan && !(formData.featurePlan === "starter" && Number(formData.studentEstimate) > 200));
     if (currentStep === 3) return !!(formData.academicYear.trim() && formData.currentTerm.trim());
     return true;
   }, [currentStep, formData]);
+
+  useEffect(() => {
+    if (Number(formData.studentEstimate) > 200 && formData.featurePlan === "starter") {
+      setFormData((prev) => ({ ...prev, featurePlan: "standard" }));
+    }
+  }, [formData.studentEstimate, formData.featurePlan]);
 
   const handleNext = () => {
     if (!valid) { showToast("Please complete all required fields.", { type: "error" }); return; }
@@ -163,6 +169,7 @@ const GetStarted = () => {
         }
         @media (max-width: 640px) {
           .form-grid-2 { grid-template-columns: 1fr !important; gap: 16px !important; }
+          .get-started-section { padding: 0 14px 72px !important; }
           .get-started-form { padding: 32px 20px !important; border-radius: 24px !important; }
           .progress-card { padding: 20px !important; border-radius: 20px !important; }
           .trust-badge { padding: 16px !important; }
@@ -173,10 +180,64 @@ const GetStarted = () => {
           .school-profile-header { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
           .school-profile-header h3 { font-size: 20px !important; }
           .school-profile-field-full { grid-column: auto !important; }
+          .subscription-plan-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+          .subscription-plan-card {
+            min-height: auto !important;
+            padding: 18px !important;
+            display: grid !important;
+            grid-template-columns: 42px 1fr !important;
+            column-gap: 14px !important;
+            align-items: start !important;
+          }
+          .subscription-plan-card-icon { width: 42px !important; height: 42px !important; margin-bottom: 0 !important; }
+          .subscription-plan-card h3 { font-size: 17px !important; margin-top: 1px !important; }
+          .subscription-plan-card p { font-size: 13px !important; line-height: 1.45 !important; }
+          .billing-cycle-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
+          .billing-cycle-option {
+            min-height: 58px !important;
+            padding: 12px 14px !important;
+            display: grid !important;
+            grid-template-columns: 1fr auto !important;
+            align-items: center !important;
+            text-align: left !important;
+          }
+          .billing-cycle-option span { line-height: 1.2 !important; }
+          .billing-cycle-option .billing-discount { grid-column: 2 !important; justify-self: end !important; }
+          .billing-note { align-items: flex-start !important; line-height: 1.45 !important; }
+          .review-intro { line-height: 1.55 !important; }
+          .review-row {
+            align-items: flex-start !important;
+            gap: 8px !important;
+          }
+          .review-label { flex: 0 0 auto !important; }
+          .review-value {
+            min-width: 0 !important;
+            max-width: 58% !important;
+            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+            white-space: normal !important;
+          }
+          .form-actions { gap: 12px !important; }
+          .form-actions button { flex: 1 1 0 !important; min-width: 0 !important; padding-left: 16px !important; padding-right: 16px !important; }
+        }
+        @media (max-width: 420px) {
+          .get-started-form { padding: 28px 18px !important; }
+          .review-row {
+            flex-direction: column !important;
+            justify-content: flex-start !important;
+            align-items: stretch !important;
+          }
+          .review-value {
+            max-width: none !important;
+            text-align: left !important;
+          }
+          .form-actions { flex-direction: column-reverse !important; align-items: stretch !important; }
+          .form-actions button { width: 100% !important; }
         }
         @media (min-width: 641px) and (max-width: 960px) {
           .school-profile-grid { grid-template-columns: 1fr 1fr !important; }
           .school-profile-field-full { grid-column: 1 / -1 !important; }
+          .subscription-plan-grid { grid-template-columns: 1fr 1fr !important; }
         }
         @media (min-width: 961px) {
           .school-profile-grid { grid-template-columns: 1.1fr 1fr !important; }
@@ -350,52 +411,59 @@ const GetStarted = () => {
 
                     {currentStep === 2 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        <div className="subscription-plan-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                           <div 
-                            onClick={() => { if (Number(formData.studentEstimate) <= 500) setFormData(p => ({ ...p, featurePlan: "starter" })); }}
+                            className="subscription-plan-card"
+                            onClick={() => { if (Number(formData.studentEstimate) <= 200) setFormData(p => ({ ...p, featurePlan: "starter" })); }}
                             style={{ 
                               padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "starter" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
                               background: formData.featurePlan === "starter" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", 
-                              cursor: Number(formData.studentEstimate) > 500 ? "not-allowed" : "pointer", 
-                              transition: "all 0.2s", opacity: Number(formData.studentEstimate) > 500 ? 0.3 : 1, position: "relative", backdropFilter: "blur(10px)"
+                              cursor: Number(formData.studentEstimate) > 200 ? "not-allowed" : "pointer", 
+                              transition: "all 0.2s", opacity: Number(formData.studentEstimate) > 200 ? 0.72 : 1, position: "relative", backdropFilter: "blur(10px)", minHeight: 180
                             }}
                           >
-                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
+                            <div className="subscription-plan-card-icon" style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
                               <CheckCircle2 size={24} color="#10B981" style={{ margin: "auto" }} />
                             </div>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Starter</h3>
-                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Max 500 Students. Perfect for small schools.</p>
-                            {Number(formData.studentEstimate) > 500 && (
-                              <p style={{ fontSize: 11, color: "#EF4444", fontWeight: 700, marginTop: 8 }}>Est. {formData.studentEstimate} students exceeds limit</p>
-                            )}
+                            <div>
+                              <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Starter</h3>
+                              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Max 200 Students. Perfect for small schools.</p>
+                              {Number(formData.studentEstimate) > 200 && (
+                                <p style={{ fontSize: 11, color: "#F87171", fontWeight: 700, marginTop: 8 }}>Est. {formData.studentEstimate} students exceeds limit</p>
+                              )}
+                            </div>
                           </div>
                           <div 
+                            className="subscription-plan-card"
                             onClick={() => setFormData(p => ({ ...p, featurePlan: "standard" }))}
                             style={{ 
                               padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "standard" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
-                              background: formData.featurePlan === "standard" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", transition: "all 0.2s", backdropFilter: "blur(10px)"
+                              background: formData.featurePlan === "standard" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", transition: "all 0.2s", backdropFilter: "blur(10px)", minHeight: 180
                             }}
                           >
-                            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(11, 74, 130, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
+                            <div className="subscription-plan-card-icon" style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(11, 74, 130, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
                               <ShieldCheck size={24} color="#93C5FD" style={{ margin: "auto" }} />
                             </div>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Standard</h3>
-                            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Unlimited Students. Advanced features for growing schools.</p>
+                            <div>
+                              <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Standard</h3>
+                              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Unlimited Students. Advanced features for growing schools.</p>
+                            </div>
                           </div>
                         </div>
 
                         <div>
                           <label style={labelCls}>Preferred Billing Cycle (Post-Trial)</label>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                          <div className="billing-cycle-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                             {([
                               { key: "monthly", label: "Monthly", discount: null, price: (base: number) => base },
                               { key: "termly", label: "Termly", discount: "10% off", price: (base: number) => Math.round(base * 3 * 0.9) },
                               { key: "yearly", label: "Yearly", discount: "20% off", price: (base: number) => Math.round(base * 12 * 0.8) },
                             ] as const).map(({ key, label, discount, price }) => {
-                              const base = formData.featurePlan === "starter" ? 100 : 200;
+                              const base = formData.featurePlan === "starter" ? 100 : 300;
                               const amt = price(base);
                               return (
                                 <button
+                                  className="billing-cycle-option"
                                   key={key} type="button" onClick={() => setFormData(prev => ({ ...prev, plan: key }))}
                                   style={{
                                     padding: "14px 10px", borderRadius: 12, fontSize: 13, fontWeight: 600,
@@ -408,14 +476,14 @@ const GetStarted = () => {
                                   <span style={{ fontWeight: 700 }}>{label}</span>
                                   <span style={{ fontSize: 15, fontWeight: 800 }}>GH₵ {amt.toLocaleString()}</span>
                                   {discount && (
-                                    <span style={{ fontSize: 10, fontWeight: 800, color: "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>{discount}</span>
+                                    <span className="billing-discount" style={{ fontSize: 10, fontWeight: 800, color: "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>{discount}</span>
                                   )}
                                 </button>
                               );
                             })}
                           </div>
-                          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
-                            <Lightbulb size={14} color="#93C5FD" /> Pricing shown is after your free 30-day trial. You can change your plan anytime.
+                          <p className="billing-note" style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
+                            <Lightbulb size={14} color="#93C5FD" style={{ flexShrink: 0 }} /> Pricing shown is after your free 30-day trial. You can change your plan anytime.
                           </p>
                         </div>
                       </div>
@@ -463,12 +531,12 @@ const GetStarted = () => {
 
                     {currentStep === 4 && (
                       <div>
-                        <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginBottom: 20 }}>Please review your details before creating your school workspace.</p>
+                        <p className="review-intro" style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginBottom: 20 }}>Please review your details before creating your school workspace.</p>
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {reviewRows.map(([label, value], index) => (
-                            <div key={index} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)" }}>
-                              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>{label}</span>
-                              <span style={{ fontSize: 14, color: "white", fontWeight: 700, textAlign: "right", maxWidth: "60%" }}>{value || <span style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>Not set</span>}</span>
+                            <div className="review-row" key={index} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "12px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)" }}>
+                              <span className="review-label" style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>{label}</span>
+                              <span className="review-value" style={{ fontSize: 14, color: "white", fontWeight: 700, textAlign: "right", maxWidth: "60%", minWidth: 0, overflowWrap: "anywhere" }}>{value || <span style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>Not set</span>}</span>
                             </div>
                           ))}
                         </div>
@@ -477,7 +545,7 @@ const GetStarted = () => {
                   </motion.div>
                 </AnimatePresence>
 
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 32, paddingTop: 24, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                <div className="form-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 32, paddingTop: 24, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
                   <button
                     type="button" onClick={() => setCurrentStep(p => Math.max(p - 1, 0))}
                     disabled={currentStep === 0 || loading}
@@ -488,7 +556,7 @@ const GetStarted = () => {
 
                   <button
                     type="submit" disabled={loading}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: loading ? "rgba(255,255,255,0.1)" : "#0B4A82", color: "white", border: "none", cursor: loading ? "not-allowed" : "pointer", boxShadow: loading ? "none" : "0 4px 16px rgba(0,0,0,0.3)" }}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 8, padding: "12px 28px", borderRadius: 999, fontSize: 15, fontWeight: 700, background: loading ? "rgba(255,255,255,0.1)" : "#0B4A82", color: "white", border: "none", cursor: loading ? "not-allowed" : "pointer", boxShadow: loading ? "none" : "0 4px 16px rgba(0,0,0,0.3)" }}
                   >
                     {currentStep < STEPS.length - 1 ? (<>Continue <ArrowRight size={16} /></>) : (loading ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating workspace...</> : <><Rocket size={18} /> Launch School Workspace</>)}
                   </button>

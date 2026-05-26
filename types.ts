@@ -597,6 +597,26 @@ export interface Notice {
   createdAt?: number;
 }
 
+export interface ParentNotice {
+  id: string;
+  schoolId: string;
+  message: string;
+  date: string;
+  type: "info" | "urgent";
+  targetType: "all" | "class" | "students";
+  targetClassId?: string | null;
+  targetClassName?: string | null;
+  targetStudentIds?: string[];
+  recipientCount: number;
+  createdAt: number;
+  expiresAt?: number;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  readAt?: number | null;
+  readByParentName?: string | null;
+  readByParentPhone?: string | null;
+}
+
 export interface SystemNotification {
   id: string;
   schoolId: string;

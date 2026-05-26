@@ -5,9 +5,10 @@ import { useSchool } from "../../context/SchoolContext";
 import { collection, query, where, getDocs, updateDoc, doc, setDoc } from "firebase/firestore";
 import { firestore, auth } from "../../services/firebase";
 import { db } from "../../services/mockDb";
-import { Student } from "../../types";
+import { getParentDashboardNotices, markParentDashboardNoticeRead } from "../../services/backendApi";
+import { ParentNotice, Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
-import { LogOut, User as UserIcon, Calendar, FileText, CreditCard, MessageSquare, BookOpen, Clock, Activity } from "lucide-react";
+import { User as UserIcon, MessageSquare, Clock, CheckCircle2, Loader2 } from "lucide-react";
 import Layout from "../../components/Layout";
 import UserAvatar from "../../components/UserAvatar";
 import AttendanceView from "../../components/parent/AttendanceView";
@@ -26,6 +27,9 @@ export default function ParentDashboard() {
   const activeView = (searchParams.get("view") as ViewType) || null;
 
   const [students, setStudents] = useState<Student[]>([]);
+  const [parentNotices, setParentNotices] = useState<ParentNotice[]>([]);
+  const [loadingParentNotices, setLoadingParentNotices] = useState(false);
+  const [markingNoticeId, setMarkingNoticeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
     return sessionStorage.getItem("parentDashboard_selectedStudentId") || null;
@@ -236,6 +240,55 @@ export default function ParentDashboard() {
   const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
   const loggedInParentContact = getLoggedInParentContact(selectedStudent);
 
+  useEffect(() => {
+    const fetchParentNotices = async () => {
+      if (!selectedStudent?.schoolId || !selectedStudent?.id) {
+        setParentNotices([]);
+        return;
+      }
+
+      try {
+        setLoadingParentNotices(true);
+        const className =
+          CLASSES_LIST.find((classItem) => classItem.id === selectedStudent.classId)
+            ?.name || selectedStudent.classId;
+        const response = await getParentDashboardNotices({
+          schoolId: selectedStudent.schoolId,
+          studentId: selectedStudent.id,
+          classId: selectedStudent.classId || "",
+          className: className || "",
+        });
+        setParentNotices((response.notices || []).slice(0, 8) as ParentNotice[]);
+      } catch (error) {
+        console.error("Failed to load parent dashboard notices:", error);
+        setParentNotices([]);
+      } finally {
+        setLoadingParentNotices(false);
+      }
+    };
+
+    fetchParentNotices();
+  }, [selectedStudent?.id, selectedStudent?.schoolId, selectedStudent?.classId]);
+
+  const handleMarkNoticeRead = async (notice: ParentNotice) => {
+    if (!selectedStudent?.schoolId || !selectedStudent?.id) return;
+
+    setMarkingNoticeId(notice.id);
+    try {
+      await markParentDashboardNoticeRead({
+        noticeId: notice.id,
+        schoolId: selectedStudent.schoolId,
+        studentId: selectedStudent.id,
+        parentName: loggedInParentContact.name,
+      });
+      setParentNotices((current) => current.filter((item) => item.id !== notice.id));
+    } catch (error) {
+      console.error("Failed to mark parent dashboard notice as read:", error);
+    } finally {
+      setMarkingNoticeId(null);
+    }
+  };
+
   if (loading) {
     return (
       <Layout title="Parent Dashboard">
@@ -372,15 +425,72 @@ export default function ParentDashboard() {
                 )}
               </div>
 
-              {/* Upcoming Events Sidebar */}
+              {/* Parent Notices Sidebar */}
               <div className="lg:col-span-1">
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm lg:sticky lg:top-20">
                   <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-sm">
-                    <Clock size={16} className="text-orange-500" /> Upcoming Events
+                    <MessageSquare size={16} className="text-emerald-500" /> Reminder Notices
                   </h3>
-                  <div className="text-center py-4 text-slate-500 text-sm">
-                    No upcoming events scheduled at this time.
-                  </div>
+                  {loadingParentNotices ? (
+                    <div className="flex items-center justify-center py-8 text-slate-400">
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
+                    </div>
+                  ) : parentNotices.length === 0 ? (
+                    <div className="text-center py-4 text-slate-500 text-sm">
+                      No reminder notices at this time.
+                    </div>
+                  ) : (
+                    <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                      {parentNotices.map((notice) => (
+                        <div
+                          key={notice.id}
+                          className={`rounded-xl border p-3 ${
+                            notice.type === "urgent"
+                              ? "border-rose-100 bg-rose-50"
+                              : "border-emerald-100 bg-emerald-50"
+                          }`}
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                notice.type === "urgent"
+                                  ? "bg-rose-100 text-rose-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {notice.type === "urgent" ? "Urgent" : "Notice"}
+                            </span>
+                            <span className="text-[10px] font-medium text-slate-400">
+                              {notice.date}
+                            </span>
+                          </div>
+                          <p className="whitespace-pre-line text-sm leading-5 text-slate-700">
+                            {notice.message}
+                          </p>
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkNoticeRead(notice)}
+                              disabled={markingNoticeId === notice.id}
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                                notice.type === "urgent"
+                                  ? "border-rose-200 bg-white text-rose-600 hover:bg-rose-100"
+                                  : "border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-100"
+                              } disabled:cursor-not-allowed disabled:opacity-60`}
+                              title="Mark as read"
+                              aria-label="Mark notice as read"
+                            >
+                              {markingNoticeId === notice.id ? (
+                                <Loader2 size={15} className="animate-spin" />
+                              ) : (
+                                <CheckCircle2 size={16} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

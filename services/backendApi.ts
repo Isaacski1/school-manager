@@ -823,6 +823,59 @@ export async function startPublicSchoolSetup(payload: any): Promise<any> {
   });
 }
 
+export async function sendParentDashboardNotice(payload: {
+  message: string;
+  type: "info" | "urgent";
+  targetStudentIds: string[];
+  targetClassId?: string | null;
+  targetClassName?: string | null;
+}): Promise<{ success: boolean; notice: any; message: string }> {
+  return apiRequest("/api/admin/parent-notices", {
+    body: payload,
+  });
+}
+
+export async function getParentDashboardNoticeHistory(): Promise<{
+  success: boolean;
+  notices: any[];
+}> {
+  return apiRequest("/api/admin/parent-notices/history", {
+    method: "GET",
+  });
+}
+
+export async function deleteParentDashboardNotice(noticeId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  return apiRequest(`/api/admin/parent-notices/${encodeURIComponent(noticeId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getParentDashboardNotices(params: {
+  schoolId: string;
+  studentId: string;
+  classId?: string;
+  className?: string;
+}): Promise<{ success: boolean; notices: any[] }> {
+  const query = buildQueryString(params);
+  return apiRequest(`/api/parent/notices${query}`, {
+    method: "GET",
+  });
+}
+
+export async function markParentDashboardNoticeRead(payload: {
+  noticeId: string;
+  schoolId: string;
+  studentId: string;
+  parentName?: string;
+}): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/parent/notices/${encodeURIComponent(payload.noticeId)}/read`, {
+    body: payload,
+  });
+}
+
 
 export interface SuperAdminSmsOverview {
   success: boolean;

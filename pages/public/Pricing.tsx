@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Check, ChevronDown } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Info } from "lucide-react";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 
 const fadeUp = { hidden: { opacity: 0, y: 28 }, show: { opacity: 1, y: 0, transition: { duration: 0.55 } } };
@@ -9,69 +9,99 @@ const stagger = { show: { transition: { staggerChildren: 0.15 } } };
 
 type Cycle = "monthly" | "termly" | "yearly";
 
-const BASE_PRICES = { starter: 100, standard: 200 };
+const formatCurrency = (amount: number) => `GH₵ ${amount.toLocaleString()}`;
 
-function getPrice(base: number, cycle: Cycle): { amount: number; label: string; perMonth: number; save: number } {
+function getSubscriptionPrice(monthlyPrice: number, cycle: Cycle): { amount: number; label: string; savings: number } {
   if (cycle === "monthly") {
-    return { amount: base, label: "/ month", perMonth: base, save: 0 };
+    return { amount: monthlyPrice, label: "/ month", savings: 0 };
   }
+
   if (cycle === "termly") {
-    const total = base * 3 * 0.9;
-    return { amount: total, label: "/ term (3 months)", perMonth: Math.round(total / 3), save: base * 3 - total };
+    const undiscounted = monthlyPrice * 3;
+    const amount = Math.round(undiscounted * 0.9);
+    return { amount, label: "/ term", savings: undiscounted - amount };
   }
-  // yearly
-  const total = base * 12 * 0.8;
-  return { amount: total, label: "/ year (12 months)", perMonth: Math.round(total / 12), save: base * 12 - total };
+
+  const undiscounted = monthlyPrice * 12;
+  const amount = Math.round(undiscounted * 0.8);
+  return { amount, label: "/ year", savings: undiscounted - amount };
 }
 
 const plans = [
   {
-    name: "Starter",
-    baseKey: "starter" as const,
+    name: "Starter Plan",
     tagline: "For schools that want a clean digital foundation.",
     popular: false,
+    monthlyPrice: 100,
+    setupFee: 600,
+    onboardingDetails: "Covers standard Excel student data import and remote admin walk-through.",
     bullets: [
-      "Student & teacher attendance",
-      "Teacher workflows & timetable",
-      "Assessments and report cards",
-      "Core school setup tools",
-      "Basic dashboard analytics",
-      "Parent dashboard access",
-      "Up to 500 students",
+      "Up to 200 Students",
+      "Student & Staff Profiles",
+      "Core School Setup Tools",
     ],
   },
   {
-    name: "Standard",
-    baseKey: "standard" as const,
+    name: "Standard Plan",
     tagline: "For schools that need deeper operations visibility.",
     popular: true,
+    monthlyPrice: 300,
+    setupFee: 1500,
+    onboardingDetails: "Covers complete physical/digital record migration, custom grading configuration, and 1 day of on-site staff training.",
     bullets: [
-      "Everything in Starter",
-      "Full student academic history",
-      "Fees, billing & payment tracking",
-      "Online payments via Paystack / MoMo",
-      "WhatsApp Broadcast to all parents",
-      "Parent portal — fees, invoices & payments",
-      "Admin WhatsApp payment alerts & invoices",
-      "Advanced admin control panel",
-      "Activity monitor & backups",
-      "Priority support",
-      "Unlimited students",
+      "Unlimited Students",
+      "All Starter Features",
+      "NaCCA Grading System & Terminal Reports",
+      "Exam Results Analytics",
+      "Parent Portal Access",
     ],
   },
 ];
 
 const faqs = [
   { q: "Do I need a credit card to start?", a: "No. You can start a free trial and set up your school with no payment required upfront." },
-  { q: "Can I switch plans later?", a: "Yes. You can upgrade from Starter to Standard at any time from your admin settings." },
-  { q: "How long does onboarding take?", a: "Most schools are fully set up within 5–10 minutes using our self-serve wizard." },
+  { q: "Can I switch plans later?", a: "Yes. You can upgrade from Starter Plan to Standard Plan at any time from your admin settings." },
+  { q: "Is there a setup fee?", a: "Yes. Starter Plan has a GH₵ 600 one-time setup fee, and Standard Plan has a GH₵ 1,500 one-time setup fee. This covers onboarding, data migration, configuration, and training based on the plan." },
+  { q: "How long does onboarding take?", a: "Starter onboarding is handled remotely. Standard onboarding includes record migration, grading configuration, and 1 day of on-site staff training." },
   { q: "Is my school data safe?", a: "Yes. All data is stored securely on Firebase with role-based access control and regular backups." },
-  { q: "What does the termly billing discount mean?", a: "Paying termly covers 3 months at once and gives you a 10% discount vs paying monthly. Yearly billing gives a 20% discount across all 12 months." },
+  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 3 months with a 10% discount, and yearly covers 12 months with a 20% discount. The one-time setup fee is charged only when the school is first onboarded." },
+];
+
+const featureComparisonRows = [
+  { feature: "Up to 200 Students", starter: true, standard: true },
+  { feature: "Unlimited Students", starter: false, standard: true },
+  { feature: "Student & Staff Records", starter: true, standard: true },
+  { feature: "Class & Section Organization", starter: true, standard: true },
+  { feature: "Attendance Tracking", starter: true, standard: true },
+  { feature: "Teacher Attendance Tracking", starter: true, standard: true },
+  { feature: "Fees & Billing", starter: false, standard: true },
+  { feature: "Payment Tracking", starter: false, standard: true },
+  { feature: "Financial Reporting", starter: false, standard: true },
+  { feature: "Assessments & Reports", starter: false, standard: true },
+  { feature: "NaCCA Grading System & Terminal Reports", starter: false, standard: true },
+  { feature: "Exam Results Analytics", starter: false, standard: true },
+  { feature: "Report Cards", starter: false, standard: true },
+  { feature: "Skills & Remarks", starter: false, standard: true },
+  { feature: "Student Performance", starter: false, standard: true },
+  { feature: "Timetable Management", starter: false, standard: true },
+  { feature: "Parent Portal Access", starter: false, standard: true },
+  { feature: "School Announcements", starter: false, standard: true },
+  { feature: "WhatsApp Broadcast", starter: false, standard: true },
+  { feature: "Online Fee Payments", starter: false, standard: true },
+  { feature: "Admin Payment Alerts", starter: false, standard: true },
+  { feature: "Notifications & Alerts", starter: false, standard: true },
+  { feature: "Analytics & Reports", starter: false, standard: true },
+  { feature: "Activity Monitoring", starter: false, standard: true },
+  { feature: "Backup & Recovery", starter: false, standard: true },
+  { feature: "System Settings", starter: false, standard: true },
+  { feature: "Security & Access Control", starter: true, standard: true },
+  { feature: "Mobile Responsive Access", starter: true, standard: true },
 ];
 
 const Pricing = () => {
   const [cycle, setCycle] = useState<Cycle>("monthly");
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
+  const [activeSetupTooltip, setActiveSetupTooltip] = useState<string | null>(null);
 
   return (
     <PublicSiteLayout>
@@ -117,23 +147,26 @@ const Pricing = () => {
           <h1 style={{ fontSize: "clamp(34px, 5vw, 56px)", fontWeight: 800, color: "white", margin: "0 0 20px 0", lineHeight: 1.1, letterSpacing: "-0.02em" }}>Affordable School Management Pricing in Ghana</h1>
           <p style={{ fontSize: "clamp(16px, 2vw, 19px)", color: "rgba(255,255,255,0.7)", margin: "0 0 48px 0", lineHeight: 1.6 }}>Choose the most cost-effective school management software for your Ghanaian school. Simple, transparent plans with no hidden fees.</p>
 
-          {/* Billing Cycle Toggle */}
           <div className="cycle-toggle" style={{ display: "inline-flex", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 999, padding: 6, gap: 4 }}>
-            {(["monthly", "termly", "yearly"] as Cycle[]).map((c) => (
+            {(["monthly", "termly", "yearly"] as Cycle[]).map((billingCycle) => (
               <button
-                key={c}
-                onClick={() => setCycle(c)}
+                key={billingCycle}
+                onClick={() => setCycle(billingCycle)}
                 style={{
-                  padding: "10px 22px", borderRadius: 999, fontSize: 14, fontWeight: 700,
-                  border: "none", cursor: "pointer", transition: "all 0.25s",
-                  background: cycle === c ? "#0B4A82" : "transparent",
-                  color: cycle === c ? "white" : "rgba(255,255,255,0.6)",
-                  position: "relative",
+                  padding: "10px 22px",
+                  borderRadius: 999,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.25s",
+                  background: cycle === billingCycle ? "#0B4A82" : "transparent",
+                  color: cycle === billingCycle ? "white" : "rgba(255,255,255,0.6)",
                 }}
               >
-                {c.charAt(0).toUpperCase() + c.slice(1)}
-                {c === "termly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: cycle === c ? "#93C5FD" : "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>-10%</span>}
-                {c === "yearly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: cycle === c ? "#93C5FD" : "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>-20%</span>}
+                {billingCycle.charAt(0).toUpperCase() + billingCycle.slice(1)}
+                {billingCycle === "termly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#FBBF24", background: "rgba(251,191,36,0.12)", borderRadius: 999, padding: "2px 8px" }}>-10%</span>}
+                {billingCycle === "yearly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#FBBF24", background: "rgba(251,191,36,0.12)", borderRadius: 999, padding: "2px 8px" }}>-20%</span>}
               </button>
             ))}
           </div>
@@ -144,7 +177,9 @@ const Pricing = () => {
       <section className="pricing-grid-section" style={{ padding: "0 24px", marginTop: -80, position: "relative", zIndex: 10 }}>
         <motion.div initial="hidden" animate="show" variants={stagger} className="pricing-grid" style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 32 }}>
           {plans.map((plan) => {
-            const priceInfo = getPrice(BASE_PRICES[plan.baseKey], cycle);
+            const subscription = getSubscriptionPrice(plan.monthlyPrice, cycle);
+            const totalDueToday = subscription.amount + plan.setupFee;
+            const isSetupTooltipOpen = activeSetupTooltip === plan.name;
             return (
               <motion.div
                 key={plan.name}
@@ -176,18 +211,52 @@ const Pricing = () => {
                 {/* Price */}
                 <div style={{ marginBottom: "8px" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-                    <span style={{ fontSize: "13px", fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>GH₵</span>
-                    <span className="price-amount" style={{ fontSize: "48px", fontWeight: "800", color: "white", lineHeight: 1 }}>{priceInfo.amount.toLocaleString()}</span>
+                    <span className="price-amount" style={{ fontSize: "48px", fontWeight: "800", color: "white", lineHeight: 1 }}>{formatCurrency(subscription.amount)}</span>
                   </div>
-                  <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.5)", margin: "4px 0 0 0" }}>{priceInfo.label}</p>
-                  {cycle !== "monthly" && (
-                    <p style={{ fontSize: "13px", color: "#10B981", margin: "6px 0 0 0", fontWeight: 700 }}>
-                      ≈ GH₵ {priceInfo.perMonth}/mo · Save GH₵ {priceInfo.save.toLocaleString()}
+                  <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.5)", margin: "4px 0 0 0" }}>{subscription.label}</p>
+                  {subscription.savings > 0 && (
+                    <p style={{ fontSize: 13, color: "#10B981", margin: "6px 0 0 0", fontWeight: 700 }}>
+                      Save {formatCurrency(subscription.savings)}
                     </p>
                   )}
+                  <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                    <span style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", fontWeight: 600 }}>
+                      + {formatCurrency(plan.setupFee)} one-time setup fee
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`${plan.name} setup fee details`}
+                      onClick={() => setActiveSetupTooltip(isSetupTooltipOpen ? null : plan.name)}
+                      onMouseEnter={() => setActiveSetupTooltip(plan.name)}
+                      onMouseLeave={() => setActiveSetupTooltip(null)}
+                      style={{ width: 24, height: 24, borderRadius: "50%", border: "1px solid rgba(245, 158, 11, 0.45)", background: "rgba(245, 158, 11, 0.12)", color: "#FBBF24", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                    >
+                      <Info size={14} />
+                    </button>
+                    {isSetupTooltipOpen && (
+                      <div style={{ position: "absolute", left: 0, top: "calc(100% + 10px)", width: 280, maxWidth: "min(280px, calc(100vw - 64px))", padding: "12px 14px", borderRadius: 12, background: "#082A4A", border: "1px solid rgba(251, 191, 36, 0.35)", color: "rgba(255,255,255,0.86)", fontSize: 13, lineHeight: 1.5, boxShadow: "0 18px 45px rgba(0,0,0,0.35)", zIndex: 30 }}>
+                        {plan.onboardingDetails}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "24px 0 32px" }} />
+
+                <div style={{ border: "1px solid rgba(251, 191, 36, 0.28)", borderRadius: 18, padding: "16px", marginBottom: 28, background: "rgba(251, 191, 36, 0.08)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, color: "rgba(255,255,255,0.68)", fontSize: 13, marginBottom: 8 }}>
+                    <span>{cycle.charAt(0).toUpperCase() + cycle.slice(1)} subscription</span>
+                    <strong style={{ color: "white" }}>{formatCurrency(subscription.amount)}</strong>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, color: "rgba(255,255,255,0.68)", fontSize: 13, marginBottom: 12 }}>
+                    <span>One-time setup</span>
+                    <strong style={{ color: "white" }}>{formatCurrency(plan.setupFee)}</strong>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 12, borderTop: "1px solid rgba(251, 191, 36, 0.24)" }}>
+                    <span style={{ color: "#FBBF24", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Due Today</span>
+                    <strong style={{ color: "#FBBF24", fontSize: 20 }}>{formatCurrency(totalDueToday)}</strong>
+                  </div>
+                </div>
 
                 <div className="features-list" style={{ flex: 1, marginBottom: 48 }}>
                   <p style={{ fontSize: "13px", fontWeight: "700", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "20px" }}>What's included:</p>
@@ -247,24 +316,7 @@ const Pricing = () => {
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Starter</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Standard</span>
             </div>
-            {[
-              { feature: "Attendance & Teacher Tracking", starter: true, standard: true },
-              { feature: "Assessments & Report Cards", starter: true, standard: true },
-              { feature: "Student & Staff Management", starter: true, standard: true },
-              { feature: "Basic Dashboard Analytics", starter: true, standard: true },
-              { feature: "Billing & Subscription Management", starter: true, standard: true },
-              { feature: "Timetable Management", starter: false, standard: true },
-              { feature: "Fees & Payment Tracking", starter: false, standard: true },
-              { feature: "Online Payments (Paystack / MoMo)", starter: false, standard: true },
-              { feature: "WhatsApp Broadcast to Parents", starter: false, standard: true },
-              { feature: "Parent Portal — Fees & Invoices", starter: false, standard: true },
-              { feature: "Auto PDF Invoice on Payment", starter: false, standard: true },
-              { feature: "Admin WhatsApp Payment Alerts", starter: false, standard: true },
-              { feature: "Activity Monitor", starter: false, standard: true },
-              { feature: "Backups & Data Recovery", starter: false, standard: true },
-              { feature: "Student Academic History", starter: false, standard: true },
-              { feature: "Unlimited Students", starter: false, standard: true },
-            ].map((row, i) => (
+            {featureComparisonRows.map((row, i) => (
               <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px", padding: "14px 24px", borderBottom: "1px solid rgba(255,255,255,0.04)", alignItems: "center", gap: 8, background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
                 <span style={{ fontSize: 15, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>{row.feature}</span>
                 <div style={{ display: "flex", justifyContent: "center" }}>
@@ -288,28 +340,30 @@ const Pricing = () => {
 
       {/* Comparison table */}
       <section style={{ padding: "100px 24px 0" }}>
-        <div style={{ maxWidth: 700, margin: "0 auto", textAlign: "center", marginBottom: 48 }}>
+        <div style={{ maxWidth: 860, margin: "0 auto", textAlign: "center", marginBottom: 48 }}>
           <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Quick price comparison</h2>
-          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what you'll pay per billing cycle.</p>
+          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what each plan costs across billing cycles.</p>
           <div className="scroll-hint" style={{ display: "none", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
-            <span>← Scroll to see all cycles →</span>
+            <span>← Scroll to see all pricing details →</span>
           </div>
         </div>
-        <div style={{ maxWidth: 700, margin: "0 auto", overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
-          <div style={{ minWidth: 550, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
+        <div style={{ maxWidth: 860, margin: "0 auto", overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ minWidth: 720, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
             {/* Header row */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Plan</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Monthly</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly <span style={{ fontSize: 10 }}>(-10%)</span></span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly <span style={{ fontSize: 10 }}>(-20%)</span></span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#FBBF24", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Setup Fee</span>
             </div>
             {plans.map((plan) => (
-              <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
+              <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: "white" }}>{plan.name}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>GH₵ {BASE_PRICES[plan.baseKey]}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "termly").amount}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>GH₵ {getPrice(BASE_PRICES[plan.baseKey], "yearly").amount.toLocaleString()}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "monthly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "termly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "yearly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 800, color: "#FBBF24", textAlign: "center" }}>{formatCurrency(plan.setupFee)}</span>
               </div>
             ))}
           </div>

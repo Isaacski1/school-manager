@@ -4350,9 +4350,11 @@ const AdminDashboard = () => {
                   </Link>
                 )}
               </div>
-              <div className={DASHBOARD_TABLE_WRAPPER}>
+              <div
+                className={`${DASHBOARD_TABLE_WRAPPER} max-h-[420px] overflow-auto`}
+              >
                 <table className="w-full text-left text-sm text-slate-600">
-                  <thead className="bg-slate-50/90 text-slate-700 font-semibold">
+                  <thead className="sticky top-0 z-10 bg-slate-50 text-slate-700 font-semibold shadow-[0_1px_0_rgba(226,232,240,0.9)]">
                     <tr>
                       <th className="px-6 py-3">Student Name</th>
                       <th className="px-6 py-3 text-center">Assigned Class</th>
