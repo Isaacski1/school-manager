@@ -422,12 +422,9 @@ const ProtectedRoute = ({
     return <Navigate to="/login" replace />;
   }
 
-  // TEMP DEV BYPASS: Commented out email verification check to allow rapid testing without checking emails
-  /*
   if (user && !user.emailVerified && user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.PARENT) {
-    return <Navigate to="/verify-email" replace />;
+    return <Navigate to="/verify-email" replace state={{ email: user.email }} />;
   }
-  */
 
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
     // Redirect based on actual role if they try to access unauthorized pages

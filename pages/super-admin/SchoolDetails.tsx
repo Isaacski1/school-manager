@@ -118,7 +118,6 @@ const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
 const SCHOOL_TYPE_OPTIONS = [
   "Primary School",
   "Junior High School",
-  "Senior High School",
   "Basic School (Nursery to JHS)",
   "Nursery/Kindergarten",
 ];

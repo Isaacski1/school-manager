@@ -370,7 +370,6 @@ const GetStarted = () => {
                               <option value="">Select type</option>
                               <option>Primary School</option>
                               <option>Junior High School</option>
-                              <option>Senior High School</option>
                               <option>Basic School (Nursery to JHS)</option>
                               <option>Nursery/Kindergarten</option>
                             </select>

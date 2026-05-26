@@ -6,6 +6,7 @@ import {
   ActionCodeSettings,
   sendEmailVerification,
   signInWithEmailAndPassword,
+  signOut,
 } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { auth } from "../../services/firebase";
@@ -30,6 +31,12 @@ const VerifyEmail = () => {
   const [resendSuccess, setResendSuccess] = useState(false);
   const [resendError, setResendError] = useState("");
 
+  const clearUnverifiedSession = async () => {
+    if (auth.currentUser && !auth.currentUser.emailVerified) {
+      await signOut(auth);
+    }
+  };
+
   const handleResend = async () => {
     if (!state?.email || !state?.password) {
       setResendError("Please go back to the registration form and try again.");
@@ -44,6 +51,7 @@ const VerifyEmail = () => {
         handleCodeInApp: true,
       };
       await sendEmailVerification(userCredential.user, actionSettings);
+      await clearUnverifiedSession();
       setResendSuccess(true);
     } catch (err: any) {
       setResendError(err?.message || "Failed to resend. Please try logging in instead.");
@@ -66,6 +74,7 @@ const VerifyEmail = () => {
           window.location.href = "/";
           return;
         }
+        await clearUnverifiedSession();
       }
 
       // If no current user but we have credentials, try to sign in
@@ -78,6 +87,7 @@ const VerifyEmail = () => {
             window.location.href = "/";
             return;
           } else {
+            await clearUnverifiedSession();
             setResendError("Email not verified yet. Please check your inbox and click the verification link.");
           }
         } catch (signInErr: any) {
@@ -247,6 +257,7 @@ const VerifyEmail = () => {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Link
               to="/login"
+              onClick={() => void signOut(auth)}
               style={{
                 color: "#0B4A82",
                 fontWeight: 700,
@@ -259,6 +270,7 @@ const VerifyEmail = () => {
 
             <Link
               to="/"
+              onClick={() => void signOut(auth)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
