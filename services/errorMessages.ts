@@ -106,6 +106,14 @@ export const getFriendlyErrorMessage = (
     return message || "Firebase Auth is unreachable right now. Please try again in a few minutes.";
   }
 
+  if (code === "VERIFICATION_LINK_FAILED") {
+    return message || "The server could not generate a verification link. Please contact support.";
+  }
+
+  if (code === "VERIFICATION_EMAIL_FAILED") {
+    return message || "The server could not send the verification email. Please contact support.";
+  }
+
   if (status === 404) {
     return "We could not find the requested record. It may have been removed or changed.";
   }

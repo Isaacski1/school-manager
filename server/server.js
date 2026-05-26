@@ -10845,14 +10845,28 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
       email: safeEmail,
     }).toString()}`;
 
-    const emailVerificationLink = await retryFirebaseAdminNetworkCall(
-      "generate public verification email link",
-      () =>
-        admin.auth().generateEmailVerificationLink(safeEmail, {
-          url: verificationContinueUrl,
-          handleCodeInApp: true,
-        }),
-    );
+    let emailVerificationLink = "";
+    try {
+      emailVerificationLink = await retryFirebaseAdminNetworkCall(
+        "generate public verification email link",
+        () =>
+          admin.auth().generateEmailVerificationLink(safeEmail, {
+            url: verificationContinueUrl,
+            handleCodeInApp: true,
+          }),
+      );
+    } catch (linkError) {
+      const message = linkError?.message || "Failed to generate verification link.";
+      console.error("[VerifyEmail] Failed to generate verification link:", {
+        email: safeEmail,
+        code: linkError?.code || null,
+        message,
+      });
+      return res.status(502).json({
+        error: `Firebase could not generate the verification link: ${message}`,
+        code: "VERIFICATION_LINK_FAILED",
+      });
+    }
 
     let displayName = userRecord.displayName || "School Admin";
     try {
@@ -10947,7 +10961,7 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         code: "FIREBASE_AUTH_UNREACHABLE",
       });
     }
-    res.status(500).json({
+    res.status(502).json({
       error: error.message || "Failed to send verification email.",
       code: "VERIFICATION_EMAIL_FAILED",
     });
