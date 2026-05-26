@@ -10801,8 +10801,8 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid email address." });
     }
 
-    const resendKey = process.env.RESEND_API_KEY;
-    const resendFrom = process.env.RESEND_FROM_EMAIL;
+    const resendKey = RESEND_API_KEY;
+    const resendFrom = RESEND_FROM_EMAIL;
     if (!resendKey || !resendFrom) {
       return res.status(503).json({
         error:
@@ -10859,8 +10859,8 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
       console.warn("[VerifyEmail] Failed to load user profile for resend", profileError?.message || profileError);
     }
 
-    const from = process.env.RESEND_FROM_NAME
-      ? `${process.env.RESEND_FROM_NAME} <${resendFrom}>`
+    const from = RESEND_FROM_NAME
+      ? `${RESEND_FROM_NAME} <${resendFrom}>`
       : resendFrom;
 
     const html = `
@@ -10912,7 +10912,19 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
     });
     const resBody = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resBody?.message || `Resend failed with ${response.status}`);
+      const providerMessage =
+        resBody?.message ||
+        resBody?.error ||
+        `Resend failed with ${response.status}`;
+      console.error("[VerifyEmail] Resend provider rejected verification email:", {
+        status: response.status,
+        email: safeEmail,
+        message: providerMessage,
+      });
+      return res.status(502).json({
+        error: `Email provider rejected the verification email: ${providerMessage}`,
+        code: "EMAIL_DELIVERY_FAILED",
+      });
     }
 
     res.json({
@@ -10931,7 +10943,10 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         code: "FIREBASE_AUTH_UNREACHABLE",
       });
     }
-    res.status(500).json({ error: error.message || "Failed to send verification email." });
+    res.status(500).json({
+      error: error.message || "Failed to send verification email.",
+      code: "VERIFICATION_EMAIL_FAILED",
+    });
   }
 });
 

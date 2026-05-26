@@ -90,6 +90,18 @@ export const getFriendlyErrorMessage = (
     return "Your session has expired. Please log in again.";
   }
 
+  if (code === "EMAIL_NOT_CONFIGURED") {
+    return "Email delivery is not configured on the server. Please contact support to set up the sender email.";
+  }
+
+  if (code === "EMAIL_DELIVERY_FAILED") {
+    return message || "The email provider could not send the verification email. Please contact support.";
+  }
+
+  if (code === "FIREBASE_AUTH_UNREACHABLE") {
+    return message || "Firebase Auth is unreachable right now. Please try again in a few minutes.";
+  }
+
   if (status === 404) {
     return "We could not find the requested record. It may have been removed or changed.";
   }
@@ -135,4 +147,3 @@ export const getFriendlyErrorMessage = (
 
   return message;
 };
-
