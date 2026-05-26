@@ -68,6 +68,10 @@ const VerifyEmail = () => {
         showToast("Verification email sent. Please check your inbox, spam, or promotions folder.", { type: "success" });
       } catch (fallbackErr: any) {
         await clearUnverifiedSession();
+        if (fallbackErr?.code === "auth/too-many-requests") {
+          setResendError("Too many verification attempts. Please wait a few minutes, then click resend again.");
+          return;
+        }
         setResendError(
           fallbackErr?.message ||
             err?.message ||

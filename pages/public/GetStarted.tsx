@@ -2,21 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ArrowRight, CheckCircle2, Lightbulb, Loader2, Rocket, ShieldCheck, UploadCloud, X } from "lucide-react";
-import { ActionCodeSettings, sendEmailVerification, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { showToast } from "../../services/toast";
 import { startPublicSchoolSetup } from "../../services/backendApi";
-import { auth } from "../../services/firebase";
 
 const STEPS = ["School Profile", "Admin Account", "Subscription Plan", "Setup Details", "Review & Launch"];
-
-const buildEmailVerificationUrl = (email: string) => {
-  const params = new URLSearchParams({
-    authAction: "emailVerified",
-    email,
-  });
-  return `${window.location.origin}/?${params.toString()}`;
-};
 
 const inputCls: React.CSSProperties = {
   width: "100%", padding: "13px 16px", borderRadius: 12, fontSize: 15,
@@ -119,21 +109,6 @@ const GetStarted = () => {
 
       if (!response?.schoolId) {
         throw new Error("Backend did not return a valid schoolId.");
-      }
-
-      try {
-        const adminEmail = formData.adminEmail.trim().toLowerCase();
-        const userCredential = await signInWithEmailAndPassword(auth, adminEmail, formData.password);
-        const actionSettings: ActionCodeSettings = {
-          url: buildEmailVerificationUrl(adminEmail),
-          handleCodeInApp: true,
-        };
-        await sendEmailVerification(userCredential.user, actionSettings);
-        if (!userCredential.user.emailVerified) {
-          await signOut(auth);
-        }
-      } catch (verificationError) {
-        console.warn("Firebase verification email could not be sent after registration", verificationError);
       }
 
       setShowSuccessPopup(true);
