@@ -52,7 +52,12 @@ const VerifyEmail = () => {
       showToast(result.message || "Verification email sent.", { type: "success" });
     } catch (err: any) {
       if (!state.password) {
-        setResendError(err?.message || "Failed to resend verification email.");
+        const details = [
+          err?.message || "Failed to resend verification email.",
+          err?.code ? `Code: ${err.code}` : "",
+          err?.status ? `Status: ${err.status}` : "",
+        ].filter(Boolean).join(" ");
+        setResendError(details);
         return;
       }
 
@@ -73,9 +78,14 @@ const VerifyEmail = () => {
           return;
         }
         setResendError(
-          fallbackErr?.message ||
-            err?.message ||
-            "Failed to resend verification email.",
+          [
+            fallbackErr?.message ||
+              err?.message ||
+              "Failed to resend verification email.",
+            fallbackErr?.code ? `Firebase code: ${fallbackErr.code}` : "",
+            err?.code ? `Server code: ${err.code}` : "",
+            err?.status ? `Server status: ${err.status}` : "",
+          ].filter(Boolean).join(" "),
         );
       }
     } finally {
