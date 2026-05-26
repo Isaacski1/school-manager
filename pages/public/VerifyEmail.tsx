@@ -3,28 +3,17 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, ArrowLeft, ShieldCheck, RefreshCw, CheckCircle2 } from "lucide-react";
 import {
-  ActionCodeSettings,
-  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { auth } from "../../services/firebase";
-import { useAuth } from "../../context/AuthContext";
 import { showToast } from "../../services/toast";
-
-const buildEmailVerificationUrl = (email: string) => {
-  const params = new URLSearchParams({
-    authAction: "emailVerified",
-    email,
-  });
-  return `${window.location.origin}/?${params.toString()}`;
-};
+import { resendPublicVerificationEmail } from "../../services/backendApi";
 
 const VerifyEmail = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
   const state = location.state as { email?: string; password?: string } | null;
 
   const [resendLoading, setResendLoading] = useState(false);
@@ -38,23 +27,21 @@ const VerifyEmail = () => {
   };
 
   const handleResend = async () => {
-    if (!state?.email || !state?.password) {
+    if (!state?.email) {
       setResendError("Please go back to the registration form and try again.");
       return;
     }
     setResendLoading(true);
     setResendError("");
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
-      const actionSettings: ActionCodeSettings = {
-        url: buildEmailVerificationUrl(state.email.trim().toLowerCase()),
-        handleCodeInApp: true,
-      };
-      await sendEmailVerification(userCredential.user, actionSettings);
+      const result = await resendPublicVerificationEmail({
+        email: state.email.trim().toLowerCase(),
+      });
       await clearUnverifiedSession();
       setResendSuccess(true);
+      showToast(result.message || "Verification email sent.", { type: "success" });
     } catch (err: any) {
-      setResendError(err?.message || "Failed to resend. Please try logging in instead.");
+      setResendError(err?.message || "Failed to resend verification email.");
     } finally {
       setResendLoading(false);
     }
@@ -229,7 +216,7 @@ const VerifyEmail = () => {
               <CheckCircle2 size={18} color="#16A34A" />
               <span style={{ fontSize: 14, fontWeight: 600, color: "#15803D" }}>Verification email resent!</span>
             </div>
-          ) : state?.email && state?.password ? (
+          ) : state?.email ? (
             <div style={{ marginBottom: 20 }}>
               <p style={{ fontSize: 13, color: "#94A3B8", marginBottom: 10 }}>Didn't receive the email?</p>
               {resendError && (

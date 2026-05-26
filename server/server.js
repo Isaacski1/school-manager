@@ -10793,6 +10793,148 @@ app.post("/api/public/start-trial", async (req, res) => {
   }
 });
 
+app.post("/api/public/resend-verification-email", async (req, res) => {
+  try {
+    const safeEmail = String(req.body?.email || "").trim().toLowerCase();
+
+    if (!safeEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail)) {
+      return res.status(400).json({ error: "Please provide a valid email address." });
+    }
+
+    const resendKey = process.env.RESEND_API_KEY;
+    const resendFrom = process.env.RESEND_FROM_EMAIL;
+    if (!resendKey || !resendFrom) {
+      return res.status(503).json({
+        error:
+          "Email delivery is not configured on the server. Please set RESEND_API_KEY and RESEND_FROM_EMAIL.",
+        code: "EMAIL_NOT_CONFIGURED",
+      });
+    }
+
+    const userRecord = await retryFirebaseAdminNetworkCall(
+      "lookup verification email auth user",
+      () => admin.auth().getUserByEmail(safeEmail),
+    );
+
+    if (userRecord.emailVerified) {
+      return res.json({
+        success: true,
+        message: "This email address is already verified. You can sign in now.",
+      });
+    }
+
+    const requestOrigin = normalizeOriginValue(req.headers.origin || "");
+    const configuredAppOrigin = normalizeOriginValue(
+      process.env.PUBLIC_APP_URL ||
+        process.env.FRONTEND_URL ||
+        process.env.CLIENT_URL ||
+        process.env.APP_URL ||
+        "https://school-manager-gh.web.app",
+    );
+    const origin =
+      requestOrigin && isAllowedOrigin(requestOrigin)
+        ? requestOrigin
+        : configuredAppOrigin || "https://school-manager-gh.web.app";
+
+    const verificationContinueUrl = `${origin}/?${new URLSearchParams({
+      authAction: "emailVerified",
+      email: safeEmail,
+    }).toString()}`;
+
+    const emailVerificationLink = await retryFirebaseAdminNetworkCall(
+      "generate public verification email link",
+      () =>
+        admin.auth().generateEmailVerificationLink(safeEmail, {
+          url: verificationContinueUrl,
+          handleCodeInApp: true,
+        }),
+    );
+
+    let displayName = userRecord.displayName || "School Admin";
+    try {
+      const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
+      const userData = userDoc.exists ? userDoc.data() : null;
+      displayName = userData?.fullName || displayName;
+    } catch (profileError) {
+      console.warn("[VerifyEmail] Failed to load user profile for resend", profileError?.message || profileError);
+    }
+
+    const from = process.env.RESEND_FROM_NAME
+      ? `${process.env.RESEND_FROM_NAME} <${resendFrom}>`
+      : resendFrom;
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0f172a">
+        <div style="background:linear-gradient(135deg,#0B4A82,#1160A8);padding:32px;border-radius:16px 16px 0 0;text-align:center">
+          <h1 style="color:white;margin:0;font-size:24px">Verify your School Manager GH account</h1>
+        </div>
+        <div style="background:white;padding:32px;border:1px solid #DBEAFE;border-top:none">
+          <p style="font-size:16px;margin:0 0 16px">Hi <strong>${escapeHtml(displayName)}</strong>,</p>
+          <p style="color:#475569;line-height:1.7;margin:0 0 24px">
+            Click the button below to verify your email address and activate your school workspace.
+          </p>
+          <p style="margin:0 0 24px">
+            <a href="${escapeHtml(emailVerificationLink)}" style="display:inline-block;background:#0B4A82;color:white;text-decoration:none;border-radius:999px;padding:13px 22px;font-size:14px;font-weight:700">Verify Email Address</a>
+          </p>
+          <p style="color:#64748B;font-size:13px;line-height:1.7;margin:0">
+            If the button does not work, copy and paste this link into your browser:<br />
+            <a href="${escapeHtml(emailVerificationLink)}" style="color:#0B4A82;word-break:break-all">${escapeHtml(emailVerificationLink)}</a>
+          </p>
+        </div>
+        <div style="background:#F8FAFC;padding:16px 32px;border-radius:0 0 16px 16px;border:1px solid #DBEAFE;border-top:none;text-align:center">
+          <p style="color:#94A3B8;font-size:12px;margin:0">School Manager GH</p>
+        </div>
+      </div>
+    `;
+
+    const text = [
+      `Hi ${displayName},`,
+      "",
+      "Click this link to verify your School Manager GH account:",
+      emailVerificationLink,
+      "",
+      "School Manager GH",
+    ].join("\n");
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [safeEmail],
+        subject: "Verify your School Manager GH account",
+        text,
+        html,
+      }),
+    });
+    const resBody = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(resBody?.message || `Resend failed with ${response.status}`);
+    }
+
+    res.json({
+      success: true,
+      message: "Verification email sent. Please check your inbox, spam, or promotions folder.",
+    });
+  } catch (error) {
+    console.error("[VerifyEmail] Failed to resend verification email:", error);
+    if (error?.code === "auth/user-not-found") {
+      return res.status(404).json({ error: "No account was found for this email address." });
+    }
+    if (isTransientFirebaseAdminNetworkError(error)) {
+      return res.status(503).json({
+        error:
+          "Firebase Auth is unreachable from the backend right now. Check your internet/DNS connection and try again.",
+        code: "FIREBASE_AUTH_UNREACHABLE",
+      });
+    }
+    res.status(500).json({ error: error.message || "Failed to send verification email." });
+  }
+});
+
 
 // ─── Paystack Integration Endpoints ──────────────────────────────────────────
 /**

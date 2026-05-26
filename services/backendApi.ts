@@ -823,6 +823,15 @@ export async function startPublicSchoolSetup(payload: any): Promise<any> {
   });
 }
 
+export async function resendPublicVerificationEmail(payload: {
+  email: string;
+}): Promise<{ success: boolean; message: string }> {
+  return apiRequest("/api/public/resend-verification-email", {
+    body: payload,
+    requiresAuth: false,
+  });
+}
+
 export async function sendParentDashboardNotice(payload: {
   message: string;
   type: "info" | "urgent";
