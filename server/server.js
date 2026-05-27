@@ -10516,6 +10516,7 @@ app.post("/api/public/start-trial", async (req, res) => {
         "https://school-manager-gh.web.app",
     );
     let emailVerificationLink = "";
+    let verificationLinkError = null;
     const verificationOrigins = [
       requestOrigin && isAllowedOrigin(requestOrigin) ? requestOrigin : "",
       configuredAppOrigin,
@@ -10537,12 +10538,34 @@ app.post("/api/public/start-trial", async (req, res) => {
             }),
         );
         break;
-      } catch (verificationLinkError) {
+      } catch (error) {
+        verificationLinkError = error;
         console.error(
           "[StartTrial] Failed to generate email verification link for origin:",
           origin,
-          verificationLinkError?.message || verificationLinkError,
+          error?.message || error,
         );
+      }
+    }
+
+    // If all origins failed due to rate limiting, queue for retry
+    if (!emailVerificationLink && verificationLinkError) {
+      const rawError = String(verificationLinkError?.message || "").toUpperCase();
+      if (rawError.includes("TOO_MANY_ATTEMPTS_TRY_LATER") || rawError.includes("RATE_LIMIT")) {
+        try {
+          const queueRef = admin.firestore().collection("email_verification_queue");
+          await queueRef.add({
+            email: safeEmail,
+            displayName: String(adminFullName || "").trim() || "School Admin",
+            reason: "TOO_MANY_ATTEMPTS_TRY_LATER",
+            attempts: 1,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            nextAttemptAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000)),
+          });
+          console.warn("[StartTrial] Enqueued verification email due to rate limit:", safeEmail);
+        } catch (queueErr) {
+          console.error("[StartTrial] Failed to enqueue verification retry:", queueErr);
+        }
       }
     }
 
