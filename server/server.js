@@ -10928,6 +10928,9 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
       email: safeEmail,
     }).toString()}`;
 
+    // Extract display name early for error handling
+    let displayName = userRecord.displayName || "School Admin";
+
     let emailVerificationLink = "";
     try {
       emailVerificationLink = await retryFirebaseAdminNetworkCall(
@@ -10979,8 +10982,6 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         code: "VERIFICATION_LINK_FAILED",
       });
     }
-
-    let displayName = userRecord.displayName || "School Admin";
     try {
       const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
       const userData = userDoc.exists ? userDoc.data() : null;
