@@ -10995,27 +10995,80 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
       : resendFrom;
 
     const html = `
-      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0f172a">
-        <div style="background:linear-gradient(135deg,#0B4A82,#1160A8);padding:32px;border-radius:16px 16px 0 0;text-align:center">
-          <h1 style="color:white;margin:0;font-size:24px">Verify your School Manager GH account</h1>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          * { margin: 0; padding: 0; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f3f4f6; }
+          .container { max-width: 600px; margin: 0 auto; width: 100%; }
+          .email-wrapper { background: white; }
+          .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; border-radius: 16px 16px 0 0; }
+          .logo { display: inline-block; margin-bottom: 16px; }
+          .logo img { height: 48px; width: auto; }
+          .header h1 { color: white; font-size: 24px; font-weight: 700; line-height: 1.3; }
+          .content { background: white; padding: 32px 20px; border: 1px solid #DBEAFE; border-top: none; }
+          .content p { font-size: 16px; color: #0f172a; line-height: 1.6; margin-bottom: 16px; }
+          .greeting { font-weight: 600; }
+          .description { color: #475569; margin-bottom: 24px; }
+          .cta-button { display: inline-block; background: #0B4A82; color: white; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 14px; font-weight: 700; margin: 24px 0; }
+          .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
+          .link-text a { color: #0B4A82; text-decoration: none; }
+          .footer { background: #F8FAFC; padding: 16px 20px; border: 1px solid #DBEAFE; border-top: none; text-align: center; border-radius: 0 0 16px 16px; }
+          .footer p { color: #94A3B8; font-size: 12px; margin: 0; }
+          
+          @media only screen and (max-width: 600px) {
+            .header { padding: 24px 16px; }
+            .header h1 { font-size: 20px; }
+            .logo { margin-bottom: 12px; }
+            .logo img { height: 40px; }
+            .content { padding: 24px 16px; }
+            .content p { font-size: 15px; }
+            .cta-button { padding: 12px 24px; font-size: 13px; }
+            .footer { padding: 12px 16px; }
+          }
+          
+          @media only screen and (max-width: 480px) {
+            .header { padding: 20px 12px; border-radius: 12px 12px 0 0; }
+            .header h1 { font-size: 18px; }
+            .logo img { height: 36px; }
+            .content { padding: 20px 12px; border-radius: 0; }
+            .cta-button { width: 100%; box-sizing: border-box; text-align: center; }
+            .footer { padding: 12px; border-radius: 0 0 12px 12px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="email-wrapper">
+            <div class="header">
+              <div class="logo">
+                <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" style="height:48px;width:auto;">
+              </div>
+              <h1>Verify your School Manager GH account</h1>
+            </div>
+            <div class="content">
+              <p><span class="greeting">Hi ${escapeHtml(displayName)}</span>,</p>
+              <p class="description">
+                Click the button below to verify your email address and activate your school workspace.
+              </p>
+              <div style="text-align:center;margin:24px 0;">
+                <a href="${escapeHtml(emailVerificationLink)}" class="cta-button">Verify Email Address</a>
+              </div>
+              <p class="link-text">
+                If the button does not work, copy and paste this link into your browser:<br />
+                <a href="${escapeHtml(emailVerificationLink)}">${escapeHtml(emailVerificationLink)}</a>
+              </p>
+            </div>
+            <div class="footer">
+              <p>School Manager GH</p>
+            </div>
+          </div>
         </div>
-        <div style="background:white;padding:32px;border:1px solid #DBEAFE;border-top:none">
-          <p style="font-size:16px;margin:0 0 16px">Hi <strong>${escapeHtml(displayName)}</strong>,</p>
-          <p style="color:#475569;line-height:1.7;margin:0 0 24px">
-            Click the button below to verify your email address and activate your school workspace.
-          </p>
-          <p style="margin:0 0 24px">
-            <a href="${escapeHtml(emailVerificationLink)}" style="display:inline-block;background:#0B4A82;color:white;text-decoration:none;border-radius:999px;padding:13px 22px;font-size:14px;font-weight:700">Verify Email Address</a>
-          </p>
-          <p style="color:#64748B;font-size:13px;line-height:1.7;margin:0">
-            If the button does not work, copy and paste this link into your browser:<br />
-            <a href="${escapeHtml(emailVerificationLink)}" style="color:#0B4A82;word-break:break-all">${escapeHtml(emailVerificationLink)}</a>
-          </p>
-        </div>
-        <div style="background:#F8FAFC;padding:16px 32px;border-radius:0 0 16px 16px;border:1px solid #DBEAFE;border-top:none;text-align:center">
-          <p style="color:#94A3B8;font-size:12px;margin:0">School Manager GH</p>
-        </div>
-      </div>
+      </body>
+      </html>
     `;
 
     const text = [

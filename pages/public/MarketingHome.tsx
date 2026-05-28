@@ -480,14 +480,20 @@ const MarketingHome = () => {
         @media (max-width: 968px) {
           .hero-grid { grid-template-columns: 1fr !important; text-align: center; gap: 40px !important; }
           .hero-text-container { align-items: center !important; max-width: 100% !important; }
-          .hero-card-container { display: none !important; }
+          .hero-card-container { width: 100% !important; }
           .hero-badges { justify-content: center !important; }
           .hero-buttons { justify-content: center !important; }
+        }
+        @media (max-width: 768px) {
+          section { padding: 80px 16px 60px !important; }
+          .hero-card-container { max-width: 100% !important; }
         }
         @media (max-width: 480px) {
           .hero-buttons { flex-direction: column; width: 100%; }
           .hero-buttons a { width: 100%; justify-content: center; }
           h1 { font-size: 32px !important; }
+          section { padding: 60px 12px 40px !important; }
+        }
         }
         @media (max-width: 768px) {
           .stats-section { height: auto !important; padding: 80px 32px !important; margin-top: 0 !important; }
@@ -578,8 +584,8 @@ const MarketingHome = () => {
         <img src="/img-students.png" alt="" aria-hidden="true" fetchPriority="high" decoding="async" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%", zIndex: 0 }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(4,18,34,0.9) 0%, rgba(11,74,130,0.7) 100%)", zIndex: 1 }} />
 
-        <div className="hero-grid" style={{ maxWidth: 1280, margin: "0 auto", width: "100%", display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 64, alignItems: "center", position: "relative", zIndex: 2 }}>
-          <motion.div initial="hidden" animate="show" variants={stagger} className="hero-text-container" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+        <div className="hero-grid" style={{ maxWidth: 1440, margin: "0 auto", width: "100%", display: "grid", gridTemplateColumns: "1fr", gap: 60, alignItems: "flex-start", position: "relative", zIndex: 2 }}>
+          <motion.div initial="hidden" animate="show" variants={stagger} className="hero-text-container" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
             <motion.div variants={fadeUp} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "8px 18px", marginBottom: 24 }}>
               <Sparkles size={14} color="white" />
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "white" }}>🇬🇭 Built for Ghana</span>
@@ -593,7 +599,7 @@ const MarketingHome = () => {
               communication in one platform.
             </motion.h1>
 
-            <motion.p variants={fadeUp} style={{ fontSize: "clamp(16px, 2vw, 18px)", lineHeight: 1.7, color: "rgba(255,255,255,0.8)", margin: "0 0 36px 0", maxWidth: 520 }}>
+            <motion.p variants={fadeUp} style={{ fontSize: "clamp(16px, 2vw, 18px)", lineHeight: 1.7, color: "rgba(255,255,255,0.8)", margin: "0 0 36px 0", maxWidth: 700 }}>
               Reduce manual work for Ghanaian schools by bringing assessments, fee records, attendance, parent updates, and daily admin tasks into one organized workspace.
             </motion.p>
 
@@ -607,28 +613,26 @@ const MarketingHome = () => {
             </motion.div>
           </motion.div>
 
-          <motion.div className="hero-card-container" style={{ perspective: 1200 }}>
-            <motion.div animate={{ y: [0, -12, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ transform: "rotateX(8deg) rotateY(-10deg) translateZ(0)", transformStyle: "preserve-3d", width: "100%", maxWidth: 460, willChange: "transform" }}>
-              <div style={{ background: "rgba(255,255,255,0.98)", borderRadius: 28, padding: 28, boxShadow: "0 40px 100px rgba(0,0,0,0.35)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                  <img src="/logo.png" alt="Logo" loading="lazy" decoding="async" style={{ height: 60 }} />
-                  <div style={{ width: 44, height: 44, borderRadius: 14, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <ShieldCheck size={22} color="#0B4A82" />
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                  {[["Attendance", "98.2%", "#ECFDF5", "#16A34A"], ["Students", "524", "#EFF6FF", "#0B4A82"], ["Reports", "Ready", "#FAF5FF", "#7C3AED"], ["Fees", "Active", "#FFFBEB", "#D97706"]].map(([label, val, bg, clr]) => (
-                    <div key={label} style={{ background: bg, borderRadius: 14, padding: "12px 14px" }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", margin: 0 }}>{label}</p>
-                      <p style={{ fontSize: 18, fontWeight: 800, color: clr, margin: 0 }}>{val}</p>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ background: "linear-gradient(135deg, #0B4A82, #1160A8)", borderRadius: 16, padding: "16px 18px" }}>
-                  <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)", margin: "0 0 4px 0" }}>Today's Summary</p>
-                  <p style={{ fontSize: 16, fontWeight: 700, color: "white", margin: 0 }}>Everything running smoothly</p>
-                </div>
-              </div>
+          <motion.div className="hero-card-container" style={{ perspective: 1200, width: "100%" }}>
+            <motion.div animate={{ y: [0, -16, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ transform: "rotateX(8deg) rotateY(-6deg) rotateZ(1deg) translateZ(0)", transformStyle: "preserve-3d", width: "100%", willChange: "transform" }}>
+              {/* Glow effect */}
+              <div style={{ position: "absolute", inset: "-50px", background: "radial-gradient(circle, rgba(11,74,130,0.35) 0%, transparent 70%)", zIndex: 0, borderRadius: 40 }} />
+              
+              {/* Dashboard Image */}
+              <img 
+                src="/hero-img.png" 
+                alt="School Manager GH Dashboard"
+                loading="lazy"
+                decoding="async"
+                style={{ 
+                  width: "100%", 
+                  height: "auto", 
+                  
+                  position: "relative", 
+                  zIndex: 1, 
+                  display: "block"
+                }} 
+              />
             </motion.div>
           </motion.div>
         </div>

@@ -88,6 +88,12 @@ const Billing: React.FC = () => {
     const type = String(payment?.type || "").toLowerCase();
     const category = String(payment?.category || "").toLowerCase();
 
+    // Exclude SMS topup payments
+    if (type === "sms_topup" || category === "sms_topup") {
+      return false;
+    }
+
+    // Exclude fee payments
     if (reference.toUpperCase().startsWith("FEES-")) {
       return false;
     }

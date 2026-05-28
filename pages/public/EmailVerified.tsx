@@ -36,6 +36,7 @@ const EmailVerified = () => {
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
   const [error, setError] = useState("");
+  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -58,6 +59,11 @@ const EmailVerified = () => {
         setVerified(true);
         setVerifying(false);
         showToast("Email verified successfully!", { type: "success" });
+        
+        // Auto-redirect to dashboard after 2 seconds
+        setTimeout(() => {
+          navigate("/");
+        }, 2000);
       } catch (err: any) {
         console.error("[EmailVerified] Email verification failed:", err);
         setVerifying(false);
@@ -72,7 +78,7 @@ const EmailVerified = () => {
     };
 
     verifyEmail();
-  }, [oobCode]);
+  }, [oobCode, navigate]);
 
   // Show loading state while verifying
   if (verifying) {
@@ -386,6 +392,38 @@ const EmailVerified = () => {
             )}
           </motion.div>
 
+          {/* Status Info */}
+          <motion.div
+            variants={fadeUp}
+            style={{
+              background: "#F0FDF4",
+              borderRadius: 16,
+              padding: "16px 20px",
+              border: "1px solid #BBF7D0",
+              marginBottom: 32,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              textAlign: "left"
+            }}
+          >
+            <Loader2 size={20} color="#16A34A" style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 600, color: "#15803D", margin: 0 }}>
+                Redirecting to dashboard...
+              </p>
+              <p style={{ fontSize: 12, color: "#16A34A", margin: "4px 0 0 0" }}>
+                This will happen automatically in a moment
+              </p>
+            </div>
+            <style>{`
+              @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+              }
+            `}</style>
+          </motion.div>
+
           {/* Next Steps */}
           <motion.div
             variants={fadeUp}
@@ -403,9 +441,9 @@ const EmailVerified = () => {
             </h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[
-                "Log in to your dashboard",
-                "Set up your school profile",
-                "Add teachers and students",
+                "Access your dashboard immediately",
+                "Complete your school profile",
+                "Add your teachers and students",
                 "Start managing your school",
               ].map((step, idx) => (
                 <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -438,6 +476,28 @@ const EmailVerified = () => {
               flexWrap: "wrap",
             }}
           >
+            <button
+              onClick={() => navigate("/")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "14px 28px",
+                borderRadius: 999,
+                background: "linear-gradient(135deg, #0B4A82, #1E40AF)",
+                color: "white",
+                fontWeight: 700,
+                fontSize: 15,
+                border: "none",
+                cursor: "pointer",
+                boxShadow: "0 8px 24px rgba(11,74,130,0.3)",
+                transition: "all 0.3s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 32px rgba(11,74,130,0.4)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(11,74,130,0.3)"; }}
+            >
+              <ArrowRight size={18} /> Go to Dashboard Now
+            </button>
             <Link
               to="/"
               style={{
@@ -458,27 +518,6 @@ const EmailVerified = () => {
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "white"; (e.currentTarget as HTMLElement).style.borderColor = "#DBEAFE"; }}
             >
               <Home size={18} /> Home
-            </Link>
-            <Link
-              to="/login"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "14px 28px",
-                borderRadius: 999,
-                background: "linear-gradient(135deg, #0B4A82, #1E40AF)",
-                color: "white",
-                fontWeight: 700,
-                fontSize: 15,
-                textDecoration: "none",
-                boxShadow: "0 8px 24px rgba(11,74,130,0.3)",
-                transition: "all 0.3s",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 32px rgba(11,74,130,0.4)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(11,74,130,0.3)"; }}
-            >
-              <LogIn size={18} /> Login to Dashboard <ArrowRight size={16} />
             </Link>
           </motion.div>
 
