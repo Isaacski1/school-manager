@@ -352,6 +352,7 @@ const VerifyEmail = () => {
             </Link>
           </div>
         </motion.div>
+        </div>
       </section>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
