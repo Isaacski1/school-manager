@@ -1690,6 +1690,125 @@ const sendDemoNotifications = async (demoDoc) => {
   return notifications;
 };
 
+/**
+ * POST /api/auth/send-password-reset-email
+ * Sends a Firebase password reset link via Resend for improved deliverability
+ */
+app.post("/api/auth/send-password-reset-email", async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+      return res.status(500).json({ error: "Email service not configured" });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Generate a Firebase password reset link (handled by Firebase Admin)
+    const resetLink = await admin.auth().generatePasswordResetLink(normalizedEmail);
+
+    const from = RESEND_FROM_NAME
+      ? `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`
+      : RESEND_FROM_EMAIL;
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [normalizedEmail],
+        subject: "Reset your School Manager GH password",
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+              table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+              img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+              body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+              .email-wrapper { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; }
+              .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; }
+              .header img { height: 48px; width: auto; display: block; margin: 0 auto; }
+              .header-title { color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1.3; margin: 20px 0 0; }
+              .content { padding: 32px 20px; color: #0f172a; }
+              .content p { font-size: 16px; line-height: 1.6; margin: 0 0 16px; }
+              .button-container { text-align: center; }
+              .cta-button { display: inline-block; background: #0B4A82; color: #ffffff !important; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 700; min-width: 200px; }
+              .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
+              .link-text a { color: #0B4A82; text-decoration: none; }
+              .footer { background: #F8FAFC; padding: 16px 20px; text-align: center; color: #94A3B8; font-size: 12px; }
+              .footer p { margin: 0; }
+              @media screen and (max-width: 600px) {
+                .email-wrapper { border-radius: 0; }
+                .header { padding: 24px 16px; }
+                .header-title { font-size: 20px; }
+                .content { padding: 24px 16px; }
+                .cta-button { width: 100% !important; max-width: 100%; box-sizing: border-box; }
+              }
+            </style>
+          </head>
+          <body>
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f3f4f6;">
+              <tr>
+                <td align="center" style="padding:20px;">
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper">
+                    <tr>
+                      <td class="header">
+                        <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" />
+                        <h1 class="header-title">Password Reset</h1>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="content">
+                        <p>We received a request to reset your password. Click the button below to proceed.</p>
+                        <div class="button-container">
+                          <a href="${resetLink}" class="cta-button">Reset password</a>
+                        </div>
+                        <p class="link-text">Or paste this link into your browser: <a href="${resetLink}">${resetLink}</a></p>
+                        <p style="font-size:12px;color:#999;margin-top:18px;">If you didn't request this, you can ignore this email.</p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="footer">
+                        <p>School Manager GH</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
+        `,
+      }),
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Resend send reset email error:", body);
+      throw new Error(body?.message || `Resend failed with ${response.status}`);
+    }
+
+    return res.json({ success: true, message: "Password reset email sent" });
+  } catch (error) {
+    console.error("/api/auth/send-password-reset-email error:", error);
+    if (error?.code === "auth/user-not-found") {
+      return res.status(404).json({ error: "No account found with this email" });
+    }
+    return res.status(500).json({ error: error?.message || "Failed to send reset email" });
+  }
+});
+
 const summarizeNotificationFailure = (result = {}) =>
   result.reason || result.error || (result.skipped ? "Skipped" : "Not sent");
 
@@ -11001,72 +11120,66 @@ app.post("/api/public/resend-verification-email", async (req, res) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-          * { margin: 0; padding: 0; }
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f3f4f6; }
-          .container { max-width: 600px; margin: 0 auto; width: 100%; }
-          .email-wrapper { background: white; }
-          .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; border-radius: 16px 16px 0 0; }
-          .logo { display: inline-block; margin-bottom: 16px; }
-          .logo img { height: 48px; width: auto; }
-          .header h1 { color: white; font-size: 24px; font-weight: 700; line-height: 1.3; }
-          .content { background: white; padding: 32px 20px; border: 1px solid #DBEAFE; border-top: none; }
-          .content p { font-size: 16px; color: #0f172a; line-height: 1.6; margin-bottom: 16px; }
+          body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+          table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+          img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+          body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+          .email-body { width: 100%; }
+          .email-wrapper { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; }
+          .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; }
+          .logo img { height: 48px; width: auto; display: block; margin: 0 auto; }
+          .header-title { color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1.3; margin: 20px 0 0; }
+          .content { padding: 32px 20px; color: #0f172a; }
+          .content p { font-size: 16px; line-height: 1.6; margin: 0 0 16px; }
           .greeting { font-weight: 600; }
           .description { color: #475569; margin-bottom: 24px; }
-          .cta-button { display: inline-block; background: #0B4A82; color: white; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 14px; font-weight: 700; margin: 24px 0; }
+          .button-container { text-align: center; }
+          .cta-button { display: inline-block; background: #0B4A82; color: #ffffff !important; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 700; min-width: 200px; }
           .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
           .link-text a { color: #0B4A82; text-decoration: none; }
-          .footer { background: #F8FAFC; padding: 16px 20px; border: 1px solid #DBEAFE; border-top: none; text-align: center; border-radius: 0 0 16px 16px; }
-          .footer p { color: #94A3B8; font-size: 12px; margin: 0; }
-          
-          @media only screen and (max-width: 600px) {
+          .footer { background: #F8FAFC; padding: 16px 20px; text-align: center; color: #94A3B8; font-size: 12px; }
+          .footer p { margin: 0; }
+          @media screen and (max-width: 600px) {
+            .email-wrapper { border-radius: 0; }
             .header { padding: 24px 16px; }
-            .header h1 { font-size: 20px; }
-            .logo { margin-bottom: 12px; }
-            .logo img { height: 40px; }
+            .header-title { font-size: 20px; }
             .content { padding: 24px 16px; }
-            .content p { font-size: 15px; }
-            .cta-button { padding: 12px 24px; font-size: 13px; }
-            .footer { padding: 12px 16px; }
-          }
-          
-          @media only screen and (max-width: 480px) {
-            .header { padding: 20px 12px; border-radius: 12px 12px 0 0; }
-            .header h1 { font-size: 18px; }
-            .logo img { height: 36px; }
-            .content { padding: 20px 12px; border-radius: 0; }
-            .cta-button { width: 100%; box-sizing: border-box; text-align: center; }
-            .footer { padding: 12px; border-radius: 0 0 12px 12px; }
+            .cta-button { width: 100% !important; max-width: 100%; box-sizing: border-box; }
           }
         </style>
       </head>
       <body>
-        <div class="container">
-          <div class="email-wrapper">
-            <div class="header">
-              <div class="logo">
-                <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" style="height:48px;width:auto;">
-              </div>
-              <h1>Verify your School Manager GH account</h1>
-            </div>
-            <div class="content">
-              <p><span class="greeting">Hi ${escapeHtml(displayName)}</span>,</p>
-              <p class="description">
-                Click the button below to verify your email address and activate your school workspace.
-              </p>
-              <div style="text-align:center;margin:24px 0;">
-                <a href="${escapeHtml(emailVerificationLink)}" class="cta-button">Verify Email Address</a>
-              </div>
-              <p class="link-text">
-                If the button does not work, copy and paste this link into your browser:<br />
-                <a href="${escapeHtml(emailVerificationLink)}">${escapeHtml(emailVerificationLink)}</a>
-              </p>
-            </div>
-            <div class="footer">
-              <p>School Manager GH</p>
-            </div>
-          </div>
-        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-body">
+          <tr>
+            <td align="center" style="padding: 20px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper">
+                <tr>
+                  <td class="header">
+                    <div class="logo">
+                      <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" width="48" style="display:block; margin:0 auto;" />
+                    </div>
+                    <h1 class="header-title">Verify your School Manager GH account</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="content">
+                    <p class="greeting">Hi ${escapeHtml(displayName)},</p>
+                    <p class="description">Click the button below to verify your email address and activate your school workspace.</p>
+                    <div class="button-container">
+                      <a href="${escapeHtml(emailVerificationLink)}" class="cta-button">Verify Email Address</a>
+                    </div>
+                    <p class="link-text">If the button does not work, copy and paste this link into your browser:<br /><a href="${escapeHtml(emailVerificationLink)}">${escapeHtml(emailVerificationLink)}</a></p>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="footer">
+                    <p>School Manager GH</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;
@@ -12082,6 +12195,59 @@ const resolveInvoicePdfBase64 = async ({ base64Pdf, invoiceStoragePath, invoiceD
   throw new Error("Student ID and PDF data are required.");
 };
 
+const persistInvoicePdfToStorage = async ({
+  base64Pdf,
+  invoiceStoragePath,
+  resolvedSchoolId,
+  studentId,
+  reference,
+}) => {
+  const requestedPath = String(invoiceStoragePath || "").trim();
+  if (requestedPath) {
+    return requestedPath;
+  }
+
+  if (!base64Pdf || !base64Pdf.trim()) {
+    return "";
+  }
+
+  const safeReference = String(reference || Date.now())
+    .replace(/[^a-z0-9_-]/gi, "_")
+    .slice(0, 128);
+  const path = `invoice-pdfs/${resolvedSchoolId || "unknown"}/${studentId}/${safeReference}.pdf`;
+  const cleanBase64 = base64Pdf.includes("base64,")
+    ? base64Pdf.split("base64,")[1]
+    : base64Pdf;
+  const buffer = Buffer.from(cleanBase64, "base64");
+  const downloadToken = crypto.randomUUID?.() || crypto.randomBytes(16).toString("hex");
+  const bucketCandidates = getStorageBucketCandidates();
+  if (!bucketCandidates.length) {
+    throw new Error("No Firebase Storage bucket is configured for this project.");
+  }
+
+  let lastError = null;
+  for (const bucketName of bucketCandidates) {
+    try {
+      const bucket = admin.storage().bucket(bucketName);
+      const file = bucket.file(path);
+      await file.save(buffer, {
+        metadata: {
+          contentType: "application/pdf",
+          cacheControl: "public, max-age=31536000",
+          metadata: {
+            firebaseStorageDownloadTokens: downloadToken,
+          },
+        },
+      });
+      return path;
+    } catch (err) {
+      lastError = err;
+      console.warn("[Invoice] Storage save failed for bucket:", bucketName, err?.message || err);
+    }
+  }
+  throw lastError || new Error("Failed to persist invoice PDF to storage.");
+};
+
 const shouldProcessInvoiceNotificationsInline = () => {
   const setting = String(process.env.INVOICE_NOTIFICATIONS_INLINE || "")
     .trim()
@@ -12126,24 +12292,62 @@ const processPaymentInvoiceNotification = async ({
     const recipients = resolvePaymentNotificationRecipients(studentData, body);
     for (const recipient of recipients) {
       const result = await svc.sendWhatsAppMedia(recipient, caption, cleanBase64, filename, mimetype);
-      results.push({ recipient, ...result });
+      if (!result.success) {
+        const smsMessage = [
+          `Payment received for ${effectiveStudentName}.`,
+          `Amount: GHS ${amount}.`,
+          `Fee: ${feeName || "School Fees"}.`,
+          `Reference: ${reference}.`,
+          `This is a notification from ${schoolName}.`,
+        ].join(" ");
+
+        const smsResult = await sendSmsWithWallet({
+          schoolId: resolvedSchoolId,
+          phone: recipient,
+          message: smsMessage,
+        });
+
+        const finalResult = smsResult.success
+          ? { recipient, ...smsResult, channel: "sms", fallback: true }
+          : { recipient, ...result, channel: "whatsapp", fallback: true };
+
+        results.push(finalResult);
+        await writeNotificationLog({
+          schoolId: resolvedSchoolId,
+          recipient,
+          type: "payment_invoice_parent",
+          status: smsResult.success ? "sent" : "failed",
+          errorMessage: smsResult.success ? "" : smsResult.error || result.error || "",
+          metadata: {
+            reference,
+            studentId,
+            centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER,
+            payloadSize,
+            fallback: "sms",
+          },
+        });
+
+        if (!smsResult.success) {
+          await enqueueWhatsAppRetry({
+            schoolId: resolvedSchoolId,
+            recipient,
+            type: "payment_invoice_parent",
+            payload: { caption, cleanBase64, filename, mimetype },
+            lastError: smsResult.error || result.error || "Send failed",
+          });
+        }
+        continue;
+      }
+
+      results.push({ recipient, ...result, channel: "whatsapp" });
       await writeNotificationLog({
         schoolId: resolvedSchoolId,
         recipient,
         type: "payment_invoice_parent",
-        status: result.success ? "sent" : "failed",
-        errorMessage: result.error || "",
+        status: "sent",
+        errorMessage: "",
         metadata: { reference, studentId, centralNumber: SCHOOL_MANAGER_GH_WHATSAPP_NUMBER, payloadSize },
       });
-      if (!result.success) {
-        await enqueueWhatsAppRetry({
-          schoolId: resolvedSchoolId,
-          recipient,
-          type: "payment_invoice_parent",
-          payload: { caption, cleanBase64, filename, mimetype },
-          lastError: result.error || "Send failed",
-        });
-      }
     }
   }
 
@@ -12248,6 +12452,8 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         studentName,
         feeName,
         adminPhone,
+        paymentId,
+        forceInline,
       } = req.body || {};
       if (!studentId || (!base64Pdf && !invoiceStoragePath && !invoiceDownloadUrl)) {
         return res.status(400).json({ error: "Student ID and PDF data are required." });
@@ -12264,6 +12470,9 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
       const settings = settingsSnap?.exists ? settingsSnap.data() || {} : {};
       const schoolData = schoolSnap?.exists ? schoolSnap.data() || {} : {};
       const notificationSettings = settings.notificationSettings || {};
+      const recipientPhones = resolvePaymentNotificationRecipients(studentData, req.body);
+      const firstRecipient = recipientPhones[0] || null;
+      const inlineProcessing = Boolean(forceInline) || shouldProcessInvoiceNotificationsInline();
 
       if (
         notificationSettings.enableWhatsAppNotifications === false ||
@@ -12280,9 +12489,16 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         return res.json({ success: true, skipped: true });
       }
 
-      const invoicePdf = await resolveInvoicePdfBase64({
+      const invoiceStoragePathToUse = await persistInvoicePdfToStorage({
         base64Pdf,
         invoiceStoragePath,
+        resolvedSchoolId,
+        studentId: String(studentId),
+        reference,
+      });
+      const invoicePdf = await resolveInvoicePdfBase64({
+        base64Pdf,
+        invoiceStoragePath: invoiceStoragePathToUse,
         invoiceDownloadUrl,
       });
       const cleanBase64 = invoicePdf.cleanBase64;
@@ -12295,6 +12511,37 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
       const statusInfo = svc?.getWhatsAppStatus ? svc.getWhatsAppStatus() : { status: "unavailable" };
       if (!svc || statusInfo.status !== "ready") {
         const errorMessage = `Central WhatsApp session is not ready (${statusInfo.status}).`;
+        if (inlineProcessing && firstRecipient) {
+          const smsMessage = [
+            `Payment received for ${studentName || studentData.name || "Student"}.`,
+            `Amount: GHS ${amount}.`,
+            `Fee: ${feeName || "School Fees"}.`,
+            `Reference: ${reference}.`,
+            `This is a notification from ${settings.schoolName || schoolData.name || "School Manager GH"}.`,
+          ].join(" ");
+          const smsResult = await sendSmsWithWallet({
+            schoolId: resolvedSchoolId,
+            phone: firstRecipient,
+            message: smsMessage,
+          });
+          if (paymentId) {
+            await db.collection("payments").doc(String(paymentId)).set(
+              {
+                invoiceNotificationStatus: smsResult.success ? "sent" : "failed",
+                invoiceNotificationChannel: smsResult.success ? "sms" : null,
+                invoiceNotificationPhone: firstRecipient,
+                invoiceNotificationSentAt: smsResult.success
+                  ? admin.firestore.FieldValue.serverTimestamp()
+                  : admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          }
+          if (smsResult.success) {
+            return res.json({ success: true, channel: "sms", fallback: true, result: smsResult });
+          }
+        }
+
         await writeNotificationLog({
           schoolId: resolvedSchoolId,
           recipient: "multiple",
@@ -12310,9 +12557,24 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         await enqueueWhatsAppRetry({
           schoolId: resolvedSchoolId,
           type: "payment_invoice",
-          payload: { ...req.body, schoolId: resolvedSchoolId },
+          payload: {
+            ...req.body,
+            schoolId: resolvedSchoolId,
+            invoiceStoragePath: invoiceStoragePathToUse,
+          },
           lastError: errorMessage,
         });
+        if (paymentId) {
+          await db.collection("payments").doc(String(paymentId)).set(
+            {
+              invoiceNotificationStatus: "queued",
+              invoiceNotificationChannel: "whatsapp",
+              invoiceNotificationPhone: firstRecipient,
+              invoiceNotificationSentAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
         return res.json({ success: true, queued: true, whatsappStatus: statusInfo.status });
       }
 
@@ -12322,12 +12584,15 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         settings,
         schoolData,
         studentData,
-        body: req.body,
+        body: {
+          ...req.body,
+          invoiceStoragePath: invoiceStoragePathToUse,
+        },
         cleanBase64,
         payloadSize,
       };
 
-      if (!shouldProcessInvoiceNotificationsInline()) {
+      if (!inlineProcessing) {
         await writeNotificationLog({
           schoolId: resolvedSchoolId,
           recipient: "multiple",
@@ -12342,11 +12607,37 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
             invoiceSource: invoicePdf.source,
           },
         });
+        if (paymentId) {
+          await db.collection("payments").doc(String(paymentId)).set(
+            {
+              invoiceNotificationStatus: "queued",
+              invoiceNotificationChannel: "whatsapp",
+              invoiceNotificationPhone: firstRecipient,
+              invoiceNotificationSentAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
         schedulePaymentInvoiceNotification(invoiceJob);
         return res.json({ success: true, queued: true, background: true, size: payloadSize });
       }
 
       const results = await processPaymentInvoiceNotification(invoiceJob);
+      if (paymentId) {
+        const sentResult = results.find((item) => item.success);
+        const status = sentResult ? "sent" : "failed";
+        const channel = sentResult?.channel || results[0]?.channel || "whatsapp";
+        const phone = sentResult?.phone || results[0]?.phone || firstRecipient;
+        await db.collection("payments").doc(String(paymentId)).set(
+          {
+            invoiceNotificationStatus: status,
+            invoiceNotificationChannel: channel,
+            invoiceNotificationPhone: phone,
+            invoiceNotificationSentAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
       return res.json({ success: true, size: payloadSize, results });
     }
 

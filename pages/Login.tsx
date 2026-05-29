@@ -11,7 +11,6 @@ import {
   PhoneAuthProvider,
   PhoneMultiFactorGenerator,
   RecaptchaVerifier,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithCustomToken,
   signOut,
@@ -428,17 +427,24 @@ const Login = () => {
     setResetSuccess("");
 
     try {
-      await sendPasswordResetEmail(auth, normalizeEmailInput(email));
+      const response = await fetch(`${API_BASE_URL}/api/auth/send-password-reset-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizeEmailInput(email) }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const msg = data?.error || "Failed to send reset email. Please try again.";
+        setFormError(msg);
+        return;
+      }
+
       setResetSuccess("Password reset email sent! Check your inbox.");
+      setEmail("");
     } catch (err: any) {
       console.error("Password reset failed", err);
-      let msg = "Failed to send reset email. Please try again.";
-      if (err?.code === "auth/user-not-found") {
-        msg = "No account found with this email.";
-      } else {
-        msg = getFriendlyErrorMessage(err, msg);
-      }
-      setFormError(msg);
+      setFormError("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -860,6 +866,20 @@ const Login = () => {
                   required
                 />
               </div>
+
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start">
+                  <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-red-500" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {resetSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm flex items-start">
+                  <CheckCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-emerald-500" />
+                  <span>{resetSuccess}</span>
+                </div>
+              )}
 
               <button
                 type="submit"

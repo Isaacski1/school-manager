@@ -103,8 +103,8 @@ const VerifyEmail = () => {
       if (auth.currentUser) {
         await auth.currentUser.reload();
         if (auth.currentUser.emailVerified) {
-          showToast("Email verified! Redirecting to your dashboard...", { type: "success" });
-          window.location.href = "/";
+          showToast("Email verified! Redirecting to login...", { type: "success" });
+          window.location.href = "/login";
           return;
         }
         await clearUnverifiedSession();
@@ -116,8 +116,8 @@ const VerifyEmail = () => {
           const userCredential = await signInWithEmailAndPassword(auth, state.email, state.password);
           await userCredential.user.reload();
           if (userCredential.user.emailVerified) {
-            showToast("Email verified! Redirecting to your dashboard...", { type: "success" });
-            window.location.href = "/";
+            showToast("Email verified! Redirecting to login...", { type: "success" });
+            window.location.href = "/login";
             return;
           } else {
             await clearUnverifiedSession();
@@ -143,42 +143,75 @@ const VerifyEmail = () => {
   return (
     <PublicSiteLayout>
       <section style={{
-        minHeight: "80vh",
+        minHeight: "100vh",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "80px 24px",
+        flexDirection: "column",
         background: "linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%)"
       }}>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          style={{
-            maxWidth: 520,
-            width: "100%",
-            background: "white",
-            borderRadius: 32,
-            padding: "48px 40px",
-            boxShadow: "0 20px 50px rgba(11,74,130,0.1)",
-            border: "1.5px solid #DBEAFE",
-            textAlign: "center"
-          }}
-        >
-          {/* Icon */}
-          <div style={{
-            width: 88,
-            height: 88,
-            borderRadius: 28,
-            background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            margin: "0 auto 28px",
-            border: "2px solid #BFDBFE"
+        {/* Blue-White Gradient Header */}
+        <div style={{
+          background: "linear-gradient(135deg, #0B4A82 0%, #1E40AF 50%, #3B82F6 100%)",
+          padding: "32px 24px",
+          textAlign: "center",
+          boxShadow: "0 4px 12px rgba(11, 74, 130, 0.15)"
+        }}>
+          <h1 style={{
+            fontSize: 28,
+            fontWeight: 800,
+            color: "white",
+            margin: 0,
+            letterSpacing: "-0.02em"
           }}>
-            <Mail size={44} color="#0B4A82" />
-          </div>
+            Verify your School Manager GH account
+          </h1>
+          <p style={{
+            fontSize: 14,
+            color: "rgba(255, 255, 255, 0.9)",
+            margin: "8px 0 0 0",
+            fontWeight: 500
+          }}>
+            Complete your email verification to access your school workspace
+          </p>
+        </div>
+
+        {/* Main Content */}
+        <div style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "48px 24px"
+        }}>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            style={{
+              maxWidth: 520,
+              width: "100%",
+              background: "white",
+              borderRadius: 32,
+              padding: "48px 40px",
+              boxShadow: "0 20px 50px rgba(11,74,130,0.1)",
+              border: "1.5px solid #DBEAFE",
+              textAlign: "center"
+            }}
+          >
+            {/* Icon */}
+            <div style={{
+              width: 120,
+              height: 120,
+              borderRadius: 32,
+              background: "linear-gradient(135deg, #0B4A82, #0F5BA8)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 28px",
+              border: "2px solid #BFDBFE",
+              boxShadow: "0 8px 24px rgba(11, 74, 130, 0.2)"
+            }}>
+              <Mail size={56} color="white" strokeWidth={1.5} />
+            </div>
 
           <h1 style={{ fontSize: 30, fontWeight: 800, color: "#0f172a", marginBottom: 12 }}>
             Check your inbox

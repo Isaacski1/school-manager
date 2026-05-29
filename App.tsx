@@ -110,7 +110,7 @@ const getEmailVerificationRedirect = () => {
 
   if (email) nextParams.set("email", email);
 
-  return `${url.origin}${url.pathname}#/email-verified?${nextParams.toString()}`;
+  return `${url.origin}${url.pathname}#/login?${nextParams.toString()}`;
 };
 
 const AppContent = () => {

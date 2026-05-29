@@ -274,6 +274,21 @@ const FeesPayments: React.FC = () => {
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
 
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState<string | null>(null);
+  const [sentInvoiceStatus, setSentInvoiceStatus] = useState<
+    Record<string, { channel: "whatsapp" | "sms"; sentAt: string }>
+  >({});
+
+  const resolveInvoiceRecipientPhone = (student?: Student) => {
+    return (
+      student?.guardianWhatsApp ||
+      student?.guardianPhone ||
+      student?.fatherWhatsApp ||
+      student?.fatherPhone ||
+      student?.motherWhatsApp ||
+      student?.motherPhone ||
+      ""
+    );
+  };
 
   // Helper: Pre-load image to Base64
   const urlToBase64 = (url: string): Promise<string> =>
@@ -321,9 +336,14 @@ const FeesPayments: React.FC = () => {
   };
 
   const handleSendWhatsAppInvoice = async (payment: StudentFeePayment) => {
-    const student = students.find(s => s.id === payment.studentId);
-    if (!student?.guardianPhone) {
-      showToast("No guardian phone number found for this student.", { type: "error" });
+    const student = students.find((s) => s.id === payment.studentId);
+    const invoicePhone = resolveInvoiceRecipientPhone(student);
+    if (!invoicePhone) {
+      showToast("No guardian or parent phone number found for this student.", { type: "error" });
+      return;
+    }
+    if (!student) {
+      showToast("Student record not found.", { type: "error" });
       return;
     }
 
@@ -374,23 +394,12 @@ const FeesPayments: React.FC = () => {
           pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
         }
 
-        let pdfBase64 = "";
-        let invoiceStoragePath = "";
-        try {
-          const safeReference = String(payment.receiptNumber || payment.id || Date.now()).replace(/[^a-z0-9_-]/gi, "_");
-          invoiceStoragePath = `invoice-pdfs/${schoolId || "unknown"}/${student.id}/${safeReference}.pdf`;
-          await uploadBytes(storageRef(storage, invoiceStoragePath), pdfBlob, {
-            contentType: "application/pdf",
-          });
-        } catch (uploadError) {
-          console.warn("[Invoice] Storage upload failed, falling back to base64 payload:", uploadError);
-          const reader = new FileReader();
-          const pdfBase64Promise = new Promise<string>((resolve) => {
-            reader.onloadend = () => resolve(reader.result as string);
-          });
-          reader.readAsDataURL(pdfBlob);
-          pdfBase64 = await pdfBase64Promise;
-        }
+        const reader = new FileReader();
+        const pdfBase64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+        });
+        reader.readAsDataURL(pdfBlob);
+        const pdfBase64 = await pdfBase64Promise;
 
         root.unmount();
         document.body.removeChild(container);
@@ -403,19 +412,39 @@ const FeesPayments: React.FC = () => {
             ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
           },
           body: JSON.stringify({
+            paymentId: payment.id,
             studentId: student.id,
             studentName: student.name,
-            guardianPhone: student.guardianPhone,
+            guardianName: student?.guardianName || student?.name || "Parent",
+            guardianPhone: invoicePhone,
             adminPhone: school?.phone,
             amount: payment.amountPaid,
             reference: payment.receiptNumber || payment.id,
-            ...(invoiceStoragePath ? { invoiceStoragePath } : { base64Pdf: pdfBase64 }),
-            feeName: payment.feeName
+            base64Pdf: pdfBase64,
+            feeName: payment.feeName,
+            forceInline: true,
           })
         });
+        const responseBody = await response.json().catch(() => ({}));
 
         if (response.ok) {
-          showToast("Invoice sent to WhatsApp successfully!", { type: "success" });
+          const channel =
+            responseBody.channel ||
+            responseBody.results?.[0]?.channel ||
+            (responseBody.queued ? "whatsapp" : "whatsapp");
+          setSentInvoiceStatus((prev) => ({
+            ...prev,
+            [payment.id]: {
+              channel: channel === "sms" ? "sms" : "whatsapp",
+              sentAt: new Date().toLocaleString(),
+            },
+          }));
+          showToast(
+            channel === "sms"
+              ? "Invoice SMS notification sent to parent."
+              : "Invoice sent to parent via WhatsApp.",
+            { type: "success" },
+          );
           logActivity({
             schoolId: schoolId!,
             actorUid: user?.id || null,
@@ -426,8 +455,8 @@ const FeesPayments: React.FC = () => {
             }
           });
         } else {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error || "Failed to send WhatsApp message");
+          const errData = responseBody || (await response.json().catch(() => ({})));
+          throw new Error(errData.error || "Failed to send invoice notification");
         }
       } catch (err) {
         if (document.body.contains(container)) document.body.removeChild(container);
@@ -521,7 +550,9 @@ const FeesPayments: React.FC = () => {
     return buildFinanceCacheKey(schoolId, academicYear, term, selectedClassId);
   }, [schoolId, academicYear, term, selectedClassId]);
 
-  const scrollToSection = (ref: React.RefObject<HTMLDivElement>) => {
+  const scrollToSection = (
+    ref: React.RefObject<HTMLDivElement | null>,
+  ) => {
     ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -925,33 +956,13 @@ const FeesPayments: React.FC = () => {
     availableClasses.find((cls) => cls.id === classId)?.name || classId || "this class";
 
   const getNewStudentFeeCutoff = () => {
-    const reopenDate = schoolConfig?.schoolReopenDate?.trim() || "";
-    const onboardingCutoff = onboardingDate.trim();
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayMs = today.getTime();
-
-    const parseActiveCutoff = (value: string) => {
-      if (!value) return null;
-      const normalizedValue = /^\d{4}-\d{2}-\d{2}$/.test(value)
-        ? `${value}T00:00:00`
-        : value;
-      const parsedMs = new Date(normalizedValue).getTime();
-      if (Number.isNaN(parsedMs) || parsedMs > todayMs) return null;
-      return parsedMs;
-    };
-
-    const reopenMs = parseActiveCutoff(reopenDate);
-    const onboardingMs = parseActiveCutoff(onboardingCutoff);
-
-    const cutoffDate = reopenMs !== null ? reopenDate : onboardingMs !== null ? onboardingCutoff : "";
-    const cutoffMs = reopenMs ?? onboardingMs;
-
-    if (!cutoffDate || cutoffMs === null) return null;
+    const cutoffMs = today.getTime() - 7 * 24 * 60 * 60 * 1000;
+    const cutoffDate = new Date(cutoffMs).toISOString().slice(0, 10);
     return {
       cutoffMs,
       cutoffDate,
-      sourceLabel: reopenMs !== null ? "school reopen date" : "onboarding date",
+      sourceLabel: "student join date (last 7 days)",
     };
   };
 
@@ -1068,9 +1079,9 @@ const FeesPayments: React.FC = () => {
         feeId: fee.id,
         feeName: fee.feeName,
         amount: fee.amount,
-        openingPaidAmount: previous?.openingPaidAmount ?? null,
-        openingBalance: previous?.openingBalance ?? null,
-        openingStatus: previous?.openingStatus ?? null,
+        openingPaidAmount: previous?.openingPaidAmount,
+        openingBalance: previous?.openingBalance,
+        openingStatus: previous?.openingStatus,
       };
     });
     const openingPaidTotal = feesList.reduce(
@@ -2124,7 +2135,7 @@ const FeesPayments: React.FC = () => {
       setOpeningLedgerForm((prev) => ({
         ...prev,
         [formKey]: {
-          openingStatus: updatedLedger.openingStatus,
+          openingStatus: openingStatusDerived,
           openingPaidAmount: String(updatedLedger.openingPaidAmount || 0),
           openingBalance: String(updatedLedger.openingBalance || 0),
         },
@@ -2948,141 +2959,126 @@ const FeesPayments: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_1fr]">
-                      <div className="space-y-4">
+                    <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+                      <div className="space-y-6">
                         <div
-                          className="relative mx-auto flex h-[250px] w-[250px] max-w-full items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-4 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur"
+                          className="relative mx-auto flex h-[320px] w-full max-w-[340px] items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-5 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur"
                           onMouseMove={handleWeeklyChartHover}
                           onMouseLeave={() => setHoveredWeekIndex(null)}
                         >
-                        <div
-                          className="absolute inset-4 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)]"
-                          style={{
-                            background: `conic-gradient(${weeklySegments
-                              .map(
-                                (segment) =>
-                                  `${segment.color} ${segment.start}% ${segment.start + segment.percentage}%`,
-                              )
-                              .join(", ")})`,
-                          }}
-                        />
-                        {hoveredWeekIndex !== null &&
-                          weeklySegments[hoveredWeekIndex] && (
-                            <div
-                              className="pointer-events-none absolute inset-4 rounded-full transition-all duration-300"
-                              style={{
-                                background: `conic-gradient(transparent 0% ${weeklySegments[hoveredWeekIndex].start}%, rgba(255,255,255,0.5) ${weeklySegments[hoveredWeekIndex].start}% ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}%, transparent ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}% 100%)`,
-                                transform: "scale(1.025)",
-                              }}
-                            />
-                          )}
-                        <div className="absolute inset-[34px] rounded-full border border-white/80 bg-white/90 shadow-inner" />
-                        <div className="relative flex max-w-[150px] flex-col items-center justify-center text-center">
-                          <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
-                            Weekly total
-                          </span>
-                          <span className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                            {formatMoney(weeklyTotal)}
-                          </span>
-                          <span className="mt-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-500">
-                            Avg{" "}
-                            {formatMoney(
-                              weeklyTotal / (collectionTrend.length || 1),
-                            )}
-                          </span>
-                        </div>
-
-                        {hoveredWeekIndex !== null &&
-                          weeklySegments[hoveredWeekIndex] && (
-                            <div className="absolute -top-4 left-1/2 z-10 w-[min(100%,220px)] -translate-x-1/2 rounded-2xl bg-slate-950 px-3 py-2 text-center text-[11px] text-white shadow-xl">
-                              {weeklySegments[hoveredWeekIndex].label} /{" "}
-                              {formatMoney(
-                                weeklySegments[hoveredWeekIndex].value,
-                              )}{" "}
-                              /{" "}
-                              {weeklySegments[
-                                hoveredWeekIndex
-                              ].percentage.toFixed(1)}
-                              %
-                            </div>
-                          )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-[20px] border border-white/80 bg-white/80 px-4 py-3 shadow-sm">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                            Peak week
-                          </p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">
-                            {strongestWeek?.label || "None"}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {strongestWeek
-                              ? formatMoney(strongestWeek.value)
-                              : "No activity"}
-                          </p>
-                        </div>
-                        <div className="rounded-[20px] border border-white/80 bg-gradient-to-br from-slate-50 via-white to-cyan-50 px-4 py-3 shadow-sm">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                            Focus
-                          </p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">
-                            Distribution mix
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            Hover any segment to inspect week share.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {weeklySegments.map((segment, index) => (
                           <div
-                            key={segment.label}
-                            onMouseEnter={() => setHoveredWeekIndex(index)}
-                            onMouseLeave={() => setHoveredWeekIndex(null)}
-                            className="rounded-[22px] border border-white/80 bg-white/86 p-4 text-xs text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                                  {segment.label}
-                                </p>
-                                <p className="mt-2 text-base font-semibold text-slate-900">
-                                  {formatMoney(segment.value)}
-                                </p>
-                              </div>
-                              <span
-                                className="mt-1 h-3 w-3 shrink-0 rounded-full"
-                                style={{ backgroundColor: segment.color }}
+                            className="absolute inset-4 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)]"
+                            style={{
+                              background: `conic-gradient(${weeklySegments
+                                .map(
+                                  (segment) =>
+                                    `${segment.color} ${segment.start}% ${segment.start + segment.percentage}%`,
+                                )
+                                .join(", ")})`,
+                            }}
+                          />
+                          {hoveredWeekIndex !== null &&
+                            weeklySegments[hoveredWeekIndex] && (
+                              <div
+                                className="pointer-events-none absolute inset-4 rounded-full transition-all duration-300"
+                                style={{
+                                  background: `conic-gradient(transparent 0% ${weeklySegments[hoveredWeekIndex].start}%, rgba(255,255,255,0.5) ${weeklySegments[hoveredWeekIndex].start}% ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}%, transparent ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}% 100%)`,
+                                  transform: "scale(1.025)",
+                                }}
                               />
-                            </div>
-                            <div className="mt-4">
-                              <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                <span>Share</span>
-                                <span>{segment.percentage.toFixed(1)}%</span>
+                            )}
+                          <div className="absolute inset-[34px] rounded-full border border-white/80 bg-white/90 shadow-inner" />
+                          <div className="relative flex max-w-[170px] flex-col items-center justify-center text-center">
+                            <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                              Weekly total
+                            </span>
+                            <span className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+                              {formatMoney(weeklyTotal)}
+                            </span>
+                            <span className="mt-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-500">
+                              Avg {formatMoney(weeklyTotal / (collectionTrend.length || 1))}
+                            </span>
+                          </div>
+                          {hoveredWeekIndex !== null &&
+                            weeklySegments[hoveredWeekIndex] && (
+                              <div className="absolute -top-4 left-1/2 z-10 w-[min(100%,220px)] -translate-x-1/2 rounded-2xl bg-slate-950 px-3 py-2 text-center text-[11px] text-white shadow-xl">
+                                {weeklySegments[hoveredWeekIndex].label} / {formatMoney(weeklySegments[hoveredWeekIndex].value)} / {weeklySegments[hoveredWeekIndex].percentage.toFixed(1)}%
                               </div>
-                              <div className="mt-2 h-2 rounded-full bg-slate-100">
-                                <div
-                                  className="h-full rounded-full"
-                                  style={{
-                                    width: `${Math.max(
-                                      segment.percentage,
-                                      segment.value > 0 ? 6 : 0,
-                                    )}%`,
-                                    backgroundColor: segment.color,
-                                  }}
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div className="rounded-[20px] border border-white/80 bg-white/80 px-4 py-4 shadow-sm">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                              Peak week
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">
+                              {strongestWeek?.label || "None"}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {strongestWeek ? formatMoney(strongestWeek.value) : "No activity"}
+                            </p>
+                          </div>
+                          <div className="rounded-[20px] border border-white/80 bg-gradient-to-br from-slate-50 via-white to-cyan-50 px-4 py-4 shadow-sm">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                              Focus
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">
+                              Distribution mix
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Hover any segment to inspect week share.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex min-h-[450px] flex-col gap-3">
+                        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                          {weeklySegments.map((segment, index) => (
+                            <div
+                              key={segment.label}
+                              onMouseEnter={() => setHoveredWeekIndex(index)}
+                              onMouseLeave={() => setHoveredWeekIndex(null)}
+                              className="rounded-[22px] border border-white/80 bg-white/86 p-4 text-xs text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                    {segment.label}
+                                  </p>
+                                  <p className="mt-2 text-base font-semibold text-slate-900">
+                                    {formatMoney(segment.value)}
+                                  </p>
+                                </div>
+                                <span
+                                  className="mt-1 h-3 w-3 shrink-0 rounded-full"
+                                  style={{ backgroundColor: segment.color }}
                                 />
                               </div>
+                              <div className="mt-4">
+                                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                  <span>Share</span>
+                                  <span>{segment.percentage.toFixed(1)}%</span>
+                                </div>
+                                <div className="mt-2 h-2 rounded-full bg-slate-100">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.max(segment.percentage, segment.value > 0 ? 6 : 0)}%`,
+                                      backgroundColor: segment.color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
+
+                        <div className="rounded-[24px] border border-dashed border-slate-200/80 bg-white/65 px-4 py-4 text-xs text-slate-500">
+                          The chart now uses the full panel width and the week cards stretch to fill the available space.
+                        </div>
                       </div>
-                      <div className="rounded-[24px] border border-dashed border-slate-200/80 bg-white/65 px-4 py-4 text-xs text-slate-500">
-                        The chart stays readable on smaller screens while
-                        keeping every week visible.
-                      </div>
-                    </div>
                     </div>
                   )}
                 </div>
@@ -3287,6 +3283,13 @@ const FeesPayments: React.FC = () => {
                             <p className="mt-1 text-xs text-slate-500">
                               {payment.feeName} / {payment.paymentMethod}
                             </p>
+                            {(sentInvoiceStatus[payment.id]?.channel || (payment as any).invoiceNotificationChannel) && (
+                              <span className="mt-2 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                {sentInvoiceStatus[payment.id]?.channel === "sms" || (payment as any).invoiceNotificationChannel === "sms"
+                                  ? "Invoice sent via SMS"
+                                  : "Invoice sent via WhatsApp"}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 lg:justify-end">
@@ -3624,7 +3627,7 @@ const FeesPayments: React.FC = () => {
                       {
                         title: "New students only",
                         description:
-                          "Uses the school reopen date so admission fees apply only to students added for the new term.",
+                          "Applies to students added within the last 7 days, so old students do not get admission fees.",
                       },
                       {
                         title: "Export quickly",

@@ -99,6 +99,18 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     return Number.isNaN(value) ? null : value;
   };
 
+  const isStudentNewForAdmissionFee = () => {
+    const createdAtMs = getStudentCreatedAtMs();
+    if (createdAtMs === null) return false;
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    return Date.now() - createdAtMs <= oneWeekMs;
+  };
+
+  const isAdmissionFeeNewStudentsOnly = (feeName: string, fees: FeeDefinition[]) => {
+    const fee = fees.find(f => f.feeName === feeName);
+    return fee && fee.appliesTo === "new_students_only" && fee.feeFrequency === "one_time";
+  };
+
   const isFeeApplicableToStudent = (fee: FeeDefinition, currentYear: string, schoolReopenDate?: string) => {
     if (fee.academicYear !== currentYear) return false;
     if (fee.feeFrequency === "per_year" && fee.applyToAcademicYear && fee.applyToAcademicYear !== currentYear) {
@@ -114,12 +126,10 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
       case "selected_students":
         return fee.selectedStudentIds?.includes(student.id) || false;
       case "new_students_only": {
-        const cutoffDate = schoolReopenDate || "";
-        if (!cutoffDate) return true;
         const createdAtMs = getStudentCreatedAtMs();
         if (createdAtMs === null) return true;
-        const cutoffMs = new Date(`${cutoffDate}T00:00:00`).getTime();
-        return Number.isNaN(cutoffMs) || createdAtMs >= cutoffMs;
+        const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+        return Date.now() - createdAtMs <= oneWeekMs;
       }
       case "all_students":
       default:
@@ -511,18 +521,6 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
 
       setLastPaymentInfo({ reference, amount, date: paymentDate });
       
-      // Notify Admin Dashboard
-      try {
-        await db.addSystemNotification(
-          `Payment Received: GHS ${amount} for ${student.name} (${feeName || "School Fees"})`,
-          "system",
-          student.schoolId
-        );
-      } catch (err) {
-        console.error("Failed to add system notification", err);
-      }
-      
-
       const hasNotificationPhone = Boolean(
         student.fatherPhone ||
           student.motherPhone ||
@@ -599,27 +597,15 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
           }
 
-          // 7. Prefer Storage upload so large PDFs are not sent through JSON.
-          let pdfBase64 = "";
-          let invoiceStoragePath = "";
-          try {
-            const safeReference = String(reference || Date.now()).replace(/[^a-z0-9_-]/gi, "_");
-            invoiceStoragePath = `invoice-pdfs/${student.schoolId || "unknown"}/${student.id}/${safeReference}.pdf`;
-            await uploadBytes(storageRef(storage, invoiceStoragePath), pdfBlob, {
-              contentType: "application/pdf",
-            });
-          } catch (uploadError) {
-            console.warn("[Invoice] Storage upload failed, falling back to base64 payload:", uploadError);
-            const reader = new FileReader();
-            const pdfBase64Promise = new Promise<string>((resolve) => {
-              reader.onloadend = () => {
-                const base64 = reader.result as string;
-                resolve(base64);
-              };
-            });
-            reader.readAsDataURL(pdfBlob);
-            pdfBase64 = await pdfBase64Promise;
-          }
+          const reader = new FileReader();
+          const pdfBase64Promise = new Promise<string>((resolve) => {
+            reader.onloadend = () => {
+              const base64 = reader.result as string;
+              resolve(base64);
+            };
+          });
+          reader.readAsDataURL(pdfBlob);
+          const pdfBase64 = await pdfBase64Promise;
 
           // 8. Clean up DOM
           root.unmount();
@@ -643,7 +629,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
               adminPhone: school?.phone,
               amount,
               reference,
-              ...(invoiceStoragePath ? { invoiceStoragePath } : { base64Pdf: pdfBase64 }),
+              base64Pdf: pdfBase64,
               feeName: feeName || "School Fees"
             })
           });
@@ -974,7 +960,16 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                           <tbody>
                             {ledger.fees.map((fee, index) => (
                               <tr key={index} className="border-b border-slate-100 last:border-0">
-                                <td className="py-2 sm:py-3 text-slate-800 text-xs sm:text-sm">{fee.feeName}</td>
+                                <td className="py-2 sm:py-3 text-slate-800 text-xs sm:text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span>{fee.feeName}</span>
+                                    {isAdmissionFeeNewStudentsOnly(fee.feeName, feeDefinitions) && isStudentNewForAdmissionFee() && (
+                                      <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded-full whitespace-nowrap">
+                                        New students only
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
                                 <td className="py-2 sm:py-3 text-right text-slate-600 text-xs sm:text-sm">{formatCurrency(fee.amount)}</td>
                                 <td className="py-2 sm:py-3 text-right text-green-600 text-xs sm:text-sm">{formatCurrency(fee.actualPaid || 0)}</td>
                                 <td className="py-2 sm:py-3 text-right text-red-600 text-xs sm:text-sm">{formatCurrency(fee.actualBalance || 0)}</td>
