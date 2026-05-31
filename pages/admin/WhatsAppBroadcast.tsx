@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { usePaystackPayment } from "react-paystack";
 import { announceWhatsAppBroadcastJob } from "../../components/WhatsAppBroadcastProgress";
+import { API_BASE_URL } from "../../src/config";
 
 // WhatsApp official SVG icon
 const WhatsAppIcon = ({ size = 22 }: { size?: number }) => (
@@ -22,7 +23,7 @@ const WhatsAppIcon = ({ size = 22 }: { size?: number }) => (
   </svg>
 );
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_BASE = API_BASE_URL;
 const SAFE_BROADCAST_LIMIT = 100;
 const LARGE_SEND_WARNING_LIMIT = 50;
 

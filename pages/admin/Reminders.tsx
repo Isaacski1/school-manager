@@ -6,6 +6,7 @@ import { firestore } from "../../services/firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { showToast } from "../../services/toast";
 import { deleteParentDashboardNotice, getParentDashboardNoticeHistory, sendParentDashboardNotice } from "../../services/backendApi";
+import { API_BASE_URL } from "../../src/config";
 import { MessageSquare, Users, Send, Loader2, RefreshCw, AlertTriangle, Sparkles, CreditCard, Wallet, ShieldAlert, ChevronDown, Filter, CheckCircle2, Inbox, Trash2 } from "lucide-react";
 import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { usePaystackPayment } from "react-paystack";
@@ -466,7 +467,7 @@ const Reminders: React.FC = () => {
       const fb = getAuth();
       const token = await fb.currentUser?.getIdToken() ?? "";
       
-      const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+      const API_BASE = API_BASE_URL;
       
       const res = await fetch(`${API_BASE}/api/admin/reminders/send`, {
         method: "POST",

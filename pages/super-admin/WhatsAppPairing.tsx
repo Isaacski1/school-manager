@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Layout from "../../components/Layout";
 import { showToast } from "../../services/toast";
+import { API_BASE_URL } from "../../src/config";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -14,7 +15,7 @@ import {
   WifiOff,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_BASE = API_BASE_URL;
 const CENTRAL_WHATSAPP_NUMBER = "+233201008784";
 
 type WaStatus = "disconnected" | "connecting" | "qr_ready" | "ready" | "error" | "unavailable";

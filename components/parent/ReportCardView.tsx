@@ -242,6 +242,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
           },
           studentInfo: {
             name: student.name,
+            photoUrl: student.photoUrl || "",
             gender: student.gender || "",
             dob: student.dob || "",
             class: className,

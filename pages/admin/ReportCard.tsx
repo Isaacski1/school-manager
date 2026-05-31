@@ -452,6 +452,7 @@ const ReportCard = () => {
         },
         studentInfo: {
           name: student?.name || "",
+          photoUrl: student?.photoUrl || "",
           gender: student?.gender || "",
           dob: student?.dob || "",
           class:
@@ -857,6 +858,7 @@ const ReportCard = () => {
           },
           studentInfo: {
             name: student?.name || "",
+            photoUrl: student?.photoUrl || "",
             gender: student?.gender || "",
             dob: student?.dob || "",
             class:

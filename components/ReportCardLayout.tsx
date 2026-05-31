@@ -5,76 +5,63 @@ import html2pdf from "html2pdf.js";
 import { calculateGrade, getGradeColor } from "../constants";
 import { Save, GraduationCap, BarChart2, Star, MessageSquare } from "lucide-react";
 
+const DEFAULT_STUDENT_PHOTO =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='48' fill='%23e2e8f0'/%3E%3Ccircle cx='48' cy='35' r='17' fill='%2394a3b8'/%3E%3Cpath d='M20 82c3.8-18 16.8-28 28-28s24.2 10 28 28' fill='%2394a3b8'/%3E%3C/svg%3E";
+
 const SectionHeader = ({ icon: Icon, title }: { icon: any; title: string }) => (
   <div
     style={{
       width: "100%",
       marginBottom: "8px",
+      position: "relative",
+      height: "18px",
       whiteSpace: "nowrap",
-      lineHeight: "15px",
+      lineHeight: 1,
     }}
   >
-    <table
+    <div
       style={{
-        width: "100%",
-        borderCollapse: "collapse",
-        tableLayout: "auto",
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top: "8px",
+        height: "2px",
+        backgroundColor: "#dbeafe",
+        opacity: 0.7,
+      }}
+    />
+    <span
+      style={{
+        position: "relative",
+        zIndex: 1,
+        display: "inline-flex",
+        alignItems: "center",
+        height: "18px",
+        gap: "5px",
+        paddingRight: "9px",
+        backgroundColor: "#ffffff",
+        color: "#1e40af",
+        fontSize: "12px",
+        fontWeight: 700,
+        letterSpacing: "0.05em",
+        lineHeight: "18px",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
       }}
     >
-      <tbody>
-        <tr>
-          <td
-            style={{
-              width: "17px",
-              padding: 0,
-              verticalAlign: "middle",
-            }}
-          >
-            <Icon
-              size={15}
-              strokeWidth={2.2}
-              color="#2563eb"
-              style={{
-                display: "block",
-                width: "15px",
-                height: "15px",
-              }}
-            />
-          </td>
-          <td
-            style={{
-              width: "1%",
-              padding: "0 8px 0 0",
-              color: "#1e40af",
-              fontSize: "12px",
-              fontWeight: 700,
-              letterSpacing: "0.05em",
-              lineHeight: "15px",
-              textTransform: "uppercase",
-              verticalAlign: "middle",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {title}
-          </td>
-          <td
-            style={{
-              padding: 0,
-              verticalAlign: "middle",
-            }}
-          >
-            <div
-              style={{
-                height: "2px",
-                width: "100%",
-                backgroundColor: "#dbeafe",
-                opacity: 0.7,
-              }}
-            />
-          </td>
-        </tr>
-      </tbody>
-    </table>
+      <Icon
+        size={15}
+        strokeWidth={2.2}
+        color="#2563eb"
+        style={{
+          display: "block",
+          width: "15px",
+          height: "15px",
+          flex: "0 0 15px",
+        }}
+      />
+      {title}
+    </span>
   </div>
 );
 
@@ -85,6 +72,7 @@ interface ReportCardLayoutProps {
 const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  const [studentPhotoDataUrl, setStudentPhotoDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const convertLogoToDataUrl = async () => {
@@ -119,6 +107,36 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
       convertLogoToDataUrl();
     }
   }, [data?.schoolInfo?.logoUrl]);
+
+  useEffect(() => {
+    const convertStudentPhotoToDataUrl = async () => {
+      const src = data?.studentInfo?.photoUrl;
+      if (!src) {
+        setStudentPhotoDataUrl(null);
+        return;
+      }
+
+      if (src.startsWith("data:")) {
+        setStudentPhotoDataUrl(src);
+        return;
+      }
+
+      try {
+        const response = await fetch(src);
+        const blob = await response.blob();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setStudentPhotoDataUrl(reader.result as string);
+        };
+        reader.readAsDataURL(blob);
+      } catch (error) {
+        console.warn("Failed to fetch or convert student photo:", error);
+        setStudentPhotoDataUrl(null);
+      }
+    };
+
+    convertStudentPhotoToDataUrl();
+  }, [data?.studentInfo?.photoUrl]);
 
   if (!data) {
     return null;
@@ -323,9 +341,21 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
           </div>
         </div>
         {/* Student Info */}
-        <div className="flex justify-between items-center pb-1.5 mb-3 text-[12px] font-medium border-b border-slate-100">
-          <div className="flex gap-1">
-            <span className="font-bold text-slate-900">Name:</span> <span className="text-slate-700">{studentInfo.name}</span>
+        <div className="flex justify-between items-center gap-3 pb-2 mb-3 text-[12px] font-medium border-b border-slate-100">
+          <div className="flex items-center gap-2 min-w-[230px]">
+            <img
+              src={studentPhotoDataUrl || DEFAULT_STUDENT_PHOTO}
+              alt={`${studentInfo.name || "Student"} profile`}
+              className="w-12 h-12 rounded-full object-cover border-2 border-blue-100 bg-slate-100 shrink-0"
+            />
+            <div className="leading-tight">
+              <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                Student Name
+              </span>
+              <span className="block text-[13px] font-bold text-slate-900">
+                {studentInfo.name}
+              </span>
+            </div>
           </div>
           <div className="flex gap-1">
             <span className="font-bold text-slate-900">Class:</span> <span className="text-slate-700">{studentInfo.class}</span>
