@@ -44,11 +44,11 @@ const Dashboard = lazy(() => import("./pages/super-admin/Dashboard"));
 const SmsManager = lazy(() => import("./pages/super-admin/SmsManager"));
 const SuperAdminBackups = lazy(() => import("./pages/super-admin/Backups"));
 const SuperAdminPayments = lazy(() => import("./pages/super-admin/Payments"));
-const SuperAdminFinanceFlow = lazy(() => import("./pages/super-admin/FinanceFlow"));
 const SuperAdminUsers = lazy(() => import("./pages/super-admin/Users"));
 const SuperAdminAnalytics = lazy(() => import("./pages/super-admin/Analytics"));
 const SuperAdminSystemHealth = lazy(() => import("./pages/super-admin/SystemHealth"));
 const SuperAdminBroadcasts = lazy(() => import("./pages/super-admin/Broadcasts"));
+const SuperAdminWhatsAppPairing = lazy(() => import("./pages/super-admin/WhatsAppPairing"));
 const LoginHistory = lazy(() => import("./pages/super-admin/security/LoginHistory"));
 const SuspiciousEvents = lazy(() => import("./pages/super-admin/security/SuspiciousEvents"));
 const AuditLogs = lazy(() => import("./pages/super-admin/security/AuditLogs"));
@@ -779,16 +779,6 @@ const AppRoutes = ({
         }
       />
       <Route
-        path="/super-admin/finance"
-        element={
-          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
-            <Layout title="Finance Flow">
-              <SuperAdminFinanceFlow />
-            </Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/super-admin/sms"
         element={
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
@@ -827,6 +817,14 @@ const AppRoutes = ({
         element={
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
             <SuperAdminBroadcasts />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/whatsapp"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <SuperAdminWhatsAppPairing />
           </ProtectedRoute>
         }
       />

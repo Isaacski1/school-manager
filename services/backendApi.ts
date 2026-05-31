@@ -924,6 +924,16 @@ export interface SuperAdminSmsOverview {
     retailRatePerSms: number;
     wholesaleRatePerSms: number;
     providerSenderId: string;
+    smsBundleExpiryType?: "expiring" | "unexpiring";
+    smsBundleExpiresAt?: number | null;
+    smsBundles?: Array<{
+      id: string;
+      type: "expiring" | "unexpiring";
+      messageCount: number;
+      purchasedAt: number;
+      expiresAt: number | null;
+      label?: string;
+    }>;
     updatedAt?: number;
     updatedBy?: string;
   };
@@ -959,6 +969,16 @@ export async function updateSuperAdminSmsConfig(payload: {
   retailRatePerSms: number;
   wholesaleRatePerSms: number;
   providerSenderId: string;
+  smsBundleExpiryType?: "expiring" | "unexpiring";
+  smsBundleExpiresAt?: number | null;
+  smsBundles?: Array<{
+    id: string;
+    type: "expiring" | "unexpiring";
+    messageCount: number;
+    purchasedAt: number;
+    expiresAt: number | null;
+    label?: string;
+  }>;
 }): Promise<{ success: boolean; message: string }> {
   return apiRequest("/api/superadmin/sms/config", { body: payload });
 }

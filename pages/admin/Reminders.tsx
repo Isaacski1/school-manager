@@ -1007,6 +1007,12 @@ const Reminders: React.FC = () => {
                           <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full font-bold">
                             {b.recipientCount} parent{b.recipientCount !== 1 ? 's' : ''}
                           </span>
+                          {Array.isArray(b.recipientPhones) && b.recipientPhones.length > 0 && (
+                            <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                              {b.recipientPhones.slice(0, 2).join(", ")}
+                              {b.recipientPhones.length > 2 ? ` +${b.recipientPhones.length - 2}` : ""}
+                            </p>
+                          )}
                         </td>
                         <td className="py-3.5 pr-4 max-w-xs sm:max-w-md truncate font-medium text-slate-800" title={b.message}>
                           {b.message}

@@ -24,6 +24,7 @@ import {
   submitSuperAdminAiFeedback,
   getSuperAdminAiMetrics,
   getSuperAdminDashboardOverview,
+  getSuperAdminSchoolsPage,
 } from "../../services/backendApi";
 import showToast from "../../services/toast";
 import { clearClientCache, resolveClientCache } from "../../services/clientCache";
@@ -2755,7 +2756,7 @@ const Dashboard: React.FC = () => {
           checklistLimit: 200, // Checklist data
         });
 
-        const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
+        let normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
           ...(row || {}),
           id: String(row?.id || ""),
           name: getSchoolName(row?.name),
@@ -2794,6 +2795,25 @@ const Dashboard: React.FC = () => {
           payload?.totals,
           normalizedSchools,
         );
+        const totalSchoolsCount = Number(
+          resolvedTotals?.totalSchools ?? resolvedTotals?.schools ?? 0,
+        );
+        if (normalizedSchools.length === 0 && totalSchoolsCount > 0) {
+          const schoolsPage = await getSuperAdminSchoolsPage({
+            limit: Math.min(200, Math.max(25, totalSchoolsCount)),
+            forceRefresh,
+          });
+          normalizedSchools = ((schoolsPage.items || []) as any[]).map((row: any) => ({
+            ...(row || {}),
+            id: String(row?.id || ""),
+            name: getSchoolName(row?.name),
+            code: getSchoolCode(row?.code, row?.id),
+            logoUrl: normalizeText(row?.logoUrl),
+            plan: normalizePlan(row?.plan),
+            status: normalizeStatus(row?.status),
+            createdAt: row?.createdAt || null,
+          }));
+        }
 
         setSchools(normalizedSchools);
         setActivity(normalizedActivity);
@@ -2854,7 +2874,7 @@ const Dashboard: React.FC = () => {
           checklistLimit: 500,
         });
 
-        const normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
+        let normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
           ...(row || {}),
           id: String(row?.id || ""),
           name: getSchoolName(row?.name),
@@ -2893,6 +2913,25 @@ const Dashboard: React.FC = () => {
           payload?.totals,
           normalizedSchools,
         );
+        const totalSchoolsCount = Number(
+          resolvedTotals?.totalSchools ?? resolvedTotals?.schools ?? 0,
+        );
+        if (normalizedSchools.length === 0 && totalSchoolsCount > 0) {
+          const schoolsPage = await getSuperAdminSchoolsPage({
+            limit: Math.min(200, Math.max(25, totalSchoolsCount)),
+            forceRefresh,
+          });
+          normalizedSchools = ((schoolsPage.items || []) as any[]).map((row: any) => ({
+            ...(row || {}),
+            id: String(row?.id || ""),
+            name: getSchoolName(row?.name),
+            code: getSchoolCode(row?.code, row?.id),
+            logoUrl: normalizeText(row?.logoUrl),
+            plan: normalizePlan(row?.plan),
+            status: normalizeStatus(row?.status),
+            createdAt: row?.createdAt || null,
+          }));
+        }
 
         setSchools(normalizedSchools);
         setActivity(normalizedActivity);
@@ -3110,7 +3149,7 @@ const Dashboard: React.FC = () => {
         }
       }
 
-      if (status === "pending") pendingCount += 1;
+      if (status === "pending" && createdAt >= last30Cutoff) pendingCount += 1;
       if (status === "failed") failedCount += 1;
     });
 
@@ -4368,6 +4407,7 @@ const Dashboard: React.FC = () => {
                 ring: "bg-amber-500",
                 text: "text-amber-700",
                 icon: <Clock size={18} />,
+                note: "This session resets after 30 days",
               },
               {
                 label: "Failed",
@@ -4418,6 +4458,11 @@ const Dashboard: React.FC = () => {
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
+                    {item.note && (
+                      <p className={`mt-3 text-xs font-semibold ${item.text}`}>
+                        {item.note}
+                      </p>
+                    )}
                   </div>
                 </div>
               );
@@ -4475,7 +4520,7 @@ const Dashboard: React.FC = () => {
                   {paymentMetrics.pendingCount}
                 </div>
                 <p className="text-xs text-amber-700 mt-2">
-                  Awaiting confirmation
+                  Awaiting confirmation. This session resets after 30 days.
                 </p>
               </div>
               <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">

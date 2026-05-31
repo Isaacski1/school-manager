@@ -979,12 +979,14 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
     const schoolData = schoolDoc.data();
     const walletBalance = schoolData?.smsWallet?.balance ?? 0;
     
-    // Format phones to international format (233...)
-    const formattedPhones = phones.map(p => {
-      let clean = String(p).replace(/\D/g, "");
-      if (clean.startsWith("0")) clean = "233" + clean.substring(1);
-      return clean;
-    });
+    // Format phones to international format (233...) and discard unusable entries.
+    const formattedPhones = Array.from(
+      new Set(phones.map((phone) => normalizeSmsPhone(phone)).filter(Boolean)),
+    );
+
+    if (!formattedPhones.length) {
+      return res.status(400).json({ error: "No valid parent phone numbers were selected." });
+    }
 
     const totalCost = formattedPhones.length * retailRate;
 
@@ -1017,11 +1019,11 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
         })
       });
 
-      smsData = await smsResponse.json();
+      smsData = await smsResponse.json().catch(() => ({}));
 
-      if (!smsResponse.ok) {
+      if (!smsResponse.ok || smsData.status !== "success") {
         console.error("Arkesel SMS Error:", smsData);
-        return res.status(400).json({ error: smsData.message || "Failed to send SMS via Arkesel." });
+        return res.status(400).json({ error: smsData.message || `Failed to send SMS via Arkesel (${smsResponse.status}).` });
       }
     }
 
@@ -1042,6 +1044,7 @@ app.post("/api/admin/reminders/send", authMiddleware, async (req, res) => {
       sentBy: uid,
       message,
       recipientCount: formattedPhones.length,
+      recipientPhones: formattedPhones,
       cost: totalCost,
       wholesaleCost: totalWholesaleCost,
       profitMargin: totalProfitMargin,
@@ -5019,7 +5022,7 @@ app.get(
         100,
         100000,
       );
-      const DASHBOARD_QUERY_TIMEOUT_MS = 1500; // Reduced from 2800
+      const DASHBOARD_QUERY_TIMEOUT_MS = 3500;
       const CHECKLIST_QUERY_TIMEOUT_MS = 1200; // Reduced from 2200
 
       const cacheKey = buildSuperAdminViewCacheKey(
@@ -5117,7 +5120,19 @@ app.get(
             [],
           );
 
-          return Array.isArray(unorderedRows) ? unorderedRows : [];
+          if (Array.isArray(unorderedRows) && unorderedRows.length > 0) {
+            return unorderedRows;
+          }
+
+          // Final fallback mirrors /api/superadmin/schools-page, which is the
+          // reliable source for the dedicated Schools screen.
+          const page = await listCollectionPage({
+            collectionName: "schools",
+            orderField: "createdAt",
+            direction: "desc",
+            limitCount: Math.min(schoolsLimit, 250),
+          });
+          return Array.isArray(page.items) ? page.items : [];
         } catch (err) {
           console.error("Error fetching schools:", err?.message);
           return [];
@@ -8363,7 +8378,10 @@ app.get(
       const config = smsConfigDoc.exists ? smsConfigDoc.data() : {
         retailRatePerSms: 0.05,
         wholesaleRatePerSms: 0.02,
-        providerSenderId: "SMGH"
+        providerSenderId: "SMGH",
+        smsBundleExpiryType: "unexpiring",
+        smsBundleExpiresAt: null,
+        smsBundles: []
       };
 
       // 2. Fetch real-time Arkesel balance if API key is present
@@ -8493,6 +8511,26 @@ app.get(
         };
       }).sort((a, b) => b.createdAt - a.createdAt);
 
+      const successfulTopupRevenueFromTransactions = transactions.reduce((sum, tx) => {
+        const status = String(tx.status || "").toLowerCase();
+        if (status !== "success" && status !== "paid") return sum;
+        return sum + (Number(tx.amount || 0) / 100);
+      }, 0);
+      const recordedTopupRevenue = Number(summary.totalTopupAmount || 0);
+      const retailRate = Number(config.retailRatePerSms || 0.05);
+      const wholesaleRate = Number(config.wholesaleRatePerSms || 0.02);
+      const topupRevenue =
+        recordedTopupRevenue > 0
+          ? recordedTopupRevenue
+          : successfulTopupRevenueFromTransactions;
+
+      if (topupRevenue > 0) {
+        const estimatedSmsSold = retailRate > 0 ? topupRevenue / retailRate : totalSmsSent;
+        totalRevenue = topupRevenue;
+        totalWholesaleCost = estimatedSmsSold * wholesaleRate;
+        totalProfitMargin = totalRevenue - totalWholesaleCost;
+      }
+
       res.json({
         success: true,
         provider: {
@@ -8530,7 +8568,14 @@ app.post(
   superAdminMiddleware,
   async (req, res) => {
     try {
-      const { retailRatePerSms, wholesaleRatePerSms, providerSenderId } = req.body;
+      const {
+        retailRatePerSms,
+        wholesaleRatePerSms,
+        providerSenderId,
+        smsBundleExpiryType,
+        smsBundleExpiresAt,
+        smsBundles
+      } = req.body;
 
       if (retailRatePerSms === undefined || wholesaleRatePerSms === undefined) {
         return res.status(400).json({ error: "retailRatePerSms and wholesaleRatePerSms are required." });
@@ -8543,10 +8588,39 @@ app.post(
         return res.status(400).json({ error: "Rates must be valid positive numbers." });
       }
 
+      const expiryType = smsBundleExpiryType === "expiring" ? "expiring" : "unexpiring";
+      const expiresAt = expiryType === "expiring" ? Number(smsBundleExpiresAt || 0) : null;
+
+      if (expiryType === "expiring" && (!Number.isFinite(expiresAt) || expiresAt <= 0)) {
+        return res.status(400).json({ error: "Select a valid SMS bundle expiry date." });
+      }
+
+      const normalizedBundles = Array.isArray(smsBundles)
+        ? smsBundles.slice(0, 50).map((bundle) => {
+            const type = bundle?.type === "expiring" ? "expiring" : "unexpiring";
+            const messageCount = Math.max(0, Math.floor(Number(bundle?.messageCount || 0)));
+            const purchasedAt = Number(bundle?.purchasedAt || Date.now());
+            const bundleExpiresAt = type === "expiring" ? Number(bundle?.expiresAt || 0) : null;
+            return {
+              id: String(bundle?.id || crypto.randomUUID?.() || crypto.randomBytes(8).toString("hex")),
+              type,
+              messageCount,
+              purchasedAt: Number.isFinite(purchasedAt) && purchasedAt > 0 ? purchasedAt : Date.now(),
+              expiresAt: type === "expiring" && Number.isFinite(bundleExpiresAt) && bundleExpiresAt > 0
+                ? bundleExpiresAt
+                : null,
+              label: String(bundle?.label || "").slice(0, 80)
+            };
+          }).filter((bundle) => bundle.messageCount > 0 && (bundle.type === "unexpiring" || bundle.expiresAt))
+        : [];
+
       await admin.firestore().collection("settings").doc("platform_sms").set({
         retailRatePerSms: retail,
         wholesaleRatePerSms: wholesale,
         providerSenderId: providerSenderId || "SMGH",
+        smsBundleExpiryType: expiryType,
+        smsBundleExpiresAt: expiresAt,
+        smsBundles: normalizedBundles,
         updatedAt: Date.now(),
         updatedBy: req.user.uid
       }, { merge: true });
@@ -8557,7 +8631,7 @@ app.post(
         actorUid: req.user.uid,
         actorRole: "super_admin",
         entityId: "platform_sms",
-        meta: { retail, wholesale, providerSenderId }
+        meta: { retail, wholesale, providerSenderId, smsBundleExpiryType: expiryType, smsBundleExpiresAt: expiresAt }
       });
 
       res.json({
@@ -9323,6 +9397,7 @@ const normalizeSmsPhone = (phone) => {
   if (!digits) return "";
   if (digits.startsWith("233")) return digits;
   if (digits.startsWith("0")) return `233${digits.slice(1)}`;
+  if (digits.length === 9 && /^[235]\d{8}$/.test(digits)) return `233${digits}`;
   return digits;
 };
 
@@ -11538,17 +11613,46 @@ const loadWhatsAppService = async () => {
   return whatsappService;
 };
 
+const requireSuperAdminForWhatsApp = async (req, res) => {
+  const tokenRole = req.user?.role || "";
+  if (tokenRole === "super_admin") return true;
+
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(403).json({ error: "Forbidden. Super Admin access required." });
+      return false;
+    }
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const role = callerDoc.exists ? callerDoc.data()?.role || "" : "";
+    if (role === "super_admin") return true;
+  } catch (err) {
+    console.error("[WhatsApp] Super Admin check failed:", err.message);
+  }
+
+  res.status(403).json({ error: "Forbidden. Super Admin access required." });
+  return false;
+};
+
 /**
  * GET /api/whatsapp/status
  * Returns current WhatsApp connection status and QR code if pending.
  */
 app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.getWhatsAppStatus) {
+    return res.status(503).json({
+      status: "unavailable",
+      qr: null,
+      available: false,
+      centralNumber: "+233201008784",
+      error: "WhatsApp service unavailable. Ensure whatsapp-web.js and qrcode are installed.",
+    });
+  }
   return res.json({
-    status: "centralized",
-    qr: null,
+    ...svc.getWhatsAppStatus(),
     centralNumber: "+233201008784",
-    message:
-      "School-owned WhatsApp QR pairing is temporarily disabled. Notifications use the centralized School Manager GH WhatsApp service.",
   });
 });
 
@@ -11557,10 +11661,13 @@ app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
  * Initializes the WhatsApp client and starts QR generation.
  */
 app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
-  return res.status(410).json({
-    error:
-      "WhatsApp QR pairing is disabled for Version 1. Configure Notification Settings instead.",
-  });
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.initWhatsAppClient) {
+    return res.status(503).json({ error: "WhatsApp service unavailable." });
+  }
+  svc.initWhatsAppClient();
+  return res.json({ success: true, ...svc.getWhatsAppStatus() });
 });
 
 /**
@@ -11568,10 +11675,19 @@ app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
  * Requests a pairing code for a specific phone number.
  */
 app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
-  return res.status(410).json({
-    error:
-      "Pairing codes are disabled for Version 1 centralized notifications.",
-  });
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const { phone } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "Phone number is required." });
+  const svc = await loadWhatsAppService();
+  if (!svc?.requestPairingCode) {
+    return res.status(503).json({ error: "WhatsApp service unavailable." });
+  }
+  try {
+    const code = await svc.requestPairingCode(phone);
+    return res.json({ success: true, code });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || "Failed to generate pairing code." });
+  }
 });
 
 /**
@@ -11579,10 +11695,13 @@ app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
  * Disconnects and destroys the WhatsApp session.
  */
 app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
-  return res.json({
-    success: true,
-    message: "No school-owned WhatsApp session is active in Version 1.",
-  });
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.disconnectWhatsApp) {
+    return res.status(503).json({ error: "WhatsApp service unavailable." });
+  }
+  await svc.disconnectWhatsApp();
+  return res.json({ success: true, ...svc.getWhatsAppStatus() });
 });
 
 /**
@@ -11590,10 +11709,24 @@ app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
  * Disconnects and deletes the local session folder.
  */
 app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
-  return res.json({
-    success: true,
-    message: "School-owned WhatsApp sessions are disabled in Version 1.",
-  });
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.clearWhatsAppSession) {
+    return res.status(503).json({ error: "WhatsApp service unavailable." });
+  }
+  const result = await svc.clearWhatsAppSession();
+  if (!result.success) return res.status(500).json(result);
+  return res.json({ ...result, ...svc.getWhatsAppStatus() });
+});
+
+app.get("/api/whatsapp/debug", authMiddleware, async (req, res) => {
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.testPuppeteer) {
+    return res.status(503).json({ success: false, error: "WhatsApp service unavailable." });
+  }
+  const result = await svc.testPuppeteer();
+  return res.status(result.success ? 200 : 500).json(result);
 });
 
 /**
@@ -12221,8 +12354,10 @@ const persistInvoicePdfToStorage = async ({
   const buffer = Buffer.from(cleanBase64, "base64");
   const downloadToken = crypto.randomUUID?.() || crypto.randomBytes(16).toString("hex");
   const bucketCandidates = getStorageBucketCandidates();
+  
   if (!bucketCandidates.length) {
-    throw new Error("No Firebase Storage bucket is configured for this project.");
+    console.warn("[Invoice] No Firebase Storage bucket configured. Proceeding without storage persistence.");
+    return "";
   }
 
   let lastError = null;
@@ -12245,7 +12380,9 @@ const persistInvoicePdfToStorage = async ({
       console.warn("[Invoice] Storage save failed for bucket:", bucketName, err?.message || err);
     }
   }
-  throw lastError || new Error("Failed to persist invoice PDF to storage.");
+  
+  console.warn("[Invoice] PDF storage persistence failed. Will proceed with base64 transmission:", lastError?.message || "Unknown error");
+  return "";
 };
 
 const shouldProcessInvoiceNotificationsInline = () => {
@@ -12509,8 +12646,33 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
 
       const svc = await loadWhatsAppService();
       const statusInfo = svc?.getWhatsAppStatus ? svc.getWhatsAppStatus() : { status: "unavailable" };
-      if (!svc || statusInfo.status !== "ready") {
-        const errorMessage = `Central WhatsApp session is not ready (${statusInfo.status}).`;
+      if (svc && statusInfo.status !== "ready" && svc.initWhatsAppClient) {
+        console.log("[WhatsApp] Central client not ready. Initializing on demand...");
+        svc.initWhatsAppClient();
+        const ready = await new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve(false), 30000);
+          const checkReady = () => {
+            const freshStatus = svc.getWhatsAppStatus();
+            if (freshStatus.status === "ready") {
+              clearTimeout(timeout);
+              resolve(true);
+            } else if (freshStatus.status === "error") {
+              clearTimeout(timeout);
+              resolve(false);
+            } else {
+              setTimeout(checkReady, 1000);
+            }
+          };
+          checkReady();
+        });
+        if (ready) {
+          console.log("[WhatsApp] Central client became ready during invoice send.");
+        }
+      }
+
+      const currentStatusInfo = svc?.getWhatsAppStatus ? svc.getWhatsAppStatus() : { status: "unavailable" };
+      if (!svc || currentStatusInfo.status !== "ready") {
+        const errorMessage = `Central WhatsApp session is not ready (${currentStatusInfo.status}).`;
         if (inlineProcessing && firstRecipient) {
           const smsMessage = [
             `Payment received for ${studentName || studentData.name || "Student"}.`,
@@ -12811,7 +12973,7 @@ const shouldAutoInitWhatsApp = () => {
   const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(setting)) return true;
   if (["0", "false", "no", "off"].includes(setting)) return false;
-  return false;
+  return process.env.NODE_ENV !== "production";
 };
 
 const server = app.listen(PORT);
