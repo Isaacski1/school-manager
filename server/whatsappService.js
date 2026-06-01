@@ -4,6 +4,7 @@
  */
 
 import { createRequire } from "module";
+import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 const require = createRequire(import.meta.url);
@@ -18,6 +19,19 @@ const configuredWebVersionRemotePath = String(
 const configuredUserAgent = String(
   process.env.WHATSAPP_USER_AGENT || "",
 ).trim();
+
+const SYSTEM_CHROME_PATHS =
+  process.platform === "win32"
+    ? [
+        join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+        join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+      ]
+    : [
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+      ];
 
 let Client, LocalAuth, MessageMedia, qrcode;
 let dependencyError = null;
@@ -119,14 +133,31 @@ export const testPuppeteer = async () => {
 
 const resolvePuppeteerExecutablePath = () => {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+      return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    lastError = `PUPPETEER_EXECUTABLE_PATH is set but the file does not exist: ${process.env.PUPPETEER_EXECUTABLE_PATH}`;
+    console.warn("[WhatsApp]", lastError);
   }
   if (puppeteerExecutablePath) {
+    return puppeteerExecutablePath;
+  }
+  const systemChromePath = SYSTEM_CHROME_PATHS.find((chromePath) =>
+    existsSync(chromePath),
+  );
+  if (systemChromePath) {
+    puppeteerExecutablePath = systemChromePath;
     return puppeteerExecutablePath;
   }
   try {
     const puppeteer = require("puppeteer");
     puppeteerExecutablePath = puppeteer.executablePath();
+    if (!existsSync(puppeteerExecutablePath)) {
+      lastError = `Chrome is not installed for WhatsApp pairing. Run "cd server && npm install" or "node server/scripts/install-puppeteer-chrome.mjs", then restart the backend. Missing: ${puppeteerExecutablePath}`;
+      console.warn("[WhatsApp]", lastError);
+      puppeteerExecutablePath = null;
+      return null;
+    }
     return puppeteerExecutablePath;
   } catch (err) {
     console.warn("[WhatsApp] Could not resolve Puppeteer Chrome path:", err?.message || err);
