@@ -129,6 +129,10 @@ const PRODUCTION_APP_ORIGINS = [
   "https://www.schoolmanagergh.com",
 ];
 
+const PRODUCTION_APP_ORIGIN_REGEXES = [
+  /^https:\/\/([a-z0-9-]+\.)?schoolmanagergh\.com$/i,
+];
+
 const normalizeOriginValue = (value) => String(value || "").trim().replace(/\/$/, "");
 
 const collectOrigins = (...values) =>
@@ -174,6 +178,7 @@ const isAllowedOrigin = (origin) => {
   if (!origin) return true;
   const normalizedOrigin = normalizeOriginValue(origin);
   if (allowedOrigins.has(normalizedOrigin)) return true;
+  if (PRODUCTION_APP_ORIGIN_REGEXES.some((regex) => regex.test(normalizedOrigin))) return true;
   return wildcardOriginRegexes.some((regex) => regex.test(normalizedOrigin));
 };
 
@@ -203,6 +208,8 @@ app.use(
     optionsSuccessStatus: 204,
   }),
 );
+
+app.options("*", cors());
 
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
