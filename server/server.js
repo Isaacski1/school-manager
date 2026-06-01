@@ -133,7 +133,8 @@ const PRODUCTION_APP_ORIGIN_REGEXES = [
   /^https:\/\/([a-z0-9-]+\.)?schoolmanagergh\.com$/i,
 ];
 
-const normalizeOriginValue = (value) => String(value || "").trim().replace(/\/$/, "");
+const normalizeOriginValue = (value) =>
+  String(value || "").trim().replace(/\/$/, "").toLowerCase();
 
 const collectOrigins = (...values) =>
   values
@@ -184,7 +185,11 @@ const isAllowedOrigin = (origin) => {
 
 const corsOptions = {
   origin(origin, callback) {
-    callback(null, isAllowedOrigin(origin));
+    const allowed = isAllowedOrigin(origin);
+    if (origin && !allowed) {
+      console.warn("[CORS] Blocked origin:", origin);
+    }
+    callback(null, allowed);
   },
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
@@ -194,36 +199,16 @@ const corsOptions = {
     "X-Paystack-Signature",
   ],
   optionsSuccessStatus: 204,
+  preflightContinue: false,
 };
-
-app.use((req, res, next) => {
-  const origin = normalizeOriginValue(req.headers.origin || "");
-  if (origin && isAllowedOrigin(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Authorization,Content-Type,X-Requested-With,X-Paystack-Signature",
-    );
-  }
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(isAllowedOrigin(origin) ? 204 : 403);
-  }
-
-  next();
-});
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (!isAllowedOrigin(origin)) {
+  if (origin && !isAllowedOrigin(origin)) {
+    console.warn("[CORS] Forbidden request origin:", origin, req.method, req.originalUrl);
     return res.status(403).json({
       error:
         "Forbidden: Request origin is not allowed. Configure CORS_ALLOWED_ORIGINS for this deployment.",
