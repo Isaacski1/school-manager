@@ -11672,6 +11672,7 @@ app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
   return res.json({
     ...svc.getWhatsAppStatus(),
     centralNumber: "+233201008784",
+    autoInit: shouldAutoInitWhatsApp(),
   });
 });
 
@@ -12998,7 +12999,7 @@ const shouldAutoInitWhatsApp = () => {
   const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(setting)) return true;
   if (["0", "false", "no", "off"].includes(setting)) return false;
-  return true;
+  return false;
 };
 
 const server = app.listen(PORT);
