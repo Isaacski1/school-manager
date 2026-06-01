@@ -7,6 +7,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
 let Client, LocalAuth, MessageMedia, qrcode;
+let dependencyError = null;
 try {
   const wwjs = require("whatsapp-web.js");
   Client = wwjs.Client;
@@ -15,6 +16,7 @@ try {
   qrcode = require("qrcode");
   console.log("[WhatsApp] whatsapp-web.js loaded successfully.");
 } catch (err) {
+  dependencyError = err?.message || String(err);
   console.error("[WhatsApp] Failed to require whatsapp-web.js or qrcode:", err.message);
 }
 
@@ -65,7 +67,7 @@ export const getWhatsAppStatus = () => ({
   status: clientStatus,
   qr: currentQrBase64,
   available: Boolean(Client && LocalAuth && qrcode),
-  lastError: lastError
+  lastError: lastError || dependencyError,
 });
 
 export const clearWhatsAppSession = async () => {
