@@ -4,7 +4,13 @@
  */
 
 import { createRequire } from "module";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 const require = createRequire(import.meta.url);
+
+const serverDir = dirname(fileURLToPath(import.meta.url));
+const puppeteerCacheDir = join(serverDir, ".cache", "puppeteer");
+process.env.PUPPETEER_CACHE_DIR ||= puppeteerCacheDir;
 
 let Client, LocalAuth, MessageMedia, qrcode;
 let dependencyError = null;
@@ -25,6 +31,7 @@ let clientStatus = "disconnected";
 let currentQrBase64 = null;
 let lastError = null;
 let initializing = false;
+let puppeteerExecutablePath = null;
 
 // Utility functions for safety and timing
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,9 +94,11 @@ export const clearWhatsAppSession = async () => {
 export const testPuppeteer = async () => {
   try {
     const puppeteer = require("puppeteer");
+    const executablePath = resolvePuppeteerExecutablePath();
     console.log("[WhatsApp] Testing Puppeteer launch...");
     const browser = await puppeteer.launch({
       headless: true,
+      ...(executablePath ? { executablePath } : {}),
       args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     const version = await browser.version();
@@ -98,6 +107,23 @@ export const testPuppeteer = async () => {
   } catch (err) {
     console.error("[WhatsApp] Puppeteer Test Failed:", err.message);
     return { success: false, error: err.message };
+  }
+};
+
+const resolvePuppeteerExecutablePath = () => {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  if (puppeteerExecutablePath) {
+    return puppeteerExecutablePath;
+  }
+  try {
+    const puppeteer = require("puppeteer");
+    puppeteerExecutablePath = puppeteer.executablePath();
+    return puppeteerExecutablePath;
+  } catch (err) {
+    console.warn("[WhatsApp] Could not resolve Puppeteer Chrome path:", err?.message || err);
+    return null;
   }
 };
 
@@ -120,6 +146,7 @@ export const initWhatsAppClient = () => {
   currentQrBase64 = null;
   lastError = null;
   console.log("[WhatsApp] Initializing client...");
+  const executablePath = resolvePuppeteerExecutablePath();
 
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: "./whatsapp-session" }),
@@ -131,6 +158,7 @@ export const initWhatsAppClient = () => {
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     puppeteer: {
       headless: true,
+      ...(executablePath ? { executablePath } : {}),
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",

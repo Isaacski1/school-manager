@@ -6,6 +6,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "postinstall": "node scripts/install-puppeteer-chrome.mjs",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },

@@ -3,65 +3,51 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import html2pdf from "html2pdf.js";
 import { calculateGrade, getGradeColor } from "../constants";
-import { Save, GraduationCap, BarChart2, Star, MessageSquare } from "lucide-react";
+import { Save } from "lucide-react";
 
 const DEFAULT_STUDENT_PHOTO =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='48' fill='%23e2e8f0'/%3E%3Ccircle cx='48' cy='35' r='17' fill='%2394a3b8'/%3E%3Cpath d='M20 82c3.8-18 16.8-28 28-28s24.2 10 28 28' fill='%2394a3b8'/%3E%3C/svg%3E";
 
-const SectionHeader = ({ icon: Icon, title }: { icon: any; title: string }) => (
+const SectionHeader = ({ title }: { title: string }) => (
   <div
     style={{
       width: "100%",
+      display: "flex",
+      alignItems: "center",
+      gap: "7px",
       marginBottom: "8px",
-      position: "relative",
-      height: "18px",
-      whiteSpace: "nowrap",
-      lineHeight: 1,
+      minHeight: "20px",
+      lineHeight: "20px",
     }}
   >
-    <div
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        top: "8px",
-        height: "2px",
-        backgroundColor: "#dbeafe",
-        opacity: 0.7,
-      }}
-    />
     <span
       style={{
-        position: "relative",
-        zIndex: 1,
         display: "inline-flex",
         alignItems: "center",
-        height: "18px",
+        flex: "0 0 auto",
+        height: "20px",
         gap: "5px",
-        paddingRight: "9px",
-        backgroundColor: "#ffffff",
         color: "#1e40af",
         fontSize: "12px",
         fontWeight: 700,
-        letterSpacing: "0.05em",
-        lineHeight: "18px",
+        letterSpacing: "0.04em",
+        lineHeight: "20px",
         textTransform: "uppercase",
         whiteSpace: "nowrap",
       }}
     >
-      <Icon
-        size={15}
-        strokeWidth={2.2}
-        color="#2563eb"
-        style={{
-          display: "block",
-          width: "15px",
-          height: "15px",
-          flex: "0 0 15px",
-        }}
-      />
       {title}
     </span>
+    <span
+      aria-hidden="true"
+      style={{
+        display: "block",
+        flex: "1 1 auto",
+        height: "2px",
+        minWidth: "24px",
+        backgroundColor: "#dbeafe",
+      }}
+    />
   </div>
 );
 
@@ -400,7 +386,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
 
         {/* Academic Performance */}
         <div className="mb-3">
-          <SectionHeader icon={GraduationCap} title="Academic Performance" />
+          <SectionHeader title="Academic Performance" />
           <div className="overflow-x-auto rounded-t-md overflow-hidden">
             <table className="w-full text-left border-collapse text-[12px] bg-transparent">
               <thead
@@ -534,7 +520,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
               className="bg-white/80 p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
-              <SectionHeader icon={BarChart2} title="Performance Summary" />
+              <SectionHeader title="Performance Summary" />
               <div className="mt-2">
                 <div
                   className="flex justify-between py-0.5"
@@ -571,7 +557,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
               className="bg-white/80 p-2.5 rounded-md text-[11px] space-y-0.5"
               style={{ border: "1px solid #1160A8" }}
             >
-              <SectionHeader icon={Star} title="Skills & Behaviour" />
+              <SectionHeader title="Skills & Behaviour" />
               <div className="mt-2">
                 {skills &&
                   Object.entries(skills).map(([skill, rating]) => (
@@ -593,7 +579,7 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
 
         {/* Remarks */}
         <div className="mb-3">
-          <SectionHeader icon={MessageSquare} title="Remarks" />
+          <SectionHeader title="Remarks" />
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-white/75 px-2 py-1 text-[11px]">
               <h4 className="font-bold mb-0.5 text-slate-900">Class Teacher:</h4>
