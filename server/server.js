@@ -182,6 +182,23 @@ const isAllowedOrigin = (origin) => {
   return wildcardOriginRegexes.some((regex) => regex.test(normalizedOrigin));
 };
 
+const corsOptions = {
+  origin(origin, callback) {
+    callback(null, isAllowedOrigin(origin));
+  },
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Authorization",
+    "Content-Type",
+    "X-Requested-With",
+    "X-Paystack-Signature",
+  ],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (!isAllowedOrigin(origin)) {
@@ -192,24 +209,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      callback(null, isAllowedOrigin(origin));
-    },
-    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Authorization",
-      "Content-Type",
-      "X-Requested-With",
-      "X-Paystack-Signature",
-    ],
-    optionsSuccessStatus: 204,
-  }),
-);
-
-app.options("*", cors());
 
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
