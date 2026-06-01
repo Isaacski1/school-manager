@@ -120,11 +120,14 @@ const WhatsAppPairing: React.FC = () => {
       const res = await apiFetch(path, { method: "POST", ...opts });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+      setStatusError(null);
       showToast(successMessage, { type: "success" });
       await loadStatus();
       return data;
     } catch (error: any) {
-      showToast(error?.message || "WhatsApp action failed.", { type: "error" });
+      const message = error?.message || "WhatsApp action failed.";
+      setStatusError(message);
+      showToast(message, { type: "error" });
       return null;
     } finally {
       setLoadingAction(null);

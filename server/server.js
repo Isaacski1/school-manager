@@ -11620,8 +11620,22 @@ const loadWhatsAppService = async () => {
 };
 
 const requireSuperAdminForWhatsApp = async (req, res) => {
-  const tokenRole = req.user?.role || "";
-  if (tokenRole === "super_admin") return true;
+  const hasSuperAdminAccess = (value) => {
+    if (!value || typeof value !== "object") return false;
+    const role = String(value.role || value.userRole || value.claimRole || "").trim().toLowerCase();
+    const roles = Array.isArray(value.roles) ? value.roles.map((item) => String(item).toLowerCase()) : [];
+    return (
+      role === "super_admin" ||
+      role === "superadmin" ||
+      roles.includes("super_admin") ||
+      roles.includes("superadmin") ||
+      value.super_admin === true ||
+      value.superAdmin === true ||
+      value.isSuperAdmin === true
+    );
+  };
+
+  if (hasSuperAdminAccess(req.user)) return true;
 
   try {
     const uid = req.user?.uid;
@@ -11630,8 +11644,7 @@ const requireSuperAdminForWhatsApp = async (req, res) => {
       return false;
     }
     const callerDoc = await admin.firestore().collection("users").doc(uid).get();
-    const role = callerDoc.exists ? callerDoc.data()?.role || "" : "";
-    if (role === "super_admin") return true;
+    if (callerDoc.exists && hasSuperAdminAccess(callerDoc.data() || {})) return true;
   } catch (err) {
     console.error("[WhatsApp] Super Admin check failed:", err.message);
   }
@@ -11689,6 +11702,12 @@ app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
     return res.status(503).json({ error: "WhatsApp service unavailable." });
   }
   try {
+    if (svc.getWhatsAppStatus && svc.initWhatsAppClient) {
+      const currentStatus = svc.getWhatsAppStatus();
+      if (["disconnected", "error", "unavailable"].includes(currentStatus.status)) {
+        svc.initWhatsAppClient();
+      }
+    }
     const code = await svc.requestPairingCode(phone);
     return res.json({ success: true, code });
   } catch (err) {

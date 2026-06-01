@@ -289,12 +289,27 @@ export const disconnectWhatsApp = async () => {
 };
 
 export const requestPairingCode = async (phone) => {
-  if (!client || (clientStatus !== "qr_ready" && clientStatus !== "connecting")) {
-    console.warn(`[WhatsApp] Cannot request pairing code: Client is ${clientStatus}`);
-    throw new Error("WhatsApp client must be initializing to request a code.");
-  }
   try {
     const digits = normalizePhone(phone);
+    if (!/^233\d{9}$/.test(digits)) {
+      throw new Error("Enter a valid Ghana WhatsApp number, for example 0201008784 or +233201008784.");
+    }
+
+    const startedAt = Date.now();
+    while (
+      (!client || !["qr_ready", "connecting"].includes(clientStatus)) &&
+      Date.now() - startedAt < 15000
+    ) {
+      await sleep(500);
+    }
+
+    if (!client || !["qr_ready", "connecting"].includes(clientStatus)) {
+      console.warn(`[WhatsApp] Cannot request pairing code: Client is ${clientStatus}`);
+      throw new Error(
+        `WhatsApp client is ${clientStatus}. Click Start Pairing, wait for the QR code, then request a phone pairing code.`,
+      );
+    }
+
     console.log(`[WhatsApp] Requesting Pairing Code for: ${digits}`);
     const code = await client.requestPairingCode(digits);
     console.log(`[WhatsApp] ✅ Pairing Code generated: ${code}`);
