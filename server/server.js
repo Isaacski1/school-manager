@@ -12980,7 +12980,7 @@ const shouldAutoInitWhatsApp = () => {
   const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(setting)) return true;
   if (["0", "false", "no", "off"].includes(setting)) return false;
-  return process.env.NODE_ENV !== "production";
+  return true;
 };
 
 const server = app.listen(PORT);

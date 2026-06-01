@@ -107,11 +107,12 @@ const WhatsAppPairing: React.FC = () => {
 
   useEffect(() => {
     loadStatus();
-    intervalRef.current = setInterval(() => loadStatus(false), 3000);
+    const pollDelay = status === "connecting" || loadingAction === "connect" ? 1000 : 3000;
+    intervalRef.current = setInterval(() => loadStatus(false), pollDelay);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [loadStatus]);
+  }, [loadStatus, loadingAction, status]);
 
   const runAction = async (action: string, path: string, successMessage: string, opts: RequestInit = {}) => {
     setLoadingAction(action);
@@ -130,8 +131,13 @@ const WhatsAppPairing: React.FC = () => {
     }
   };
 
-  const handleConnect = () =>
+  const handleConnect = () => {
+    setStatus("connecting");
+    setQrCode(null);
+    setLastError(null);
+    setStatusError(null);
     runAction("connect", "/api/whatsapp/init", "WhatsApp service is starting. Wait for the QR code.");
+  };
 
   const handleDisconnect = () =>
     runAction("disconnect", "/api/whatsapp/disconnect", "WhatsApp session disconnected.");
@@ -263,7 +269,7 @@ const WhatsAppPairing: React.FC = () => {
                 <div className="text-center">
                   <Loader2 size={36} className="mx-auto animate-spin text-emerald-600" />
                   <p className="mt-3 text-sm font-semibold text-slate-700">Waiting for QR code...</p>
-                  <p className="mt-1 text-xs text-slate-500">This can take 10 to 30 seconds after starting pairing.</p>
+                  <p className="mt-1 text-xs text-slate-500">First startup can take 30 to 60 seconds. After the server is warm, it is usually faster.</p>
                 </div>
               ) : (
                 <div className="text-center">

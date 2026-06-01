@@ -8,6 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+server/.cache/
+server/whatsapp-session/
 dist
 dist-ssr
 *.local
