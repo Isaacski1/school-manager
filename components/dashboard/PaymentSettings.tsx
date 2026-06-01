@@ -77,8 +77,13 @@ interface PaymentConfig {
   momoNumber?: string;
   momoName?: string;
   subaccountCode?: string;
+  platformFeePercentage?: number;
+  schoolSettlementPercentage?: number;
   status: "pending" | "active" | "error";
 }
+
+const DEFAULT_PLATFORM_FEE_PERCENTAGE = 2;
+const DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE = 98;
 
 const PaymentSettings: React.FC = () => {
   const { school } = useSchool();
@@ -159,16 +164,21 @@ const PaymentSettings: React.FC = () => {
         throw new Error(result.error || "Failed to setup Paystack subaccount");
       }
 
+      const activatedConfig: PaymentConfig = {
+        ...config,
+        ...(result.paymentSettings || {}),
+        subaccountCode: result.subaccountCode || result.paymentSettings?.subaccountCode,
+        platformFeePercentage: result.paymentSettings?.platformFeePercentage ?? DEFAULT_PLATFORM_FEE_PERCENTAGE,
+        schoolSettlementPercentage: result.paymentSettings?.schoolSettlementPercentage ?? DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE,
+        status: "active"
+      };
+
       setConfig(prev => ({
         ...prev,
-        subaccountCode: result.subaccountCode,
+        ...activatedConfig,
         status: "active"
       }));
-      setActiveConfig({
-        ...config,
-        subaccountCode: result.subaccountCode,
-        status: "active"
-      });
+      setActiveConfig(activatedConfig);
 
       showToast("Payment settings activated successfully!", { type: "success" });
       setShowForm(false);
@@ -256,6 +266,20 @@ const PaymentSettings: React.FC = () => {
                         {activeConfig.method === "Bank" 
                           ? (activeConfig.accountNumber || "Not set") 
                           : (activeConfig.momoNumber || "Not set")}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-slate-400 text-[10px] mb-0.5">School Settlement</p>
+                      <p className="font-bold text-sm sm:text-lg">
+                        {activeConfig.schoolSettlementPercentage ?? DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE}%
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-slate-400 text-[10px] mb-0.5">Platform Fee</p>
+                      <p className="font-bold text-sm sm:text-lg">
+                        {activeConfig.platformFeePercentage ?? DEFAULT_PLATFORM_FEE_PERCENTAGE}%
                       </p>
                     </div>
                   </div>

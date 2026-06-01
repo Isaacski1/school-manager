@@ -196,6 +196,28 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
+app.use((req, res, next) => {
+  const origin = normalizeOriginValue(req.headers.origin || "");
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization,Content-Type,X-Requested-With,X-Paystack-Signature",
+    );
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(isAllowedOrigin(origin) ? 204 : 403);
+  }
+
+  next();
+});
+
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
@@ -898,7 +920,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
         business_name: resolvedBusinessName,
         settlement_bank: resolvedBankCode,
         account_number: resolvedAccountNumber,
-        percentage_charge: 0,
+        percentage_charge: PLATFORM_FEE_PERCENTAGE,
         primary_contact_phone: contactPhone || userData.phone || ""
       }),
     });
@@ -920,6 +942,8 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       method: resolvedMethod,
       status: "active",
       subaccountCode,
+      platformFeePercentage: PLATFORM_FEE_PERCENTAGE,
+      schoolSettlementPercentage: SCHOOL_SETTLEMENT_PERCENTAGE,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       setupAt: admin.firestore.FieldValue.serverTimestamp(),
       bankName: resolvedMethod === "Bank" ? (bankName || resolvedBankCode) : null,
@@ -1529,6 +1553,8 @@ app.post("/api/parent/notices/:noticeId/read", authMiddleware, async (req, res) 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
+const PLATFORM_FEE_PERCENTAGE = 2;
+const SCHOOL_SETTLEMENT_PERCENTAGE = 100 - PLATFORM_FEE_PERCENTAGE;
 const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
@@ -11550,7 +11576,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
         business_name,
         settlement_bank,
         account_number,
-        percentage_charge: 0,
+        percentage_charge: PLATFORM_FEE_PERCENTAGE,
       }),
     });
 
@@ -11567,6 +11593,8 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       method,
       subaccountCode,
       status: "active",
+      platformFeePercentage: PLATFORM_FEE_PERCENTAGE,
+      schoolSettlementPercentage: SCHOOL_SETTLEMENT_PERCENTAGE,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       // Bank specific fields
       bankName: method === "Bank" ? (bankName || settlement_bank) : null,
@@ -12949,7 +12977,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       business_name: businessName,
       settlement_bank: bankCode,
       account_number: accountNumber,
-      percentage_charge: 0,
+      percentage_charge: PLATFORM_FEE_PERCENTAGE,
       primary_contact_phone: contactPhone || ""
     };
     
@@ -12979,6 +13007,8 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       method,
       status: "active",
       subaccountCode,
+      platformFeePercentage: PLATFORM_FEE_PERCENTAGE,
+      schoolSettlementPercentage: SCHOOL_SETTLEMENT_PERCENTAGE,
       ...(method === "Bank" ? { bankName, accountNumber, accountName } : { momoNetwork, momoNumber, momoName })
     };
 
