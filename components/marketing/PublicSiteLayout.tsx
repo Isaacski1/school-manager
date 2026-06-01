@@ -13,7 +13,7 @@ const navLinks = [
   { href: "/features", label: "Features" },
   { href: "/pricing", label: "Pricing" },
   { href: "/blog", label: "Blog" },
-  { href: "/demos", label: "Watch Demos" },
+  // { href: "/demos", label: "Watch Demos" }, // Disabled until demo videos are ready
 ];
 
 const whatsappHref = `https://wa.me/233201008784?text=${encodeURIComponent(
@@ -420,7 +420,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
 
             <div>
               <p style={{ fontWeight: 700, fontSize: 14, marginBottom: 16, color: "rgba(255,255,255,0.9)" }}>Platform</p>
-              {[["Home", "/"], ["Features", "/features"], ["Pricing", "/pricing"], ["Watch Demos", "/demos"], ["Book Free Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
+              {[["Home", "/"], ["Features", "/features"], ["Pricing", "/pricing"], ["Book Free Demo", "/book-demo"], ["Register Your School", "/get-started"]].map(([label, href]) => (
                 <Link key={href} to={href} style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10, transition: "color 0.2s" }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "white"}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"}

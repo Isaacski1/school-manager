@@ -107,7 +107,13 @@ const WhatsAppPairing: React.FC = () => {
 
   useEffect(() => {
     loadStatus();
-    const pollDelay = status === "connecting" || loadingAction === "connect" ? 1000 : 3000;
+    // Polling delays: Fast when connecting (1s), slower for QR display (120s/2min), normal otherwise (3s)
+    let pollDelay = 3000;
+    if (status === "connecting" || loadingAction === "connect") {
+      pollDelay = 1000;
+    } else if (status === "qr_ready") {
+      pollDelay = 120000; // 2 minutes for QR code display
+    }
     intervalRef.current = setInterval(() => loadStatus(false), pollDelay);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);

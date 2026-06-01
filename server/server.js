@@ -13014,7 +13014,7 @@ const shouldAutoInitWhatsApp = () => {
   const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(setting)) return true;
   if (["0", "false", "no", "off"].includes(setting)) return false;
-  return false;
+  return true; // default to auto-init for production reliability
 };
 
 const server = app.listen(PORT);
@@ -13036,6 +13036,101 @@ server.on("listening", async () => {
     }
   } catch (err) {
     console.error("[WhatsApp] Failed to auto-initialize on startup:", err.message);
+  }
+
+  // Start a lightweight retry worker to process pending WhatsApp retry queue entries.
+  const startWhatsAppRetryWorker = () => {
+    const INTERVAL = Number(process.env.WHATSAPP_RETRY_INTERVAL_MS || 60000);
+    console.log(`[WhatsAppRetryWorker] Starting; interval=${INTERVAL}ms`);
+    setInterval(async () => {
+      try {
+        const db = admin.firestore();
+        const now = Date.now();
+        const q = db
+          .collection("whatsapp_retry_queue")
+          .where("status", "==", "pending")
+          .where("nextAttemptAt", "<=", now)
+          .orderBy("nextAttemptAt")
+          .limit(10);
+
+        const snap = await q.get();
+        if (snap.empty) return;
+
+        const svc = await loadWhatsAppService();
+        const readiness = svc?.ensureWhatsAppReady ? await svc.ensureWhatsAppReady() : { ready: false };
+
+        for (const doc of snap.docs) {
+          const data = doc.data();
+          const id = doc.id;
+          try {
+            await doc.ref.update({ status: "processing", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+            if (!svc) throw new Error("WhatsApp service unavailable");
+
+            const payload = data.payload || {};
+            let sendResult = { success: false, error: "No action taken" };
+
+            if (!readiness.ready) {
+              // Try to ensure client is started if saved session exists
+              await svc.initWhatsAppClient?.();
+              const fresh = await svc.ensureWhatsAppReady?.();
+              if (!fresh || !fresh.ready) throw new Error(`WhatsApp not ready (${fresh?.status || 'unknown'})`);
+            }
+
+            if (payload && payload.cleanBase64) {
+              sendResult = await svc.sendWhatsAppMedia(data.recipient || payload.recipient, payload.caption || "", payload.cleanBase64, payload.filename || "file.pdf", payload.mimetype || "application/pdf");
+            } else if (payload && payload.message) {
+              sendResult = await svc.sendWhatsAppMessage(data.recipient || payload.recipient, payload.message);
+            } else if (data.type === "payment_invoice" && payload && payload.reference) {
+              // best-effort: try to send media if invoice PDF exists in payload
+              if (payload.cleanBase64) {
+                sendResult = await svc.sendWhatsAppMedia(data.recipient || payload.recipient, payload.caption || "", payload.cleanBase64, payload.filename || "invoice.pdf", payload.mimetype || "application/pdf");
+              } else if (payload.message) {
+                sendResult = await svc.sendWhatsAppMessage(data.recipient || payload.recipient, payload.message);
+              } else {
+                sendResult = { success: false, error: "Unknown invoice payload" };
+              }
+            } else {
+              // Fallback: try to send a simple text using any message field
+              const text = payload.message || payload.caption || data.message || "";
+              if (text) sendResult = await svc.sendWhatsAppMessage(data.recipient || payload.recipient, text);
+            }
+
+            if (sendResult && sendResult.success) {
+              await doc.ref.update({ status: "done", attempts: (data.attempts || 0) + 1, updatedAt: admin.firestore.FieldValue.serverTimestamp(), lastError: "" });
+              console.log(`[WhatsAppRetryWorker] Sent retry ${id} -> ${data.recipient}`);
+            } else {
+              const attempts = (data.attempts || 0) + 1;
+              const maxAttempts = data.maxAttempts || 3;
+              const backoff = attempts * 10 * 60 * 1000; // attempts * 10 minutes
+              const nextAttemptAt = Date.now() + backoff;
+              const update = {
+                status: attempts >= maxAttempts ? "failed" : "pending",
+                attempts,
+                nextAttemptAt,
+                lastError: (sendResult && sendResult.error) || "Send failed",
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              };
+              await doc.ref.update(update);
+              console.warn(`[WhatsAppRetryWorker] Retry ${id} failed: ${update.lastError}`);
+            }
+          } catch (err) {
+            const attempts = (doc.data()?.attempts || 0) + 1;
+            const nextAttemptAt = Date.now() + 10 * 60 * 1000;
+            await doc.ref.update({ status: attempts >= (doc.data()?.maxAttempts || 3) ? "failed" : "pending", attempts, nextAttemptAt, lastError: err.message || String(err), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            console.warn(`[WhatsAppRetryWorker] Processing ${doc.id} error:`, err.message || err);
+          }
+        }
+      } catch (err) {
+        console.warn("[WhatsAppRetryWorker] Error:", err?.message || err);
+      }
+    }, INTERVAL);
+  };
+
+  try {
+    startWhatsAppRetryWorker();
+  } catch (err) {
+    console.warn("[WhatsAppRetryWorker] Failed to start:", err?.message || err);
   }
 });
 

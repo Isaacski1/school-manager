@@ -78,8 +78,16 @@ export const ensureWhatsAppReady = async () => {
 
   if (!client || clientStatus === "error" || clientStatus === "disconnected") {
     console.log(`[WhatsApp] Auto-reconnect requested from status: ${clientStatus}`);
-    await disconnectWhatsApp();
-    initWhatsAppClient();
+    
+    // Check if there's a saved session (e.g., after Render spindown/restart)
+    const hasSavedSession = existsSync("./whatsapp-session");
+    if (hasSavedSession && clientStatus !== "error") {
+      console.log("[WhatsApp] Found saved session. Attempting auto-reconnect...");
+      initWhatsAppClient();
+    } else {
+      await disconnectWhatsApp();
+      initWhatsAppClient();
+    }
   }
 
   const ready = await waitForReady();
