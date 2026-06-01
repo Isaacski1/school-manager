@@ -12,6 +12,13 @@ const serverDir = dirname(fileURLToPath(import.meta.url));
 const puppeteerCacheDir = join(serverDir, ".cache", "puppeteer");
 process.env.PUPPETEER_CACHE_DIR ||= puppeteerCacheDir;
 
+const configuredWebVersionRemotePath = String(
+  process.env.WHATSAPP_WEB_VERSION_REMOTE_PATH || "",
+).trim();
+const configuredUserAgent = String(
+  process.env.WHATSAPP_USER_AGENT || "",
+).trim();
+
 let Client, LocalAuth, MessageMedia, qrcode;
 let dependencyError = null;
 try {
@@ -150,12 +157,15 @@ export const initWhatsAppClient = () => {
 
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: "./whatsapp-session" }),
-    // Use a remote web version cache to bypass outdated local WhatsApp Web versions that cause "Couldn't link device"
-    webVersionCache: {
-      type: "remote",
-      remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
-    },
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ...(configuredWebVersionRemotePath
+      ? {
+          webVersionCache: {
+            type: "remote",
+            remotePath: configuredWebVersionRemotePath,
+          },
+        }
+      : {}),
+    ...(configuredUserAgent ? { userAgent: configuredUserAgent } : {}),
     puppeteer: {
       headless: true,
       ...(executablePath ? { executablePath } : {}),
