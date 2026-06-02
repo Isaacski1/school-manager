@@ -641,12 +641,33 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
 
           const result = await response.json().catch(() => ({}));
           console.log("[Invoice] WhatsApp notification handled:", result);
+          const notificationResults = Array.isArray(result.results) ? result.results : [];
+          const sentToWhatsApp = notificationResults.some(
+            (item) => item.success && item.channel === "whatsapp",
+          );
+          const sentToSmsFallback = notificationResults.some(
+            (item) => item.success && item.channel === "sms",
+          );
+          const allFailed = notificationResults.length > 0 && notificationResults.every((item) => !item.success);
+
           if (result.queued) {
             showToast("Payment saved. WhatsApp notification queued.", { type: "info" });
           } else if (result.skipped) {
             showToast("Payment saved. WhatsApp notifications are disabled.", { type: "info" });
-          } else {
+          } else if (sentToWhatsApp) {
             showToast("Payment saved and WhatsApp notification processed.", { type: "success" });
+          } else if (sentToSmsFallback) {
+            showToast(
+              "Payment saved. WhatsApp failed, but an SMS fallback was sent to the parent.",
+              { type: "warning" },
+            );
+          } else if (allFailed) {
+            showToast(
+              "Payment saved, but notification failed. Please check the WhatsApp sender and parent contact number.",
+              { type: "error" },
+            );
+          } else {
+            showToast("Payment saved. Notification result is pending.", { type: "info" });
           }
         } catch (captureError: any) {
           console.error("[Invoice] Capture/Send failed:", captureError);

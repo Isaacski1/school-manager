@@ -53,9 +53,23 @@ let currentQrBase64 = null;
 let lastError = null;
 let initializing = false;
 let puppeteerExecutablePath = null;
+let reconnectTimeout = null;
+let initWatchdog = null;
 
 // Utility functions for safety and timing
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const clearReconnectTimeout = () => {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+};
+const clearInitWatchdog = () => {
+  if (initWatchdog) {
+    clearTimeout(initWatchdog);
+    initWatchdog = null;
+  }
+};
 const BROADCAST_BATCH_SIZE = 25;
 const BROADCAST_BATCH_PAUSE_MS = 10 * 60 * 1000;
 const BROADCAST_MIN_DELAY_MS = 45 * 1000;
@@ -64,10 +78,17 @@ const BROADCAST_MAX_DELAY_MS = 120 * 1000;
 const waitForReady = async (timeoutMs = 45000) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (clientStatus === "ready") return true;
-    if (clientStatus === "qr_ready") return false;
+    if (clientStatus === "ready") {
+      console.log("[WhatsApp] Client became ready while waiting.");
+      return true;
+    }
+    if (clientStatus === "qr_ready") {
+      console.log("[WhatsApp] Client requested QR while waiting.");
+      return false;
+    }
     await sleep(1000);
   }
+  console.warn("[WhatsApp] waitForReady timed out after", timeoutMs, "ms. Current status:", clientStatus);
   return clientStatus === "ready";
 };
 
@@ -76,18 +97,21 @@ export const ensureWhatsAppReady = async () => {
     return { ready: true, status: clientStatus };
   }
 
-  if (!client || clientStatus === "error" || clientStatus === "disconnected") {
+  if (clientStatus === "connecting" || clientStatus === "qr_ready") {
+    console.log(`[WhatsApp] Waiting for existing connection attempt. Current status: ${clientStatus}`);
+    const ready = await waitForReady();
+    return {
+      ready,
+      status: clientStatus,
+      qr: currentQrBase64,
+      lastError,
+    };
+  }
+
+  if (!client || clientStatus === "disconnected" || clientStatus === "error") {
     console.log(`[WhatsApp] Auto-reconnect requested from status: ${clientStatus}`);
-    
-    // Check if there's a saved session (e.g., after Render spindown/restart)
-    const hasSavedSession = existsSync("./whatsapp-session");
-    if (hasSavedSession && clientStatus !== "error") {
-      console.log("[WhatsApp] Found saved session. Attempting auto-reconnect...");
-      initWhatsAppClient();
-    } else {
-      await disconnectWhatsApp();
-      initWhatsAppClient();
-    }
+    await disconnectWhatsApp();
+    initWhatsAppClient();
   }
 
   const ready = await waitForReady();
@@ -142,6 +166,7 @@ export const testPuppeteer = async () => {
 const resolvePuppeteerExecutablePath = () => {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     if (existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+      console.log("[WhatsApp] Using PUPPETEER_EXECUTABLE_PATH from environment.");
       return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
     lastError = `PUPPETEER_EXECUTABLE_PATH is set but the file does not exist: ${process.env.PUPPETEER_EXECUTABLE_PATH}`;
@@ -150,30 +175,36 @@ const resolvePuppeteerExecutablePath = () => {
   if (puppeteerExecutablePath) {
     return puppeteerExecutablePath;
   }
+
+  try {
+    const puppeteer = require("puppeteer");
+    const bundledPath = puppeteer.executablePath();
+    if (existsSync(bundledPath)) {
+      console.log("[WhatsApp] Using Puppeteer bundled browser executable.");
+      puppeteerExecutablePath = bundledPath;
+      return puppeteerExecutablePath;
+    }
+    console.warn("[WhatsApp] Puppeteer bundled executable path not found:", bundledPath);
+  } catch (err) {
+    console.warn("[WhatsApp] Could not load puppeteer for bundled executable path:", err?.message || err);
+  }
+
   const systemChromePath = SYSTEM_CHROME_PATHS.find((chromePath) =>
     existsSync(chromePath),
   );
   if (systemChromePath) {
+    console.log("[WhatsApp] Falling back to system Chrome executable.");
     puppeteerExecutablePath = systemChromePath;
     return puppeteerExecutablePath;
   }
-  try {
-    const puppeteer = require("puppeteer");
-    puppeteerExecutablePath = puppeteer.executablePath();
-    if (!existsSync(puppeteerExecutablePath)) {
-      lastError = `Chrome is not installed for WhatsApp pairing. Run "cd server && npm install" or "node server/scripts/install-puppeteer-chrome.mjs", then restart the backend. Missing: ${puppeteerExecutablePath}`;
-      console.warn("[WhatsApp]", lastError);
-      puppeteerExecutablePath = null;
-      return null;
-    }
-    return puppeteerExecutablePath;
-  } catch (err) {
-    console.warn("[WhatsApp] Could not resolve Puppeteer Chrome path:", err?.message || err);
-    return null;
-  }
+
+  lastError = "Chrome executable could not be resolved from PUPPETEER_EXECUTABLE_PATH, puppeteer bundle, or system installations.";
+  console.warn("[WhatsApp]", lastError);
+  return null;
 };
 
 export const initWhatsAppClient = () => {
+  clearReconnectTimeout();
   if (!Client || !LocalAuth) {
     console.error("[WhatsApp] Client/LocalAuth not available.");
     clientStatus = "error";
@@ -193,6 +224,27 @@ export const initWhatsAppClient = () => {
   lastError = null;
   console.log("[WhatsApp] Initializing client...");
   const executablePath = resolvePuppeteerExecutablePath();
+  console.log("[WhatsApp] Puppeteer executable path:", executablePath || "(default bundle or environment default)");
+
+  const puppeteerOptions = {
+    headless: true,
+    ...(executablePath ? { executablePath } : {}),
+    defaultViewport: null,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--window-size=1280,1024",
+    ],
+    ignoreDefaultArgs: ["--enable-automation"],
+    waitForInitialPage: false,
+  };
+
+  console.log("[WhatsApp] Puppeteer options:", {
+    executablePath: puppeteerOptions.executablePath ? "provided" : "default",
+    args: puppeteerOptions.args,
+  });
 
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: "./whatsapp-session" }),
@@ -205,39 +257,7 @@ export const initWhatsAppClient = () => {
         }
       : {}),
     ...(configuredUserAgent ? { userAgent: configuredUserAgent } : {}),
-    puppeteer: {
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--disable-renderer-backgrounding",
-        "--disable-backgrounding-occluded-windows",
-        "--single-process",
-        "--no-first-run",
-        "--no-zygote",
-        "--disable-gpu",
-        "--disable-extensions",
-        "--disable-software-rasterizer",
-        "--mute-audio",
-        "--disable-background-networking",
-        "--disable-background-timer-throttling",
-        "--disable-client-side-phishing-detection",
-        "--disable-default-apps",
-        "--disable-hang-monitor",
-        "--disable-popup-blocking",
-        "--disable-prompt-on-repost",
-        "--disable-sync",
-        "--disable-translate",
-        "--disable-breakpad",
-        "--disable-component-update",
-        "--disable-domain-reliability",
-        "--metrics-recording-only",
-        "--safebrowsing-disable-auto-update"
-      ],
-    },
+    puppeteer: puppeteerOptions,
   });
 
   client.on("qr", async (qr) => {
@@ -258,7 +278,12 @@ export const initWhatsAppClient = () => {
     console.log(`[WhatsApp] Loading: ${percent}% - ${message}`);
   });
 
+  client.on("change_state", (state) => {
+    console.log(`[WhatsApp] State changed: ${state}`);
+  });
+
   client.on("ready", () => {
+    clearInitWatchdog();
     initializing = false;
     clientStatus = "ready";
     currentQrBase64 = null;
@@ -266,6 +291,7 @@ export const initWhatsAppClient = () => {
   });
 
   client.on("auth_failure", (msg) => {
+    clearInitWatchdog();
     initializing = false;
     clientStatus = "error";
     lastError = `Authentication failed: ${msg}`;
@@ -273,26 +299,71 @@ export const initWhatsAppClient = () => {
   });
 
   client.on("disconnected", (reason) => {
+    clearInitWatchdog();
     initializing = false;
     clientStatus = "disconnected";
     client = null;
     currentQrBase64 = null;
     console.warn("[WhatsApp] Disconnected:", reason);
+
+    if (existsSync("./whatsapp-session")) {
+      clearReconnectTimeout();
+      reconnectTimeout = setTimeout(() => {
+        console.log("[WhatsApp] Disconnected. Attempting auto-reconnect...");
+        initWhatsAppClient();
+      }, 20000);
+    }
   });
 
-  client.initialize().catch((err) => {
-    initializing = false;
-    clientStatus = "error";
-    client = null;
-    const message = err?.message || String(err);
-    lastError = /browser is already running/i.test(message)
-      ? "WhatsApp session is already open in another server/browser process. Stop the old Node/Chrome process, then connect again."
-      : `Initialization error: ${message}`;
-    console.error("[WhatsApp] Init error:", message);
-  });
+  const initTimeoutMs = Number(process.env.WHATSAPP_INIT_TIMEOUT_MS || 60000);
+  const initTimeout = setTimeout(() => {
+    if (clientStatus === "connecting") {
+      console.warn(
+        `[WhatsApp] Initialization is still pending after ${initTimeoutMs}ms. Current status=${clientStatus}. ` +
+          "If this continues, check Chrome/Puppeteer environment and the server process.",
+      );
+    }
+  }, initTimeoutMs);
+
+  initWatchdog = setTimeout(() => {
+    if (clientStatus === "connecting") {
+      console.warn(
+        `[WhatsApp] Initialization watchdog triggered after ${initTimeoutMs}ms. ` +
+          `Current status still=${clientStatus}. Destroying client and marking as error.`,
+      );
+      if (client) {
+        client.destroy().catch(() => {});
+      }
+      client = null;
+      initializing = false;
+      clientStatus = "error";
+      lastError = "Initialization timed out waiting for WhatsApp client readiness.";
+    }
+  }, initTimeoutMs);
+
+  client.initialize()
+    .then(() => {
+      clearTimeout(initTimeout);
+      clearInitWatchdog();
+      console.log("[WhatsApp] client.initialize() promise resolved.");
+    })
+    .catch((err) => {
+      clearTimeout(initTimeout);
+      clearInitWatchdog();
+      initializing = false;
+      clientStatus = "error";
+      client = null;
+      const message = err?.message || String(err);
+      lastError = /browser is already running/i.test(message)
+        ? "WhatsApp session is already open in another server/browser process. Stop the old Node/Chrome process, then connect again."
+        : `Initialization error: ${message}`;
+      console.error("[WhatsApp] Init error:", message);
+    });
 };
 
 export const disconnectWhatsApp = async () => {
+  clearReconnectTimeout();
+  clearInitWatchdog();
   if (client) {
     try { await client.destroy(); } catch (_) {}
     client = null;

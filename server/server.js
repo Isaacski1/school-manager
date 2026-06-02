@@ -12301,7 +12301,7 @@ const writeAdminNotification = async (schoolId, message) => {
 
 const enqueueWhatsAppRetry = async (payload) => {
   try {
-    await admin.firestore().collection("whatsapp_retry_queue").add({
+    const ref = await admin.firestore().collection("whatsapp_retry_queue").add({
       ...payload,
       status: "pending",
       attempts: 0,
@@ -12310,6 +12310,7 @@ const enqueueWhatsAppRetry = async (payload) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    console.log(`[WhatsAppRetryQueue] Enqueued retry ${ref.id} type=${payload.type || 'unknown'} recipient=${payload.recipient || (payload.payload && payload.payload.recipient) || 'unknown'}`);
   } catch (err) {
     console.warn("[WhatsAppRetryQueue] Failed:", err.message);
   }
@@ -12839,7 +12840,13 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
           { merge: true },
         );
       }
-      return res.json({ success: true, size: payloadSize, results });
+      const notificationSummary = {
+        whatsappSent: results.some((item) => item.success && item.channel === "whatsapp"),
+        smsFallbackSent: results.some((item) => item.success && item.channel === "sms"),
+        anyFailed: results.some((item) => !item.success),
+        channels: Array.from(new Set(results.map((item) => item.channel).filter(Boolean))),
+      };
+      return res.json({ success: true, size: payloadSize, results, notificationSummary });
     }
 
     const { studentId, amount, reference, base64Pdf, studentName, guardianPhone, feeName, adminPhone } = req.body;
@@ -13048,20 +13055,22 @@ server.on("listening", async () => {
         const now = Date.now();
         const q = db
           .collection("whatsapp_retry_queue")
-          .where("status", "==", "pending")
           .where("nextAttemptAt", "<=", now)
           .orderBy("nextAttemptAt")
           .limit(10);
 
         const snap = await q.get();
         if (snap.empty) return;
+        const pendingDocs = snap.docs.filter((doc) => doc.data()?.status === "pending");
+        if (pendingDocs.length === 0) return;
 
         const svc = await loadWhatsAppService();
         const readiness = svc?.ensureWhatsAppReady ? await svc.ensureWhatsAppReady() : { ready: false };
 
-        for (const doc of snap.docs) {
+        for (const doc of pendingDocs) {
           const data = doc.data();
           const id = doc.id;
+          console.log(`[WhatsAppRetryWorker] Processing queued item ${id} type=${data.type || 'unknown'} recipient=${data.recipient || (data.payload && data.payload.recipient) || 'unknown'} attempts=${data.attempts || 0}`);
           try {
             await doc.ref.update({ status: "processing", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
 
