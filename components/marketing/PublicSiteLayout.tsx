@@ -16,7 +16,7 @@ const navLinks = [
   // { href: "/demos", label: "Watch Demos" }, // Disabled until demo videos are ready
 ];
 
-const whatsappHref = `https://wa.me/233201008784?text=${encodeURIComponent(
+const whatsappHref = `https://wa.me/233549175604?text=${encodeURIComponent(
   "Hello, I would like a demo of School Manager GH.",
 )}`;
 
@@ -437,7 +437,7 @@ const PublicSiteLayout: React.FC<PublicSiteLayoutProps> = ({ children }) => {
               ].map(([label, href]) => (
                 <Link key={href} to={href} style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10 }}>{label}</Link>
               ))}
-              <a href="mailto:isaacskiwebdev@gmail.com" style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10 }}>isaacskiwebdev@gmail.com</a>
+              <a href="mailto:info@schoolmanagergh.com" style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none", marginBottom: 10 }}>info@schoolmanagergh.com</a>
               <a href="tel:+233419175604" style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,0.6)", textDecoration: "none" }}>+233 419 175 604</a>
             </div>
           </div>

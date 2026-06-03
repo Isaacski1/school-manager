@@ -169,7 +169,7 @@ npm run dev
 | `ARKESEL_API_KEY`              | Arkesel API key                                 | Required for live SMS gateway balance and sending |
 | `ARKESEL_SENDER_ID`            | SchoolMgr                                       | Approved Arkesel sender ID |
 | `DEMO_NOTIFY_EMAIL`            | info@schoolmanagergh.com                        | Receives Book Demo form details |
-| `DEMO_NOTIFY_WHATSAPP`         | +233201008784                                   | WhatsApp Business number used for direct Book Demo chat links |
+| `DEMO_NOTIFY_WHATSAPP`         | +233549175604                                   | WhatsApp Business number used for direct Book Demo chat links |
 | `TRIAL_NOTIFY_EMAIL`           | info@schoolmanagergh.com                        | Receives new school registration details |
 | `TRIAL_NOTIFY_WHATSAPP`        | +233549175604                                   | Receives new school registration WhatsApp alerts |
 | `VITE_BACKEND_URL`             | http://API_BASE_URL (dev) or https://... (prod) | Frontend uses this    |

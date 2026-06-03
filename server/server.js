@@ -1548,7 +1548,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const DEMO_NOTIFY_EMAIL =
   process.env.DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const DEMO_NOTIFY_WHATSAPP =
-  process.env.DEMO_NOTIFY_WHATSAPP || "+233201008784";
+  process.env.DEMO_NOTIFY_WHATSAPP || "+233549175604";
 const TRIAL_NOTIFY_EMAIL =
   process.env.TRIAL_NOTIFY_EMAIL || DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";

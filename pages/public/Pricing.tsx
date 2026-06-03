@@ -33,7 +33,7 @@ const plans = [
     tagline: "For schools that want a clean digital foundation.",
     popular: false,
     monthlyPrice: 100,
-    setupFee: 600,
+    setupFee: 300,
     onboardingDetails: "Covers standard Excel student data import and remote admin walk-through.",
     bullets: [
       "Up to 200 Students",
@@ -46,7 +46,7 @@ const plans = [
     tagline: "For schools that need deeper operations visibility.",
     popular: true,
     monthlyPrice: 300,
-    setupFee: 1500,
+    setupFee: 1000,
     onboardingDetails: "Covers complete physical/digital record migration, custom grading configuration, and 1 day of on-site staff training.",
     bullets: [
       "Unlimited Students",
@@ -61,7 +61,7 @@ const plans = [
 const faqs = [
   { q: "Do I need a credit card to start?", a: "No. You can start a free trial and set up your school with no payment required upfront." },
   { q: "Can I switch plans later?", a: "Yes. You can upgrade from Starter Plan to Standard Plan at any time from your admin settings." },
-  { q: "Is there a setup fee?", a: "Yes. Starter Plan has a GH₵ 600 one-time setup fee, and Standard Plan has a GH₵ 1,500 one-time setup fee. This covers onboarding, data migration, configuration, and training based on the plan." },
+  { q: "Is there a setup fee?", a: "Yes. Starter Plan has a GH₵ 300 one-time setup fee, and Standard Plan has a GH₵ 1,000 one-time setup fee. These fees are cover onboarding, data migration, configuration, and training, and they can be negotiated if you need a smaller arrangement." },
   { q: "How long does onboarding take?", a: "Starter onboarding is handled remotely. Standard onboarding includes record migration, grading configuration, and 1 day of on-site staff training." },
   { q: "Is my school data safe?", a: "Yes. All data is stored securely on Firebase with role-based access control and regular backups." },
   { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 3 months with a 10% discount, and yearly covers 12 months with a 20% discount. The one-time setup fee is charged only when the school is first onboarded." },

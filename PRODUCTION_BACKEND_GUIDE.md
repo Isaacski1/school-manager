@@ -98,7 +98,7 @@ Open http://localhost:3000 in your browser
    - `ARKESEL_API_KEY` = (paste your Arkesel API key)
    - `ARKESEL_SENDER_ID` = (your approved sender ID, for example `SchoolMgr`)
    - `DEMO_NOTIFY_EMAIL` = `info@schoolmanagergh.com`
-   - `DEMO_NOTIFY_WHATSAPP` = `+233201008784`
+   - `DEMO_NOTIFY_WHATSAPP` = `+233549175604`
    - `TRIAL_NOTIFY_EMAIL` = `info@schoolmanagergh.com`
    - `TRIAL_NOTIFY_WHATSAPP` = `+233549175604`
 5. **Deploy!** Click "Deploy Service"
