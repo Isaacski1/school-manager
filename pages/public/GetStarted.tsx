@@ -470,7 +470,7 @@ const GetStarted = () => {
                         </div>
 
                         <div>
-                          <label style={labelCls}>Preferred Billing Cycle (Post-Trial)</label>
+                          <label style={labelCls}>Preferred Billing Cycle (starts after trial)</label>
                           <div className="billing-cycle-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                             {([
                               { key: "monthly", label: "Monthly", discount: null, price: (base: number) => base },
@@ -501,7 +501,7 @@ const GetStarted = () => {
                             })}
                           </div>
                           <p className="billing-note" style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
-                            <Lightbulb size={14} color="#93C5FD" style={{ flexShrink: 0 }} /> Pricing shown is after your free 30-day trial. You can change your plan anytime.
+                            <Lightbulb size={14} color="#93C5FD" style={{ flexShrink: 0 }} /> Your free 30-day trial runs first. The selected billing cycle (monthly, termly, or yearly) starts only after the trial ends, so the first termly or yearly payment is due after day 30.
                           </p>
                         </div>
                       </div>

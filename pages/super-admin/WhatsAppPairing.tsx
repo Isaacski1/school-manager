@@ -107,12 +107,12 @@ const WhatsAppPairing: React.FC = () => {
 
   useEffect(() => {
     loadStatus();
-    // Polling delays: Fast when connecting (1s), slower for QR display (120s/2min), normal otherwise (3s)
+    // Polling delays: Fast when connecting (1s), moderate when waiting for QR scan (5s), normal otherwise (3s)
     let pollDelay = 3000;
     if (status === "connecting" || loadingAction === "connect") {
       pollDelay = 1000;
     } else if (status === "qr_ready") {
-      pollDelay = 120000; // 2 minutes for QR code display
+      pollDelay = 5000; // Poll frequently while waiting for QR scan
     }
     intervalRef.current = setInterval(() => loadStatus(false), pollDelay);
     return () => {
@@ -265,6 +265,9 @@ const WhatsAppPairing: React.FC = () => {
             <p className="mt-2 text-sm leading-6 text-slate-600">
               On the phone using {CENTRAL_WHATSAPP_NUMBER}, open WhatsApp Business, go to Linked Devices, choose Link a Device, then scan this QR.
             </p>
+            <p className="mt-2 text-sm text-slate-500">
+              After scanning, the dashboard should detect the connected session within a few seconds.
+            </p>
 
             <div className="mt-6 flex min-h-72 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6">
               {status === "ready" ? (
@@ -297,6 +300,9 @@ const WhatsAppPairing: React.FC = () => {
               </div>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 Use this if you are managing the dashboard on the same phone and cannot scan the QR.
+              </p>
+              <p className="mt-2 text-sm text-slate-500">
+                After entering the pairing code on your phone, wait a few seconds for the dashboard to show the connected state.
               </p>
               <div className="mt-4 space-y-3">
                 <input

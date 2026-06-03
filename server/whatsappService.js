@@ -56,6 +56,20 @@ let puppeteerExecutablePath = null;
 let reconnectTimeout = null;
 let initWatchdog = null;
 
+process.on("unhandledRejection", (reason) => {
+  const message = reason?.message || String(reason);
+  console.error("[WhatsApp] Unhandled promise rejection:", message);
+  if (/auth timeout/i.test(message)) {
+    lastError = `Unhandled auth timeout: ${message}`;
+    clientStatus = "error";
+    initializing = false;
+    if (client) {
+      client.destroy().catch(() => {});
+      client = null;
+    }
+  }
+});
+
 // Utility functions for safety and timing
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clearReconnectTimeout = () => {
@@ -227,7 +241,7 @@ export const initWhatsAppClient = () => {
   console.log("[WhatsApp] Puppeteer executable path:", executablePath || "(default bundle or environment default)");
 
   const puppeteerOptions = {
-    headless: true,
+    headless: "new",
     ...(executablePath ? { executablePath } : {}),
     defaultViewport: null,
     args: [
@@ -236,6 +250,13 @@ export const initWhatsAppClient = () => {
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--window-size=1280,1024",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-features=MemorySaverMode",
+      "--memory-pressure-off",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-software-rasterizer",
     ],
     ignoreDefaultArgs: ["--enable-automation"],
     waitForInitialPage: false,
@@ -356,6 +377,8 @@ export const initWhatsAppClient = () => {
       const message = err?.message || String(err);
       lastError = /browser is already running/i.test(message)
         ? "WhatsApp session is already open in another server/browser process. Stop the old Node/Chrome process, then connect again."
+        : /auth timeout/i.test(message)
+        ? `Authentication timeout during initialization: ${message}`
         : `Initialization error: ${message}`;
       console.error("[WhatsApp] Init error:", message);
     });
