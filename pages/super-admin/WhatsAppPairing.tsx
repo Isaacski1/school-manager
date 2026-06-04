@@ -25,7 +25,7 @@ const formatCountdown = (totalSeconds: number) => {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 };
 
-type WaStatus = "disconnected" | "connecting" | "qr_ready" | "ready" | "error" | "unavailable";
+type WaStatus = "disconnected" | "connecting" | "qr_ready" | "authenticated" | "ready" | "error" | "unavailable";
 
 const WhatsAppIcon = ({ size = 22 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -48,6 +48,11 @@ const statusMeta: Record<WaStatus, { label: string; className: string; icon: Rea
     label: "Scan QR",
     className: "bg-blue-100 text-blue-800",
     icon: <Smartphone size={16} />,
+  },
+  authenticated: {
+    label: "Finalizing",
+    className: "bg-emerald-100 text-emerald-800",
+    icon: <Loader2 size={16} className="animate-spin" />,
   },
   ready: {
     label: "Ready",
@@ -135,7 +140,7 @@ const WhatsAppPairing: React.FC = () => {
   useEffect(() => {
     loadStatus();
     let pollDelay = 10000;
-    if (status === "connecting" || loadingAction === "connect") {
+    if (status === "connecting" || status === "authenticated" || loadingAction === "connect") {
       pollDelay = 3000;
     } else if (status === "qr_ready") {
       pollDelay = 5000;
@@ -261,7 +266,7 @@ const WhatsAppPairing: React.FC = () => {
             <button
               type="button"
               onClick={handleConnect}
-              disabled={isBusy || status === "ready" || status === "connecting" || status === "qr_ready"}
+              disabled={isBusy || status === "ready" || status === "connecting" || status === "qr_ready" || status === "authenticated"}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loadingAction === "connect" ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />}
@@ -342,6 +347,12 @@ const WhatsAppPairing: React.FC = () => {
                       ? "QR code expired. Refresh it to scan again."
                       : `QR code expires in ${formatCountdown(qrSecondsRemaining)}.`}
                   </p>
+                </div>
+              ) : status === "authenticated" ? (
+                <div className="text-center">
+                  <Loader2 size={36} className="mx-auto animate-spin text-emerald-600" />
+                  <p className="mt-3 text-sm font-semibold text-slate-700">Phone paired. Finalizing connection...</p>
+                  <p className="mt-1 text-xs text-slate-500">Keep WhatsApp open. The dashboard should switch to Ready shortly.</p>
                 </div>
               ) : status === "connecting" || status === "qr_ready" ? (
                 <div className="text-center">

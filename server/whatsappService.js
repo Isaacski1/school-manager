@@ -303,10 +303,16 @@ export const initWhatsAppClient = () => {
   });
 
   client.on("authenticated", () => {
+    clientStatus = "authenticated";
+    currentQrBase64 = null;
     console.log("[WhatsApp] Session authenticated successfully.");
   });
 
   client.on("loading_screen", (percent, message) => {
+    if (Number(percent) >= 90 && clientStatus !== "ready") {
+      clientStatus = "authenticated";
+      currentQrBase64 = null;
+    }
     console.log(`[WhatsApp] Loading: ${percent}% - ${message}`);
   });
 
