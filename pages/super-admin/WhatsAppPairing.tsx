@@ -124,12 +124,15 @@ const WhatsAppPairing: React.FC = () => {
       setAvailable(data.available !== false);
       setStatusError(null);
     } catch (error: any) {
-      setStatusError(error?.message || "Could not reach WhatsApp service.");
+      const transientDuringPairing = ["connecting", "qr_ready", "authenticated"].includes(status);
+      if (!transientDuringPairing || manual) {
+        setStatusError(error?.message || "Could not reach WhatsApp service.");
+      }
     } finally {
       statusRequestInFlightRef.current = false;
       if (manual) setLoadingAction(null);
     }
-  }, [apiFetch]);
+  }, [apiFetch, status]);
 
   useEffect(() => {
     if (!qrCode) return;
@@ -140,7 +143,9 @@ const WhatsAppPairing: React.FC = () => {
   useEffect(() => {
     loadStatus();
     let pollDelay = 10000;
-    if (status === "connecting" || status === "authenticated" || loadingAction === "connect") {
+    if (status === "authenticated") {
+      pollDelay = 15000;
+    } else if (status === "connecting" || loadingAction === "connect") {
       pollDelay = 3000;
     } else if (status === "qr_ready") {
       pollDelay = 5000;
