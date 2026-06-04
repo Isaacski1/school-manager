@@ -12,6 +12,8 @@
     "env:prod": "node scripts/switch-env.mjs prod",
     "start": "node server/server.js",
     "server:dev": "nodemon",
+    "backfill:payout-ledger": "node scripts/backfillPayoutLedger.mjs",
+    "backfill:payout-ledger:write": "node scripts/backfillPayoutLedger.mjs --write",
     "predeploy": "npm run build",
     "deploy": "npm run deploy:prod",
     "deploy:prod": "npm run env:prod && npm run build && firebase deploy --project school-manager-gh --only hosting",

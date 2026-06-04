@@ -139,6 +139,38 @@ async function apiRequest<T>(
   throw new Error("API request failed after all retries.");
 }
 
+export interface PayoutStatusResponse {
+  success: boolean;
+  schoolId: string;
+  currency: "GHS";
+  minimumSettlementAmount: number;
+  grossOnlineCollections: number;
+  estimatedSchoolShare: number;
+  settledAmount: number;
+  availableBalance: number;
+  remainingToThreshold: number;
+  progressPercent: number;
+  status: "unconfigured" | "pending" | "ready";
+  paymentAccountStatus: string;
+  source?: "payoutLedger" | "recordedPaymentsEstimate";
+  lastSettlement?: {
+    id: string | number;
+    status: string;
+    amount: number;
+    settledAt?: string | null;
+  } | null;
+  warnings?: string[];
+  lastRefreshed: string;
+}
+
+export async function getPayoutStatus(
+  schoolId: string,
+): Promise<PayoutStatusResponse> {
+  return apiRequest(`/api/payments/${encodeURIComponent(schoolId)}/payout-status`, {
+    method: "GET",
+  });
+}
+
 /**
  * Create a school via backend
  * REQUIRES: Caller must be super_admin

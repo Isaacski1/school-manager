@@ -4457,6 +4457,44 @@ const verifyPaystackTransaction = async (reference) => {
   return paystackRequest(`/transaction/verify/${reference}`, "GET");
 };
 
+const pesewasToGhs = (value) => {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount) ? Math.round((amount / 100) * 100) / 100 : 0;
+};
+
+const payoutLedgerDocId = (prefix, rawId) =>
+  `${prefix}_${String(rawId || Date.now()).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+const resolveSchoolBySubaccount = async (subaccountCode) => {
+  const code = String(subaccountCode || "").trim();
+  if (!code) return null;
+  const snap = await admin
+    .firestore()
+    .collection("schools")
+    .where("paymentSettings.subaccountCode", "==", code)
+    .limit(1)
+    .get();
+  return snap.empty ? null : { id: snap.docs[0].id, data: snap.docs[0].data() || {} };
+};
+
+const writePayoutLedgerEntry = async (schoolId, entryId, entry) => {
+  if (!schoolId || !entryId) return;
+  await admin
+    .firestore()
+    .collection("schools")
+    .doc(String(schoolId))
+    .collection("payoutLedger")
+    .doc(entryId)
+    .set(
+      {
+        ...entry,
+        schoolId: String(schoolId),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+};
+
 const updateSchoolBilling = async (schoolId, updates) => {
   await admin
     .firestore()
@@ -9137,6 +9175,71 @@ app.post("/api/billing/webhook", async (req, res) => {
       return res.status(200).send("OK");
     }
 
+    if (String(event.event || "").startsWith("settlement.")) {
+      const settlementSubaccount =
+        data?.subaccount?.subaccount_code ||
+        data?.subaccount?.subaccountCode ||
+        data?.subaccount_code ||
+        data?.subaccount;
+      const resolvedSchool =
+        schoolId ? { id: schoolId, data: null } : await resolveSchoolBySubaccount(settlementSubaccount);
+
+      if (!resolvedSchool?.id) {
+        return res.status(200).send("No schoolId or subaccount match for settlement webhook");
+      }
+
+      const settlementId =
+        data?.id ||
+        data?.reference ||
+        data?.settlement_code ||
+        `${resolvedSchool.id}_${data?.settlement_date || data?.createdAt || Date.now()}`;
+      const amountGhs = pesewasToGhs(
+        data?.effective_amount ?? data?.total_amount ?? data?.total_processed ?? data?.amount,
+      );
+      const status = String(data?.status || event.event.replace("settlement.", "") || "unknown").toLowerCase();
+
+      await writePayoutLedgerEntry(
+        resolvedSchool.id,
+        payoutLedgerDocId("settlement", settlementId),
+        {
+          type: "settlement",
+          direction: "debit",
+          reference: String(settlementId),
+          amount: amountGhs,
+          currency: data?.currency || "GHS",
+          status,
+          paystackEvent: event.event,
+          subaccountCode: settlementSubaccount || null,
+          settledAt:
+            data?.settlement_date ||
+            data?.createdAt ||
+            data?.paid_at ||
+            data?.paidAt ||
+            null,
+          paystackData: {
+            id: data?.id || null,
+            status: data?.status || null,
+            total_amount: data?.total_amount ?? null,
+            effective_amount: data?.effective_amount ?? null,
+            total_processed: data?.total_processed ?? null,
+            settlement_date: data?.settlement_date || null,
+          },
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      );
+
+      await logActivity({
+        eventType: "payout_settlement_webhook",
+        schoolId: resolvedSchool.id,
+        actorUid: null,
+        actorRole: "system",
+        entityId: String(settlementId),
+        meta: { event: event.event, amount: amountGhs, status },
+      });
+
+      return res.status(200).send("OK");
+    }
+
     if (!schoolId) {
       return res.status(200).send("No schoolId on webhook metadata");
     }
@@ -9198,6 +9301,93 @@ app.post("/api/billing/webhook", async (req, res) => {
         actorRole: "system",
         entityId: paymentReference,
         meta: { reference: paymentReference, event: event.event, amount: amountGhs },
+      });
+
+      return res.status(200).send("OK");
+    }
+
+    if (event.event === "charge.success" && /^FEES-/i.test(String(paymentReference || ""))) {
+      const schoolSnap = await admin.firestore().collection("schools").doc(String(schoolId)).get();
+      const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
+      const paymentSettings = schoolData.paymentSettings || {};
+      const schoolSettlementPercentage = Number.isFinite(Number(paymentSettings.schoolSettlementPercentage))
+        ? Number(paymentSettings.schoolSettlementPercentage)
+        : SCHOOL_SETTLEMENT_PERCENTAGE;
+      const grossAmount = pesewasToGhs(data.amount);
+      const schoolShareAmount =
+        grossAmount * Math.max(0, Math.min(100, schoolSettlementPercentage)) / 100;
+
+      await writePayoutLedgerEntry(
+        schoolId,
+        payoutLedgerDocId("payment", paymentReference),
+        {
+          type: "payment_received",
+          direction: "credit",
+          reference: paymentReference,
+          amount: Number(schoolShareAmount.toFixed(2)),
+          grossAmount,
+          schoolShareAmount: Number(schoolShareAmount.toFixed(2)),
+          platformFeePercentage: Number(paymentSettings.platformFeePercentage ?? PLATFORM_FEE_PERCENTAGE),
+          schoolSettlementPercentage,
+          currency: data.currency || "GHS",
+          status: "success",
+          paystackEvent: event.event,
+          subaccountCode:
+            data?.subaccount?.subaccount_code ||
+            data?.subaccount?.subaccountCode ||
+            paymentSettings.subaccountCode ||
+            null,
+          studentId: metadata.studentId || null,
+          studentName: metadata.studentName || null,
+          feeId: metadata.feeId || null,
+          feeName: metadata.feeName || null,
+          academicYear: metadata.academicYear || null,
+          term: metadata.term || null,
+          paidAt: data.paid_at || data.paidAt || Date.now(),
+          paystackData: {
+            id: data.id || null,
+            status: data.status || null,
+            channel: data.channel || null,
+            gateway_response: data.gateway_response || null,
+            amount: data.amount || null,
+            fees: data.fees || null,
+          },
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      );
+
+      if (paymentReference) {
+        await admin.firestore().collection("payments").doc(paymentReference).set(
+          {
+            status: "success",
+            paidAt: Date.now(),
+            gatewayResponse: data.gateway_response || null,
+            channel: data.channel || null,
+            event: event.event,
+            reference: paymentReference,
+            schoolId,
+            module: "fees",
+            type: "fee_payment",
+            category: "fee_payment",
+            amount: grossAmount,
+            schoolShareAmount: Number(schoolShareAmount.toFixed(2)),
+          },
+          { merge: true },
+        );
+      }
+
+      await logActivity({
+        eventType: "fee_payment_payout_ledger_success",
+        schoolId,
+        actorUid: null,
+        actorRole: "system",
+        entityId: paymentReference,
+        meta: {
+          reference: paymentReference,
+          event: event.event,
+          grossAmount,
+          schoolShareAmount: Number(schoolShareAmount.toFixed(2)),
+        },
       });
 
       return res.status(200).send("OK");
@@ -12255,6 +12445,266 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
   } catch (err) {
     console.error("[Fee Payment Initialize Error]:", err.message);
     return res.status(500).json({ error: "Could not initialize payment." });
+  }
+});
+
+/**
+ * Get admin payout status for a school's Paystack subaccount.
+ * GET /api/payments/:schoolId/payout-status
+ */
+app.get("/api/payments/:schoolId/payout-status", authMiddleware, async (req, res) => {
+  const minimumSettlementAmount = 50;
+  const currency = "GHS";
+
+  try {
+    const schoolId = String(req.params.schoolId || "").trim();
+    if (!schoolId) {
+      return res.status(400).json({ error: "School ID is required." });
+    }
+
+    const db = admin.firestore();
+    const [userSnap, schoolSnap] = await Promise.all([
+      db.collection("users").doc(req.user.uid).get(),
+      db.collection("schools").doc(schoolId).get(),
+    ]);
+
+    if (!schoolSnap.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
+
+    const userData = userSnap.data() || {};
+    const isSchoolAdmin =
+      userData.role === "school_admin" && String(userData.schoolId || "") === schoolId;
+    const isSuperAdmin = userData.role === "super_admin";
+    if (!isSchoolAdmin && !isSuperAdmin) {
+      return res.status(403).json({ error: "Unauthorized to view payout status for this school." });
+    }
+
+    const schoolData = schoolSnap.data() || {};
+    const paymentSettings = schoolData.paymentSettings || {};
+    const paymentAccountStatus = String(paymentSettings.status || "inactive");
+    const subaccountCode = String(paymentSettings.subaccountCode || "").trim();
+    const schoolSettlementPercentage = Number.isFinite(Number(paymentSettings.schoolSettlementPercentage))
+      ? Number(paymentSettings.schoolSettlementPercentage)
+      : SCHOOL_SETTLEMENT_PERCENTAGE;
+
+    if (paymentAccountStatus !== "active" || !subaccountCode) {
+      return res.json({
+        success: true,
+        schoolId,
+        currency,
+        minimumSettlementAmount,
+        grossOnlineCollections: 0,
+        estimatedSchoolShare: 0,
+        settledAmount: 0,
+        availableBalance: 0,
+        remainingToThreshold: minimumSettlementAmount,
+        progressPercent: 0,
+        status: "unconfigured",
+        paymentAccountStatus,
+        lastSettlement: null,
+        warnings: [],
+        lastRefreshed: new Date().toISOString(),
+      });
+    }
+
+    const ledgerSnap = await db
+      .collection("schools")
+      .doc(schoolId)
+      .collection("payoutLedger")
+      .limit(5000)
+      .get();
+
+    if (!ledgerSnap.empty) {
+      const ledgerEntries = ledgerSnap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() || {}),
+      }));
+      const creditEntries = ledgerEntries.filter(
+        (entry) =>
+          entry.type === "payment_received" &&
+          entry.direction === "credit" &&
+          String(entry.status || "").toLowerCase() === "success",
+      );
+      const settlementEntries = ledgerEntries.filter(
+        (entry) =>
+          entry.type === "settlement" &&
+          entry.direction === "debit" &&
+          ["success", "processing", "pending"].includes(String(entry.status || "").toLowerCase()),
+      );
+
+      const grossOnlineCollections = creditEntries.reduce(
+        (sum, entry) => sum + Math.max(0, Number(entry.grossAmount ?? entry.amount ?? 0)),
+        0,
+      );
+      const estimatedSchoolShare = creditEntries.reduce(
+        (sum, entry) => sum + Math.max(0, Number(entry.schoolShareAmount ?? entry.amount ?? 0)),
+        0,
+      );
+      const settledAmount = settlementEntries.reduce(
+        (sum, entry) => sum + Math.max(0, Number(entry.amount || 0)),
+        0,
+      );
+      const availableBalance = Math.max(0, estimatedSchoolShare - settledAmount);
+      const remainingToThreshold = Math.max(0, minimumSettlementAmount - availableBalance);
+      const progressPercent = Math.min(
+        100,
+        Math.max(0, (availableBalance / minimumSettlementAmount) * 100),
+      );
+      const [latestSettlementEntry] = settlementEntries.sort((a, b) => {
+        const aTime = new Date(a.settledAt || a.createdAt || a.updatedAt || 0).getTime();
+        const bTime = new Date(b.settledAt || b.createdAt || b.updatedAt || 0).getTime();
+        return bTime - aTime;
+      });
+
+      return res.json({
+        success: true,
+        schoolId,
+        currency,
+        minimumSettlementAmount,
+        grossOnlineCollections: Number(grossOnlineCollections.toFixed(2)),
+        estimatedSchoolShare: Number(estimatedSchoolShare.toFixed(2)),
+        settledAmount: Number(settledAmount.toFixed(2)),
+        availableBalance: Number(availableBalance.toFixed(2)),
+        remainingToThreshold: Number(remainingToThreshold.toFixed(2)),
+        progressPercent: Number(progressPercent.toFixed(2)),
+        status: availableBalance >= minimumSettlementAmount ? "ready" : "pending",
+        paymentAccountStatus,
+        source: "payoutLedger",
+        lastSettlement: latestSettlementEntry
+          ? {
+              id: latestSettlementEntry.reference || latestSettlementEntry.id,
+              status: latestSettlementEntry.status || "unknown",
+              amount: Math.max(0, Number(latestSettlementEntry.amount || 0)),
+              settledAt: latestSettlementEntry.settledAt || null,
+            }
+          : null,
+        warnings: [],
+        lastRefreshed: new Date().toISOString(),
+      });
+    }
+
+    const paymentDocs = new Map();
+    const addPaymentDocs = (snap) => {
+      snap.docs.forEach((docSnap) => {
+        const data = docSnap.data() || {};
+        paymentDocs.set(`${docSnap.ref.path}`, { id: docSnap.id, ...data });
+      });
+    };
+
+    const [schoolPaymentsSnap, legacyPaymentsSnap] = await Promise.all([
+      db.collection("schools").doc(schoolId).collection("payments").limit(2000).get(),
+      db.collection("payments").where("schoolId", "==", schoolId).limit(2000).get(),
+    ]);
+    addPaymentDocs(schoolPaymentsSnap);
+    addPaymentDocs(legacyPaymentsSnap);
+
+    const onlinePayments = Array.from(paymentDocs.values()).filter((payment) => {
+      const recordedBy = String(payment.recordedBy || "").toLowerCase();
+      const receiptNumber = String(payment.receiptNumber || "");
+      return recordedBy === "parent portal" || /^FEES-/i.test(receiptNumber);
+    });
+
+    const grossOnlineCollections = onlinePayments.reduce(
+      (sum, payment) => sum + Math.max(0, Number(payment.amountPaid || 0)),
+      0,
+    );
+    const estimatedSchoolShare =
+      grossOnlineCollections * Math.max(0, Math.min(100, schoolSettlementPercentage)) / 100;
+
+    let settledAmount = 0;
+    let lastSettlement = null;
+    const warnings = [];
+
+    if (PAYSTACK_SECRET_KEY && isLivePaystackSecret()) {
+      try {
+        const subaccount = await paystackRequest(
+          `/subaccount/${encodeURIComponent(subaccountCode)}`,
+          "GET",
+        );
+        const subaccountId = subaccount?.data?.id || subaccountCode;
+        const settlements = [];
+
+        for (let page = 1; page <= 5; page += 1) {
+          const settlementData = await paystackRequest(
+            `/settlement?subaccount=${encodeURIComponent(subaccountId)}&perPage=100&page=${page}`,
+            "GET",
+          );
+          const rows = Array.isArray(settlementData?.data) ? settlementData.data : [];
+          settlements.push(...rows);
+          const pageCount = Number(settlementData?.meta?.pageCount || page);
+          if (page >= pageCount || rows.length === 0) break;
+        }
+
+        const settlementAmountToGhs = (settlement) =>
+          Number(
+            settlement.effective_amount ??
+              settlement.total_amount ??
+              settlement.total_processed ??
+              0,
+          ) / 100;
+
+        settledAmount = settlements
+          .filter((settlement) =>
+            ["success", "processing", "pending"].includes(
+              String(settlement.status || "").toLowerCase(),
+            ),
+          )
+          .reduce((sum, settlement) => sum + Math.max(0, settlementAmountToGhs(settlement)), 0);
+
+        const [latestSettlement] = settlements.sort((a, b) => {
+          const aTime = new Date(a.settlement_date || a.createdAt || a.updatedAt || 0).getTime();
+          const bTime = new Date(b.settlement_date || b.createdAt || b.updatedAt || 0).getTime();
+          return bTime - aTime;
+        });
+        if (latestSettlement) {
+          lastSettlement = {
+            id: latestSettlement.id,
+            status: latestSettlement.status || "unknown",
+            amount: Math.max(0, settlementAmountToGhs(latestSettlement)),
+            settledAt:
+              latestSettlement.settlement_date ||
+              latestSettlement.createdAt ||
+              latestSettlement.updatedAt ||
+              null,
+          };
+        }
+      } catch (err) {
+        console.warn("[Payout Status] Paystack settlement lookup failed:", err.message);
+        warnings.push("Could not refresh Paystack settlement history. Showing the app's recorded online collections estimate.");
+      }
+    } else {
+      warnings.push("Paystack live secret is not configured. Showing the app's recorded online collections estimate.");
+    }
+
+    const availableBalance = Math.max(0, estimatedSchoolShare - settledAmount);
+    const remainingToThreshold = Math.max(0, minimumSettlementAmount - availableBalance);
+    const progressPercent = Math.min(
+      100,
+      Math.max(0, (availableBalance / minimumSettlementAmount) * 100),
+    );
+
+    return res.json({
+      success: true,
+      schoolId,
+      currency,
+      minimumSettlementAmount,
+      grossOnlineCollections: Number(grossOnlineCollections.toFixed(2)),
+      estimatedSchoolShare: Number(estimatedSchoolShare.toFixed(2)),
+      settledAmount: Number(settledAmount.toFixed(2)),
+      availableBalance: Number(availableBalance.toFixed(2)),
+      remainingToThreshold: Number(remainingToThreshold.toFixed(2)),
+      progressPercent: Number(progressPercent.toFixed(2)),
+      status: availableBalance >= minimumSettlementAmount ? "ready" : "pending",
+      paymentAccountStatus,
+      source: "recordedPaymentsEstimate",
+      lastSettlement,
+      warnings,
+      lastRefreshed: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("[Payout Status Error]:", err.message);
+    return res.status(500).json({ error: "Could not load payout status." });
   }
 });
 

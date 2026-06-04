@@ -49,9 +49,17 @@ import {
   Settings,
   X,
 } from "lucide-react";
+import PayoutStatus from "../../components/dashboard/PayoutStatus";
 
 
 const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
+const normalizeTerm = (value?: string | null): FeeTerm => {
+  if (!value) return "Term 1";
+  const normalized = value.trim();
+  return termOptions.includes(normalized as FeeTerm)
+    ? (normalized as FeeTerm)
+    : "Term 1";
+};
 const paymentMethods: PaymentMethod[] = ["Cash", "MoMo", "Bank"];
 const statusFilters = ["all", "paid", "part-paid", "unpaid"] as const;
 
@@ -234,18 +242,45 @@ const FeesPayments: React.FC = () => {
   const ledgerAutoSyncSignatureRef = useRef("");
   const ledgerAutoSyncInFlightRef = useRef(false);
 
-  const [academicYear, setAcademicYear] = useState(() => {
-    const stored = readStoredFilters();
-    return stored.academicYear || ACADEMIC_YEAR;
-  });
-  const [term, setTerm] = useState<FeeTerm>(() => {
-    const stored = readStoredFilters();
-    return stored.term || "Term 1";
-  });
+  const [academicYear, setAcademicYear] = useState(ACADEMIC_YEAR);
+  const [term, setTerm] = useState<FeeTerm>("Term 1");
   const [selectedClassId, setSelectedClassId] = useState(() => {
     const stored = readStoredFilters();
     return stored.selectedClassId || "all";
   });
+  const [scopeInitialized, setScopeInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!schoolId) return;
+    let active = true;
+    const stored = readStoredFilters();
+    const initialAcademicYear = stored.academicYear || ACADEMIC_YEAR;
+    const initialTerm = stored.term || "Term 1";
+
+    setAcademicYear(initialAcademicYear);
+    setTerm(initialTerm);
+    setSelectedClassId(stored.selectedClassId || "all");
+
+    const loadSystemScope = async () => {
+      try {
+        const config = await db.getSchoolConfig(schoolId);
+        if (!active || !config) return;
+        setSchoolConfig(config);
+        setAcademicYear(config.academicYear || initialAcademicYear);
+        setTerm(normalizeTerm(config.currentTerm) || initialTerm);
+      } catch {
+        // ignore load failure and continue with default or stored filters
+      } finally {
+        if (active) setScopeInitialized(true);
+      }
+    };
+
+    void loadSystemScope();
+    return () => {
+      active = false;
+    };
+  }, [schoolId]);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const filters = { academicYear, term, selectedClassId };
@@ -884,7 +919,7 @@ const FeesPayments: React.FC = () => {
   }, [fetchPrimaryData, fetchAuxiliaryData]);
 
   useEffect(() => {
-    if (!schoolId) return;
+    if (!schoolId || !scopeInitialized) return;
     const cached = readFinanceCache();
     if (cached?.primary) {
       applyPrimarySnapshot(cached.primary);
@@ -913,6 +948,7 @@ const FeesPayments: React.FC = () => {
     applyPrimarySnapshot,
     applyAuxiliarySnapshot,
     fetchData,
+    scopeInitialized,
   ]);
 
   useEffect(() => {
@@ -2602,6 +2638,9 @@ const FeesPayments: React.FC = () => {
                   </div>
                 );
               })}
+              <div className="sm:col-span-2">
+                <PayoutStatus schoolId={schoolId} />
+              </div>
             </div>
           </div>
 
