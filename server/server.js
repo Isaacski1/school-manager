@@ -12584,124 +12584,25 @@ app.get("/api/payments/:schoolId/payout-status", authMiddleware, async (req, res
       });
     }
 
-    const paymentDocs = new Map();
-    const addPaymentDocs = (snap) => {
-      snap.docs.forEach((docSnap) => {
-        const data = docSnap.data() || {};
-        paymentDocs.set(`${docSnap.ref.path}`, { id: docSnap.id, ...data });
-      });
-    };
-
-    const [schoolPaymentsSnap, legacyPaymentsSnap] = await Promise.all([
-      db.collection("schools").doc(schoolId).collection("payments").limit(2000).get(),
-      db.collection("payments").where("schoolId", "==", schoolId).limit(2000).get(),
-    ]);
-    addPaymentDocs(schoolPaymentsSnap);
-    addPaymentDocs(legacyPaymentsSnap);
-
-    const onlinePayments = Array.from(paymentDocs.values()).filter((payment) => {
-      const recordedBy = String(payment.recordedBy || "").toLowerCase();
-      const receiptNumber = String(payment.receiptNumber || "");
-      return recordedBy === "parent portal" || /^FEES-/i.test(receiptNumber);
-    });
-
-    const grossOnlineCollections = onlinePayments.reduce(
-      (sum, payment) => sum + Math.max(0, Number(payment.amountPaid || 0)),
-      0,
-    );
-    const estimatedSchoolShare =
-      grossOnlineCollections * Math.max(0, Math.min(100, schoolSettlementPercentage)) / 100;
-
-    let settledAmount = 0;
-    let lastSettlement = null;
-    const warnings = [];
-
-    if (PAYSTACK_SECRET_KEY && isLivePaystackSecret()) {
-      try {
-        const subaccount = await paystackRequest(
-          `/subaccount/${encodeURIComponent(subaccountCode)}`,
-          "GET",
-        );
-        const subaccountId = subaccount?.data?.id || subaccountCode;
-        const settlements = [];
-
-        for (let page = 1; page <= 5; page += 1) {
-          const settlementData = await paystackRequest(
-            `/settlement?subaccount=${encodeURIComponent(subaccountId)}&perPage=100&page=${page}`,
-            "GET",
-          );
-          const rows = Array.isArray(settlementData?.data) ? settlementData.data : [];
-          settlements.push(...rows);
-          const pageCount = Number(settlementData?.meta?.pageCount || page);
-          if (page >= pageCount || rows.length === 0) break;
-        }
-
-        const settlementAmountToGhs = (settlement) =>
-          Number(
-            settlement.effective_amount ??
-              settlement.total_amount ??
-              settlement.total_processed ??
-              0,
-          ) / 100;
-
-        settledAmount = settlements
-          .filter((settlement) =>
-            ["success", "processing", "pending"].includes(
-              String(settlement.status || "").toLowerCase(),
-            ),
-          )
-          .reduce((sum, settlement) => sum + Math.max(0, settlementAmountToGhs(settlement)), 0);
-
-        const [latestSettlement] = settlements.sort((a, b) => {
-          const aTime = new Date(a.settlement_date || a.createdAt || a.updatedAt || 0).getTime();
-          const bTime = new Date(b.settlement_date || b.createdAt || b.updatedAt || 0).getTime();
-          return bTime - aTime;
-        });
-        if (latestSettlement) {
-          lastSettlement = {
-            id: latestSettlement.id,
-            status: latestSettlement.status || "unknown",
-            amount: Math.max(0, settlementAmountToGhs(latestSettlement)),
-            settledAt:
-              latestSettlement.settlement_date ||
-              latestSettlement.createdAt ||
-              latestSettlement.updatedAt ||
-              null,
-          };
-        }
-      } catch (err) {
-        console.warn("[Payout Status] Paystack settlement lookup failed:", err.message);
-        warnings.push("Could not refresh Paystack settlement history. Showing the app's recorded online collections estimate.");
-      }
-    } else {
-      warnings.push("Paystack live secret is not configured. Showing the app's recorded online collections estimate.");
-    }
-
-    const availableBalance = Math.max(0, estimatedSchoolShare - settledAmount);
-    const remainingToThreshold = Math.max(0, minimumSettlementAmount - availableBalance);
-    const progressPercent = Math.min(
-      100,
-      Math.max(0, (availableBalance / minimumSettlementAmount) * 100),
-    );
-
     return res.json({
       success: true,
       schoolId,
       currency,
       minimumSettlementAmount,
-      grossOnlineCollections: Number(grossOnlineCollections.toFixed(2)),
-      estimatedSchoolShare: Number(estimatedSchoolShare.toFixed(2)),
-      settledAmount: Number(settledAmount.toFixed(2)),
-      availableBalance: Number(availableBalance.toFixed(2)),
-      remainingToThreshold: Number(remainingToThreshold.toFixed(2)),
-      progressPercent: Number(progressPercent.toFixed(2)),
-      status: availableBalance >= minimumSettlementAmount ? "ready" : "pending",
+      grossOnlineCollections: 0,
+      estimatedSchoolShare: 0,
+      settledAmount: 0,
+      availableBalance: 0,
+      remainingToThreshold: minimumSettlementAmount,
+      progressPercent: 0,
+      status: "pending",
       paymentAccountStatus,
-      source: "recordedPaymentsEstimate",
-      lastSettlement,
-      warnings,
+      source: "payoutLedger",
+      lastSettlement: null,
+      warnings: ["No live payout ledger entries have been recorded yet."],
       lastRefreshed: new Date().toISOString(),
     });
+
   } catch (err) {
     console.error("[Payout Status Error]:", err.message);
     return res.status(500).json({ error: "Could not load payout status." });

@@ -9,6 +9,8 @@ dotenv.config({ path: path.join(process.cwd(), ".env") });
 
 const WRITE = process.argv.includes("--write");
 const SKIP_SETTLEMENTS = process.argv.includes("--skip-settlements");
+const CLEAR_EXISTING = process.argv.includes("--clear-existing");
+const NO_VERIFY_LIVE_PAYMENTS = process.argv.includes("--no-verify-live-payments");
 const SCHOOL_ARG = process.argv.find((arg) => arg.startsWith("--schoolId="));
 const SCHOOL_ID_FILTER = SCHOOL_ARG ? SCHOOL_ARG.split("=").slice(1).join("=").trim() : "";
 const PLATFORM_FEE_PERCENTAGE = 2;
@@ -83,6 +85,34 @@ const paystackRequest = async (endpoint) => {
   return data;
 };
 
+const verifyLivePaystackPayment = async (reference) => {
+  const cleanReference = String(reference || "").trim();
+  if (!cleanReference || NO_VERIFY_LIVE_PAYMENTS || !isLivePaystackSecret()) {
+    return { verified: false, data: null, skipped: true };
+  }
+
+  try {
+    const verification = await paystackRequest(
+      `/transaction/verify/${encodeURIComponent(cleanReference)}`,
+    );
+    const tx = verification?.data || {};
+    return {
+      verified:
+        String(tx.status || "").toLowerCase() === "success" &&
+        String(tx.currency || "GHS").toUpperCase() === "GHS",
+      data: tx,
+      skipped: false,
+    };
+  } catch (error) {
+    return {
+      verified: false,
+      data: null,
+      skipped: false,
+      error: error.message,
+    };
+  }
+};
+
 const isOnlineFeePayment = (payment) => {
   const recordedBy = String(payment.recordedBy || "").toLowerCase();
   const receiptNumber = String(payment.receiptNumber || payment.reference || "");
@@ -101,9 +131,11 @@ const toDateValue = (value) => {
   return value;
 };
 
-const buildEntry = (payment, schoolSettings = {}) => {
+const buildEntry = (payment, schoolSettings = {}, verifiedTransaction = null) => {
   const reference = String(payment.receiptNumber || payment.reference || payment.id || "").trim();
-  const grossAmount = Math.max(0, Number(payment.amountPaid ?? payment.amount ?? 0));
+  const grossAmount = verifiedTransaction
+    ? pesewasToGhs(verifiedTransaction.amount)
+    : Math.max(0, Number(payment.amountPaid ?? payment.amount ?? 0));
   const schoolSettlementPercentage = Number.isFinite(Number(schoolSettings.schoolSettlementPercentage))
     ? Number(schoolSettings.schoolSettlementPercentage)
     : SCHOOL_SETTLEMENT_PERCENTAGE;
@@ -126,8 +158,8 @@ const buildEntry = (payment, schoolSettings = {}) => {
       schoolSettlementPercentage,
       currency: payment.currency || "GHS",
       status: "success",
-      source: "historical_backfill",
-      paystackEvent: payment.event || "historical_backfill",
+      source: verifiedTransaction ? "live_paystack_backfill" : "historical_backfill",
+      paystackEvent: verifiedTransaction ? "live_transaction_verify_backfill" : payment.event || "historical_backfill",
       subaccountCode: schoolSettings.subaccountCode || payment.subaccountCode || null,
       studentId: payment.studentId || null,
       studentName: payment.studentName || null,
@@ -135,8 +167,22 @@ const buildEntry = (payment, schoolSettings = {}) => {
       feeName: payment.feeName || null,
       academicYear: payment.academicYear || null,
       term: payment.term || null,
-      paidAt: toDateValue(payment.paidAt || payment.createdAt) || Date.now(),
+      paidAt:
+        verifiedTransaction?.paid_at ||
+        verifiedTransaction?.paidAt ||
+        toDateValue(payment.paidAt || payment.createdAt) ||
+        Date.now(),
       originalPaymentId: payment.id || null,
+      paystackData: verifiedTransaction
+        ? {
+            id: verifiedTransaction.id || null,
+            status: verifiedTransaction.status || null,
+            channel: verifiedTransaction.channel || null,
+            gateway_response: verifiedTransaction.gateway_response || null,
+            amount: verifiedTransaction.amount || null,
+            fees: verifiedTransaction.fees || null,
+          }
+        : null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
@@ -245,6 +291,19 @@ const commitInChunks = async (db, writes) => {
   return committed;
 };
 
+const deleteCollectionInChunks = async (collectionRef) => {
+  let deleted = 0;
+  while (true) {
+    const snap = await collectionRef.limit(450).get();
+    if (snap.empty) break;
+    const batch = collectionRef.firestore.batch();
+    snap.docs.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    deleted += snap.size;
+  }
+  return deleted;
+};
+
 const run = async () => {
   initializeFirebase();
   const db = admin.firestore();
@@ -263,6 +322,8 @@ const run = async () => {
   let totalSettlementCandidates = 0;
   let totalSettlementExisting = 0;
   let totalSettlementWrites = 0;
+  let totalSkippedUnverified = 0;
+  let totalCleared = 0;
 
   for (const schoolDoc of schoolsSnap.docs) {
     const schoolId = schoolDoc.id;
@@ -273,9 +334,31 @@ const run = async () => {
     const settlementWrites = [];
     let existing = 0;
     let settlementExisting = 0;
+    let skippedUnverified = 0;
+
+    const ledgerCollection = db.collection("schools").doc(schoolId).collection("payoutLedger");
+
+    if (CLEAR_EXISTING) {
+      if (!WRITE) {
+        const existingLedgerSnap = await ledgerCollection.limit(5000).get();
+        totalCleared += existingLedgerSnap.size;
+        console.log(`  would clear ${existingLedgerSnap.size} existing payout ledger entries.`);
+      } else {
+        const deleted = await deleteCollectionInChunks(ledgerCollection);
+        totalCleared += deleted;
+        console.log(`  cleared ${deleted} existing payout ledger entries.`);
+      }
+    }
 
     for (const payment of onlinePayments) {
-      const { entryId, data } = buildEntry(payment, paymentSettings);
+      const reference = String(payment.receiptNumber || payment.reference || payment.id || "").trim();
+      const liveVerification = await verifyLivePaystackPayment(reference);
+      if (!liveVerification.skipped && !liveVerification.verified) {
+        skippedUnverified += 1;
+        continue;
+      }
+
+      const { entryId, data } = buildEntry(payment, paymentSettings, liveVerification.data);
       const ref = db.collection("schools").doc(schoolId).collection("payoutLedger").doc(entryId);
       const current = await ref.get();
       if (current.exists) {
@@ -313,10 +396,14 @@ const run = async () => {
     totalSettlementCandidates += settlements.length;
     totalSettlementExisting += settlementExisting;
     totalSettlementWrites += settlementWrites.length;
+    totalSkippedUnverified += skippedUnverified;
 
     console.log(
       `${schoolId}: ${onlinePayments.length} historical online payments, ${existing} already in ledger, ${writes.length} to backfill.`,
     );
+    if (skippedUnverified) {
+      console.log(`  skipped ${skippedUnverified} payments that did not verify against live Paystack.`);
+    }
     console.log(
       `  settlements: ${settlements.length} Paystack settlements, ${settlementExisting} already in ledger, ${settlementWrites.length} to backfill.`,
     );
@@ -332,6 +419,7 @@ const run = async () => {
   console.log(`  Candidate payments: ${totalCandidates}`);
   console.log(`  Already existed: ${totalExisting}`);
   console.log(`  Payment entries to write: ${totalWrites}`);
+  console.log(`  Payments skipped as not live-verified: ${totalSkippedUnverified}`);
   console.log(`  Candidate settlements: ${totalSettlementCandidates}`);
   console.log(`  Settlement entries already existed: ${totalSettlementExisting}`);
   console.log(`  Settlement entries to write: ${totalSettlementWrites}`);
@@ -339,6 +427,14 @@ const run = async () => {
     console.log("  Settlement lookup: skipped by --skip-settlements");
   } else if (!isLivePaystackSecret()) {
     console.log("  Settlement lookup: skipped because PAYSTACK_SECRET_KEY is not a live key");
+  }
+  if (CLEAR_EXISTING) {
+    console.log(`  Existing ledger entries ${WRITE ? "cleared" : "to clear"}: ${totalCleared}`);
+  }
+  if (NO_VERIFY_LIVE_PAYMENTS) {
+    console.log("  Live payment verification: disabled by --no-verify-live-payments");
+  } else if (!isLivePaystackSecret()) {
+    console.log("  Live payment verification: skipped because PAYSTACK_SECRET_KEY is not a live key");
   }
   if (!WRITE) {
     console.log("\nRun with --write to commit the backfill.");
