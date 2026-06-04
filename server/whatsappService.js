@@ -405,17 +405,15 @@ export const requestPairingCode = async (phone) => {
     }
 
     const startedAt = Date.now();
-    while (
-      (!client || !["qr_ready", "connecting"].includes(clientStatus)) &&
-      Date.now() - startedAt < 15000
-    ) {
+    const waitMs = Number(process.env.WHATSAPP_PAIRING_CODE_WAIT_MS || 120000);
+    while ((!client || clientStatus !== "qr_ready") && Date.now() - startedAt < waitMs) {
       await sleep(500);
     }
 
-    if (!client || !["qr_ready", "connecting"].includes(clientStatus)) {
+    if (!client || clientStatus !== "qr_ready") {
       console.warn(`[WhatsApp] Cannot request pairing code: Client is ${clientStatus}`);
       throw new Error(
-        `WhatsApp client is ${clientStatus}. Click Start Pairing, wait for the QR code, then request a phone pairing code.`,
+        `WhatsApp client is ${clientStatus}. Click Start Pairing and wait until the QR code appears before requesting a phone pairing code.`,
       );
     }
 

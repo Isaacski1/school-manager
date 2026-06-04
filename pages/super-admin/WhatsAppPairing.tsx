@@ -302,7 +302,7 @@ const WhatsAppPairing: React.FC = () => {
                 Use this if you are managing the dashboard on the same phone and cannot scan the QR.
               </p>
               <p className="mt-2 text-sm text-slate-500">
-                After entering the pairing code on your phone, wait a few seconds for the dashboard to show the connected state.
+                First click Start Pairing and wait for the QR code to appear, then generate a phone pairing code.
               </p>
               <div className="mt-4 space-y-3">
                 <input
@@ -315,7 +315,7 @@ const WhatsAppPairing: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleRequestPairingCode}
-                  disabled={isBusy || (status !== "connecting" && status !== "qr_ready")}
+                  disabled={isBusy || status !== "qr_ready"}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loadingAction === "pairing-code" ? <Loader2 size={16} className="animate-spin" /> : <Smartphone size={16} />}
