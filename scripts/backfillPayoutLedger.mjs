@@ -11,6 +11,7 @@ const WRITE = process.argv.includes("--write");
 const SKIP_SETTLEMENTS = process.argv.includes("--skip-settlements");
 const CLEAR_EXISTING = process.argv.includes("--clear-existing");
 const NO_VERIFY_LIVE_PAYMENTS = process.argv.includes("--no-verify-live-payments");
+const VERBOSE = process.argv.includes("--verbose");
 const SCHOOL_ARG = process.argv.find((arg) => arg.startsWith("--schoolId="));
 const SCHOOL_ID_FILTER = SCHOOL_ARG ? SCHOOL_ARG.split("=").slice(1).join("=").trim() : "";
 const PLATFORM_FEE_PERCENTAGE = 2;
@@ -124,6 +125,37 @@ const isOnlineFeePayment = (payment) => {
   );
 };
 
+const paymentReference = (payment) =>
+  String(payment.receiptNumber || payment.reference || payment.id || "").trim();
+
+const uniquePaymentsByReference = (payments) => {
+  const byReference = new Map();
+  const withoutReference = [];
+
+  payments.forEach((payment) => {
+    const reference = paymentReference(payment);
+    if (!reference) {
+      withoutReference.push(payment);
+      return;
+    }
+
+    const existing = byReference.get(reference);
+    if (!existing) {
+      byReference.set(reference, {
+        ...payment,
+        duplicatePaymentIds: [payment.id].filter(Boolean),
+        localSplitTotal: Math.max(0, Number(payment.amountPaid ?? payment.amount ?? 0)),
+      });
+      return;
+    }
+
+    existing.localSplitTotal += Math.max(0, Number(payment.amountPaid ?? payment.amount ?? 0));
+    if (payment.id) existing.duplicatePaymentIds.push(payment.id);
+  });
+
+  return [...byReference.values(), ...withoutReference];
+};
+
 const toDateValue = (value) => {
   if (!value) return null;
   if (typeof value?.toDate === "function") return value.toDate().toISOString();
@@ -132,7 +164,7 @@ const toDateValue = (value) => {
 };
 
 const buildEntry = (payment, schoolSettings = {}, verifiedTransaction = null) => {
-  const reference = String(payment.receiptNumber || payment.reference || payment.id || "").trim();
+  const reference = paymentReference(payment);
   const grossAmount = verifiedTransaction
     ? pesewasToGhs(verifiedTransaction.amount)
     : Math.max(0, Number(payment.amountPaid ?? payment.amount ?? 0));
@@ -173,6 +205,10 @@ const buildEntry = (payment, schoolSettings = {}, verifiedTransaction = null) =>
         toDateValue(payment.paidAt || payment.createdAt) ||
         Date.now(),
       originalPaymentId: payment.id || null,
+      duplicatePaymentIds: Array.isArray(payment.duplicatePaymentIds)
+        ? payment.duplicatePaymentIds
+        : undefined,
+      localSplitTotal: Number(payment.localSplitTotal || grossAmount || 0),
       paystackData: verifiedTransaction
         ? {
             id: verifiedTransaction.id || null,
@@ -307,11 +343,20 @@ const deleteCollectionInChunks = async (collectionRef) => {
 const run = async () => {
   initializeFirebase();
   const db = admin.firestore();
-  const schoolsSnap = SCHOOL_ID_FILTER
-    ? await db.collection("schools").where(admin.firestore.FieldPath.documentId(), "==", SCHOOL_ID_FILTER).get()
-    : await db.collection("schools").get();
+  console.log(`Firebase project: ${admin.app().options.projectId || "(default credentials)"}`);
+  const schools = [];
 
-  if (schoolsSnap.empty) {
+  if (SCHOOL_ID_FILTER) {
+    const schoolDoc = await db.collection("schools").doc(SCHOOL_ID_FILTER).get();
+    if (schoolDoc.exists) {
+      schools.push(schoolDoc);
+    }
+  } else {
+    const schoolsSnap = await db.collection("schools").get();
+    schools.push(...schoolsSnap.docs);
+  }
+
+  if (!schools.length) {
     console.log(SCHOOL_ID_FILTER ? `No school found for ${SCHOOL_ID_FILTER}.` : "No schools found.");
     return;
   }
@@ -325,11 +370,12 @@ const run = async () => {
   let totalSkippedUnverified = 0;
   let totalCleared = 0;
 
-  for (const schoolDoc of schoolsSnap.docs) {
+  for (const schoolDoc of schools) {
     const schoolId = schoolDoc.id;
     const schoolData = schoolDoc.data() || {};
     const paymentSettings = schoolData.paymentSettings || {};
     const onlinePayments = await collectPayments(db, schoolId);
+    const uniqueOnlinePayments = uniquePaymentsByReference(onlinePayments);
     const writes = [];
     const settlementWrites = [];
     let existing = 0;
@@ -350,10 +396,13 @@ const run = async () => {
       }
     }
 
-    for (const payment of onlinePayments) {
-      const reference = String(payment.receiptNumber || payment.reference || payment.id || "").trim();
+    for (const payment of uniqueOnlinePayments) {
+      const reference = paymentReference(payment);
       const liveVerification = await verifyLivePaystackPayment(reference);
       if (!liveVerification.skipped && !liveVerification.verified) {
+        if (VERBOSE) {
+          console.log(`  skipped unverified payment ${reference || payment.id}`);
+        }
         skippedUnverified += 1;
         continue;
       }
@@ -366,6 +415,12 @@ const run = async () => {
         continue;
       }
       writes.push({ ref, data: { ...data, schoolId } });
+
+      if (VERBOSE) {
+        console.log(
+          `  verified ${reference}: ${data.grossAmount} gross, ${data.schoolShareAmount} school share, ${payment.duplicatePaymentIds?.length || 1} local row(s)`,
+        );
+      }
     }
 
     let settlements = [];
@@ -399,7 +454,7 @@ const run = async () => {
     totalSkippedUnverified += skippedUnverified;
 
     console.log(
-      `${schoolId}: ${onlinePayments.length} historical online payments, ${existing} already in ledger, ${writes.length} to backfill.`,
+      `${schoolId}: ${onlinePayments.length} historical online payment rows (${uniqueOnlinePayments.length} unique references), ${existing} already in ledger, ${writes.length} to backfill.`,
     );
     if (skippedUnverified) {
       console.log(`  skipped ${skippedUnverified} payments that did not verify against live Paystack.`);

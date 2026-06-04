@@ -336,20 +336,21 @@ export const initWhatsAppClient = () => {
     }
   });
 
-  const initTimeoutMs = Number(process.env.WHATSAPP_INIT_TIMEOUT_MS || 60000);
+  const initWarningMs = Number(process.env.WHATSAPP_INIT_WARNING_MS || 60000);
+  const initWatchdogMs = Number(process.env.WHATSAPP_INIT_WATCHDOG_MS || process.env.WHATSAPP_INIT_TIMEOUT_MS || 180000);
   const initTimeout = setTimeout(() => {
     if (clientStatus === "connecting") {
       console.warn(
-        `[WhatsApp] Initialization is still pending after ${initTimeoutMs}ms. Current status=${clientStatus}. ` +
+        `[WhatsApp] Initialization is still pending after ${initWarningMs}ms. Current status=${clientStatus}. ` +
           "If this continues, check Chrome/Puppeteer environment and the server process.",
       );
     }
-  }, initTimeoutMs);
+  }, initWarningMs);
 
   initWatchdog = setTimeout(() => {
     if (clientStatus === "connecting") {
       console.warn(
-        `[WhatsApp] Initialization watchdog triggered after ${initTimeoutMs}ms. ` +
+        `[WhatsApp] Initialization watchdog triggered after ${initWatchdogMs}ms. ` +
           `Current status still=${clientStatus}. Destroying client and marking as error.`,
       );
       if (client) {
@@ -358,9 +359,9 @@ export const initWhatsAppClient = () => {
       client = null;
       initializing = false;
       clientStatus = "error";
-      lastError = "Initialization timed out waiting for WhatsApp client readiness.";
+      lastError = `Initialization timed out after ${initWatchdogMs}ms waiting for WhatsApp client readiness.`;
     }
-  }, initTimeoutMs);
+  }, initWatchdogMs);
 
   client.initialize()
     .then(() => {

@@ -281,7 +281,7 @@ const WhatsAppPairing: React.FC = () => {
                 <div className="text-center">
                   <Loader2 size={36} className="mx-auto animate-spin text-emerald-600" />
                   <p className="mt-3 text-sm font-semibold text-slate-700">Waiting for QR code...</p>
-                  <p className="mt-1 text-xs text-slate-500">First startup can take 30 to 60 seconds. After the server is warm, it is usually faster.</p>
+                  <p className="mt-1 text-xs text-slate-500">On Render, first startup can take 1 to 3 minutes while Chrome and WhatsApp Web finish loading.</p>
                 </div>
               ) : (
                 <div className="text-center">
