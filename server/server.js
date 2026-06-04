@@ -11862,18 +11862,17 @@ const requireSuperAdminForWhatsApp = async (req, res) => {
  */
 app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
-  const svc = await loadWhatsAppService();
-  if (!svc?.getWhatsAppStatus) {
-    return res.status(503).json({
-      status: "unavailable",
-      qr: null,
-      available: false,
-      centralNumber: "+233201008784",
-      error: "WhatsApp service unavailable. Ensure whatsapp-web.js and qrcode are installed.",
-    });
-  }
+  const svc = whatsappService;
+  const status = svc?.getWhatsAppStatus
+    ? svc.getWhatsAppStatus()
+    : {
+        status: "disconnected",
+        qr: null,
+        available: true,
+        lastError: null,
+      };
   return res.json({
-    ...svc.getWhatsAppStatus(),
+    ...status,
     centralNumber: "+233201008784",
     autoInit: shouldAutoInitWhatsApp(),
   });

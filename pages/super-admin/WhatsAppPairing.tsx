@@ -17,6 +17,7 @@ import {
 
 const API_BASE = API_BASE_URL;
 const CENTRAL_WHATSAPP_NUMBER = "+233201008784";
+const QR_EXPIRES_AFTER_MS = 55_000;
 
 type WaStatus = "disconnected" | "connecting" | "qr_ready" | "ready" | "error" | "unavailable";
 
@@ -68,7 +69,10 @@ const WhatsAppPairing: React.FC = () => {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [pairingPhone, setPairingPhone] = useState("0201008784");
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [qrReceivedAt, setQrReceivedAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusRequestInFlightRef = useRef(false);
 
   const getToken = useCallback(async () => {
     const { getAuth } = await import("firebase/auth");
@@ -88,31 +92,47 @@ const WhatsAppPairing: React.FC = () => {
   }, [getToken]);
 
   const loadStatus = useCallback(async (manual = false) => {
+    if (statusRequestInFlightRef.current) return;
+    statusRequestInFlightRef.current = true;
     if (manual) setLoadingAction("refresh");
     try {
       const res = await apiFetch("/api/whatsapp/status");
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
       setStatus((data.status || "disconnected") as WaStatus);
-      setQrCode(data.qr || null);
+      const nextQr = data.qr || null;
+      setQrCode((previousQr) => {
+        if (nextQr && nextQr !== previousQr) {
+          setQrReceivedAt(Date.now());
+        } else if (!nextQr) {
+          setQrReceivedAt(null);
+        }
+        return nextQr;
+      });
       setLastError(data.lastError || null);
       setAvailable(data.available !== false);
       setStatusError(null);
     } catch (error: any) {
       setStatusError(error?.message || "Could not reach WhatsApp service.");
     } finally {
+      statusRequestInFlightRef.current = false;
       if (manual) setLoadingAction(null);
     }
   }, [apiFetch]);
 
   useEffect(() => {
+    if (!qrCode) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [qrCode]);
+
+  useEffect(() => {
     loadStatus();
-    // Polling delays: Fast when connecting (1s), moderate when waiting for QR scan (5s), normal otherwise (3s)
-    let pollDelay = 3000;
+    let pollDelay = 10000;
     if (status === "connecting" || loadingAction === "connect") {
-      pollDelay = 1000;
+      pollDelay = 3000;
     } else if (status === "qr_ready") {
-      pollDelay = 5000; // Poll frequently while waiting for QR scan
+      pollDelay = 5000;
     }
     intervalRef.current = setInterval(() => loadStatus(false), pollDelay);
     return () => {
@@ -143,6 +163,7 @@ const WhatsAppPairing: React.FC = () => {
   const handleConnect = () => {
     setStatus("connecting");
     setQrCode(null);
+    setQrReceivedAt(null);
     setLastError(null);
     setStatusError(null);
     runAction("connect", "/api/whatsapp/init", "WhatsApp service is starting. Wait for the QR code.");
@@ -154,12 +175,14 @@ const WhatsAppPairing: React.FC = () => {
   const handleClearSession = () => {
     if (!window.confirm("Clear the saved WhatsApp session and force a fresh QR scan?")) return;
     setPairingCode(null);
+    setQrReceivedAt(null);
     runAction("clear", "/api/whatsapp/clear-session", "WhatsApp session cleared.");
   };
 
   const handleRefreshQr = () => {
     setPairingCode(null);
     setQrCode(null);
+    setQrReceivedAt(null);
     setStatus("connecting");
     runAction("refresh-qr", "/api/whatsapp/refresh-qr", "WhatsApp QR session is refreshing.");
   };
@@ -180,6 +203,11 @@ const WhatsAppPairing: React.FC = () => {
 
   const meta = statusMeta[status] || statusMeta.disconnected;
   const isBusy = Boolean(loadingAction);
+  const qrAgeMs = qrReceivedAt ? nowMs - qrReceivedAt : 0;
+  const qrExpired = Boolean(qrCode && qrReceivedAt && qrAgeMs >= QR_EXPIRES_AFTER_MS);
+  const qrSecondsRemaining = qrCode && qrReceivedAt
+    ? Math.max(0, Math.ceil((QR_EXPIRES_AFTER_MS - qrAgeMs) / 1000))
+    : 0;
 
   return (
     <Layout title="WhatsApp Pairing">
@@ -283,18 +311,29 @@ const WhatsAppPairing: React.FC = () => {
                   <p className="mt-3 text-sm font-bold text-emerald-700">WhatsApp is connected and ready.</p>
                 </div>
               ) : qrCode ? (
-                <div className="relative">
-                  <img src={qrCode} alt="WhatsApp QR Code" className="h-64 w-64 rounded-2xl border-8 border-white bg-white shadow-md" />
-                  <button
-                    type="button"
-                    onClick={handleRefreshQr}
-                    disabled={isBusy}
-                    className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/80 bg-slate-900/85 text-white shadow-lg transition hover:bg-slate-800 disabled:opacity-60"
-                    title="Refresh QR code"
-                    aria-label="Refresh QR code"
-                  >
-                    {loadingAction === "refresh-qr" ? <Loader2 size={22} className="animate-spin" /> : <RefreshCw size={22} />}
-                  </button>
+                <div className="text-center">
+                  <div className="relative inline-flex">
+                    <img
+                      src={qrCode}
+                      alt="WhatsApp QR Code"
+                      className={`h-64 w-64 rounded-2xl border-8 border-white bg-white shadow-md transition duration-300 ${qrExpired ? "opacity-25 grayscale" : "opacity-100"}`}
+                    />
+                    {qrExpired && (
+                      <button
+                        type="button"
+                        onClick={handleRefreshQr}
+                        disabled={isBusy}
+                        className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/80 bg-slate-900/85 text-white shadow-lg transition hover:bg-slate-800 disabled:opacity-60"
+                        title="Refresh QR code"
+                        aria-label="Refresh QR code"
+                      >
+                        {loadingAction === "refresh-qr" ? <Loader2 size={22} className="animate-spin" /> : <RefreshCw size={22} />}
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-3 text-xs font-semibold text-slate-500">
+                    {qrExpired ? "QR code expired. Refresh it to scan again." : `QR code expires in ${qrSecondsRemaining}s.`}
+                  </p>
                 </div>
               ) : status === "connecting" || status === "qr_ready" ? (
                 <div className="text-center">
@@ -309,7 +348,7 @@ const WhatsAppPairing: React.FC = () => {
                 </div>
               )}
             </div>
-            {(status === "qr_ready" || qrCode) && (
+            {qrExpired && (
               <button
                 type="button"
                 onClick={handleRefreshQr}
