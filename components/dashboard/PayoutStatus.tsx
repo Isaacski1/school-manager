@@ -6,6 +6,7 @@ import type { PayoutStatusResponse } from "../../services/backendApi";
 type PayoutStatusProps = {
   schoolId: string;
   minimumThreshold?: number;
+  scopeLabel?: string;
 };
 
 const currency = (value: number) => `GHS ${value.toFixed(2)}`;
@@ -13,6 +14,7 @@ const currency = (value: number) => `GHS ${value.toFixed(2)}`;
 const PayoutStatus: React.FC<PayoutStatusProps> = ({
   schoolId,
   minimumThreshold = 50,
+  scopeLabel = "All terms",
 }) => {
   const [status, setStatus] = useState<PayoutStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,8 +100,11 @@ const PayoutStatus: React.FC<PayoutStatusProps> = ({
                 {loading ? "..." : currency(balance)}
               </p>
               <p className="text-xs font-medium text-slate-500">
-                estimated available
+                available across all terms
               </p>
+            </div>
+            <div className="mt-2 inline-flex rounded-full border border-slate-200 bg-white/70 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+              Paystack subaccount balance - {scopeLabel}
             </div>
           </div>
         </div>
@@ -137,8 +142,9 @@ const PayoutStatus: React.FC<PayoutStatusProps> = ({
             <p className="mt-2 text-xs leading-5 text-slate-600">
               The available payout balance has reached Paystack Ghana's{" "}
               {currency(threshold)} minimum. It should be settled to the
-              configured account on the next working day, subject to Paystack
-              processing.
+              configured account on the next working day. This balance is for
+              the school's Paystack subaccount, so it does not reset when you
+              change the finance term filter.
             </p>
           </div>
         ) : (
@@ -149,7 +155,8 @@ const PayoutStatus: React.FC<PayoutStatusProps> = ({
             <p className="mt-2 text-xs leading-5 text-slate-600">
               Paystack Ghana settles automatically after the school's available
               payout balance reaches {currency(threshold)}. New online fee
-              payments keep adding to this balance until it qualifies.
+              payments from any term keep adding to this subaccount balance
+              until it qualifies.
             </p>
 
             <div className="mt-3">

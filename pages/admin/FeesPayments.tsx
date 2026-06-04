@@ -2639,7 +2639,7 @@ const FeesPayments: React.FC = () => {
                 );
               })}
               <div className="sm:col-span-2">
-                <PayoutStatus schoolId={schoolId} />
+                <PayoutStatus schoolId={schoolId} scopeLabel="All terms" />
               </div>
             </div>
           </div>
