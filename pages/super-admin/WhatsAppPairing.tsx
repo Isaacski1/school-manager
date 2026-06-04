@@ -17,7 +17,13 @@ import {
 
 const API_BASE = API_BASE_URL;
 const CENTRAL_WHATSAPP_NUMBER = "+233201008784";
-const QR_EXPIRES_AFTER_MS = 55_000;
+const QR_EXPIRES_AFTER_MS = 5 * 60_000;
+
+const formatCountdown = (totalSeconds: number) => {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+};
 
 type WaStatus = "disconnected" | "connecting" | "qr_ready" | "ready" | "error" | "unavailable";
 
@@ -332,7 +338,9 @@ const WhatsAppPairing: React.FC = () => {
                     )}
                   </div>
                   <p className="mt-3 text-xs font-semibold text-slate-500">
-                    {qrExpired ? "QR code expired. Refresh it to scan again." : `QR code expires in ${qrSecondsRemaining}s.`}
+                    {qrExpired
+                      ? "QR code expired. Refresh it to scan again."
+                      : `QR code expires in ${formatCountdown(qrSecondsRemaining)}.`}
                   </p>
                 </div>
               ) : status === "connecting" || status === "qr_ready" ? (
