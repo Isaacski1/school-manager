@@ -11948,6 +11948,16 @@ app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
   return res.json({ ...result, ...svc.getWhatsAppStatus() });
 });
 
+app.post("/api/whatsapp/refresh-qr", authMiddleware, async (req, res) => {
+  if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  const svc = await loadWhatsAppService();
+  if (!svc?.refreshWhatsAppQr) {
+    return res.status(503).json({ error: "WhatsApp service unavailable." });
+  }
+  const status = await svc.refreshWhatsAppQr();
+  return res.json({ success: true, ...status });
+});
+
 app.get("/api/whatsapp/debug", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
   const svc = await loadWhatsAppService();

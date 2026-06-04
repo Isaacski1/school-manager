@@ -157,6 +157,13 @@ const WhatsAppPairing: React.FC = () => {
     runAction("clear", "/api/whatsapp/clear-session", "WhatsApp session cleared.");
   };
 
+  const handleRefreshQr = () => {
+    setPairingCode(null);
+    setQrCode(null);
+    setStatus("connecting");
+    runAction("refresh-qr", "/api/whatsapp/refresh-qr", "WhatsApp QR session is refreshing.");
+  };
+
   const handleRequestPairingCode = async () => {
     if (!pairingPhone.trim()) {
       showToast("Enter the WhatsApp phone number first.", { type: "error" });
@@ -276,7 +283,19 @@ const WhatsAppPairing: React.FC = () => {
                   <p className="mt-3 text-sm font-bold text-emerald-700">WhatsApp is connected and ready.</p>
                 </div>
               ) : qrCode ? (
-                <img src={qrCode} alt="WhatsApp QR Code" className="h-64 w-64 rounded-2xl border-8 border-white bg-white shadow-md" />
+                <div className="relative">
+                  <img src={qrCode} alt="WhatsApp QR Code" className="h-64 w-64 rounded-2xl border-8 border-white bg-white shadow-md" />
+                  <button
+                    type="button"
+                    onClick={handleRefreshQr}
+                    disabled={isBusy}
+                    className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/80 bg-slate-900/85 text-white shadow-lg transition hover:bg-slate-800 disabled:opacity-60"
+                    title="Refresh QR code"
+                    aria-label="Refresh QR code"
+                  >
+                    {loadingAction === "refresh-qr" ? <Loader2 size={22} className="animate-spin" /> : <RefreshCw size={22} />}
+                  </button>
+                </div>
               ) : status === "connecting" || status === "qr_ready" ? (
                 <div className="text-center">
                   <Loader2 size={36} className="mx-auto animate-spin text-emerald-600" />
@@ -290,6 +309,17 @@ const WhatsAppPairing: React.FC = () => {
                 </div>
               )}
             </div>
+            {(status === "qr_ready" || qrCode) && (
+              <button
+                type="button"
+                onClick={handleRefreshQr}
+                disabled={isBusy}
+                className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                {loadingAction === "refresh-qr" ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                Refresh QR Code
+              </button>
+            )}
           </div>
 
           <div className="space-y-6">

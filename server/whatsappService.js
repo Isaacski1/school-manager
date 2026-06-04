@@ -19,6 +19,7 @@ const configuredWebVersionRemotePath = String(
 const configuredUserAgent = String(
   process.env.WHATSAPP_USER_AGENT || "",
 ).trim();
+const puppeteerLaunchTimeoutMs = Number(process.env.PUPPETEER_LAUNCH_TIMEOUT_MS || 120000);
 
 const SYSTEM_CHROME_PATHS =
   process.platform === "win32"
@@ -158,6 +159,12 @@ export const clearWhatsAppSession = async () => {
   }
 };
 
+export const refreshWhatsAppQr = async () => {
+  await disconnectWhatsApp();
+  initWhatsAppClient();
+  return getWhatsAppStatus();
+};
+
 export const testPuppeteer = async () => {
   try {
     const puppeteer = require("puppeteer");
@@ -166,6 +173,8 @@ export const testPuppeteer = async () => {
     const browser = await puppeteer.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),
+      timeout: puppeteerLaunchTimeoutMs,
+      protocolTimeout: puppeteerLaunchTimeoutMs,
       args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     const version = await browser.version();
@@ -243,6 +252,8 @@ export const initWhatsAppClient = () => {
   const puppeteerOptions = {
     headless: "new",
     ...(executablePath ? { executablePath } : {}),
+    timeout: puppeteerLaunchTimeoutMs,
+    protocolTimeout: puppeteerLaunchTimeoutMs,
     defaultViewport: null,
     args: [
       "--no-sandbox",
