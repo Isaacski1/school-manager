@@ -12,6 +12,9 @@ const require = createRequire(import.meta.url);
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const puppeteerCacheDir = join(serverDir, ".cache", "puppeteer");
 process.env.PUPPETEER_CACHE_DIR ||= puppeteerCacheDir;
+const whatsappSessionPath = String(
+  process.env.WHATSAPP_SESSION_PATH || join(serverDir, "whatsapp-session"),
+).trim();
 
 const configuredWebVersionRemotePath = String(
   process.env.WHATSAPP_WEB_VERSION_REMOTE_PATH || "",
@@ -57,6 +60,16 @@ let puppeteerExecutablePath = null;
 let reconnectTimeout = null;
 let initWatchdog = null;
 
+const logRuntimeInfo = (label) => {
+  const memory = process.memoryUsage();
+  console.log(`[WhatsApp] Runtime ${label}:`, {
+    sessionPath: whatsappSessionPath,
+    rssMb: Math.round(memory.rss / 1024 / 1024),
+    heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+    heapTotalMb: Math.round(memory.heapTotal / 1024 / 1024),
+  });
+};
+
 process.on("unhandledRejection", (reason) => {
   const message = reason?.message || String(reason);
   console.error("[WhatsApp] Unhandled promise rejection:", message);
@@ -69,6 +82,16 @@ process.on("unhandledRejection", (reason) => {
       client = null;
     }
   }
+});
+
+process.on("exit", (code) => {
+  console.warn("[WhatsApp] Node process exiting", { code, status: clientStatus });
+});
+
+["SIGTERM", "SIGINT"].forEach((signal) => {
+  process.on(signal, () => {
+    console.warn("[WhatsApp] Process signal received", { signal, status: clientStatus });
+  });
 });
 
 // Utility functions for safety and timing
@@ -143,14 +166,15 @@ export const getWhatsAppStatus = () => ({
   qr: currentQrBase64,
   available: Boolean(Client && LocalAuth && qrcode),
   lastError: lastError || dependencyError,
+  sessionPath: whatsappSessionPath,
 });
 
 export const clearWhatsAppSession = async () => {
   await disconnectWhatsApp();
   try {
     const fs = await import("fs/promises");
-    await fs.rm("./whatsapp-session", { recursive: true, force: true });
-    console.log("[WhatsApp] Session folder cleared.");
+    await fs.rm(whatsappSessionPath, { recursive: true, force: true });
+    console.log("[WhatsApp] Session folder cleared:", whatsappSessionPath);
     lastError = null;
     return { success: true };
   } catch (err) {
@@ -246,6 +270,7 @@ export const initWhatsAppClient = () => {
   currentQrBase64 = null;
   lastError = null;
   console.log("[WhatsApp] Initializing client...");
+  logRuntimeInfo("before init");
   const executablePath = resolvePuppeteerExecutablePath();
   console.log("[WhatsApp] Puppeteer executable path:", executablePath || "(default bundle or environment default)");
 
@@ -279,7 +304,7 @@ export const initWhatsAppClient = () => {
   });
 
   client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "./whatsapp-session" }),
+    authStrategy: new LocalAuth({ dataPath: whatsappSessionPath }),
     ...(configuredWebVersionRemotePath
       ? {
           webVersionCache: {
@@ -344,7 +369,7 @@ export const initWhatsAppClient = () => {
     currentQrBase64 = null;
     console.warn("[WhatsApp] Disconnected:", reason);
 
-    if (existsSync("./whatsapp-session")) {
+    if (existsSync(whatsappSessionPath)) {
       clearReconnectTimeout();
       reconnectTimeout = setTimeout(() => {
         console.log("[WhatsApp] Disconnected. Attempting auto-reconnect...");

@@ -4,12 +4,7 @@ import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
-import { auth, storage } from "../../services/firebase";
-import { ref as storageRef, uploadBytes } from "firebase/storage";
-import { createRoot } from "react-dom/client";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
-import InvoiceTemplate from "../../components/parent/InvoiceTemplate";
+import { auth } from "../../services/firebase";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
 import {
@@ -47,9 +42,11 @@ import {
   Wallet,
   CreditCard,
   Settings,
+  MessageSquare,
   X,
 } from "lucide-react";
 import PayoutStatus from "../../components/dashboard/PayoutStatus";
+import { API_BASE_URL } from "../../src/config";
 
 
 const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
@@ -63,21 +60,6 @@ const normalizeTerm = (value?: string | null): FeeTerm => {
 const paymentMethods: PaymentMethod[] = ["Cash", "MoMo", "Bank"];
 const statusFilters = ["all", "paid", "part-paid", "unpaid"] as const;
 
-const WhatsAppIcon: React.FC<{ size?: number; className?: string }> = ({
-  size = 16,
-  className = "",
-}) => (
-  <svg
-    aria-hidden="true"
-    className={className}
-    fill="currentColor"
-    height={size}
-    viewBox="0 0 24 24"
-    width={size}
-  >
-    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.33 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.51 2 12.04 2Zm0 18.15h-.01a8.22 8.22 0 0 1-4.19-1.15l-.3-.18-3.14.82.84-3.06-.2-.31a8.17 8.17 0 0 1-1.25-4.36 8.25 8.25 0 1 1 8.25 8.24Zm4.52-6.17c-.25-.12-1.47-.73-1.7-.81-.23-.08-.39-.12-.56.12-.16.25-.64.81-.78.98-.14.16-.29.19-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.35-.76-1.85-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.23.25-.87.85-.87 2.07s.89 2.4 1.01 2.56c.12.17 1.75 2.67 4.24 3.75.59.25 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.14-1.18-.06-.11-.23-.17-.48-.29Z" />
-  </svg>
-);
 const feeFrequencyOptions: { value: FeeFrequency; label: string }[] = [
   { value: "one_time", label: "One-time" },
   { value: "per_term", label: "Per term" },
@@ -308,9 +290,9 @@ const FeesPayments: React.FC = () => {
     useState<FinanceSettings | null>(null);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
 
-  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState<string | null>(null);
+  const [isSendingSmsReceipt, setIsSendingSmsReceipt] = useState<string | null>(null);
   const [sentInvoiceStatus, setSentInvoiceStatus] = useState<
-    Record<string, { channel: "whatsapp" | "sms"; sentAt: string }>
+    Record<string, { channel: "sms"; sentAt: string }>
   >({});
 
   const resolveInvoiceRecipientPhone = (student?: Student) => {
@@ -325,52 +307,7 @@ const FeesPayments: React.FC = () => {
     );
   };
 
-  // Helper: Pre-load image to Base64
-  const urlToBase64 = (url: string): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        try {
-          const canvas = document.createElement("canvas");
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return reject(new Error("Canvas context not available"));
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL("image/png"));
-        } catch (err) { reject(err); }
-      };
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = url;
-    });
-
-  const waitForNextPaint = () =>
-    new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => resolve());
-      });
-    });
-
-  const generateSinglePagePdfBlob = async (element: HTMLElement): Promise<Blob> => {
-    const canvas = await html2canvas(element, {
-      scale: 1.5,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: "#ffffff",
-      logging: false,
-    });
-    const imgData = canvas.toDataURL("image/jpeg", 0.8);
-    const pdf = new jsPDF({
-      orientation: "portrait",
-      unit: "px",
-      format: [canvas.width / 1.5, canvas.height / 1.5],
-    });
-    pdf.addImage(imgData, "JPEG", 0, 0, canvas.width / 1.5, canvas.height / 1.5);
-    return pdf.output("blob");
-  };
-
-  const handleSendWhatsAppInvoice = async (payment: StudentFeePayment) => {
+  const handleSendSmsReceipt = async (payment: StudentFeePayment) => {
     const student = students.find((s) => s.id === payment.studentId);
     const invoicePhone = resolveInvoiceRecipientPhone(student);
     if (!invoicePhone) {
@@ -383,125 +320,85 @@ const FeesPayments: React.FC = () => {
     }
 
     try {
-      setIsSendingWhatsApp(payment.id);
-      showToast("Generating receipt PDF...", { type: "info" });
+      setIsSendingSmsReceipt(payment.id);
+      showToast("Sending receipt SMS...", { type: "info" });
 
-      const container = document.createElement("div");
-      container.style.position = "fixed";
-      container.style.top = "0";
-      container.style.left = "-9999px";
-      container.style.width = "800px";
-      container.style.backgroundColor = "white";
-      document.body.appendChild(container);
-
-      try {
-        let logoBase64 = "";
-        if (school?.logoUrl) {
-          try {
-            logoBase64 = await urlToBase64(school.logoUrl);
-          } catch (e) {
-            logoBase64 = school.logoUrl;
-          }
-        }
-
-        const root = createRoot(container);
-        root.render(
-          <InvoiceTemplate
-            schoolName={school?.name || "School Manager"}
-            schoolLogo={logoBase64}
-            studentName={student.name}
-            studentId={student.id}
-            amount={payment.amountPaid}
-            reference={payment.receiptNumber || payment.id}
-            date={payment.createdAt as number}
-            academicYear={payment.academicYear}
-            term={payment.term}
-          />
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch(`${API_BASE_URL}/api/payments/send-invoice`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({
+          schoolId,
+          source: "admin_manual_receipt",
+          notifyAdmin: false,
+          paymentId: payment.id,
+          studentId: student.id,
+          studentName: student.name,
+          guardianName: student?.guardianName || student?.name || "Parent",
+          guardianPhone: invoicePhone,
+          recipientPhone: invoicePhone,
+          classId: student.classId,
+          className: getClassLabel(student.classId),
+          fatherPhone: student.fatherPhone,
+          motherPhone: student.motherPhone,
+          fatherWhatsApp: student.fatherWhatsApp,
+          motherWhatsApp: student.motherWhatsApp,
+          guardianWhatsApp: student.guardianWhatsApp,
+          adminPhone: school?.phone,
+          amount: payment.amountPaid,
+          reference: payment.receiptNumber || payment.id,
+          feeName: payment.feeName,
+          forceInline: true,
+        }),
+      });
+      const responseBody = await response.json().catch(() => ({}));
+      if (!response.ok || responseBody.success === false) {
+        const failedResult = Array.isArray(responseBody.results)
+          ? responseBody.results.find((item: any) => item.type === "payment_invoice_parent" && !item.success) ||
+            responseBody.results.find((item: any) => !item.success)
+          : null;
+        throw new Error(
+          responseBody.error ||
+            failedResult?.error ||
+            responseBody.notificationSummary?.error ||
+            "Failed to send receipt SMS.",
         );
-
-        await waitForNextPaint();
-        await new Promise(resolve => setTimeout(resolve, 800));
-
-        let pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
-        
-        if (pdfBlob.size < 5000) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
-        }
-
-        const reader = new FileReader();
-        const pdfBase64Promise = new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-        });
-        reader.readAsDataURL(pdfBlob);
-        const pdfBase64 = await pdfBase64Promise;
-
-        root.unmount();
-        document.body.removeChild(container);
-
-        const idToken = await auth.currentUser?.getIdToken();
-        const response = await fetch('/api/payments/send-invoice', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
-          },
-          body: JSON.stringify({
-            paymentId: payment.id,
-            studentId: student.id,
-            studentName: student.name,
-            guardianName: student?.guardianName || student?.name || "Parent",
-            guardianPhone: invoicePhone,
-            adminPhone: school?.phone,
-            amount: payment.amountPaid,
-            reference: payment.receiptNumber || payment.id,
-            base64Pdf: pdfBase64,
-            feeName: payment.feeName,
-            forceInline: true,
-          })
-        });
-        const responseBody = await response.json().catch(() => ({}));
-
-        if (response.ok) {
-          const channel =
-            responseBody.channel ||
-            responseBody.results?.[0]?.channel ||
-            (responseBody.queued ? "whatsapp" : "whatsapp");
-          setSentInvoiceStatus((prev) => ({
-            ...prev,
-            [payment.id]: {
-              channel: channel === "sms" ? "sms" : "whatsapp",
-              sentAt: new Date().toLocaleString(),
-            },
-          }));
-          showToast(
-            channel === "sms"
-              ? "Invoice SMS notification sent to parent."
-              : "Invoice sent to parent via WhatsApp.",
-            { type: "success" },
-          );
-          logActivity({
-            schoolId: schoolId!,
-            actorUid: user?.id || null,
-            actorRole: user?.role || null,
-            eventType: "WhatsApp",
-            meta: {
-              description: `Sent invoice for ${student.name} (${payment.receiptNumber || payment.id})`
-            }
-          });
-        } else {
-          const errData = responseBody || (await response.json().catch(() => ({})));
-          throw new Error(errData.error || "Failed to send invoice notification");
-        }
-      } catch (err) {
-        if (document.body.contains(container)) document.body.removeChild(container);
-        throw err;
       }
+
+      setSentInvoiceStatus((prev) => ({
+        ...prev,
+        [payment.id]: {
+          channel: "sms",
+          sentAt: new Date().toLocaleString(),
+        },
+      }));
+      const summary = responseBody.notificationSummary || {};
+      const parentSmsSent = summary.parentSmsSent !== false;
+      showToast(
+        parentSmsSent && summary.adminSmsSent
+          ? "Receipt SMS sent to parent and payment alert SMS sent to admin."
+          : parentSmsSent
+            ? "Receipt SMS sent to parent."
+            : "Payment alert SMS sent, but the parent receipt SMS needs review.",
+        { type: "success" },
+      );
+      logActivity({
+        schoolId: schoolId!,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "SMS",
+        meta: {
+          description: `Sent SMS receipt for ${student.name} (${payment.receiptNumber || payment.id})`,
+        },
+      });
     } catch (error) {
-      console.error("WhatsApp Error:", error);
-      showToast("Failed to send invoice via WhatsApp.", { type: "error" });
+      console.error("SMS receipt error:", error);
+      showToast(error instanceof Error ? error.message : "Failed to send receipt SMS.", { type: "error" });
     } finally {
-      setIsSendingWhatsApp(null);
+      setIsSendingSmsReceipt(null);
     }
   };
 
@@ -515,10 +412,66 @@ const FeesPayments: React.FC = () => {
     "defaulters" | "weekly" | "class" | null
   >(null);
   const [isSavingOnboarding, setIsSavingOnboarding] = useState(false);
+  const reviewParentPaymentsProcessedRef = useRef(false);
 
   useEffect(() => {
     // No longer needed as it's a full page
   }, []);
+
+  useEffect(() => {
+    const shouldReviewParentPayments = new URLSearchParams(location.search).get("reviewParentPayments") === "1";
+    if (!shouldReviewParentPayments || reviewParentPaymentsProcessedRef.current || !schoolId || payments.length === 0) return;
+
+    const parentPaymentsToReview = payments.filter((payment) => {
+      const recordedBy = String(payment.recordedBy || "").toLowerCase();
+      const receipt = String(payment.receiptNumber || "").toUpperCase();
+      return !payment.adminReviewedAt && (recordedBy.includes("parent") || receipt.startsWith("FEES-"));
+    });
+
+    if (parentPaymentsToReview.length === 0) {
+      reviewParentPaymentsProcessedRef.current = true;
+      navigate("/admin/fees", { replace: true });
+      return;
+    }
+
+    reviewParentPaymentsProcessedRef.current = true;
+    const reviewedAt = Date.now();
+    Promise.all(
+      parentPaymentsToReview.map((payment) =>
+        db.updateStudentPayment(
+          payment.id,
+          {
+            adminReviewedAt: reviewedAt,
+            adminReviewedBy: user?.id || null,
+          },
+          schoolId,
+        ),
+      ),
+    )
+      .then(() => {
+        setPayments((current) =>
+          current.map((payment) =>
+            parentPaymentsToReview.some((reviewedPayment) => reviewedPayment.id === payment.id)
+              ? { ...payment, adminReviewedAt: reviewedAt, adminReviewedBy: user?.id || null }
+              : payment,
+          ),
+        );
+        [window.sessionStorage, window.localStorage].forEach((storage) => {
+          Object.keys(storage)
+            .filter((key) => key.startsWith(`admin_dashboard_`) && key.includes(schoolId))
+            .forEach((key) => storage.removeItem(key));
+        });
+        showToast(
+          `${parentPaymentsToReview.length} parent payment${parentPaymentsToReview.length === 1 ? "" : "s"} marked as reviewed.`,
+          { type: "success" },
+        );
+        navigate("/admin/fees", { replace: true });
+      })
+      .catch((error) => {
+        console.error("Failed to mark parent payments reviewed", error);
+        showToast("Failed to mark parent payments as reviewed.", { type: "error" });
+      });
+  }, [location.search, navigate, payments, schoolId, user?.id]);
 
   // Recent payments pagination removed - switching to scrollable section
 
@@ -3324,9 +3277,7 @@ const FeesPayments: React.FC = () => {
                             </p>
                             {(sentInvoiceStatus[payment.id]?.channel || (payment as any).invoiceNotificationChannel) && (
                               <span className="mt-2 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
-                                {sentInvoiceStatus[payment.id]?.channel === "sms" || (payment as any).invoiceNotificationChannel === "sms"
-                                  ? "Invoice sent via SMS"
-                                  : "Invoice sent via WhatsApp"}
+                                Receipt sent via SMS
                               </span>
                             )}
                           </div>
@@ -3350,20 +3301,20 @@ const FeesPayments: React.FC = () => {
                             <Eye size={14} /> Details
                           </button>
                           <button
-                            onClick={() => handleSendWhatsAppInvoice(payment)}
-                            disabled={isSendingWhatsApp === payment.id}
+                            onClick={() => handleSendSmsReceipt(payment)}
+                            disabled={isSendingSmsReceipt === payment.id}
                             className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-sm transition-all ${
-                              isSendingWhatsApp === payment.id
+                              isSendingSmsReceipt === payment.id
                                 ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
-                                : "border-[#1FAF5A] bg-[#25D366] text-white shadow-emerald-100 hover:border-[#128C4A] hover:bg-[#1FAF5A]"
+                                : "border-sky-200 bg-sky-600 text-white shadow-sky-100 hover:border-sky-300 hover:bg-sky-700"
                             }`}
                           >
-                            {isSendingWhatsApp === payment.id ? (
+                            {isSendingSmsReceipt === payment.id ? (
                               <RefreshCw size={14} className="animate-spin" />
                             ) : (
-                              <WhatsAppIcon size={14} />
+                              <MessageSquare size={14} />
                             )}
-                            WhatsApp
+                            SMS
                           </button>
                         </div>
                       </div>
@@ -4630,20 +4581,20 @@ const FeesPayments: React.FC = () => {
 
                 <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
                   <button
-                    onClick={() => handleSendWhatsAppInvoice(selectedPayment)}
-                    disabled={isSendingWhatsApp === selectedPayment.id}
+                    onClick={() => handleSendSmsReceipt(selectedPayment)}
+                    disabled={isSendingSmsReceipt === selectedPayment.id}
                     className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-all ${
-                      isSendingWhatsApp === selectedPayment.id
+                      isSendingSmsReceipt === selectedPayment.id
                         ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
-                        : "border-[#1FAF5A] bg-[#25D366] text-white shadow-emerald-100 hover:border-[#128C4A] hover:bg-[#1FAF5A]"
+                        : "border-sky-200 bg-sky-600 text-white shadow-sky-100 hover:border-sky-300 hover:bg-sky-700"
                     }`}
                   >
-                    {isSendingWhatsApp === selectedPayment.id ? (
+                    {isSendingSmsReceipt === selectedPayment.id ? (
                       <RefreshCw size={16} className="animate-spin" />
                     ) : (
-                      <WhatsAppIcon size={16} />
+                      <MessageSquare size={16} />
                     )}
-                    Send to WhatsApp
+                    Send SMS Receipt
                   </button>
                   <button
                     onClick={() => setSelectedPayment(null)}

@@ -1548,8 +1548,10 @@ const AdminDashboard = () => {
           .filter((payment) => {
             const recordedBy = String(payment.recordedBy || "").toLowerCase();
             const receipt = String(payment.receiptNumber || "").toUpperCase();
+            const isReviewed = Boolean(payment.adminReviewedAt);
             return (
-              recordedBy.includes("parent") || receipt.startsWith("FEES-")
+              !isReviewed &&
+              (recordedBy.includes("parent") || receipt.startsWith("FEES-"))
             );
           })
           .sort((left, right) => {
@@ -4346,7 +4348,7 @@ const AdminDashboard = () => {
                       </div>
                       {hasFeature("fees_payments") && (
                         <Link
-                          to="/admin/fees"
+                          to="/admin/fees?reviewParentPayments=1"
                           className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
                         >
                           Review in Fees & Payments

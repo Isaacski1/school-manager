@@ -82,8 +82,11 @@ interface PaymentConfig {
   status: "pending" | "active" | "error";
 }
 
-const DEFAULT_PLATFORM_FEE_PERCENTAGE = 2;
-const DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE = 98;
+const DEFAULT_PLATFORM_FEE_PERCENTAGE = 2.5;
+const DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE = 97.5;
+
+const CURRENT_PLATFORM_FEE_PERCENTAGE = DEFAULT_PLATFORM_FEE_PERCENTAGE;
+const CURRENT_SCHOOL_SETTLEMENT_PERCENTAGE = 100 - CURRENT_PLATFORM_FEE_PERCENTAGE;
 
 const PaymentSettings: React.FC = () => {
   const { school } = useSchool();
@@ -96,6 +99,8 @@ const PaymentSettings: React.FC = () => {
   });
   const [activeConfig, setActiveConfig] = useState<PaymentConfig | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const platformFeePercentage = CURRENT_PLATFORM_FEE_PERCENTAGE;
+  const schoolSettlementPercentage = CURRENT_SCHOOL_SETTLEMENT_PERCENTAGE;
 
   useEffect(() => {
     async function fetchPaymentSettings() {
@@ -105,8 +110,13 @@ const PaymentSettings: React.FC = () => {
         if (schoolDoc.exists()) {
           const data = schoolDoc.data();
           if (data.paymentSettings) {
-            setConfig(data.paymentSettings);
-            setActiveConfig(data.paymentSettings);
+            const normalizedPaymentSettings = {
+              ...data.paymentSettings,
+              platformFeePercentage: CURRENT_PLATFORM_FEE_PERCENTAGE,
+              schoolSettlementPercentage: CURRENT_SCHOOL_SETTLEMENT_PERCENTAGE,
+            };
+            setConfig(normalizedPaymentSettings);
+            setActiveConfig(normalizedPaymentSettings);
           }
         }
       } catch (error) {
@@ -272,14 +282,14 @@ const PaymentSettings: React.FC = () => {
                     <div>
                       <p className="text-slate-400 text-[10px] mb-0.5">School Settlement</p>
                       <p className="font-bold text-sm sm:text-lg">
-                        {activeConfig.schoolSettlementPercentage ?? DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE}%
+                        {schoolSettlementPercentage}%
                       </p>
                     </div>
 
                     <div>
                       <p className="text-slate-400 text-[10px] mb-0.5">Platform Fee</p>
                       <p className="font-bold text-sm sm:text-lg">
-                        {activeConfig.platformFeePercentage ?? DEFAULT_PLATFORM_FEE_PERCENTAGE}%
+                        {platformFeePercentage}%
                       </p>
                     </div>
                   </div>
@@ -302,6 +312,21 @@ const PaymentSettings: React.FC = () => {
                 >
                   <Settings size={18} />
                 </button>
+              </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900">
+                <div className="flex gap-3">
+                  <Info className="mt-0.5 shrink-0 text-blue-600" size={18} />
+                  <div className="space-y-2">
+                    <p className="font-bold">How online payment settlement works</p>
+                    <p>
+                      When a parent pays online, Paystack sends {schoolSettlementPercentage}% of the payment to your payout account and keeps {platformFeePercentage}% for School Manager GH platform services.
+                    </p>
+                    <p className="text-xs leading-5 text-blue-800">
+                      Example: if a parent pays GHS 1,000, your school receives GHS {schoolSettlementPercentage * 10} and the platform fee is GHS {platformFeePercentage * 10}. Paystack processing charges may also apply according to Paystack's settlement rules.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {activeConfig?.status === "active" && !showForm && (

@@ -630,11 +630,6 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 label="Broadcasts"
               />
               <NavItem
-                href="/super-admin/whatsapp"
-                icon={<WhatsAppIcon size={18} />}
-                label="WhatsApp Pairing"
-              />
-              <NavItem
                 href="/super-admin/security/login-history"
                 icon={<Lock size={18} />}
                 label="Login History"

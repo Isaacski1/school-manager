@@ -4004,13 +4004,14 @@ class FirestoreService {
   ): Promise<void> {
     await this.requireFeature(schoolId, "fees_payments");
     if (!paymentId) return;
-    await updateDoc(doc(firestore, "payments", paymentId), updates);
     if (schoolId && (await this.useFinanceV2(schoolId))) {
-      await updateDoc(
-        doc(firestore, "schools", schoolId, "payments", paymentId),
-        updates,
-      );
+      const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+      const rootRef = doc(firestore, "payments", paymentId);
+      await setDoc(scopedRef, updates, { merge: true });
+      await setDoc(rootRef, { ...updates, schoolId }, { merge: true }).catch(() => {});
+      return;
     }
+    await updateDoc(doc(firestore, "payments", paymentId), updates);
   }
 
   async computeLedgerTotals(

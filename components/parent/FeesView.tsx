@@ -531,87 +531,8 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
       );
 
       if (hasNotificationPhone) {
-        console.log("[Invoice] Starting Flash Capture Invoicing...");
-        
-        // Make it visible and keep it there for a moment to force a browser paint
-
-
-
-
-
-
-
-
-
-        // Wait 2 seconds for the browser to definitely render the text
-        // 1. Create a temporary container
-        const container = document.createElement("div");
-        container.style.position = "fixed";
-        container.style.top = "0";
-        container.style.left = "-9999px"; // Off-screen but attached
-        container.style.width = "800px";
-        container.style.backgroundColor = "white";
-        document.body.appendChild(container);
-
         try {
-          // 2. Pre-load school logo if it exists
-          let logoBase64 = "";
-          if (school?.logoUrl) {
-            try {
-              logoBase64 = await urlToBase64(school.logoUrl);
-            } catch (e) {
-              console.warn("[Invoice] Logo pre-load failed, using original URL", e);
-              logoBase64 = school.logoUrl;
-            }
-          }
-
-          // 3. Render the template into the container
-          const root = createRoot(container);
-          root.render(
-            <InvoiceTemplate
-              schoolName={school?.name || "School Manager"}
-              schoolLogo={logoBase64}
-              studentName={student.name}
-              studentId={student.id}
-              amount={amount}
-              reference={reference}
-              date={paymentDate}
-              academicYear={academicYear}
-              term={selectedTerm === "all" ? "All Terms" : selectedTerm}
-            />
-          );
-
-          // 4. Wait for React to render and the browser to paint
-          await waitForNextPaint();
-          await new Promise(resolve => setTimeout(resolve, 800)); // Extra safety for complex styles
-
-          // 5. Capture as PDF
-          let pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
-          
-          // 6. Diagnostic validation
-          console.log(`[Invoice] Captured PDF size: ${(pdfBlob.size / 1024).toFixed(2)} KB`);
-          
-          if (pdfBlob.size < 5000) { // If < 5KB, it's likely blank or failed
-            console.warn("[Invoice] PDF size looks suspicious, retrying...");
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            pdfBlob = await generateSinglePagePdfBlob(container.firstElementChild as HTMLElement);
-          }
-
-          const reader = new FileReader();
-          const pdfBase64Promise = new Promise<string>((resolve) => {
-            reader.onloadend = () => {
-              const base64 = reader.result as string;
-              resolve(base64);
-            };
-          });
-          reader.readAsDataURL(pdfBlob);
-          const pdfBase64 = await pdfBase64Promise;
-
-          // 8. Clean up DOM
-          root.unmount();
-          document.body.removeChild(container);
-
-          // 9. Send to WhatsApp
+          // Send SMS receipt and admin payment alert.
           const idToken = await auth.currentUser?.getIdToken();
           const response = await fetch(`${API_BASE_URL}/api/payments/send-invoice`, {
             method: 'POST',
@@ -621,60 +542,60 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             },
             body: JSON.stringify({
               schoolId: student.schoolId,
+              source: "parent_dashboard_payment",
+              notifyAdmin: true,
               studentId: student.id,
               studentName: student.name,
+              guardianName: (student as any).guardianName || (student as any).parentName || "Parent",
+              classId: student.classId,
+              className: CLASSES_LIST.find((c) => c.id === student.classId)?.name || student.classId,
               fatherPhone: student.fatherPhone,
               motherPhone: student.motherPhone,
               guardianPhone: student.guardianPhone,
               adminPhone: school?.phone,
               amount,
               reference,
-              base64Pdf: pdfBase64,
               feeName: feeName || "School Fees"
             })
           });
 
-          if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error || `Server returned ${response.status}`);
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || result.success === false) {
+            throw new Error(result.error || `Server returned ${response.status}`);
           }
 
-          const result = await response.json().catch(() => ({}));
-          console.log("[Invoice] WhatsApp notification handled:", result);
+          console.log("[Invoice] SMS notification handled:", result);
           const notificationResults = Array.isArray(result.results) ? result.results : [];
-          const sentToWhatsApp = notificationResults.some(
-            (item) => item.success && item.channel === "whatsapp",
+          const sentToParentSms = notificationResults.some(
+            (item) => item.success && item.channel === "sms" && item.type === "payment_invoice_parent",
           );
-          const sentToSmsFallback = notificationResults.some(
-            (item) => item.success && item.channel === "sms",
+          const sentToAdminSms = notificationResults.some(
+            (item) => item.success && item.channel === "sms" && item.type === "payment_alert_admin",
           );
           const allFailed = notificationResults.length > 0 && notificationResults.every((item) => !item.success);
 
           if (result.queued) {
-            showToast("Payment saved. WhatsApp notification queued.", { type: "info" });
+            showToast("Payment saved. SMS notification is pending.", { type: "info" });
           } else if (result.skipped) {
-            showToast("Payment saved. WhatsApp notifications are disabled.", { type: "info" });
-          } else if (sentToWhatsApp) {
-            showToast("Payment saved and WhatsApp notification processed.", { type: "success" });
-          } else if (sentToSmsFallback) {
+            showToast("Payment saved. SMS notifications are disabled.", { type: "info" });
+          } else if (sentToParentSms && sentToAdminSms) {
             showToast(
-              "Payment saved. WhatsApp failed, but an SMS fallback was sent to the parent.",
-              { type: "warning" },
+              "Payment saved. Receipt SMS sent to parent and payment alert SMS sent to admin.",
+              { type: "success" },
             );
+          } else if (sentToParentSms) {
+            showToast("Payment saved and receipt SMS sent to parent.", { type: "success" });
           } else if (allFailed) {
             showToast(
-              "Payment saved, but notification failed. Please check the WhatsApp sender and parent contact number.",
+              "Payment saved, but SMS notification failed. Please check SMS balance and phone numbers.",
               { type: "error" },
             );
           } else {
             showToast("Payment saved. Notification result is pending.", { type: "info" });
           }
-        } catch (captureError: any) {
-          console.error("[Invoice] Capture/Send failed:", captureError);
-          showToast("Payment saved. WhatsApp notification will need review.", { type: "warning" });
-          if (document.body.contains(container)) {
-            document.body.removeChild(container);
-          }
+        } catch (notificationError: any) {
+          console.error("[Invoice] SMS send failed:", notificationError);
+          showToast("Payment saved. SMS notification will need review.", { type: "warning" });
         }
       }
 

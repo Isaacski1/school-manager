@@ -1538,7 +1538,7 @@ app.post("/api/parent/notices/:noticeId/read", authMiddleware, async (req, res) 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
-const PLATFORM_FEE_PERCENTAGE = 2;
+const PLATFORM_FEE_PERCENTAGE = 2.5;
 const SCHOOL_SETTLEMENT_PERCENTAGE = 100 - PLATFORM_FEE_PERCENTAGE;
 const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
@@ -9608,6 +9608,46 @@ const normalizeSmsPhone = (phone) => {
   return digits;
 };
 
+const extractArkeselMessageIds = (smsData) => {
+  const rows = Array.isArray(smsData?.data)
+    ? smsData.data
+    : smsData?.data
+      ? [smsData.data]
+      : [];
+  return rows
+    .map((row) => row?.ID || row?.id || row?.sms_id || row?.message_id || row?.uuid)
+    .filter(Boolean)
+    .map(String);
+};
+
+const scheduleArkeselDeliveryReportLog = ({ apiKey, messageIds, context }) => {
+  if (!apiKey || !messageIds.length) return;
+  setTimeout(async () => {
+    for (const messageId of messageIds) {
+      try {
+        const reportRes = await fetch(`https://sms.arkesel.com/api/v2/sms/${encodeURIComponent(messageId)}`, {
+          headers: { "api-key": apiKey },
+        });
+        const reportData = await reportRes.json().catch(() => ({}));
+        const deliveryStatus = String(reportData?.data?.status || "").toUpperCase();
+        const logMethod = deliveryStatus.includes("PENDING APPROVAL") ? console.warn : console.log;
+        logMethod("[SMS Receipt] Arkesel delivery report:", JSON.stringify({
+          ...context,
+          messageId,
+          statusCode: reportRes.status,
+          report: reportData,
+        }, null, 2));
+      } catch (err) {
+        console.warn("[SMS Receipt] Arkesel delivery report lookup failed:", {
+          ...context,
+          messageId,
+          error: err?.message || String(err),
+        });
+      }
+    }
+  }, 20000);
+};
+
 const sendSmsWithWallet = async ({ schoolId, phone, message }) => {
   const arkeselKey = process.env.ARKESEL_API_KEY;
   if (!arkeselKey) {
@@ -9616,23 +9656,40 @@ const sendSmsWithWallet = async ({ schoolId, phone, message }) => {
 
   const normalizedPhone = normalizeSmsPhone(phone);
   if (!normalizedPhone) {
-    return { success: false, skipped: true, error: "No valid staff phone number." };
+    return { success: false, skipped: true, error: "No valid SMS phone number." };
+  }
+
+  const resolvedSchoolId = String(schoolId || "").trim();
+  if (!resolvedSchoolId) {
+    return { success: false, skipped: true, error: "School ID is missing for SMS wallet lookup." };
   }
 
   const db = admin.firestore();
-  const schoolRef = db.collection("schools").doc(String(schoolId));
+  const schoolRef = db.collection("schools").doc(resolvedSchoolId);
+  const smsConfigSnap = await db.collection("settings").doc("platform_sms").get();
+  const smsConfig = smsConfigSnap.exists ? smsConfigSnap.data() || {} : {};
+  const retailRate = Number(smsConfig.retailRatePerSms ?? 0.05);
+  const messageCost = Number.isFinite(retailRate) && retailRate > 0 ? retailRate : 0.05;
+  const senderId = smsConfig.providerSenderId || process.env.ARKESEL_SENDER_ID || "SMGH";
   const reservation = await db.runTransaction(async (tx) => {
     const schoolSnap = await tx.get(schoolRef);
     const balance = Number(schoolSnap.data()?.smsWallet?.balance || 0);
-    if (balance < 1) {
-      return { reserved: false, balance };
+    if (balance < messageCost) {
+      return { reserved: false, balance, messageCost };
     }
-    tx.update(schoolRef, { "smsWallet.balance": balance - 1 });
-    return { reserved: true, balance };
+    tx.update(schoolRef, {
+      "smsWallet.balance": balance - messageCost,
+      "smsWallet.lastSendAt": Date.now(),
+    });
+    return { reserved: true, balance, messageCost };
   });
 
   if (!reservation.reserved) {
-    return { success: false, skipped: true, error: "SMS wallet has no credits." };
+    return {
+      success: false,
+      skipped: true,
+      error: `Insufficient SMS wallet balance. Sending requires GHS ${messageCost.toFixed(2)}, but the current balance is GHS ${Number(reservation.balance || 0).toFixed(2)}.`,
+    };
   }
 
   try {
@@ -9643,25 +9700,73 @@ const sendSmsWithWallet = async ({ schoolId, phone, message }) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        sender: process.env.ARKESEL_SENDER_ID || "SCHOOL",
+        sender: senderId,
         message,
         recipients: [normalizedPhone],
       }),
     });
     const smsData = await smsRes.json().catch(() => ({}));
+    const messageIds = extractArkeselMessageIds(smsData);
+    const logContext = {
+      schoolId: resolvedSchoolId,
+      phone: normalizedPhone,
+      sender: senderId,
+    };
+    console.log("[SMS Receipt] Arkesel response:", JSON.stringify({
+      ...logContext,
+      statusCode: smsRes.status,
+      status: smsData?.status,
+      message: smsData?.message,
+      messageIds,
+      response: smsData,
+    }, null, 2));
     if (!smsRes.ok || smsData.status !== "success") {
       await schoolRef.update({
-        "smsWallet.balance": admin.firestore.FieldValue.increment(1),
+        "smsWallet.balance": admin.firestore.FieldValue.increment(messageCost),
       });
       return {
         success: false,
         error: smsData.message || `Arkesel failed with ${smsRes.status}`,
+        providerResponse: smsData,
       };
     }
-    return { success: true, provider: "arkesel", phone: normalizedPhone };
+    scheduleArkeselDeliveryReportLog({
+      apiKey: arkeselKey,
+      messageIds,
+      context: logContext,
+    });
+    await Promise.all([
+      db.collection("settings").doc("platform_sms_summary").set(
+        {
+          totalSmsSent: admin.firestore.FieldValue.increment(1),
+          totalRevenue: admin.firestore.FieldValue.increment(messageCost),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      ),
+      db.collection("sms_school_usage").doc(resolvedSchoolId).set(
+        {
+          schoolId: resolvedSchoolId,
+          totalSms: admin.firestore.FieldValue.increment(1),
+          totalCost: admin.firestore.FieldValue.increment(messageCost),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    ]);
+    return {
+      success: true,
+      provider: "arkesel",
+      phone: normalizedPhone,
+      senderId,
+      cost: messageCost,
+      messageIds,
+      providerMessage: smsData?.message || "",
+      providerResponse: smsData,
+    };
   } catch (error) {
     await schoolRef.update({
-      "smsWallet.balance": admin.firestore.FieldValue.increment(1),
+      "smsWallet.balance": admin.firestore.FieldValue.increment(messageCost),
     });
     return { success: false, error: error.message || "SMS send failed." };
   }
@@ -11811,7 +11916,22 @@ app.get("/version", (req, res) => {
 // ─── WhatsApp Broadcast Endpoints ────────────────────────────────────────────
 let whatsappService = null;
 
+const isWhatsAppPaused = () => {
+  const setting = String(process.env.WHATSAPP_PAUSED || "").trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(setting)) return false;
+  return true;
+};
+
+const getPausedWhatsAppStatus = () => ({
+  status: "unavailable",
+  qr: null,
+  available: false,
+  paused: true,
+  lastError: "WhatsApp is temporarily paused.",
+});
+
 const loadWhatsAppService = async () => {
+  if (isWhatsAppPaused()) return null;
   if (!whatsappService) {
     try {
       whatsappService = await import("./whatsappService.js");
@@ -11862,6 +11982,13 @@ const requireSuperAdminForWhatsApp = async (req, res) => {
  */
 app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.json({
+      ...getPausedWhatsAppStatus(),
+      centralNumber: "+233201008784",
+      autoInit: false,
+    });
+  }
   const svc = whatsappService;
   const status = svc?.getWhatsAppStatus
     ? svc.getWhatsAppStatus()
@@ -11884,6 +12011,9 @@ app.get("/api/whatsapp/status", authMiddleware, async (req, res) => {
  */
 app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const svc = await loadWhatsAppService();
   if (!svc?.initWhatsAppClient) {
     return res.status(503).json({ error: "WhatsApp service unavailable." });
@@ -11898,6 +12028,9 @@ app.post("/api/whatsapp/init", authMiddleware, async (req, res) => {
  */
 app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const { phone } = req.body || {};
   if (!phone) return res.status(400).json({ error: "Phone number is required." });
   const svc = await loadWhatsAppService();
@@ -11924,6 +12057,9 @@ app.post("/api/whatsapp/pairing-code", authMiddleware, async (req, res) => {
  */
 app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const svc = await loadWhatsAppService();
   if (!svc?.disconnectWhatsApp) {
     return res.status(503).json({ error: "WhatsApp service unavailable." });
@@ -11938,6 +12074,9 @@ app.post("/api/whatsapp/disconnect", authMiddleware, async (req, res) => {
  */
 app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const svc = await loadWhatsAppService();
   if (!svc?.clearWhatsAppSession) {
     return res.status(503).json({ error: "WhatsApp service unavailable." });
@@ -11949,6 +12088,9 @@ app.post("/api/whatsapp/clear-session", authMiddleware, async (req, res) => {
 
 app.post("/api/whatsapp/refresh-qr", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const svc = await loadWhatsAppService();
   if (!svc?.refreshWhatsAppQr) {
     return res.status(503).json({ error: "WhatsApp service unavailable." });
@@ -11959,6 +12101,9 @@ app.post("/api/whatsapp/refresh-qr", authMiddleware, async (req, res) => {
 
 app.get("/api/whatsapp/debug", authMiddleware, async (req, res) => {
   if (!(await requireSuperAdminForWhatsApp(req, res))) return;
+  if (isWhatsAppPaused()) {
+    return res.status(503).json({ success: false, error: "WhatsApp pairing is temporarily paused.", ...getPausedWhatsAppStatus() });
+  }
   const svc = await loadWhatsAppService();
   if (!svc?.testPuppeteer) {
     return res.status(503).json({ success: false, error: "WhatsApp service unavailable." });
@@ -12678,17 +12823,251 @@ const enqueueWhatsAppRetry = async (payload) => {
 
 const resolvePaymentNotificationRecipients = (studentData, body) => {
   const candidates = [
+    body.guardianPhone,
+    body.recipientPhone,
+    studentData?.guardianPhone,
+    studentData?.guardianWhatsApp,
     body.fatherPhone,
     studentData?.fatherPhone,
     studentData?.fatherWhatsApp,
     body.motherPhone,
     studentData?.motherPhone,
     studentData?.motherWhatsApp,
-    body.guardianPhone,
-    studentData?.guardianPhone,
-    studentData?.guardianWhatsApp,
   ];
   return [...new Set(candidates.map(normalizeBroadcastPhone).filter((phone) => /^233\d{9}$/.test(phone)))];
+};
+
+const resolvePaymentParentName = (studentData = {}, body = {}) =>
+  String(
+    body.guardianName ||
+      body.parentName ||
+      studentData.guardianName ||
+      studentData.parentName ||
+      studentData.fatherName ||
+      studentData.motherName ||
+      "Parent",
+  ).trim();
+
+const resolvePaymentClassName = (studentData = {}, body = {}) =>
+  String(
+    body.className ||
+      studentData.className ||
+      studentData.class ||
+      studentData.classLevel ||
+      body.classId ||
+      studentData.classId ||
+      "N/A",
+  ).trim();
+
+const resolveSchoolAdminSmsRecipient = async ({ schoolId, settings = {}, schoolData = {}, body = {} }) => {
+  const notificationSettings = settings.notificationSettings || {};
+  const directCandidates = [
+    notificationSettings.adminSmsNumber,
+    notificationSettings.adminPhone,
+    notificationSettings.adminWhatsAppNumber,
+    body.adminPhone,
+    schoolData.phone,
+    schoolData.contactPhone,
+    settings.phone,
+    settings.contactPhone,
+    schoolData.paymentSettings?.contactPhone,
+  ];
+  const directRecipient = directCandidates
+    .map(normalizeBroadcastPhone)
+    .find((phone) => /^233\d{9}$/.test(phone));
+  if (directRecipient) return directRecipient;
+
+  if (!schoolId) return "";
+  try {
+    const adminSnap = await admin
+      .firestore()
+      .collection("users")
+      .where("schoolId", "==", String(schoolId))
+      .where("role", "==", "school_admin")
+      .limit(5)
+      .get();
+    for (const docSnap of adminSnap.docs) {
+      const userData = docSnap.data() || {};
+      const phone = normalizeBroadcastPhone(
+        userData.phoneNumber || userData.phone || userData.contactPhone || userData.whatsapp || "",
+      );
+      if (/^233\d{9}$/.test(phone)) return phone;
+    }
+  } catch (err) {
+    console.warn("[SMS Invoice] Could not resolve school admin phone:", err?.message || err);
+  }
+  return "";
+};
+
+const sendPaymentInvoiceSmsNotifications = async ({
+  resolvedSchoolId,
+  settings,
+  schoolData,
+  studentData,
+  body,
+}) => {
+  const {
+    amount,
+    reference,
+    studentId,
+    studentName,
+    feeName,
+    paymentId,
+  } = body || {};
+  const notificationSettings = settings.notificationSettings || {};
+  const schoolName = settings.schoolName || schoolData.name || "School Manager GH";
+  const effectiveStudentName = studentName || studentData.name || "Student";
+  const effectiveFeeName = feeName || "School Fees";
+  const parentName = resolvePaymentParentName(studentData, body);
+  const className = resolvePaymentClassName(studentData, body);
+  const shouldSendAdminAlert =
+    body?.notifyAdmin !== false && body?.source !== "admin_manual_receipt";
+  const results = [];
+  const smsNotificationsEnabled =
+    notificationSettings.enableSmsNotifications ??
+    notificationSettings.enableWhatsAppNotifications ??
+    true;
+
+  if (!smsNotificationsEnabled) {
+    results.push({
+      success: false,
+      skipped: true,
+      channel: "sms",
+      type: "payment_invoice_parent",
+      error: "SMS notifications are disabled.",
+    });
+    results.push({
+      success: false,
+      skipped: true,
+      channel: "sms",
+      type: "payment_alert_admin",
+      error: "SMS notifications are disabled.",
+    });
+    return results;
+  }
+
+  if (notificationSettings.enableInvoiceNotifications !== false) {
+    const parentRecipients = resolvePaymentNotificationRecipients(studentData, body);
+    const parentMessage = [
+      `${schoolName} receipt: GHS ${amount} received.`,
+      `Child: ${effectiveStudentName}.`,
+      `Fee: ${effectiveFeeName}.`,
+      `Ref: ${reference}.`,
+    ].join(" ");
+
+    for (const recipient of parentRecipients) {
+      const smsResult = await sendSmsWithWallet({
+        schoolId: resolvedSchoolId,
+        phone: recipient,
+        message: parentMessage,
+      });
+      const result = { recipient, ...smsResult, channel: "sms", type: "payment_invoice_parent" };
+      results.push(result);
+      await writeNotificationLog({
+        schoolId: resolvedSchoolId,
+        recipient,
+        type: "payment_invoice_parent",
+        status: smsResult.success ? "sent" : "failed",
+        errorMessage: smsResult.success ? "" : smsResult.error || "SMS send failed.",
+        metadata: {
+          reference,
+          studentId,
+          channel: "sms",
+          senderId: smsResult.senderId || null,
+          providerMessage: smsResult.providerMessage || "",
+          providerResponse: smsResult.providerResponse || null,
+        },
+      });
+    }
+  }
+
+  if (notificationSettings.enablePaymentAlerts !== false && shouldSendAdminAlert) {
+    const adminRecipient = await resolveSchoolAdminSmsRecipient({
+      schoolId: resolvedSchoolId,
+      settings,
+      schoolData,
+      body,
+    });
+    if (adminRecipient) {
+      const adminMessage = [
+        `${schoolName} notification: ${parentName} made payment for ${effectiveStudentName}.`,
+        `Amount: GHS ${amount}.`,
+        `Class: ${className}.`,
+        `Fee: ${effectiveFeeName}.`,
+        `Ref: ${reference}.`,
+      ].join(" ");
+      const adminResult = await sendSmsWithWallet({
+        schoolId: resolvedSchoolId,
+        phone: adminRecipient,
+        message: adminMessage,
+      });
+      results.push({ recipient: adminRecipient, ...adminResult, channel: "sms", type: "payment_alert_admin" });
+      await writeNotificationLog({
+        schoolId: resolvedSchoolId,
+        recipient: adminRecipient,
+        type: "payment_alert_admin",
+        status: adminResult.success ? "sent" : "failed",
+        errorMessage: adminResult.success ? "" : adminResult.error || "SMS send failed.",
+        metadata: {
+          reference,
+          studentId,
+          channel: "sms",
+          senderId: adminResult.senderId || null,
+          providerMessage: adminResult.providerMessage || "",
+          providerResponse: adminResult.providerResponse || null,
+        },
+      });
+    } else {
+      results.push({
+        success: false,
+        skipped: true,
+        channel: "sms",
+        type: "payment_alert_admin",
+        error: "No school admin phone number found.",
+      });
+      await writeNotificationLog({
+        schoolId: resolvedSchoolId,
+        recipient: "",
+        type: "payment_alert_admin",
+        status: "skipped",
+        errorMessage: "No school admin phone number found.",
+        metadata: { reference, studentId, channel: "sms" },
+      });
+    }
+  } else if (!shouldSendAdminAlert) {
+    results.push({
+      success: false,
+      skipped: true,
+      channel: "sms",
+      type: "payment_alert_admin",
+      error: "Admin alert skipped for manual receipt send.",
+    });
+  }
+
+  if (paymentId) {
+    const sentResult = results.find((item) => item.success && item.type === "payment_invoice_parent") ||
+      results.find((item) => item.success);
+    await admin.firestore().collection("payments").doc(String(paymentId)).set(
+      {
+        invoiceNotificationStatus: sentResult ? "sent" : "failed",
+        invoiceNotificationChannel: "sms",
+        invoiceNotificationPhone: sentResult?.phone || sentResult?.recipient || null,
+        invoiceNotificationSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        invoiceNotificationError: sentResult ? null : results.find((item) => item.error)?.error || "SMS notification failed.",
+      },
+      { merge: true },
+    );
+  }
+
+  const failures = results.filter((result) => !result.success && !result.skipped);
+  if (failures.length) {
+    await writeAdminNotification(
+      resolvedSchoolId,
+      `Some SMS payment notifications failed for ${effectiveStudentName}. Check SMS wallet balance and phone numbers.`,
+    );
+  }
+
+  return results;
 };
 
 const resolveInvoicePdfBase64 = async ({ base64Pdf, invoiceStoragePath, invoiceDownloadUrl }) => {
@@ -12992,8 +13371,8 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         paymentId,
         forceInline,
       } = req.body || {};
-      if (!studentId || (!base64Pdf && !invoiceStoragePath && !invoiceDownloadUrl)) {
-        return res.status(400).json({ error: "Student ID and PDF data are required." });
+      if (!studentId) {
+        return res.status(400).json({ error: "Student ID is required." });
       }
 
       const db = admin.firestore();
@@ -13012,7 +13391,6 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
       const inlineProcessing = Boolean(forceInline) || shouldProcessInvoiceNotificationsInline();
 
       if (
-        notificationSettings.enableWhatsAppNotifications === false ||
         (notificationSettings.enablePaymentAlerts === false &&
           notificationSettings.enableInvoiceNotifications === false)
       ) {
@@ -13025,6 +13403,36 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
         });
         return res.json({ success: true, skipped: true });
       }
+
+      const smsResults = await sendPaymentInvoiceSmsNotifications({
+        resolvedSchoolId,
+        settings,
+        schoolData,
+        studentData,
+        body: req.body,
+      });
+      const parentSmsResults = smsResults.filter((item) => item.type === "payment_invoice_parent");
+      const adminSmsResults = smsResults.filter((item) => item.type === "payment_alert_admin");
+      const firstParentFailure = parentSmsResults.find((item) => !item.success);
+      const parentSmsSent = parentSmsResults.some((item) => item.success && item.channel === "sms");
+      const adminSmsSent = adminSmsResults.some((item) => item.success && item.channel === "sms");
+      const smsNotificationSummary = {
+        smsSent: smsResults.some((item) => item.success && item.channel === "sms"),
+        parentSmsSent,
+        adminSmsSent,
+        anyFailed: smsResults.some((item) => !item.success && !item.skipped),
+        error: firstParentFailure?.error || null,
+        channels: ["sms"],
+      };
+      return res.json({
+        success: parentSmsSent,
+        channel: "sms",
+        results: smsResults,
+        notificationSummary: smsNotificationSummary,
+        error: parentSmsSent
+          ? undefined
+          : firstParentFailure?.error || "No parent receipt SMS was sent.",
+      });
 
       const invoiceStoragePathToUse = await persistInvoicePdfToStorage({
         base64Pdf,
@@ -13378,6 +13786,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
 // Start server
 const PORT = process.env.PORT || 3001;
 const shouldAutoInitWhatsApp = () => {
+  if (isWhatsAppPaused()) return false;
   const setting = String(process.env.WHATSAPP_AUTO_INIT || "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(setting)) return true;
   if (["0", "false", "no", "off"].includes(setting)) return false;
@@ -13388,6 +13797,11 @@ const server = app.listen(PORT);
 
 server.on("listening", async () => {
   console.log(`Server running on port ${PORT}`);
+
+  if (isWhatsAppPaused()) {
+    console.log("[WhatsApp] Temporarily paused. Set WHATSAPP_PAUSED=false to enable pairing and background sending.");
+    return;
+  }
 
   // Auto-initialize WhatsApp on startup if possible
   if (!shouldAutoInitWhatsApp()) {

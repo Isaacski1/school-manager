@@ -163,6 +163,8 @@ export interface StudentFeePayment {
   isOpeningPayment?: boolean;
   createdAt: Date | number;
   recordedBy: string;
+  adminReviewedAt?: Date | number;
+  adminReviewedBy?: string | null;
 }
 
 export interface FinanceSettings {
@@ -344,7 +346,9 @@ export interface SchoolConfig {
   positionRule?: "total" | "average" | "subject";
   notificationSettings?: {
     adminWhatsAppNumber?: string;
+    adminSmsNumber?: string;
     enableWhatsAppNotifications?: boolean;
+    enableSmsNotifications?: boolean;
     enablePaymentAlerts?: boolean;
     enableInvoiceNotifications?: boolean;
   };

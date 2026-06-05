@@ -112,7 +112,9 @@ const SystemSettings = () => {
     positionRule: "total",
     notificationSettings: {
       adminWhatsAppNumber: "",
+      adminSmsNumber: "",
       enableWhatsAppNotifications: true,
+      enableSmsNotifications: true,
       enablePaymentAlerts: true,
       enableInvoiceNotifications: true,
     },
@@ -194,8 +196,16 @@ const SystemSettings = () => {
       notificationSettings: {
         adminWhatsAppNumber:
           data.notificationSettings?.adminWhatsAppNumber || "",
+        adminSmsNumber:
+          data.notificationSettings?.adminSmsNumber ||
+          data.notificationSettings?.adminWhatsAppNumber ||
+          "",
         enableWhatsAppNotifications:
           data.notificationSettings?.enableWhatsAppNotifications ?? true,
+        enableSmsNotifications:
+          data.notificationSettings?.enableSmsNotifications ??
+          data.notificationSettings?.enableWhatsAppNotifications ??
+          true,
         enablePaymentAlerts:
           data.notificationSettings?.enablePaymentAlerts ?? true,
         enableInvoiceNotifications:
@@ -291,14 +301,14 @@ const SystemSettings = () => {
   const handleSaveNotificationSettings = async () => {
     const settings = config.notificationSettings || {};
     const normalizedAdminPhone = normalizeGhanaPhoneNumber(
-      settings.adminWhatsAppNumber || "",
+      settings.adminSmsNumber || settings.adminWhatsAppNumber || "",
     );
 
     if (
-      settings.enableWhatsAppNotifications &&
+      settings.enableSmsNotifications &&
       !isValidGhanaPhoneNumber(normalizedAdminPhone)
     ) {
-      showToast("Enter a valid Ghana WhatsApp number.", { type: "error" });
+      showToast("Enter a valid Ghana SMS number.", { type: "error" });
       return;
     }
 
@@ -306,9 +316,11 @@ const SystemSettings = () => {
       ...config,
       schoolId,
       notificationSettings: {
+        adminSmsNumber: normalizedAdminPhone,
         adminWhatsAppNumber: normalizedAdminPhone,
+        enableSmsNotifications: Boolean(settings.enableSmsNotifications),
         enableWhatsAppNotifications: Boolean(
-          settings.enableWhatsAppNotifications,
+          settings.enableSmsNotifications,
         ),
         enablePaymentAlerts: Boolean(settings.enablePaymentAlerts),
         enableInvoiceNotifications: Boolean(settings.enableInvoiceNotifications),
@@ -1043,8 +1055,7 @@ const SystemSettings = () => {
                     Notification Settings
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    Messages are sent through School Manager GH WhatsApp
-                    Service +233201008784.
+                    Payment alerts and receipts are sent by SMS while WhatsApp is paused.
                   </p>
                 </div>
                 <button
@@ -1065,18 +1076,21 @@ const SystemSettings = () => {
               <div className="space-y-5">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Admin WhatsApp Number
+                    Admin SMS Number
                   </label>
                   <input
                     type="tel"
                     value={
-                      config.notificationSettings?.adminWhatsAppNumber || ""
+                      config.notificationSettings?.adminSmsNumber ||
+                      config.notificationSettings?.adminWhatsAppNumber ||
+                      ""
                     }
                     onChange={(e) =>
                       setConfig({
                         ...config,
                         notificationSettings: {
                           ...(config.notificationSettings || {}),
+                          adminSmsNumber: e.target.value,
                           adminWhatsAppNumber: e.target.value,
                         },
                       })
@@ -1086,6 +1100,9 @@ const SystemSettings = () => {
                         ...config,
                         notificationSettings: {
                           ...(config.notificationSettings || {}),
+                          adminSmsNumber: normalizeGhanaPhoneNumber(
+                            e.target.value,
+                          ),
                           adminWhatsAppNumber: normalizeGhanaPhoneNumber(
                             e.target.value,
                           ),
@@ -1103,8 +1120,8 @@ const SystemSettings = () => {
 
                 {[
                   {
-                    key: "enableWhatsAppNotifications",
-                    label: "Enable WhatsApp Notifications",
+                    key: "enableSmsNotifications",
+                    label: "Enable SMS Notifications",
                   },
                   { key: "enablePaymentAlerts", label: "Enable Payment Alerts" },
                   {
