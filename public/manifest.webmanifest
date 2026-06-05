@@ -1,9 +1,12 @@
 {
   "name": "School Manager GH",
   "short_name": "School Manager",
+  "description": "School Management System",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "theme_color": "#2563eb",
   "background_color": "#ffffff",
   "icons": [
