@@ -38,6 +38,7 @@ export interface User {
 export interface School {
   id: string;
   name: string;
+  schoolAdminFullName?: string;
   code: string;
   logoUrl: string;
   phone: string;

@@ -177,6 +177,7 @@ export async function getPayoutStatus(
  */
 export async function createSchool(payload: {
   name: string;
+  schoolAdminFullName?: string;
   phone?: string;
   address?: string;
   logoUrl?: string;

@@ -6454,6 +6454,7 @@ app.post(
     try {
       const {
         name,
+        schoolAdminFullName,
         phone,
         address,
         logoUrl,
@@ -6534,6 +6535,9 @@ app.post(
       const schoolData = {
         schoolId,
         name: name.trim(),
+        schoolAdminFullName: schoolAdminFullName
+          ? String(schoolAdminFullName).trim()
+          : "",
         code: schoolCode,
         phone: phone ? phone.trim() : "",
         address: address ? address.trim() : "",

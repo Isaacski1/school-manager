@@ -48,6 +48,7 @@ const Schools = () => {
     schoolType: "Basic School (Nursery to JHS)",
 
     name: "",
+    schoolAdminFullName: "",
     phone: "",
     address: "",
     logoUrl: "",
@@ -329,6 +330,7 @@ const Schools = () => {
       const croppedLogo = getCroppedLogoDataUrl();
       await createSchool({
         name: formData.name.trim(),
+        schoolAdminFullName: formData.schoolAdminFullName.trim(),
         phone: formData.phone.trim(),
         address: formData.address.trim(),
         logoUrl: croppedLogo || "",
@@ -346,6 +348,7 @@ const Schools = () => {
 
       setFormData({
         name: "",
+        schoolAdminFullName: "",
         phone: "",
         address: "",
         logoUrl: "",
@@ -881,6 +884,25 @@ const Schools = () => {
                     setFormData({ ...formData, name: e.target.value })
                   }
                   placeholder="Enter school name"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  School Admin Full Name
+                </label>
+                <input
+                  type="text"
+                  disabled={isCreatingSchool}
+                  className="w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-transparent outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  value={formData.schoolAdminFullName}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      schoolAdminFullName: e.target.value,
+                    })
+                  }
+                  placeholder="Enter school admin full name"
                 />
               </div>
 

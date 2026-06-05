@@ -1287,7 +1287,11 @@ const ReportCard = () => {
             )}
           </div>
 
-          <ReportCardLayout data={reportCardData} />
+          <div className="-mx-3 overflow-auto px-3 pb-4 sm:mx-0 sm:px-0">
+            <div className="min-w-max">
+              <ReportCardLayout data={reportCardData} />
+            </div>
+          </div>
         </div>
       )}
     </Layout>
