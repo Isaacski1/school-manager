@@ -1111,16 +1111,17 @@ class FirestoreService {
     // Update private settings
     await setDoc(doc(firestore, "settings", schoolId), config);
     
-    // Also sync logo and name to the public 'schools' profile for the marketing site
+    // Also sync branding to the public school profile used by dashboards and Super Admin.
+    // This client-side mirror can be blocked by rules for school admins; logo uploads
+    // also call the backend branding endpoint with Admin SDK privileges.
     if (data.logoUrl || data.schoolName || data.notificationSettings) {
-      // Execute in background to keep the main settings update fast
       setDoc(doc(firestore, "schools", schoolId), {
         ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
         ...(data.schoolName ? { name: data.schoolName } : {}),
         ...(data.notificationSettings ? { notificationSettings: data.notificationSettings } : {}),
         updatedAt: Date.now()
       }, { merge: true }).catch((err) => {
-        console.warn("Failed to sync profile to public schools collection (background task)", err);
+        console.warn("Failed to sync profile to schools collection from client", err);
       });
     }
   }
@@ -3920,11 +3921,12 @@ class FirestoreService {
   async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
     await this.requireFeature(ledger.schoolId, "fees_payments");
     this.requireSchoolId(ledger.schoolId, "upsertStudentLedger");
+    const cleanedLedger = this.stripUndefinedDeep(ledger);
     const useV2 = await this.useFinanceV2(ledger.schoolId);
     const docRef = useV2
       ? doc(firestore, "schools", ledger.schoolId, "feeLedgers", ledger.id)
       : doc(firestore, "student_ledgers", ledger.id);
-    await setDoc(docRef, ledger, {
+    await setDoc(docRef, cleanedLedger, {
       merge: true,
     });
   }

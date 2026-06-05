@@ -3,6 +3,10 @@ import { db } from "../../services/mockDb";
 import { useAuth } from "../../context/AuthContext";
 import { AttendanceRecord, SchoolConfig, Student } from "../../types";
 import { Calendar, CheckCircle, XCircle, Clock, TrendingUp, X } from "lucide-react";
+import {
+  collectHolidayDateKeys,
+  getExpectedSchoolDayKeys,
+} from "../../services/schoolCalendar";
 
 interface AttendanceViewProps {
   student: Student;
@@ -56,19 +60,22 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
         setLoading(true);
         setErrorMsg(null);
         
-        const { startDate, endDate } = getMonthDateRange(selectedMonth, selectedYear);
+        const config = await db.getSchoolConfig(effectiveSchoolId);
+        const { startDate: monthStartDate, endDate: monthEndDate } = getMonthDateRange(selectedMonth, selectedYear);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const startDate = config.schoolReopenDate || monthStartDate;
+        const endDate = monthEndDate > todayKey ? monthEndDate : todayKey;
         
         console.log(`[AttendanceView] Fetching for ${student.name} (${studentId}) in class ${effectiveClassId} school ${effectiveSchoolId} from ${startDate} to ${endDate}`);
         
-        const [records, config] = await Promise.all([
-          db.getClassAttendanceByDateRange(
-            effectiveSchoolId,
-            effectiveClassId,
-            startDate,
-            endDate
-          ),
-          db.getSchoolConfig(effectiveSchoolId),
-        ]);
+        const records = await db.getClassAttendanceByDateRange(
+          effectiveSchoolId,
+          effectiveClassId,
+          startDate,
+          endDate
+        );
         
         if (!records || records.length === 0) {
           console.log(`[AttendanceView] No records found for the selected period.`);
@@ -173,45 +180,30 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
 
   const stats = useMemo(() => {
     const studentIdTrimmed = student.id.trim();
-    const { startDate, endDate } = getMonthDateRange(selectedMonth, selectedYear);
-    const recordHolidayDates = new Set(
-      attendanceRecords.filter((record) => record.isHoliday).map((record) => record.date),
-    );
-    const configHolidayDates = new Set(
-      (schoolConfig?.holidayDates || []).map((holiday) => holiday.date),
-    );
-    const reopenDate = schoolConfig?.schoolReopenDate || "";
-    const vacationDate = schoolConfig?.vacationDate || "";
+    const holidayKeys = collectHolidayDateKeys([
+      ...attendanceRecords.filter((record) => record.isHoliday).map((record) => record.date),
+      ...(schoolConfig?.holidayDates || []),
+    ]);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
-    let totalDays = 0;
-    if (reopenDate) {
-      const cursor = new Date(`${startDate}T00:00:00`);
-      const end = new Date(`${endDate}T00:00:00`);
-      while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
-        const dateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
-        const day = cursor.getDay();
-        const isWeekend = day === 0 || day === 6;
-        if (
-          !isWeekend &&
-          cursor <= today &&
-          dateStr >= reopenDate &&
-          (!vacationDate || dateStr <= vacationDate) &&
-          !recordHolidayDates.has(dateStr) &&
-          !configHolidayDates.has(dateStr)
-        ) {
-          totalDays++;
-        }
-        cursor.setDate(cursor.getDate() + 1);
-      }
-    } else {
-      totalDays = attendanceRecords.filter(r => !r.isHoliday).length;
-    }
+    const vacationDate = schoolConfig?.vacationDate
+      ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
+      : null;
+    const endDate =
+      vacationDate && vacationDate < today ? vacationDate : today;
+    const expectedSchoolDays = getExpectedSchoolDayKeys({
+      reopenDate: schoolConfig?.schoolReopenDate,
+      endDate,
+      holidayDates: Array.from(holidayKeys),
+      vacationDate: schoolConfig?.vacationDate,
+      nextTermBegins: schoolConfig?.nextTermBegins,
+    });
+    const expectedSchoolDaySet = new Set(expectedSchoolDays);
+    const totalDays = expectedSchoolDays.length;
 
     const presentDays = attendanceRecords.filter(r =>
       !r.isHoliday &&
-      !configHolidayDates.has(r.date) &&
+      expectedSchoolDaySet.has(r.date) &&
       r.presentStudentIds?.some(id => id.trim() === studentIdTrimmed)
     ).length;
     const absentDays = Math.max(0, totalDays - presentDays);

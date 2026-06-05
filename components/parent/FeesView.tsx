@@ -111,6 +111,15 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     return fee && fee.appliesTo === "new_students_only" && fee.feeFrequency === "one_time";
   };
 
+  const isAdmissionFee = (feeName?: string) =>
+    String(feeName || "").trim().toLowerCase().includes("admission");
+
+  const shouldHidePaidAdmissionFee = (fee: {
+    feeName: string;
+    actualBalance?: number;
+    actualStatus?: string;
+  }) => isAdmissionFee(fee.feeName) && (fee.actualBalance || 0) <= 0;
+
   const isFeeApplicableToStudent = (fee: FeeDefinition, currentYear: string, schoolReopenDate?: string) => {
     if (fee.academicYear !== currentYear) return false;
     if (fee.feeFrequency === "per_year" && fee.applyToAcademicYear && fee.applyToAcademicYear !== currentYear) {
@@ -313,15 +322,21 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
            statusForFee = balanceForFee <= 0 ? "Paid" : "Part-paid";
         }
 
-        ledgerTotalDue += fee.amount;
-        ledgerTotalPaid += totalPaidForFee;
-
         return {
           ...fee,
           actualPaid: totalPaidForFee,
           actualBalance: balanceForFee,
           actualStatus: statusForFee
         };
+      });
+
+      const visibleFees = enrichedFees.filter(
+        (fee) => !shouldHidePaidAdmissionFee(fee),
+      );
+
+      visibleFees.forEach((fee) => {
+        ledgerTotalDue += fee.amount;
+        ledgerTotalPaid += fee.actualPaid || 0;
       });
 
       const ledgerBalance = Math.max(0, ledgerTotalDue - ledgerTotalPaid);
@@ -332,7 +347,7 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
 
       return {
         ...ledger,
-        fees: enrichedFees,
+        fees: visibleFees,
         actualTotalDue: ledgerTotalDue,
         actualTotalPaid: ledgerTotalPaid,
         actualBalance: ledgerBalance,
@@ -341,12 +356,17 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     });
   }, [ledgers, selectedTerm, payments]);
 
+  const billLedgers = useMemo(
+    () => enrichedLedgers.filter((ledger) => ledger.fees.length > 0),
+    [enrichedLedgers],
+  );
+
   const totalStats = useMemo(() => {
     let totalFees = 0;
     let totalPaidInLedgers = 0;
     let totalBalance = 0;
 
-    enrichedLedgers.forEach(ledger => {
+    billLedgers.forEach(ledger => {
       totalFees += ledger.actualTotalDue;
       totalPaidInLedgers += ledger.actualTotalPaid;
       totalBalance += ledger.actualBalance;
@@ -361,7 +381,7 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     const finalBalance = Math.max(0, totalFees - finalPaid);
 
     return { totalFees, totalPaid: finalPaid, totalBalance: finalBalance };
-  }, [enrichedLedgers, payments, academicYear]);
+  }, [billLedgers, payments, academicYear]);
 
   const visiblePayments = useMemo(() => {
     let filtered = payments.filter(p => p.academicYear === academicYear);
@@ -797,7 +817,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                     >
                       <option value="">Select Fee to Pay (Optional)</option>
                       {feeDefinitions.map(f => {
-                        const ledgerFee = enrichedLedgers.flatMap(l => l.fees).find(lf => lf.feeId === f.id || lf.feeName === f.feeName);
+                        const ledgerFee = billLedgers.flatMap(l => l.fees).find(lf => lf.feeId === f.id || lf.feeName === f.feeName);
                         const balance = ledgerFee ? ledgerFee.actualBalance : f.amount;
                         if (balance <= 0) return null;
                         const termLabel = f.term ? ` (${f.term})` : "";
@@ -869,14 +889,14 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
               </div>
 
               {/* Fee Ledgers */}
-              {enrichedLedgers.length === 0 ? (
+              {billLedgers.length === 0 ? (
                 <div className="bg-slate-50 rounded-xl p-8 text-center">
                   <CreditCard size={48} className="text-slate-300 mx-auto mb-4" />
                   <p className="text-slate-500">No fee records found for this student.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {enrichedLedgers.map(ledger => (
+                  {billLedgers.map(ledger => (
                     <div key={ledger.id} className="border border-slate-200 rounded-xl overflow-hidden">
                       <div className="bg-slate-50 px-3 sm:px-5 py-3 border-b border-slate-200 flex items-center justify-between">
                         <div>

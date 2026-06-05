@@ -192,7 +192,7 @@ const AttendanceStats = () => {
               <table className="w-full min-w-[680px] text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200 sticky top-0 z-10">
                   <tr>
-                    <th className="px-6 py-4">Student Name</th>
+                    <th className="px-6 py-4 min-w-[260px]">Student Name</th>
                     <th className="px-6 py-4 text-center">Days Present</th>
                     <th className="px-6 py-4 text-center">Total School Days</th>
                     <th className="px-6 py-4 w-1/3">Attendance Rate</th>
@@ -242,9 +242,13 @@ const AttendanceStats = () => {
                           className={`${rowClass} transition-colors border-b border-slate-100 last:border-0`}
                         >
                           <td className="px-6 py-4">
-                            <div className="flex items-center">
-                              <UserAvatar user={s} size="sm" className="mr-3" />
-                              <div>
+                            <div className="flex items-center gap-4">
+                              <UserAvatar
+                                user={s}
+                                size="lg"
+                                className="ring-2 ring-white shadow-sm"
+                              />
+                              <div className="min-w-0">
                                 <p className="font-semibold text-slate-800 flex items-center">
                                   {s.name}
                                   {warningIcon}

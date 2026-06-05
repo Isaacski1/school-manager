@@ -164,6 +164,36 @@ const SkeletonBlock: React.FC<{ className?: string }> = ({ className }) => (
   <div className={`animate-pulse rounded-xl bg-slate-100 ${className || ""}`} />
 );
 
+const getStudentInitials = (student?: Student, fallbackId?: string) => {
+  const source = student?.name || fallbackId || "S";
+  return source
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "S";
+};
+
+const StudentAvatar: React.FC<{
+  student?: Student;
+  fallbackId?: string;
+  className?: string;
+}> = ({ student, fallbackId, className }) => (
+  <div
+    className={`flex shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm ${className || "h-14 w-14"}`}
+  >
+    {student?.photoUrl ? (
+      <img
+        src={student.photoUrl}
+        alt={student.name || "Student"}
+        className="h-full w-full object-cover"
+      />
+    ) : (
+      <span>{getStudentInitials(student, fallbackId)}</span>
+    )}
+  </div>
+);
+
 const formatMoney = (value: number) => `GHS ${value.toFixed(2)}`;
 
 const DASH_PANEL =
@@ -294,6 +324,11 @@ const FeesPayments: React.FC = () => {
   const [sentInvoiceStatus, setSentInvoiceStatus] = useState<
     Record<string, { channel: "sms"; sentAt: string }>
   >({});
+  const [receiptSmsComposer, setReceiptSmsComposer] = useState<{
+    payment: StudentFeePayment;
+    mode: "auto" | "custom";
+    message: string;
+  } | null>(null);
 
   const resolveInvoiceRecipientPhone = (student?: Student) => {
     return (
@@ -307,7 +342,33 @@ const FeesPayments: React.FC = () => {
     );
   };
 
-  const handleSendSmsReceipt = async (payment: StudentFeePayment) => {
+  const buildReceiptSmsMessage = (payment: StudentFeePayment) => {
+    const student = students.find((s) => s.id === payment.studentId);
+    const schoolName = school?.name || "School";
+    const studentName = student?.name || payment.studentId;
+    const amount = Number(payment.amountPaid || 0).toLocaleString(undefined, {
+      maximumFractionDigits: 2,
+    });
+    return [
+      `${schoolName} receipt: GHS ${amount} received.`,
+      `Child: ${studentName}.`,
+      `Fee: ${payment.feeName}.`,
+      `Ref: ${payment.receiptNumber || payment.id}.`,
+    ].join(" ");
+  };
+
+  const openReceiptSmsComposer = (payment: StudentFeePayment) => {
+    setReceiptSmsComposer({
+      payment,
+      mode: "auto",
+      message: buildReceiptSmsMessage(payment),
+    });
+  };
+
+  const handleSendSmsReceipt = async (
+    payment: StudentFeePayment,
+    customMessage?: string,
+  ) => {
     const student = students.find((s) => s.id === payment.studentId);
     const invoicePhone = resolveInvoiceRecipientPhone(student);
     if (!invoicePhone) {
@@ -351,6 +412,7 @@ const FeesPayments: React.FC = () => {
           amount: payment.amountPaid,
           reference: payment.receiptNumber || payment.id,
           feeName: payment.feeName,
+          customParentMessage: customMessage?.trim() || undefined,
           forceInline: true,
         }),
       });
@@ -385,6 +447,7 @@ const FeesPayments: React.FC = () => {
             : "Payment alert SMS sent, but the parent receipt SMS needs review.",
         { type: "success" },
       );
+      setReceiptSmsComposer(null);
       logActivity({
         schoolId: schoolId!,
         actorUid: user?.id || null,
@@ -407,6 +470,7 @@ const FeesPayments: React.FC = () => {
   const [isCreatingFee, setIsCreatingFee] = useState(false);
   const [isUpdatingFee, setIsUpdatingFee] = useState(false);
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
+  const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [activeQuickExport, setActiveQuickExport] = useState<
     "defaulters" | "weekly" | "class" | null
@@ -600,6 +664,12 @@ const FeesPayments: React.FC = () => {
     },
     [financeCacheKey, readFinanceCache],
   );
+
+  const clearFinanceCache = useCallback(() => {
+    if (typeof window === "undefined" || !financeCacheKey) return;
+    window.sessionStorage.removeItem(financeCacheKey);
+    window.localStorage.removeItem(financeCacheKey);
+  }, [financeCacheKey]);
 
   const csvEscape = (value: string | number | null | undefined) => {
     if (value === null || value === undefined) return "";
@@ -871,6 +941,24 @@ const FeesPayments: React.FC = () => {
     }
   }, [fetchPrimaryData, fetchAuxiliaryData]);
 
+  const handleRefreshWorkspace = useCallback(async () => {
+    if (isRefreshingWorkspace) return;
+    setIsRefreshingWorkspace(true);
+    clearFinanceCache();
+    try {
+      await fetchData({
+        background: false,
+        includeAuxiliary: true,
+      });
+      showToast("Finance workspace refreshed.", { type: "success" });
+    } catch (error) {
+      console.error("Failed to refresh finance workspace", error);
+      showToast("Failed to refresh workspace.", { type: "error" });
+    } finally {
+      setIsRefreshingWorkspace(false);
+    }
+  }, [clearFinanceCache, fetchData, isRefreshingWorkspace]);
+
   useEffect(() => {
     if (!schoolId || !scopeInitialized) return;
     const cached = readFinanceCache();
@@ -1064,14 +1152,21 @@ const FeesPayments: React.FC = () => {
     const existingFees = existing?.fees || [];
     const feesList = assignedFees.map((fee) => {
       const previous = existingFees.find((item) => item.feeId === fee.id);
-      return {
+      const feeEntry: StudentFeeLedger["fees"][number] = {
         feeId: fee.id,
         feeName: fee.feeName,
         amount: fee.amount,
-        openingPaidAmount: previous?.openingPaidAmount,
-        openingBalance: previous?.openingBalance,
-        openingStatus: previous?.openingStatus,
       };
+      if (previous?.openingPaidAmount !== undefined) {
+        feeEntry.openingPaidAmount = previous.openingPaidAmount;
+      }
+      if (previous?.openingBalance !== undefined) {
+        feeEntry.openingBalance = previous.openingBalance;
+      }
+      if (previous?.openingStatus !== undefined) {
+        feeEntry.openingStatus = previous.openingStatus;
+      }
+      return feeEntry;
     });
     const openingPaidTotal = feesList.reduce(
       (sum, fee) => sum + (fee.openingPaidAmount || 0),
@@ -1672,16 +1767,24 @@ const FeesPayments: React.FC = () => {
     }
   };
 
-  const visibleLedgers = useMemo(
-    () => ledgers.filter((ledger) => (ledger.fees?.length || 0) > 0),
-    [ledgers],
-  );
-
   const studentsMap = useMemo(() => {
     const map = new Map<string, Student>();
     students.forEach((s) => map.set(s.id, s));
     return map;
   }, [students]);
+
+  const visibleLedgers = useMemo(
+    () =>
+      ledgers.filter((ledger) => {
+        const student = studentsMap.get(ledger.studentId);
+        return (
+          student &&
+          (student.studentStatus || "active") === "active" &&
+          (ledger.fees?.length || 0) > 0
+        );
+      }),
+    [ledgers, studentsMap],
+  );
 
   const paymentsByStudentMap = useMemo(() => {
     const map = new Map<string, StudentFeePayment[]>();
@@ -2501,30 +2604,133 @@ const FeesPayments: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="mt-8 flex flex-wrap gap-3">
-                  <button
-                    onClick={() => {
-                      void fetchData();
-                    }}
-                    className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-lg shadow-slate-950/10 transition hover:-translate-y-0.5"
-                  >
-                    <RefreshCw size={16} />
-                    Refresh workspace
-                  </button>
-                  <button
-                    onClick={() => scrollToSection(recordPaymentRef)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white/95 backdrop-blur transition hover:bg-white/15"
-                  >
-                    <Banknote size={16} />
-                    Record payment
-                  </button>
-                  <button
-                    onClick={() => setShowOnboardingWizard(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white/95 backdrop-blur transition hover:bg-white/15"
-                  >
-                    <Users size={16} />
-                    Open onboarding
-                  </button>
+                <div className="mt-8 rounded-[28px] border border-white/15 bg-white/[0.08] p-3 shadow-inner shadow-white/5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-100/75">
+                        Quick actions
+                      </p>
+                      <p className="mt-1 text-xs text-sky-50/65">
+                        Jump straight to the work admins use most.
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-medium text-sky-50/80">
+                      {filteredLedgerRows.length} ledger rows
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <button
+                      onClick={() => scrollToSection(recordPaymentRef)}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl bg-white px-4 py-3 text-left text-sm font-semibold text-slate-950 shadow-md shadow-slate-950/10 transition-colors duration-100 hover:bg-emerald-50"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 transition-colors duration-100 group-hover:bg-emerald-600 group-hover:text-white">
+                        <Banknote size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Record payment</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-slate-500">
+                          Cash, MoMo, or bank receipt
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => scrollToSection(feeSetupRef)}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-rose-200/60 hover:bg-white/[0.16]"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-400/15 text-rose-100 ring-1 ring-rose-200/20 transition-colors duration-100 group-hover:bg-rose-500 group-hover:text-white">
+                        <Plus size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Add fee item</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          Tuition, PTA, or custom
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setShowOnboardingWizard(true)}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-violet-200/60 hover:bg-white/[0.16]"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-400/15 text-violet-100 ring-1 ring-violet-200/20 transition-colors duration-100 group-hover:bg-violet-500 group-hover:text-white">
+                        <Users size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Finance onboarding</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          Opening balances
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={handleExportReport}
+                      disabled={isExporting}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-amber-200/60 hover:bg-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-400/15 text-amber-100 ring-1 ring-amber-200/20 transition-colors duration-100 group-hover:bg-amber-500 group-hover:text-white">
+                        {isExporting ? (
+                          <RefreshCw size={18} className="animate-spin" />
+                        ) : (
+                          <Download size={18} />
+                        )}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Export report</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          Download current CSV
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => navigate("/admin/payment-settings")}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-blue-200/60 hover:bg-white/[0.16]"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-400/15 text-blue-100 ring-1 ring-blue-200/20 transition-colors duration-100 group-hover:bg-blue-500 group-hover:text-white">
+                        <CreditCard size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Online payments</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          Payout and links
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        void handleRefreshWorkspace();
+                      }}
+                      disabled={isRefreshingWorkspace || loading}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-cyan-200/60 hover:bg-white/[0.16] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-cyan-400/15 text-cyan-100 ring-1 ring-cyan-200/20 transition-colors duration-100 group-hover:bg-cyan-500 group-hover:text-white">
+                        <RefreshCw
+                          size={18}
+                          className={
+                            isRefreshingWorkspace || loading
+                              ? "animate-spin"
+                              : undefined
+                          }
+                        />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">
+                          {isRefreshingWorkspace || loading
+                            ? "Refreshing..."
+                            : "Refresh workspace"}
+                        </span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          {isRefreshingWorkspace || loading
+                            ? "Getting latest data"
+                            : "Reload finance data"}
+                        </span>
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2951,15 +3157,15 @@ const FeesPayments: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_1fr]">
                       <div className="space-y-6">
                         <div
-                          className="relative mx-auto flex h-[320px] w-full max-w-[340px] items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-5 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur"
+                          className="relative mx-auto flex aspect-square w-full max-w-[240px] items-center justify-center rounded-[28px] border border-white/80 bg-white/60 p-4 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.45)] backdrop-blur sm:max-w-[300px] lg:max-w-[320px]"
                           onMouseMove={handleWeeklyChartHover}
                           onMouseLeave={() => setHoveredWeekIndex(null)}
                         >
                           <div
-                            className="absolute inset-4 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)]"
+                            className="absolute inset-3 rounded-full shadow-[0_20px_45px_rgba(15,23,42,0.12)] sm:inset-4"
                             style={{
                               background: `conic-gradient(${weeklySegments
                                 .map(
@@ -2972,22 +3178,22 @@ const FeesPayments: React.FC = () => {
                           {hoveredWeekIndex !== null &&
                             weeklySegments[hoveredWeekIndex] && (
                               <div
-                                className="pointer-events-none absolute inset-4 rounded-full transition-all duration-300"
+                                className="pointer-events-none absolute inset-3 rounded-full transition-all duration-300 sm:inset-4"
                                 style={{
                                   background: `conic-gradient(transparent 0% ${weeklySegments[hoveredWeekIndex].start}%, rgba(255,255,255,0.5) ${weeklySegments[hoveredWeekIndex].start}% ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}%, transparent ${weeklySegments[hoveredWeekIndex].start + weeklySegments[hoveredWeekIndex].percentage}% 100%)`,
                                   transform: "scale(1.025)",
                                 }}
                               />
                             )}
-                          <div className="absolute inset-[34px] rounded-full border border-white/80 bg-white/90 shadow-inner" />
-                          <div className="relative flex max-w-[170px] flex-col items-center justify-center text-center">
-                            <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                          <div className="absolute inset-[28px] rounded-full border border-white/80 bg-white/90 shadow-inner sm:inset-[34px]" />
+                          <div className="relative flex w-[72%] max-w-[190px] flex-col items-center justify-center px-2 text-center">
+                            <span className="text-[10px] uppercase tracking-[0.22em] text-slate-400 sm:text-[11px] sm:tracking-[0.28em]">
                               Weekly total
                             </span>
-                            <span className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+                            <span className="mt-2 max-w-full whitespace-nowrap text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl lg:text-3xl">
                               {formatMoney(weeklyTotal)}
                             </span>
-                            <span className="mt-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-500">
+                            <span className="mt-2 max-w-full rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-500 sm:px-3 sm:text-[11px]">
                               Avg {formatMoney(weeklyTotal / (collectionTrend.length || 1))}
                             </span>
                           </div>
@@ -3260,17 +3466,21 @@ const FeesPayments: React.FC = () => {
                 ) : (
                   <>
                     {paymentsSorted.slice(0, paymentsLimit).map((payment) => (
+                      (() => {
+                        const student = studentsMap.get(payment.studentId);
+                        return (
                       <div
                         key={payment.id}
                         className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/80 bg-gradient-to-r from-white/90 via-white to-slate-50/90 px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-5"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-                            <Wallet size={18} />
-                          </div>
+                          <StudentAvatar
+                            student={student}
+                            fallbackId={payment.studentId}
+                          />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
-                              {studentsMap.get(payment.studentId)?.name || payment.studentId}
+                              {student?.name || payment.studentId}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
                               {payment.feeName} / {payment.paymentMethod}
@@ -3301,7 +3511,7 @@ const FeesPayments: React.FC = () => {
                             <Eye size={14} /> Details
                           </button>
                           <button
-                            onClick={() => handleSendSmsReceipt(payment)}
+                            onClick={() => openReceiptSmsComposer(payment)}
                             disabled={isSendingSmsReceipt === payment.id}
                             className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-sm transition-all ${
                               isSendingSmsReceipt === payment.id
@@ -3318,6 +3528,8 @@ const FeesPayments: React.FC = () => {
                           </button>
                         </div>
                       </div>
+                        );
+                      })()
                     ))}
                     {paymentsSorted.length > paymentsLimit && (
                       <button
@@ -3330,101 +3542,6 @@ const FeesPayments: React.FC = () => {
                   </>
                 )}
               </div>
-                <div className="mt-6">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    Workspace
-                  </p>
-                  <h3 className="mt-1 text-lg font-semibold text-slate-900">
-                    Quick Actions
-                  </h3>
-                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-                    <button
-                      onClick={() => setShowOnboardingWizard(true)}
-                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-indigo-100 bg-indigo-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:shadow-md"
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm transition group-hover:bg-indigo-600 group-hover:text-white">
-                        <Users size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          Finance Onboarding
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">
-                          Set opening balances and starting date.
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => scrollToSection(feeSetupRef)}
-                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-rose-100 bg-rose-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-rose-200 hover:bg-white hover:shadow-md"
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-sm transition group-hover:bg-rose-600 group-hover:text-white">
-                        <Plus size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          Add Fee Item
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">
-                          Create tuition, PTA, admission, or custom fees.
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => scrollToSection(recordPaymentRef)}
-                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-emerald-100 bg-emerald-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md"
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-sm transition group-hover:bg-emerald-600 group-hover:text-white">
-                        <Banknote size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          Record Payment
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">
-                          Enter cash, MoMo, or bank payments for a student.
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      onClick={handleExportReport}
-                      disabled={isExporting}
-                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-amber-100 bg-amber-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-amber-200 hover:bg-white hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:bg-amber-50/45 disabled:hover:shadow-none"
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-amber-600 shadow-sm transition group-hover:bg-amber-600 group-hover:text-white group-disabled:bg-white group-disabled:text-amber-600">
-                        {isExporting ? (
-                          <RefreshCw size={18} className="animate-spin" />
-                        ) : (
-                          <Download size={18} />
-                        )}
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          Export Report
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">
-                          Download the current fee records as CSV.
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => navigate("/admin/payment-settings")}
-                      className="group inline-flex min-h-[118px] flex-col items-start justify-between rounded-[22px] border border-blue-100 bg-blue-50/45 p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-white hover:shadow-md"
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm transition group-hover:bg-blue-600 group-hover:text-white">
-                        <CreditCard size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          Online Payments
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">
-                          Configure payment links and collection settings.
-                        </span>
-                      </span>
-                    </button>
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -4276,7 +4393,16 @@ const FeesPayments: React.FC = () => {
                             className="border-t border-slate-100"
                           >
                             <td className="py-3 px-2 font-medium text-slate-800">
-                              {student?.name || ledger.studentId}
+                              <div className="flex items-center gap-3">
+                                <StudentAvatar
+                                  student={student}
+                                  fallbackId={ledger.studentId}
+                                  className="h-12 w-12 rounded-2xl text-sm"
+                                />
+                                <span className="min-w-0 truncate">
+                                  {student?.name || ledger.studentId}
+                                </span>
+                              </div>
                             </td>
                             <td className="py-3 px-2 whitespace-nowrap text-slate-500">
                               {availableClasses.find(
@@ -4581,7 +4707,7 @@ const FeesPayments: React.FC = () => {
 
                 <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
                   <button
-                    onClick={() => handleSendSmsReceipt(selectedPayment)}
+                    onClick={() => openReceiptSmsComposer(selectedPayment)}
                     disabled={isSendingSmsReceipt === selectedPayment.id}
                     className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-all ${
                       isSendingSmsReceipt === selectedPayment.id
@@ -4603,6 +4729,197 @@ const FeesPayments: React.FC = () => {
                     Done
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+          {receiptSmsComposer && (
+            <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur sm:items-center sm:p-4">
+              <div className="flex max-h-[96vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-3xl">
+                <div className="flex shrink-0 items-start justify-between gap-3 bg-gradient-to-r from-sky-700 via-blue-600 to-cyan-500 px-4 py-4 text-white sm:px-6 sm:py-5">
+                  <div className="min-w-0">
+                    <p className="text-xs uppercase tracking-[0.2em] text-white/70">
+                      Parent receipt SMS
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold leading-tight sm:text-xl">
+                      Review Before Sending
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-white/75 sm:text-sm">
+                      The admin alert is skipped for manual sends. This SMS goes
+                      to the parent only.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setReceiptSmsComposer(null)}
+                    className="shrink-0 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/80 hover:text-white"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {(() => {
+                  const payment = receiptSmsComposer.payment;
+                  const student = students.find((s) => s.id === payment.studentId);
+                  const recipientPhone = resolveInvoiceRecipientPhone(student);
+                  const automaticMessage = buildReceiptSmsMessage(payment);
+                  const messageToSend =
+                    receiptSmsComposer.mode === "custom"
+                      ? receiptSmsComposer.message
+                      : automaticMessage;
+                  const isSending = isSendingSmsReceipt === payment.id;
+                  return (
+                    <div className="overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+                      <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm sm:grid-cols-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                            Parent number
+                          </p>
+                          <p className="mt-1 break-words font-semibold text-slate-900">
+                            {recipientPhone || "No phone found"}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                            Student
+                          </p>
+                          <p className="mt-1 break-words font-semibold text-slate-900">
+                            {student?.name || payment.studentId}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                            Amount
+                          </p>
+                          <p className="mt-1 break-words font-semibold text-slate-900">
+                            {formatMoney(payment.amountPaid)}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                            Receipt ref
+                          </p>
+                          <p className="mt-1 break-all font-semibold text-slate-900">
+                            {payment.receiptNumber || payment.id}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid grid-cols-1 gap-2 rounded-2xl bg-slate-100 p-1 sm:grid-cols-2">
+                        <button
+                          onClick={() =>
+                            setReceiptSmsComposer((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    mode: "auto",
+                                    message: automaticMessage,
+                                  }
+                                : current,
+                            )
+                          }
+                          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                            receiptSmsComposer.mode === "auto"
+                              ? "bg-white text-slate-950 shadow-sm"
+                              : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          Automatic receipt
+                        </button>
+                        <button
+                          onClick={() =>
+                            setReceiptSmsComposer((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    mode: "custom",
+                                    message:
+                                      current.mode === "custom"
+                                        ? current.message
+                                        : automaticMessage,
+                                  }
+                                : current,
+                            )
+                          }
+                          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                            receiptSmsComposer.mode === "custom"
+                              ? "bg-white text-slate-950 shadow-sm"
+                              : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          Type my own
+                        </button>
+                      </div>
+
+                      <div className="mt-5">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <label className="text-sm font-semibold text-slate-900">
+                            Message to parent
+                          </label>
+                          <span className="shrink-0 text-xs text-slate-500">
+                            {messageToSend.length}/480
+                          </span>
+                        </div>
+                        {receiptSmsComposer.mode === "custom" ? (
+                          <textarea
+                            value={receiptSmsComposer.message}
+                            onChange={(e) =>
+                              setReceiptSmsComposer((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      message: e.target.value.slice(0, 480),
+                                    }
+                                  : current,
+                              )
+                            }
+                            className="min-h-[150px] w-full resize-y rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-800 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                            placeholder="Type the receipt SMS for the parent..."
+                          />
+                        ) : (
+                          <div className="min-h-[120px] break-words rounded-2xl border border-sky-100 bg-sky-50/70 p-4 text-sm leading-6 text-slate-800">
+                            {automaticMessage}
+                          </div>
+                        )}
+                        <p className="mt-2 text-xs text-slate-500">
+                          Use automatic receipt for normal cases. Use custom
+                          text only when the admin needs to explain something
+                          extra to the parent.
+                        </p>
+                      </div>
+
+                      <div className="mt-6 flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-end">
+                        <button
+                          onClick={() => setReceiptSmsComposer(null)}
+                          className="w-full rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600 sm:w-auto"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            void handleSendSmsReceipt(
+                              payment,
+                              receiptSmsComposer.mode === "custom"
+                                ? receiptSmsComposer.message
+                                : undefined,
+                            );
+                          }}
+                          disabled={
+                            isSending ||
+                            !recipientPhone ||
+                            messageToSend.trim().length < 10
+                          }
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-100 transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none sm:w-auto"
+                        >
+                          {isSending ? (
+                            <RefreshCw size={16} className="animate-spin" />
+                          ) : (
+                            <MessageSquare size={16} />
+                          )}
+                          {isSending ? "Sending..." : "Send SMS to Parent"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

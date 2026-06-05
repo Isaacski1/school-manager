@@ -4,12 +4,14 @@ import Layout from "../../components/Layout";
 import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
+import { auth } from "../../services/firebase";
 import { logActivity } from "../../services/activityLog";
 import { Notice, ClassRoom, SchoolConfig } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { requireSchoolId } from "../../services/authProfile";
 import { canAccessFeature } from "../../services/featureAccess";
+import { API_BASE_URL } from "../../src/config";
 import {
   CLASSES_LIST,
   nurserySubjects,
@@ -62,7 +64,7 @@ const getClassGroupKey = (name: string) => {
 
 const SystemSettings = () => {
   const { user, updateUser } = useAuth();
-  const { school } = useSchool();
+  const { school, refreshSchool } = useSchool();
   const schoolId = requireSchoolId(user);
   const isTrialPlan = (school as any)?.plan === "trial";
   const canUseBackups = canAccessFeature(user, school, "backups");
@@ -552,6 +554,25 @@ const SystemSettings = () => {
       const updatedConfig = { ...config, schoolId, logoUrl: base64 };
       setConfig(updatedConfig);
       await db.updateSchoolConfig(updatedConfig);
+      const idToken = await auth.currentUser?.getIdToken();
+      const brandingResponse = await fetch(`${API_BASE_URL}/api/schools/branding`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({
+          schoolId,
+          logoUrl: base64,
+          schoolName: config.schoolName || school?.name || "",
+        }),
+      });
+      const brandingBody = await brandingResponse.json().catch(() => ({}));
+      if (!brandingResponse.ok || brandingBody.success === false) {
+        throw new Error(brandingBody.error || "Failed to sync logo to school profile.");
+      }
+      refreshSchool();
+      window.dispatchEvent(new Event("school-branding-updated"));
       showToast("Logo uploaded successfully!", { type: "success" });
       await logActivity({
         schoolId,
@@ -1055,7 +1076,7 @@ const SystemSettings = () => {
                     Notification Settings
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    Payment alerts and receipts are sent by SMS while WhatsApp is paused.
+                    Payment alerts and receipts are sent by SMS.
                   </p>
                 </div>
                 <button
@@ -1703,34 +1724,36 @@ const SystemSettings = () => {
                   risky bulk changes are still captured automatically from the
                   Recovery Center.
                 </p>
-                <button
-                  onClick={handleCreateSystemBackup}
-                  disabled={isCreatingBackup || isTrialPlan}
-                  title="Create Full System Backup"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-full hover:bg-purple-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed text-sm sm:text-base"
-                >
-                  {isCreatingBackup ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <Save size={16} />
-                      <span>Create Full System Backup</span>
-                    </>
-                  )}
-                </button>
-                <Link
-                  to="/admin/backups"
-                  className={`mt-4 inline-flex items-center text-sm font-medium ${
-                    isTrialPlan
-                      ? "text-slate-900 pointer-events-none"
-                      : "text-[#ffffff] hover:text-[#dedede]"
-                  }`}
-                >
-                  <History size={16} className="mr-1" /> Open Recovery Center
-                </Link>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+                  <button
+                    onClick={handleCreateSystemBackup}
+                    disabled={isCreatingBackup || isTrialPlan}
+                    title="Create Full System Backup"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-full hover:bg-purple-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed text-sm sm:text-base"
+                  >
+                    {isCreatingBackup ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Save size={16} />
+                        <span>Create Full System Backup</span>
+                      </>
+                    )}
+                  </button>
+                  <Link
+                    to="/admin/backups"
+                    className={`inline-flex items-center justify-center text-sm font-medium ${
+                      isTrialPlan
+                        ? "text-slate-900 pointer-events-none"
+                        : "text-[#ffffff] hover:text-[#dedede]"
+                    }`}
+                  >
+                    <History size={16} className="mr-1" /> Open Recovery Center
+                  </Link>
+                </div>
                 {isTrialPlan && (
                   <p className="text-xs text-slate-300 mt-2">
                     Recovery and backup actions are disabled during the trial

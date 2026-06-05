@@ -816,7 +816,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
 
       <div className="flex-1 min-w-0 flex flex-col min-h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white shadow-sm h-14 sm:h-16 flex items-center z-10 border-b border-[#E6F0FA]">
+        <header className="bg-white shadow-sm min-h-14 sm:min-h-16 lg:min-h-20 flex items-center z-10 border-b border-[#E6F0FA]">
           <div className="flex items-center justify-between w-full px-4 sm:px-6">
             <div className="flex items-center gap-3">
               <button
@@ -891,12 +891,16 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   <p className="text-xs text-slate-500 capitalize">{user?.role?.replace("_", " ") || "User"}</p>
                 </div>
                 <div className="relative group cursor-pointer shrink-0">
-                  <UserAvatar user={user} size="lg" />
+                  <UserAvatar
+                    user={user}
+                    size="lg"
+                    className="lg:!h-16 lg:!w-16 lg:!text-xl"
+                  />
                   <label className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity overflow-hidden" title="Change Profile Photo">
                     {uploadingPhoto ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      <Edit size={14} />
+                      <Edit size={18} />
                     )}
                     <input type="file" className="hidden" accept="image/*" onChange={handleProfilePhotoUpload} disabled={uploadingPhoto} />
                   </label>

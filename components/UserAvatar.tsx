@@ -10,7 +10,7 @@ interface UserAvatarProps {
   user?: AvatarUser | null;
   name?: string;
   photoUrl?: string;
-  size?: "xs" | "sm" | "md" | "lg" | "xl";
+  size?: "xs" | "sm" | "md" | "lg" | "xl" | "2xl";
   className?: string;
 }
 
@@ -30,6 +30,7 @@ const UserAvatar: React.FC<UserAvatarProps> = ({
     md: "w-10 h-10 text-sm",
     lg: "w-12 h-12 text-base",
     xl: "w-16 h-16 text-xl",
+    "2xl": "w-20 h-20 text-2xl",
   };
 
   const initials = avatarName

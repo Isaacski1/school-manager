@@ -601,6 +601,63 @@ async function authMiddleware(req, res, next) {
   }
 }
 
+app.post("/api/schools/branding", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user || {};
+    const { schoolId, logoUrl, schoolName } = req.body || {};
+    const resolvedSchoolId = String(schoolId || "").trim();
+    const nextLogoUrl = typeof logoUrl === "string" ? logoUrl.trim() : "";
+    const nextSchoolName = typeof schoolName === "string" ? schoolName.trim() : "";
+
+    if (!resolvedSchoolId) {
+      return res.status(400).json({ error: "School ID is required." });
+    }
+    if (!nextLogoUrl && !nextSchoolName) {
+      return res.status(400).json({ error: "Logo or school name is required." });
+    }
+
+    const userSnap = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const isSuperAdmin = userData.role === "super_admin";
+    const isSchoolAdminForSchool =
+      userData.role === "school_admin" && String(userData.schoolId || "") === resolvedSchoolId;
+
+    if (!isSuperAdmin && !isSchoolAdminForSchool) {
+      return res.status(403).json({ error: "Forbidden: You cannot update this school branding." });
+    }
+
+    const updates = {
+      ...(nextLogoUrl ? { logoUrl: nextLogoUrl } : {}),
+      ...(nextSchoolName ? { schoolName: nextSchoolName } : {}),
+      updatedAt: Date.now(),
+    };
+    const schoolUpdates = {
+      ...(nextLogoUrl ? { logoUrl: nextLogoUrl } : {}),
+      ...(nextSchoolName ? { name: nextSchoolName } : {}),
+      updatedAt: Date.now(),
+    };
+
+    await Promise.all([
+      admin.firestore().collection("settings").doc(resolvedSchoolId).set(
+        {
+          schoolId: resolvedSchoolId,
+          ...updates,
+        },
+        { merge: true },
+      ),
+      admin.firestore().collection("schools").doc(resolvedSchoolId).set(
+        schoolUpdates,
+        { merge: true },
+      ),
+    ]);
+
+    return res.json({ success: true, schoolId: resolvedSchoolId, logoUrl: nextLogoUrl || undefined });
+  } catch (error) {
+    console.error("[School Branding Update Error]:", error);
+    return res.status(500).json({ error: error.message || "Failed to update school branding." });
+  }
+});
+
 /**
  * Middleware: Check for super_admin role
  */
@@ -12948,7 +13005,11 @@ const sendPaymentInvoiceSmsNotifications = async ({
 
   if (notificationSettings.enableInvoiceNotifications !== false) {
     const parentRecipients = resolvePaymentNotificationRecipients(studentData, body);
-    const parentMessage = [
+    const customParentMessage =
+      body?.source === "admin_manual_receipt" && typeof body?.customParentMessage === "string"
+        ? body.customParentMessage.trim().slice(0, 480)
+        : "";
+    const parentMessage = customParentMessage || [
       `${schoolName} receipt: GHS ${amount} received.`,
       `Child: ${effectiveStudentName}.`,
       `Fee: ${effectiveFeeName}.`,

@@ -892,7 +892,7 @@ const ManageStudents = () => {
                 No students found.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
                 {filteredStudents.map((student) => {
                   const className =
                     availableClasses.find((c) => c.id === student.classId)?.name ||
@@ -907,66 +907,70 @@ const ManageStudents = () => {
                   return (
                     <div
                       key={student.id}
-                      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md"
+                      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md sm:p-5"
                     >
                       <div className="absolute -top-14 -right-14 h-28 w-28 rounded-full bg-indigo-100/60 blur-2xl" />
                       <div className="absolute -bottom-16 -left-10 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
 
-                      <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
-                        <div className="flex items-center gap-3">
-                          <UserAvatar user={student} size="md" />
-                          <div>
-                            <p className="font-semibold text-slate-900 text-sm sm:text-base">
+                      <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-center gap-4">
+                          <UserAvatar
+                            user={student}
+                            size="xl"
+                            className="ring-4 ring-white shadow-md"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate text-base font-semibold text-slate-900 sm:text-lg">
                               {student.name}
                             </p>
-                            <p className="text-xs text-slate-500 truncate">
+                            <p className="truncate text-xs text-slate-500">
                               ID: {student.id}
                             </p>
                           </div>
                         </div>
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 whitespace-nowrap">
+                        <span className="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 whitespace-nowrap">
                           {className}
                         </span>
                       </div>
 
-                      <div className="relative mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-slate-600">
-                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                      <div className="relative mt-4 grid grid-cols-1 gap-3 text-xs text-slate-600 sm:grid-cols-3">
+                        <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
                             Gender
                           </p>
-                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                          <p className="mt-1 break-words text-sm font-semibold text-slate-800">
                             {student.gender}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                        <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
                             Date of Birth
                           </p>
-                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                          <p className="mt-1 break-words text-sm font-semibold text-slate-800">
                             {student.dob && student.dob !== "" && student.dob !== "2015-01-01"
                               ? new Date(student.dob).toLocaleDateString("en-US")
                               : "Not Set"}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                        <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-400">
                             {primaryContact.label}
                           </p>
-                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                          <p className="mt-1 break-words text-sm font-semibold text-slate-800">
                             {primaryContact.name || primaryContact.phone || "-"}
                           </p>
-                          <p className="text-[11px] text-slate-400">
+                          <p className="break-all text-[11px] text-slate-400">
                             {primaryContact.name ? primaryContact.phone : ""}
                           </p>
                         </div>
                       </div>
 
                       <div className="relative mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex flex-col xs:flex-row xs:flex-wrap gap-2 sm:gap-2">
+                        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <button
                             type="button"
                             onClick={() => handleViewPerformance(student)}
-                            className="inline-flex items-center justify-center sm:justify-start gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 whitespace-nowrap"
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 sm:justify-start"
                             title="View Academic Performance"
                           >
                             <Eye size={14} />
@@ -976,7 +980,7 @@ const ManageStudents = () => {
                           <button
                             type="button"
                             onClick={() => handleViewAdmissionForm(student)}
-                            className="inline-flex items-center justify-center sm:justify-start gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 whitespace-nowrap"
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 sm:justify-start"
                             title="View Admission Form"
                           >
                             <FileText size={14} />
