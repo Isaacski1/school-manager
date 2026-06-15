@@ -9,11 +9,10 @@ import { logActivity } from "../../services/activityLog";
 import { Student } from "../../types";
 import {
   CLASS_PROMOTION_MAP,
-  CLASSES_LIST,
   calculateGrade,
   getGradeColor,
-  getFilteredClasses,
 } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 
 import {
   Plus,
@@ -37,8 +36,12 @@ const ManageStudents = () => {
   const { user } = useAuth();
   const schoolId = school?.id || null;
 
-  const availableClasses = getFilteredClasses(school?.schoolType);
+  const { classes: availableClasses, allClasses, getClassName } = useSchoolClasses();
   const defaultClassId = availableClasses[0]?.id || "c_p1";
+  const getNextClassId = (classId: string) =>
+    allClasses.find((classRoom) => classRoom.id === classId)?.nextClassId ??
+    CLASS_PROMOTION_MAP[classId] ??
+    null;
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [filterClass, setFilterClass] = useState("all");
@@ -422,6 +425,17 @@ const ManageStudents = () => {
   const handleBulkPromotion = async () => {
     if (!schoolId) return;
 
+    const promotionClass = allClasses.find(
+      (classRoom) => classRoom.id === promotionClassId,
+    );
+    if (promotionClass?.section && !promotionClass.nextClassId) {
+      showToast(
+        `Set the promotion destination for ${promotionClass.name} in System Settings first.`,
+        { type: "error" },
+      );
+      return;
+    }
+
     const selectedSet = new Set(selectedPromoteIds);
     const classStudents = students.filter(
       (student) => student.classId === promotionClassId,
@@ -430,7 +444,7 @@ const ManageStudents = () => {
       .filter((student) => selectedSet.has(student.id))
       .map((student) => ({
         id: student.id,
-        classId: CLASS_PROMOTION_MAP[student.classId],
+        classId: getNextClassId(student.classId),
       }))
       .filter((row) => row.classId);
 
@@ -1067,7 +1081,7 @@ const ManageStudents = () => {
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <label className="block text-xs font-semibold text-slate-500 uppercase">Class</label>
                     <p className="mt-2 text-sm font-medium text-slate-900">
-                      {CLASSES_LIST.find((c) => c.id === viewAdmissionStudent.classId)?.name || "-"}
+                      {getClassName(viewAdmissionStudent.classId)}
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -1785,11 +1799,15 @@ const ManageStudents = () => {
               const willPromoteCount = classStudents.filter((student) =>
                 selectedSet.has(student.id),
               ).length;
-              const nextClassId = CLASS_PROMOTION_MAP[promotionClassId] ?? null;
+              const nextClassId = getNextClassId(promotionClassId);
+              const promotionClass = allClasses.find(
+                (classRoom) => classRoom.id === promotionClassId,
+              );
               const nextClassName = nextClassId
-                ? CLASSES_LIST.find((c) => c.id === nextClassId)?.name ||
-                  nextClassId
-                : "Graduating";
+                ? getClassName(nextClassId)
+                : promotionClass?.section
+                  ? "Not configured"
+                  : "Graduating";
 
               return (
                 <div className="p-6 space-y-6">
@@ -1803,7 +1821,7 @@ const ManageStudents = () => {
                         onChange={(e) => setPromotionClassId(e.target.value)}
                         className="mt-2 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-emerald-200"
                       >
-                        {CLASSES_LIST.map((c) => (
+                        {availableClasses.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}
                           </option>
@@ -1981,8 +1999,7 @@ const ManageStudents = () => {
                       <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
                         <BookOpen size={14} />
                         {
-                          CLASSES_LIST.find((c) => c.id === viewStudent.classId)
-                            ?.name
+                          getClassName(viewStudent.classId)
                         }
                       </span>
                     </div>

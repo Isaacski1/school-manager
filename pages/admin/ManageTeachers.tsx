@@ -5,8 +5,8 @@ import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { createTeacher } from "../../services/backendApi";
 import { User, UserRole } from "../../types";
-import { CLASSES_LIST, getFilteredClasses } from "../../constants";
 import { useSchool } from "../../context/SchoolContext";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { useAuth } from "../../context/AuthContext";
 import { logActivity } from "../../services/activityLog";
 
@@ -47,7 +47,7 @@ const ManageTeachers = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || ""; // ✅ current school scope
-  const availableClasses = getFilteredClasses(school?.schoolType);
+  const { classes: availableClasses } = useSchoolClasses();
 
   const [teachers, setTeachers] = useState<TeacherWithClasses[]>([]);
   const [showModal, setShowModal] = useState(false);

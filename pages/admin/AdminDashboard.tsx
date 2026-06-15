@@ -62,9 +62,9 @@ import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
   calculateTotalScore,
-  getFilteredClasses,
 } from "../../constants";
 import AttendanceChart from "../../components/dashboard/AttendanceChart";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 
 const MemoAttendanceChart = React.memo(AttendanceChart);
 
@@ -433,9 +433,7 @@ const AdminDashboard = () => {
   const schoolId = school?.id || null;
   const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
+  const { classes: availableClasses } = useSchoolClasses();
   const schoolTypeLabel = school?.schoolType || "All school levels";
 
   const [stats, setStats] = useState({

@@ -1,9 +1,12 @@
 import { ComputedGrade, Assessment } from "./types";
+import type { ClassRoom } from "./types";
 
 export const ACADEMIC_YEAR = "2023-2024";
 export const CURRENT_TERM = 1;
 
-export const CLASSES_LIST = [
+const DEFAULT_CLASS_DEFINITIONS: Array<
+  Pick<ClassRoom, "id" | "name" | "level">
+> = [
   { id: "c_creche", name: "Creche", level: "CRECHE" },
   { id: "c_n1", name: "Nursery 1", level: "NURSERY" },
   { id: "c_n2", name: "Nursery 2", level: "NURSERY" },
@@ -22,6 +25,59 @@ export const CLASSES_LIST = [
   { id: "c_shs2", name: "SHS 2", level: "SHS" },
   { id: "c_shs3", name: "SHS 3", level: "SHS" },
 ];
+
+const DEFAULT_CLASSES_LIST: ClassRoom[] = DEFAULT_CLASS_DEFINITIONS.map(
+  (classRoom, index) => ({
+  ...classRoom,
+  schoolId: "",
+  baseClassId: classRoom.id,
+  section: "",
+  nextClassId: null,
+  sortOrder: index,
+  isActive: true,
+  }),
+);
+
+export const CLASSES_LIST: ClassRoom[] = DEFAULT_CLASSES_LIST.map((classRoom) => ({
+  ...classRoom,
+}));
+
+export const setRuntimeClasses = (classRooms?: ClassRoom[]) => {
+  const next = classRooms?.length ? classRooms : DEFAULT_CLASSES_LIST;
+  CLASSES_LIST.splice(
+    0,
+    CLASSES_LIST.length,
+    ...next
+      .filter((classRoom) => classRoom.isActive !== false)
+      .sort(
+        (a, b) =>
+          (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+          a.name.localeCompare(b.name),
+      )
+      .map((classRoom) => ({ ...classRoom })),
+  );
+};
+
+export const getDefaultFilteredClasses = (schoolType?: string) => {
+  if (!schoolType) return DEFAULT_CLASSES_LIST.map((classRoom) => ({ ...classRoom }));
+
+  const type = schoolType.toLowerCase();
+  const levels = type.includes("junior high")
+    ? ["JHS"]
+    : type.includes("primary school")
+      ? ["PRIMARY"]
+      : type.includes("senior high")
+        ? ["SHS"]
+        : type.includes("basic school")
+          ? ["CRECHE", "NURSERY", "KG", "PRIMARY", "JHS"]
+          : type.includes("nursery") || type.includes("kindergarten")
+            ? ["CRECHE", "NURSERY", "KG"]
+            : null;
+
+  return DEFAULT_CLASSES_LIST.filter(
+    (classRoom) => !levels || levels.includes(classRoom.level),
+  ).map((classRoom) => ({ ...classRoom }));
+};
 
 export const CLASS_PROMOTION_MAP: Record<string, string | null> = {
   c_creche: "c_n1",

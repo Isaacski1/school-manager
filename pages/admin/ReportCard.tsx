@@ -6,7 +6,7 @@ import { jsPDF } from "jspdf";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
 import { Student, SchoolConfig, AdminRemark } from "../../types";
-import { CLASSES_LIST, calculateGrade, getFilteredClasses } from "../../constants";
+import { CLASSES_LIST, calculateGrade } from "../../constants";
 import ReportCardLayout from "../../components/ReportCardLayout";
 import { Save, Edit2, X, MessageSquare } from "lucide-react";
 import { showToast } from "../../services/toast";
@@ -18,6 +18,7 @@ import {
   getExpectedSchoolDayKeys,
 } from "../../services/schoolCalendar";
 import JSZip from "jszip";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 
 // No global placeholder logo for report cards (use school-specific logo only)
 const DEFAULT_SCHOOL_LOGO = "";
@@ -131,9 +132,7 @@ const ReportCard = () => {
   const { user } = useAuth();
   const schoolId = school?.id || null;
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
+  const { classes: availableClasses } = useSchoolClasses();
 
   const [selectedClass, setSelectedClass] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
@@ -426,8 +425,10 @@ const ReportCard = () => {
       const currentClassIndex = CLASSES_LIST.findIndex(
         (c) => c.id === student?.classId,
       );
-      const nextClassName =
-        currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
+      const currentClass = CLASSES_LIST[currentClassIndex];
+      const nextClassName = currentClass?.nextClassId
+        ? CLASSES_LIST.find((item) => item.id === currentClass.nextClassId)?.name || ""
+        : !currentClass?.section && currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
           ? CLASSES_LIST[currentClassIndex + 1].name
           : "";
 
@@ -468,6 +469,7 @@ const ReportCard = () => {
         performance: termAssessments || [],
         positionRule: schoolConfig.positionRule || "subject",
         gradingScale: schoolConfig.gradingScale,
+        reportCardSettings: schoolConfig.reportCardSettings,
         summary: {
           totalScore: totalScoreForPromotion || 0,
           averageScore:
@@ -830,8 +832,10 @@ const ReportCard = () => {
         const currentClassIndex = CLASSES_LIST.findIndex(
           (c) => c.id === student?.classId,
         );
-        const nextClassName =
-          currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
+        const currentClass = CLASSES_LIST[currentClassIndex];
+        const nextClassName = currentClass?.nextClassId
+          ? CLASSES_LIST.find((item) => item.id === currentClass.nextClassId)?.name || ""
+          : !currentClass?.section && currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
             ? CLASSES_LIST[currentClassIndex + 1].name
             : "";
 
@@ -874,6 +878,7 @@ const ReportCard = () => {
           performance: studentAssessments || [],
           positionRule: schoolConfig.positionRule || "subject",
           gradingScale: schoolConfig.gradingScale,
+          reportCardSettings: schoolConfig.reportCardSettings,
           summary: {
             totalScore: totalScoreForStudent || 0,
             averageScore: averageScore,

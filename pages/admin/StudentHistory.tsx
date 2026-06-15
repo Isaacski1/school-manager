@@ -18,7 +18,8 @@ import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
-import { CLASSES_LIST, calculateGrade, getGradeColor, getFilteredClasses } from "../../constants";
+import { CLASSES_LIST, calculateGrade, getGradeColor } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { Student } from "../../types";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
@@ -29,9 +30,7 @@ const StudentHistory = () => {
   const { user } = useAuth();
   const schoolId = school?.id || null;
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
+  const { classes: availableClasses } = useSchoolClasses();
   const [students, setStudents] = useState<Student[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);

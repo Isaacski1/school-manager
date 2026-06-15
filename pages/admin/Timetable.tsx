@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
-import { CLASSES_LIST, getFilteredClasses } from "../../constants";
+import { CLASSES_LIST } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { db } from "../../services/mockDb";
 import { useSchool } from "../../context/SchoolContext";
 import { TimeSlot, ClassTimetable } from "../../types";
@@ -72,9 +73,7 @@ const Timetable = () => {
   const { user } = useAuth();
   const schoolId = requireSchoolId(user);
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
+  const { classes: availableClasses } = useSchoolClasses();
 
   const [selectedClass, setSelectedClass] = useState("");
   const [timetable, setTimetable] = useState<Record<string, TimeSlot[]>>({});

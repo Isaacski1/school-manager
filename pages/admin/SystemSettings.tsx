@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import schoolLogo from "../../logo/apple-icon-180x180.png";
 import Layout from "../../components/Layout";
+import ReportCardLayout from "../../components/ReportCardLayout";
 import UserAvatar from "../../components/UserAvatar";
 import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
@@ -13,13 +14,18 @@ import { requireSchoolId } from "../../services/authProfile";
 import { canAccessFeature } from "../../services/featureAccess";
 import { API_BASE_URL } from "../../src/config";
 import {
-  CLASSES_LIST,
   nurserySubjects,
   kgSubjects,
   primarySubjects,
   jhsSubjects,
-  getFilteredClasses,
+  getDefaultFilteredClasses,
 } from "../../constants";
+import {
+  createClassRoomId,
+  getConfiguredClassRooms,
+  normalizeClassName,
+} from "../../services/classCatalog";
+import { DEFAULT_REPORT_CARD_SETTINGS } from "../../services/reportCardSettings";
 import {
   Plus,
   Trash2,
@@ -35,6 +41,9 @@ import {
   Settings,
   Shield,
   Bell,
+  School,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -78,10 +87,6 @@ const SystemSettings = () => {
   const [noticeType, setNoticeType] = useState<"info" | "urgent">("info");
   const [isAddingNotice, setIsAddingNotice] = useState(false);
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
-
   // Class Subjects State
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [currentClassSubjects, setCurrentClassSubjects] = useState<string[]>(
@@ -112,6 +117,7 @@ const SystemSettings = () => {
     isPromotionalTerm: true,
     gradingScale: { A: 80, B: 70, C: 60, D: 45 },
     positionRule: "total",
+    reportCardSettings: DEFAULT_REPORT_CARD_SETTINGS,
     notificationSettings: {
       adminWhatsAppNumber: "",
       adminSmsNumber: "",
@@ -122,11 +128,23 @@ const SystemSettings = () => {
     },
   });
   const [savingConfig, setSavingConfig] = useState(false);
+  const availableClasses = React.useMemo(
+    () =>
+      getConfiguredClassRooms(
+        schoolId,
+        school?.schoolType,
+        config.classRooms,
+      ),
+    [schoolId, school?.schoolType, config.classRooms],
+  );
   const [savingNotificationSettings, setSavingNotificationSettings] =
     useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false); // New state
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayReason, setNewHolidayReason] = useState("");
+  const [newClassBaseId, setNewClassBaseId] = useState("");
+  const [newClassSection, setNewClassSection] = useState("");
+  const [savingClasses, setSavingClasses] = useState(false);
 
   // Danger Zone State
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -136,6 +154,9 @@ const SystemSettings = () => {
   const [subjectToDeleteName, setSubjectToDeleteName] = useState<string | null>(
     null,
   );
+  const [showReportCardPreview, setShowReportCardPreview] = useState(false);
+  const [showResetReportCardModal, setShowResetReportCardModal] =
+    useState(false);
 
   // Logo/Photo Upload State
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -195,6 +216,10 @@ const SystemSettings = () => {
           : true,
       gradingScale: data.gradingScale || { A: 80, B: 70, C: 60, D: 45 },
       positionRule: data.positionRule || "total",
+      reportCardSettings: {
+        ...DEFAULT_REPORT_CARD_SETTINGS,
+        ...(data.reportCardSettings || {}),
+      },
       notificationSettings: {
         adminWhatsAppNumber:
           data.notificationSettings?.adminWhatsAppNumber || "",
@@ -247,6 +272,157 @@ const SystemSettings = () => {
       setSelectedClassId(availableClasses[0].id);
     }
   }, [availableClasses, selectedClassId]);
+
+  const saveClassRooms = async (classRooms: ClassRoom[], message: string) => {
+    const nextConfig = { ...config, schoolId, classRooms };
+    setSavingClasses(true);
+    try {
+      await db.updateSchoolConfig(nextConfig);
+      setConfig(nextConfig);
+      showToast(message, { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "classes_updated",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          classCount: classRooms.length,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Failed to save classes", error);
+      showToast(error?.message || "Failed to save classes.", { type: "error" });
+    } finally {
+      setSavingClasses(false);
+    }
+  };
+
+  const handleAddClassStream = async () => {
+    const baseClass = getDefaultFilteredClasses(school?.schoolType).find(
+      (classRoom) => classRoom.id === newClassBaseId,
+    );
+    const section = normalizeClassName(newClassSection).toUpperCase();
+    if (!baseClass || !section) {
+      showToast("Select a class level and enter a stream name.", { type: "error" });
+      return;
+    }
+
+    const name = `${baseClass.name}-${section}`;
+    const current = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    );
+    const nextId = createClassRoomId(baseClass.id, section);
+    if (
+      current.some(
+        (classRoom) =>
+          classRoom.id === nextId ||
+          classRoom.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      showToast(`${name} already exists.`, { type: "error" });
+      return;
+    }
+
+    const classRoom: ClassRoom = {
+      id: nextId,
+      schoolId,
+      name,
+      level: baseClass.level as ClassRoom["level"],
+      baseClassId: baseClass.id,
+      section,
+      nextClassId: null,
+      sortOrder: current.length,
+      isActive: true,
+    };
+    await saveClassRooms([...current, classRoom], `${name} created.`);
+    setNewClassSection("");
+  };
+
+  const handleClassRoomChange = async (
+    classId: string,
+    updates: Partial<ClassRoom>,
+  ) => {
+    if (updates.isActive === false) {
+      const assignedStudents = await db.getStudents(schoolId, classId);
+      if (assignedStudents.length > 0) {
+        showToast(
+          `Move the ${assignedStudents.length} student(s) out of this class before deactivating it.`,
+          { type: "error" },
+        );
+        return;
+      }
+    }
+    const current = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    );
+    await saveClassRooms(
+      current.map((classRoom) =>
+        classRoom.id === classId ? { ...classRoom, ...updates } : classRoom,
+      ),
+      "Class configuration saved.",
+    );
+  };
+
+  const handleRenameClassRoom = async (classId: string, value: string) => {
+    const name = normalizeClassName(value);
+    if (!name) {
+      showToast("Class name cannot be empty.", { type: "error" });
+      return;
+    }
+    const current = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    );
+    if (
+      current.some(
+        (classRoom) =>
+          classRoom.id !== classId &&
+          classRoom.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      showToast(`${name} already exists.`, { type: "error" });
+      return;
+    }
+    const classRoom = current.find((item) => item.id === classId);
+    if (!classRoom || classRoom.name === name) return;
+    await saveClassRooms(
+      current.map((item) => (item.id === classId ? { ...item, name } : item)),
+      "Class renamed.",
+    );
+  };
+
+  const handleMoveClassRoom = async (classId: string, direction: -1 | 1) => {
+    const current = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    );
+    const index = current.findIndex((classRoom) => classRoom.id === classId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= current.length) return;
+    const reordered = [...current];
+    [reordered[index], reordered[targetIndex]] = [
+      reordered[targetIndex],
+      reordered[index],
+    ];
+    await saveClassRooms(
+      reordered.map((classRoom, sortOrder) => ({ ...classRoom, sortOrder })),
+      "Class order updated.",
+    );
+  };
 
   // --- Config Handlers ---
   const handleSaveConfig = async () => {
@@ -973,36 +1149,167 @@ const SystemSettings = () => {
           actorName: user?.fullName || "",
         },
       });
-    } finally {
+  } finally {
       setTermResetting(false);
     }
   };
 
+  const reportCardSettings =
+    config.reportCardSettings || DEFAULT_REPORT_CARD_SETTINGS;
+  const updateReportCardSettings = (
+    updates: Partial<typeof DEFAULT_REPORT_CARD_SETTINGS>,
+  ) => {
+    setConfig({
+      ...config,
+      reportCardSettings: {
+        ...DEFAULT_REPORT_CARD_SETTINGS,
+        ...(config.reportCardSettings || {}),
+        ...updates,
+      },
+    });
+  };
+  const resetReportCardSettings = () => {
+    setShowResetReportCardModal(true);
+  };
+  const confirmResetReportCardSettings = () => {
+    setConfig({
+      ...config,
+      reportCardSettings: { ...DEFAULT_REPORT_CARD_SETTINGS },
+    });
+    setShowResetReportCardModal(false);
+    showToast(
+      "Report card customization reset. Click Save Changes to keep it.",
+      { type: "success" },
+    );
+  };
+  const sampleReportCardData = {
+    schoolInfo: {
+      name: school?.name || config.schoolName || "Sample School",
+      logoUrl: config.logoUrl || school?.logoUrl || "",
+      address: school?.address || config.address || "School Address",
+      phone: school?.phone || config.phone || "0240000000",
+      email: config.email || "",
+      academicYear: config.academicYear || "2026-2027",
+      term: config.currentTerm || "Term 1",
+    },
+    studentInfo: {
+      name: "Sample Student",
+      photoUrl: "",
+      gender: "Female",
+      dob: "2015-01-01",
+      class: "Class 1-A",
+      classTeacher: "Class Teacher",
+    },
+    attendance: {
+      totalDays: 60,
+      presentDays: 56,
+      absentDays: 4,
+      attendancePercentage: 93,
+    },
+    performance: [
+      {
+        subject: "English Language",
+        testScore: 18,
+        homeworkScore: 9,
+        projectScore: 9,
+        examScore: 58,
+        total: 94,
+      },
+      {
+        subject: "Mathematics",
+        testScore: 17,
+        homeworkScore: 8,
+        projectScore: 10,
+        examScore: 55,
+        total: 90,
+      },
+    ],
+    allStudentsAssessments: [
+      { subject: "English Language", total: 94 },
+      { subject: "English Language", total: 88 },
+      { subject: "Mathematics", total: 90 },
+      { subject: "Mathematics", total: 84 },
+    ],
+    gradingScale: config.gradingScale,
+    reportCardSettings,
+    summary: {
+      totalScore: 184,
+      averageScore: "92.0",
+      overallGrade: "A",
+      classPosition: "1st",
+      totalStudents: 32,
+    },
+    skills: {
+      punctuality: "Excellent",
+      neatness: "Very Good",
+      conduct: "Excellent",
+      attitudeToWork: "Very Good",
+      classParticipation: "Excellent",
+      homeworkCompletion: "Very Good",
+    },
+    remarks: {
+      teacher: "A strong performance. Keep it up.",
+      headTeacher:
+        config.headTeacherRemark || "An outstanding performance.",
+    },
+    promotion: {
+      status: "Promoted to Class 2-A",
+      isPromotionalTerm: config.isPromotionalTerm,
+    },
+    termDates: {
+      endDate: config.termEndDate || "",
+      reopeningDate: config.nextTermBegins || "",
+      vacationDate: config.vacationDate || "",
+    },
+  };
+
   return (
     <Layout title="System Settings">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="relative overflow-hidden rounded-3xl border border-slate-200/70 bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-5 shadow-sm sm:p-7">
           <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
           <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
-          <div className="relative flex flex-col gap-2">
-            <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
-              <span className="h-10 w-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-                <Settings size={20} />
-              </span>
-              System Settings
-            </h1>
-            <p className="text-sm text-slate-600">
-              Configure academic terms, subjects, notices, and backups with a
-              premium control center.
-            </p>
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h1 className="flex items-center gap-3 text-2xl font-bold text-slate-900 sm:text-3xl">
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200">
+                  <Settings size={21} />
+                </span>
+                System Settings
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Configure branding, academic setup, report cards, notices, and
+                backups from one organized control center.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[520px]">
+              {[
+                ["Term", config.currentTerm || "Not set"],
+                ["Year", config.academicYear || "Not set"],
+                ["Classes", String(availableClasses.length)],
+                ["Notices", String(notices.length)],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur"
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    {label}
+                  </p>
+                  <p className="mt-1 truncate text-sm font-bold text-slate-800">
+                    {value}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
           {/* Left Column */}
-          <div className="space-y-8">
+          <div className="space-y-6">
             {/* Profile & Logo Customization */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
               <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                 <span className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
                   <Shield size={18} />
@@ -1066,7 +1373,7 @@ const SystemSettings = () => {
             </div>
 
             {/* Notification Settings */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -1178,8 +1485,161 @@ const SystemSettings = () => {
               </div>
             </div>
 
+            {/* Classes & Streams */}
+            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex items-start justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <span className="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                      <School size={18} />
+                    </span>
+                    Classes & Streams
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Create separate streams such as Class 1-A and Class 1-B.
+                  </p>
+                </div>
+                {savingClasses && (
+                  <span className="h-5 w-5 rounded-full border-2 border-indigo-200 border-t-indigo-600 animate-spin" />
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 mb-5">
+                <select
+                  value={newClassBaseId}
+                  onChange={(event) => setNewClassBaseId(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-200"
+                >
+                  <option value="">Select class level</option>
+                  {getDefaultFilteredClasses(school?.schoolType).map((classRoom) => (
+                    <option key={classRoom.id} value={classRoom.id}>
+                      {classRoom.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={newClassSection}
+                  onChange={(event) => setNewClassSection(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void handleAddClassStream();
+                    }
+                  }}
+                  placeholder="Stream, e.g. A or Gold"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleAddClassStream()}
+                  disabled={savingClasses}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  <Plus size={16} /> Add Stream
+                </button>
+              </div>
+
+              <div className="space-y-3 max-h-[32rem] overflow-y-auto pr-1">
+                {getConfiguredClassRooms(
+                  schoolId,
+                  school?.schoolType,
+                  config.classRooms,
+                  true,
+                ).map((classRoom, classIndex, classRooms) => (
+                  <div
+                    key={classRoom.id}
+                    className={`rounded-xl border p-4 ${
+                      classRoom.isActive === false
+                        ? "border-slate-200 bg-slate-50 opacity-70"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <input
+                          key={`${classRoom.id}-${classRoom.name}`}
+                          defaultValue={classRoom.name}
+                          disabled={savingClasses}
+                          onBlur={(event) =>
+                            void handleRenameClassRoom(
+                              classRoom.id,
+                              event.target.value,
+                            )
+                          }
+                          className="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 font-bold text-slate-800 outline-none hover:border-slate-200 focus:border-indigo-300 focus:bg-white"
+                        />
+                        <p className="text-xs text-slate-500">
+                          {classRoom.section
+                            ? `Stream ${classRoom.section}`
+                            : "Default class"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={savingClasses || classIndex === 0}
+                          onClick={() => void handleMoveClassRoom(classRoom.id, -1)}
+                          className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                          aria-label={`Move ${classRoom.name} up`}
+                        >
+                          <ArrowUp size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingClasses || classIndex === classRooms.length - 1}
+                          onClick={() => void handleMoveClassRoom(classRoom.id, 1)}
+                          className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                          aria-label={`Move ${classRoom.name} down`}
+                        >
+                          <ArrowDown size={14} />
+                        </button>
+                        <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={classRoom.isActive !== false}
+                            disabled={savingClasses}
+                            onChange={(event) =>
+                              void handleClassRoomChange(classRoom.id, {
+                                isActive: event.target.checked,
+                              })
+                            }
+                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          Active
+                        </label>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        Promote students to
+                      </label>
+                      <select
+                        value={classRoom.nextClassId || ""}
+                        disabled={savingClasses}
+                        onChange={(event) =>
+                          void handleClassRoomChange(classRoom.id, {
+                            nextClassId: event.target.value || null,
+                          })
+                        }
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-200"
+                      >
+                        <option value="">No promotion destination</option>
+                        {availableClasses
+                          .filter((candidate) => candidate.id !== classRoom.id)
+                          .map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* General Config */}
-            <div className="bg-sky-100 rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="rounded-3xl border border-sky-100 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
@@ -1369,7 +1829,7 @@ const SystemSettings = () => {
               </div>
             </div>
 
-            <div className="bg-indigo-100 rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="rounded-3xl border border-indigo-100 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
@@ -1571,9 +2031,207 @@ const SystemSettings = () => {
               </div>
             </div>
 
+          </div>
+
+          {/* Right Column */}
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">
+                    Report Card Customization
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Control the layout, branding, and sections shown on report cards.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={resetReportCardSettings}
+                    className="flex items-center text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full transition-colors"
+                  >
+                    Reset Default
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReportCardPreview(true)}
+                    className="flex items-center text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-full transition-colors"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    onClick={handleSaveConfig}
+                    disabled={savingConfig}
+                    className="flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-full transition-colors"
+                  >
+                    <Save size={14} className="mr-1" />{" "}
+                    {savingConfig ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Report Card Title
+                    </label>
+                    <input
+                      value={reportCardSettings.title}
+                      onChange={(event) =>
+                        updateReportCardSettings({ title: event.target.value })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Template
+                    </label>
+                    <select
+                      value={reportCardSettings.template}
+                      onChange={(event) =>
+                        updateReportCardSettings({
+                          template: event.target.value as any,
+                        })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    >
+                      <option value="classic">Classic</option>
+                      <option value="modern">Modern</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Primary Color
+                    </label>
+                    <input
+                      type="color"
+                      value={reportCardSettings.primaryColor}
+                      onChange={(event) =>
+                        updateReportCardSettings({
+                          primaryColor: event.target.value,
+                        })
+                      }
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white p-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Accent Color
+                    </label>
+                    <input
+                      type="color"
+                      value={reportCardSettings.accentColor}
+                      onChange={(event) =>
+                        updateReportCardSettings({
+                          accentColor: event.target.value,
+                        })
+                      }
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white p-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Header Style
+                    </label>
+                    <select
+                      value={reportCardSettings.headerStyle}
+                      onChange={(event) =>
+                        updateReportCardSettings({
+                          headerStyle: event.target.value as any,
+                        })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    >
+                      <option value="plain">Plain</option>
+                      <option value="band">Color Band</option>
+                      <option value="boxed">Soft Box</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Logo Position
+                    </label>
+                    <select
+                      value={reportCardSettings.logoPosition}
+                      onChange={(event) =>
+                        updateReportCardSettings({
+                          logoPosition: event.target.value as any,
+                        })
+                      }
+                      className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    ["showSchoolLogo", "Show school logo"],
+                    ["showWatermarkLogo", "Show watermark logo"],
+                    ["showStudentPhoto", "Show student photo"],
+                    ["showPosition", "Show position/rank"],
+                    ["showAttendance", "Show attendance summary"],
+                    ["showSkills", "Show skills/behaviour"],
+                    ["showClassTeacherRemark", "Show class teacher remark"],
+                    ["showHeadTeacherRemark", "Show head teacher remark"],
+                    ["showGradingScale", "Show grading scale"],
+                    ["showPromotionStatus", "Show promotion status"],
+                  ].map(([key, label]) => (
+                    <label
+                      key={key}
+                      className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
+                    >
+                      <span className="text-sm font-medium text-slate-700">
+                        {label}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean((reportCardSettings as any)[key])}
+                        onChange={(event) =>
+                          updateReportCardSettings({
+                            [key]: event.target.checked,
+                          } as any)
+                        }
+                        className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    ["classTeacherSignatureLabel", "Class teacher signature"],
+                    ["headTeacherSignatureLabel", "Head teacher signature"],
+                    ["stampLabel", "Stamp label"],
+                  ].map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        {label}
+                      </label>
+                      <input
+                        value={String((reportCardSettings as any)[key] || "")}
+                        onChange={(event) =>
+                          updateReportCardSettings({
+                            [key]: event.target.value,
+                          } as any)
+                        }
+                        className="w-full border border-slate-200 p-2.5 rounded-xl bg-white text-slate-800 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* Subject Management */}
-            {/* Subject Management */}
-            <div className="bg-emerald-100 rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6 overflow-hidden">
+            <div className="overflow-hidden rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-6">
               <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6 text-slate-800 flex items-center">
                 <Book className="mr-2 text-[#0B4A82]" size={24} />
                 Manage Class Subjects
@@ -1763,67 +2421,21 @@ const SystemSettings = () => {
               </div>
             )}
 
-            {/* Secret Database Reset */}
-            {canUseBackups && showDangerZone && (
-              <div className="bg-red-700 border border-rose-500/20 rounded-2xl p-6">
-                <div className="flex items-center mb-4">
-                  <Shield className="text-rose-200 mr-2" size={24} />
-                  <h2 className="text-xl font-bold text-rose-200">
-                    Danger Zone: Database Reset
-                  </h2>
-                </div>
-                <p className="text-rose-200 mb-4">
-                  This will reset term data (attendance, assessments, reports,
-                  and term-specific records) for the selected term. It does not
-                  delete school accounts or core setup, but the term data cannot
-                  be recovered. Use with extreme caution.
-                </p>
-                <div className="flex flex-col space-y-4">
-                  <button
-                    onClick={handleTermReset}
-                    disabled={termResetting}
-                    className="bg-rose-600 text-white px-4 py-2 rounded-full hover:bg-rose-700 disabled:bg-rose-400 transition-colors"
-                  >
-                    {termResetting ? "Resetting Term..." : "Term Reset"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {canUseBackups && (
-              <div className="text-center mt-4">
-                <button
-                  onClick={() => setShowDangerZone(!showDangerZone)}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-red-700 px-4 py-2 text-sm font-semibold text-slate-200 shadow-sm transition-all hover:border-white/20 hover:text-white hover:shadow-md"
-                >
-                  <span
-                    className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${
-                      showDangerZone
-                        ? "bg-red-600 text-rose-100"
-                        : "bg-rose-600 text-cyan-100"
-                    }`}
-                  >
-                    {showDangerZone ? "—" : "+"}
-                  </span>
-                  {showDangerZone ? "Hide" : "Show"} Advanced Settings
-                </button>
-              </div>
-            )}
-          </div>
-
           {/* Right Column: Notices Management */}
-          <div className="bg-red-800 rounded-2xl shadow-[0_20px_40px_-30px_rgba(2,6,23,0.9)] border border-white/10 p-4 sm:p-6 flex flex-col h-auto lg:h-full max-h-none lg:max-h-[720px]">
-            <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6 text-white flex items-center">
-              <Megaphone className="mr-2 text-emerald-200" size={24} />
+          <div className="flex h-auto max-h-none flex-col rounded-3xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-6">
+            <h2 className="mb-4 flex items-center text-lg font-bold text-slate-900 sm:mb-6 sm:text-xl">
+              <span className="mr-2 flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
+                <Megaphone size={20} />
+              </span>
               School Notices
             </h2>
 
             <form
               onSubmit={handleAddNotice}
-              className="mb-5 sm:mb-6 bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/10"
+              className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:mb-6 sm:p-4"
             >
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-300 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Date
                 </label>
                 <div className="relative">
@@ -1838,7 +2450,7 @@ const SystemSettings = () => {
                 </div>
               </div>
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-300 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Notice Message
                 </label>
                 <textarea
@@ -1852,7 +2464,7 @@ const SystemSettings = () => {
               </div>
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                 <div className="flex items-center flex-wrap gap-4">
-                  <label className="flex items-center text-sm cursor-pointer text-white">
+                  <label className="flex items-center text-sm cursor-pointer text-slate-700">
                     <input
                       type="radio"
                       name="type"
@@ -1862,7 +2474,7 @@ const SystemSettings = () => {
                     />
                     Info
                   </label>
-                  <label className="flex items-center text-sm cursor-pointer text-white">
+                  <label className="flex items-center text-sm cursor-pointer text-slate-700">
                     <input
                       type="radio"
                       name="type"
@@ -1892,35 +2504,35 @@ const SystemSettings = () => {
               </div>
             </form>
 
-            <div className="flex-1 overflow-visible lg:overflow-y-auto pr-0 lg:pr-1 min-h-0">
-              <h3 className="text-sm font-bold text-slate-100 uppercase mb-3">
+            <div className="min-h-0 flex-1 overflow-visible pr-0 lg:overflow-y-auto lg:pr-1">
+              <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">
                 Active Notices
               </h3>
               <div className="space-y-3">
                 {notices.length === 0 ? (
-                  <p className="text-slate-400 text-sm text-center italic">
+                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm italic text-slate-500">
                     No notices posted.
                   </p>
                 ) : (
                   notices.map((notice) => (
                     <div
                       key={notice.id}
-                      className="flex gap-2 sm:gap-3 justify-between items-start group p-3 border border-slate-100 rounded-xl hover:bg-slate-900 transition-colors"
+                      className="group flex items-start justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-colors hover:bg-slate-50 sm:gap-3"
                     >
                       <div
                         className={`border-l-2 pl-3 min-w-0 flex-1 ${notice.type === "urgent" ? "border-red-500" : "border-emerald-500"}`}
                       >
-                        <p className="text-sm text-slate-100 font-medium">
+                        <p className="text-sm font-medium text-slate-800">
                           {notice.message}
                         </p>
-                        <p className="text-xs text-slate-300 mt-1">
+                        <p className="mt-1 text-xs text-slate-500">
                           {notice.date} &bull;{" "}
                           {notice.type === "urgent" ? "Urgent" : "General Info"}
                         </p>
                       </div>
                       <button
                         onClick={() => handleDeleteNotice(notice.id)}
-                        className="shrink-0 text-slate-300 hover:text-[#1160A8] transition-colors p-1"
+                        className="shrink-0 rounded-lg p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
                         title="Delete Notice"
                       >
                         <Trash2 size={16} />
@@ -1931,8 +2543,114 @@ const SystemSettings = () => {
               </div>
             </div>
           </div>
+
+          {canUseBackups && (
+            <div className="rounded-3xl border border-rose-100 bg-white p-5 text-center shadow-sm sm:p-6">
+              {showDangerZone && (
+                <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-left">
+                <div className="mb-3 flex items-center">
+                  <Shield className="mr-2 text-rose-700" size={22} />
+                  <h2 className="text-lg font-bold text-rose-800">
+                    Danger Zone: Database Reset
+                  </h2>
+                </div>
+                <p className="mb-4 text-sm leading-6 text-rose-700">
+                  This will reset term data for attendance, assessments,
+                  reports, and term-specific records. It does not delete school
+                  accounts or core setup, but the term data cannot be recovered.
+                </p>
+                <button
+                  onClick={handleTermReset}
+                  disabled={termResetting}
+                  className="w-full rounded-full bg-rose-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-rose-700 disabled:bg-rose-400"
+                >
+                  {termResetting ? "Resetting Term..." : "Term Reset"}
+                </button>
+              </div>
+              )}
+
+                <button
+                  onClick={() => setShowDangerZone(!showDangerZone)}
+                  className="inline-flex items-center gap-2 rounded-full border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 shadow-sm transition-all hover:border-rose-200 hover:bg-rose-100"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-rose-600 text-xs font-bold text-white">
+                    {showDangerZone ? "-" : "+"}
+                  </span>
+                  {showDangerZone ? "Hide" : "Show"} Advanced Settings
+                </button>
+            </div>
+          )}
         </div>
       </div>
+      </div>
+
+      {showReportCardPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4">
+          <div className="relative max-h-[95vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-slate-100 p-4 shadow-2xl">
+            <div className="sticky top-0 z-10 mb-4 flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Report Card Preview
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Sample data using the current settings on this page.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReportCardPreview(false)}
+                className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"
+                aria-label="Close preview"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <ReportCardLayout data={sampleReportCardData} />
+          </div>
+        </div>
+      )}
+
+      {/* Reset Report Card Confirmation Modal */}
+      {showResetReportCardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <AlertTriangle size={26} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  Reset Report Card Design?
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  This will restore the default layout, colors, visible sections,
+                  and signature labels.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              The reset will only affect this page first. Click{" "}
+              <strong>Save Changes</strong> afterwards to keep the default design.
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowResetReportCardModal(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmResetReportCardSettings}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-amber-700"
+              >
+                Reset to Default
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Term Reset Confirmation Modal */}
       {showTermResetModal && (

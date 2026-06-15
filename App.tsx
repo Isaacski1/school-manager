@@ -115,7 +115,7 @@ const getEmailVerificationRedirect = () => {
 
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
-  const { school, schoolLoading, schoolError } = useSchool();
+  const { school, schoolLoading, schoolError, classCatalogReady } = useSchool();
 
   const [brandingVersion, setBrandingVersion] = React.useState(0);
 
@@ -245,7 +245,9 @@ const AppContent = () => {
     !isPublicRoute &&
     user &&
     (isSchoolUser || cachedSchool || hasSchoolContext) &&
-    ((schoolLoading && !school && !cachedSchool) || (!school && !cachedSchool && !schoolError)) &&
+    (!classCatalogReady ||
+      (schoolLoading && !school && !cachedSchool) ||
+      (!school && !cachedSchool && !schoolError)) &&
     !(user.role === UserRole.PARENT && !hasSchoolContext)
   ) {
     return (

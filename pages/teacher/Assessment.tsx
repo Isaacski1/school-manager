@@ -11,8 +11,8 @@ import {
   calculateGrade,
   getGradeColor,
   calculateTotalScore,
-  getFilteredClasses,
 } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { Save } from "lucide-react";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
@@ -66,14 +66,15 @@ const AssessmentPage = () => {
   const { user } = useAuth();
   const { school } = useSchool();
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
+  const { classes: schoolClasses } = useSchoolClasses();
 
   const availableClasses = React.useMemo(() => {
     if (isAdmin) {
-      return getFilteredClasses(school?.schoolType);
+      return schoolClasses;
     }
     const assignedIds = user?.assignedClassIds || [];
-    return CLASSES_LIST.filter((c) => assignedIds.includes(c.id));
-  }, [isAdmin, school?.schoolType, user?.assignedClassIds]);
+    return schoolClasses.filter((c) => assignedIds.includes(c.id));
+  }, [isAdmin, schoolClasses, user?.assignedClassIds]);
 
   const schoolId = user?.schoolId || null;
   const [selectedClassId, setSelectedClassId] = useState<string>("");

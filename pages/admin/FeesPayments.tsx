@@ -20,7 +20,8 @@ import {
   StudentFeePayment,
   SchoolConfig,
 } from "../../types";
-import { ACADEMIC_YEAR, CLASSES_LIST, getFilteredClasses } from "../../constants";
+import { ACADEMIC_YEAR, CLASSES_LIST } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -67,6 +68,7 @@ const feeFrequencyOptions: { value: FeeFrequency; label: string }[] = [
 ];
 const feeAppliesToOptions: { value: FeeAppliesTo; label: string }[] = [
   { value: "all_students", label: "All students" },
+  { value: "base_class", label: "All streams in a class level" },
   { value: "class", label: "Specific class" },
   { value: "selected_students", label: "Selected students" },
   { value: "new_students_only", label: "New students only" },
@@ -246,7 +248,19 @@ const FeesPayments: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const schoolId = school?.id || "";
-  const availableClasses = getFilteredClasses(school?.schoolType);
+  const { classes: availableClasses } = useSchoolClasses();
+  const baseClassOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    availableClasses.forEach((classRoom) => {
+      const baseClassId = classRoom.baseClassId || classRoom.id;
+      const baseClass = availableClasses.find((item) => item.id === baseClassId);
+      options.set(
+        baseClassId,
+        baseClass?.name || classRoom.name.replace(/-[^-]+$/, ""),
+      );
+    });
+    return Array.from(options, ([id, name]) => ({ id, name }));
+  }, [availableClasses]);
   const [loading, setLoading] = useState(false);
 
   const feeSetupRef = useRef<HTMLDivElement | null>(null);
@@ -544,6 +558,7 @@ const FeesPayments: React.FC = () => {
     feeName: "",
     amount: "",
     classId: "",
+    baseClassId: "",
     feeFrequency: "per_term" as FeeFrequency,
     appliesTo: "all_students" as FeeAppliesTo,
     effectiveFromDate: "",
@@ -1111,6 +1126,14 @@ const FeesPayments: React.FC = () => {
         return fee.classId && fee.classId !== student.classId
           ? `Fee is assigned to ${getClassLabel(fee.classId)} only.`
           : null;
+      case "base_class": {
+        const studentClass = availableClasses.find(
+          (classRoom) => classRoom.id === student.classId,
+        );
+        return fee.baseClassId && studentClass?.baseClassId !== fee.baseClassId
+          ? "Fee is assigned to another class level."
+          : null;
+      }
       case "selected_students":
         return fee.selectedStudentIds?.includes(student.id)
           ? null
@@ -1301,6 +1324,14 @@ const FeesPayments: React.FC = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
+    if (feeForm.appliesTo === "class" && !feeForm.classId) {
+      showToast("Select the specific class for this fee.", { type: "error" });
+      return;
+    }
+    if (feeForm.appliesTo === "base_class" && !feeForm.baseClassId) {
+      showToast("Select the class level for this fee.", { type: "error" });
+      return;
+    }
     try {
       setIsCreatingFee(true);
       const effectiveDate = feeForm.effectiveFromDate?.trim() || "";
@@ -1321,6 +1352,10 @@ const FeesPayments: React.FC = () => {
         feeName: feeForm.feeName.trim(),
         amount,
         classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+        baseClassId:
+          feeForm.appliesTo === "base_class"
+            ? feeForm.baseClassId || null
+            : null,
         academicYear,
         term,
         createdAt: Date.now(),
@@ -1374,6 +1409,7 @@ const FeesPayments: React.FC = () => {
         feeName: "",
         amount: "",
         classId: "",
+        baseClassId: "",
         feeFrequency: "per_term",
         appliesTo: "all_students",
         effectiveFromDate: "",
@@ -1412,6 +1448,7 @@ const FeesPayments: React.FC = () => {
       feeName: fee.feeName || "",
       amount: String(fee.amount || ""),
       classId: fee.classId || "",
+      baseClassId: fee.baseClassId || "",
       feeFrequency: fee.feeFrequency || "per_term",
       appliesTo: fee.appliesTo || "all_students",
       effectiveFromDate: fee.effectiveFromDate || "",
@@ -1433,6 +1470,14 @@ const FeesPayments: React.FC = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
+    if (feeForm.appliesTo === "class" && !feeForm.classId) {
+      showToast("Select the specific class for this fee.", { type: "error" });
+      return;
+    }
+    if (feeForm.appliesTo === "base_class" && !feeForm.baseClassId) {
+      showToast("Select the class level for this fee.", { type: "error" });
+      return;
+    }
     const existing = fees.find((fee) => fee.id === editingFeeId);
     if (!existing) return;
     try {
@@ -1442,6 +1487,10 @@ const FeesPayments: React.FC = () => {
         feeName: feeForm.feeName.trim(),
         amount,
         classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+        baseClassId:
+          feeForm.appliesTo === "base_class"
+            ? feeForm.baseClassId || null
+            : null,
         feeFrequency: feeForm.feeFrequency,
         appliesTo: feeForm.appliesTo,
         effectiveFromDate: feeForm.effectiveFromDate?.trim() || null,
@@ -1495,6 +1544,7 @@ const FeesPayments: React.FC = () => {
         feeName: "",
         amount: "",
         classId: "",
+        baseClassId: "",
         feeFrequency: "per_term",
         appliesTo: "all_students",
         effectiveFromDate: "",
@@ -1915,6 +1965,10 @@ const FeesPayments: React.FC = () => {
       feeName: feeForm.feeName || "Preview",
       amount: normalizedAmount,
       classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+      baseClassId:
+        feeForm.appliesTo === "base_class"
+          ? feeForm.baseClassId || null
+          : null,
       academicYear,
       term,
       createdAt: Date.now(),
@@ -1943,7 +1997,7 @@ const FeesPayments: React.FC = () => {
       eligibleCount: eligibleStudents.length,
       expectedIncrease: normalizedAmount * eligibleStudents.length,
     };
-  }, [academicYear, feeForm, students, term, user?.id, schoolId]);
+  }, [academicYear, availableClasses, feeForm, students, term, user?.id, schoolId]);
 
   const feeHealthChecks = useMemo(() => {
     const warnings: string[] = [];
@@ -1951,6 +2005,11 @@ const FeesPayments: React.FC = () => {
       if (fee.appliesTo === "class" && !fee.classId) {
         warnings.push(
           `"${fee.feeName}" is set to class but no class selected.`,
+        );
+      }
+      if (fee.appliesTo === "base_class" && !fee.baseClassId) {
+        warnings.push(
+          `"${fee.feeName}" is set to a class level but no level is selected.`,
         );
       }
       if (
@@ -3907,37 +3966,54 @@ const FeesPayments: React.FC = () => {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="text-xs text-slate-500">
-                    Class (optional)
-                  </label>
-                  <select
-                    value={feeForm.classId}
-                    onChange={(e) =>
-                      setFeeForm((prev) => {
-                        const nextClassId = e.target.value;
-                        const nextAppliesTo = nextClassId
-                          ? "class"
-                          : prev.appliesTo === "class"
-                            ? "all_students"
-                            : prev.appliesTo;
-                        return {
+                {feeForm.appliesTo === "base_class" && (
+                  <div>
+                    <label className="text-xs text-slate-500">
+                      Class Level
+                    </label>
+                    <select
+                      value={feeForm.baseClassId}
+                      onChange={(event) =>
+                        setFeeForm({
+                          ...feeForm,
+                          baseClassId: event.target.value,
+                        })
+                      }
+                      className={DASH_INPUT}
+                    >
+                      <option value="">Select class level</option>
+                      {baseClassOptions.map((classRoom) => (
+                        <option key={classRoom.id} value={classRoom.id}>
+                          {classRoom.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {feeForm.appliesTo === "class" && (
+                  <div>
+                    <label className="text-xs text-slate-500">
+                      Specific Class
+                    </label>
+                    <select
+                      value={feeForm.classId}
+                      onChange={(e) =>
+                        setFeeForm((prev) => ({
                           ...prev,
-                          classId: nextClassId,
-                          appliesTo: nextAppliesTo as FeeAppliesTo,
-                        };
-                      })
-                    }
-                    className={DASH_INPUT}
-                  >
-                    <option value="">All Classes</option>
-                    {availableClasses.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                          classId: e.target.value,
+                        }))
+                      }
+                      className={DASH_INPUT}
+                    >
+                      <option value="">Select class</option>
+                      {availableClasses.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {feeForm.appliesTo === "selected_students" && (
                   <div className="sm:col-span-2">
                     <label className="text-xs text-slate-500">
@@ -4061,6 +4137,7 @@ const FeesPayments: React.FC = () => {
                             feeName: "",
                             amount: "",
                             classId: "",
+                            baseClassId: "",
                             feeFrequency: "per_term",
                             appliesTo: "all_students",
                             effectiveFromDate: "",

@@ -102,6 +102,7 @@ export type PaymentMethod = "Cash" | "MoMo" | "Bank";
 export type FeeFrequency = "one_time" | "per_term" | "per_year";
 export type FeeAppliesTo =
   | "all_students"
+  | "base_class"
   | "class"
   | "selected_students"
   | "new_students_only";
@@ -113,6 +114,7 @@ export interface FeeDefinition {
   feeName: string;
   amount: number;
   classId?: string | null;
+  baseClassId?: string | null;
   academicYear: string;
   term: FeeTerm;
   feeFrequency?: FeeFrequency;
@@ -345,6 +347,8 @@ export interface SchoolConfig {
     D: number;
   };
   positionRule?: "total" | "average" | "subject";
+  classRooms?: ClassRoom[];
+  reportCardSettings?: ReportCardSettings;
   notificationSettings?: {
     adminWhatsAppNumber?: string;
     adminSmsNumber?: string;
@@ -451,8 +455,38 @@ export interface ClassSubjectConfig {
 export interface ClassRoom {
   id: string;
   schoolId: string;
-  name: string; // e.g., "Primary 4", "JHS 1"
-  level: "CRECHE" | "NURSERY" | "KG" | "PRIMARY" | "JHS";
+  name: string; // e.g., "Class 1-A", "JHS 1-B"
+  level: "CRECHE" | "NURSERY" | "KG" | "PRIMARY" | "JHS" | "SHS";
+  baseClassId?: string;
+  section?: string;
+  nextClassId?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export type ReportCardTemplate = "classic" | "modern" | "compact";
+export type ReportCardLogoPosition = "left" | "center" | "right";
+
+export interface ReportCardSettings {
+  title: string;
+  template: ReportCardTemplate;
+  primaryColor: string;
+  accentColor: string;
+  headerStyle: "plain" | "band" | "boxed";
+  logoPosition: ReportCardLogoPosition;
+  showSchoolLogo: boolean;
+  showWatermarkLogo: boolean;
+  showStudentPhoto: boolean;
+  showPosition: boolean;
+  showAttendance: boolean;
+  showSkills: boolean;
+  showClassTeacherRemark: boolean;
+  showHeadTeacherRemark: boolean;
+  showGradingScale: boolean;
+  showPromotionStatus: boolean;
+  classTeacherSignatureLabel: string;
+  headTeacherSignatureLabel: string;
+  stampLabel: string;
 }
 
 export interface Student {

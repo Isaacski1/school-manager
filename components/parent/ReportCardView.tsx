@@ -217,8 +217,10 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
         // Promotion logic — mirrors the admin dashboard's PASS_THRESHOLD (500 total score)
         const PASS_THRESHOLD = 500;
         const currentClassIndex = CLASSES_LIST.findIndex(c => c.id === student.classId);
-        const nextClass =
-          currentClassIndex > -1 && currentClassIndex < CLASSES_LIST.length - 1
+        const currentClass = CLASSES_LIST[currentClassIndex];
+        const nextClass = currentClass?.nextClassId
+          ? CLASSES_LIST.find((item) => item.id === currentClass.nextClassId)?.name || ""
+          : !currentClass?.section && currentClassIndex > -1 && currentClassIndex < CLASSES_LIST.length - 1
             ? CLASSES_LIST[currentClassIndex + 1].name
             : "";
         const isPromotionalTerm = activeConfig.isPromotionalTerm ?? true;
@@ -252,6 +254,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
           performance: termAssessments,
           positionRule: activeConfig.positionRule || "subject",
           gradingScale: activeConfig.gradingScale,
+          reportCardSettings: activeConfig.reportCardSettings,
           summary: {
             totalScore: termTotal,
             averageScore: termAvg.toFixed(1),

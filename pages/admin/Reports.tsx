@@ -15,8 +15,8 @@ import {
   kgSubjects,
   primarySubjects,
   jhsSubjects,
-  getFilteredClasses,
 } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { Download, BookOpen, Users, CheckCircle, XCircle } from "lucide-react";
 import { Assessment } from "../../types";
 
@@ -24,9 +24,7 @@ const Reports = () => {
   const { school } = useSchool();
   const schoolId = school?.id || null;
 
-  const availableClasses = React.useMemo(() => {
-    return getFilteredClasses(school?.schoolType);
-  }, [school?.schoolType]);
+  const { classes: availableClasses } = useSchoolClasses();
 
   const [selectedClass, setSelectedClass] = useState("");
   const [reportData, setReportData] = useState<any[]>([]);

@@ -8,7 +8,8 @@ import { showToast } from "../../services/toast";
 import { deleteParentDashboardNotice, getParentDashboardNoticeHistory, sendParentDashboardNotice } from "../../services/backendApi";
 import { API_BASE_URL } from "../../src/config";
 import { MessageSquare, Users, Send, Loader2, RefreshCw, AlertTriangle, Sparkles, CreditCard, Wallet, ShieldAlert, ChevronDown, Filter, CheckCircle2, Inbox, Trash2 } from "lucide-react";
-import { CLASSES_LIST, getFilteredClasses } from "../../constants";
+import { CLASSES_LIST } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { usePaystackPayment } from "react-paystack";
 
 // Types
@@ -372,7 +373,7 @@ const Reminders: React.FC = () => {
         ? parents.filter((p) => !p.class)
         : parents.filter((p) => p.class === classFilter);
         
-  const availableClasses = getFilteredClasses(school?.schoolType);
+  const { classes: availableClasses } = useSchoolClasses();
 
   const getClassParentCount = (className: string) => {
     return parents.filter((p) => p.class === className).length;

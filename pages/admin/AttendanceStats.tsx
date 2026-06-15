@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../components/Layout";
 import { db } from "../../services/mockDb";
-import { CLASSES_LIST, getFilteredClasses } from "../../constants";
+import { CLASSES_LIST } from "../../constants";
+import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { AlertTriangle, CheckCircle, HelpCircle } from "lucide-react";
 import UserAvatar from "../../components/UserAvatar";
 import { useSchool } from "../../context/SchoolContext";
@@ -23,7 +24,7 @@ interface StudentAttendanceStats {
 const AttendanceStats = () => {
   const { school } = useSchool();
   const schoolId = school?.id || null;
-  const availableClasses = getFilteredClasses(school?.schoolType);
+  const { classes: availableClasses } = useSchoolClasses();
   const [selectedClass, setSelectedClass] = useState(
     availableClasses[0]?.id || "c_p1",
   );

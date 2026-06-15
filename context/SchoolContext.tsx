@@ -7,13 +7,17 @@ import React, {
 } from "react";
 import { doc, onSnapshot, getDoc } from "firebase/firestore";
 import { firestore } from "../services/firebase";
-import { School } from "../types";
+import { School, SchoolConfig } from "../types";
 import { useAuth } from "./AuthContext";
+import { setRuntimeClasses } from "../constants";
+import { getConfiguredClassRooms } from "../services/classCatalog";
 
 interface SchoolContextType {
   school: School | null;
   schoolLoading: boolean;
   schoolError: string | null;
+  schoolConfig: SchoolConfig | null;
+  classCatalogReady: boolean;
   refreshSchool: () => void;
 }
 
@@ -26,6 +30,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   const [school, setSchool] = useState<School | null>(null);
   const [schoolLoading, setSchoolLoading] = useState(false);
   const [schoolError, setSchoolError] = useState<string | null>(null);
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
+  const [classCatalogReady, setClassCatalogReady] = useState(false);
   const [cachedSchool, setCachedSchool] = useState<School | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -33,18 +39,24 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
   useEffect(() => {
     let cancelled = false;
-    let unsubscribe: (() => void) | null = null;
+    let unsubscribeSchool: (() => void) | null = null;
+    let unsubscribeSettings: (() => void) | null = null;
     let retryTimer: NodeJS.Timeout | null = null;
 
     const loadSchoolData = async () => {
       // reset immediately when user changes
       setSchool(null);
       setSchoolError(null);
+      setClassCatalogReady(false);
+      setRuntimeClasses();
 
       if (!isAuthenticated || !user || user.role === "super_admin") {
         setSchool(null);
         setCachedSchool(null);
         setSchoolLoading(false);
+        setSchoolConfig(null);
+        setClassCatalogReady(true);
+        setRuntimeClasses();
         return;
       }
 
@@ -56,6 +68,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
       if (!effectiveSchoolId) {
         setSchoolLoading(false);
+        setClassCatalogReady(true);
         if (user.role !== "parent") {
           setSchoolError("No school assigned to your account");
         }
@@ -93,6 +106,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
             schoolId: effectiveSchoolId,
           });
           if (!cancelled) setSchoolLoading(false);
+          if (!cancelled) setClassCatalogReady(true);
           
           // Retry after a delay
           retryTimer = setTimeout(() => {
@@ -116,6 +130,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
             );
           if (!cancelled) setSchool(null);
           if (!cancelled) setSchoolLoading(false);
+          if (!cancelled) setClassCatalogReady(true);
           return;
         }
 
@@ -124,10 +139,42 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         if (!cancelled) setSchool(schoolData);
         if (!cancelled) setCachedSchool(schoolData);
         window.dispatchEvent(new Event("school-branding-updated"));
-        if (!cancelled) setSchoolLoading(false);
+
+        const settingsRef = doc(firestore, "settings", effectiveSchoolId);
+        const settingsSnap = await getDoc(settingsRef);
+        if (!cancelled) {
+          const nextConfig = settingsSnap.exists()
+            ? ({ schoolId: effectiveSchoolId, ...settingsSnap.data() } as SchoolConfig)
+            : null;
+          setSchoolConfig(nextConfig);
+          setRuntimeClasses(
+            getConfiguredClassRooms(
+              effectiveSchoolId,
+              schoolData.schoolType,
+              nextConfig?.classRooms,
+            ),
+          );
+          setClassCatalogReady(true);
+          setSchoolLoading(false);
+        }
+
+        unsubscribeSettings = onSnapshot(settingsRef, (snapshot) => {
+          if (cancelled) return;
+          const nextConfig = snapshot.exists()
+            ? ({ schoolId: effectiveSchoolId, ...snapshot.data() } as SchoolConfig)
+            : null;
+          setSchoolConfig(nextConfig);
+          setRuntimeClasses(
+            getConfiguredClassRooms(
+              effectiveSchoolId,
+              schoolData.schoolType,
+              nextConfig?.classRooms,
+            ),
+          );
+        });
 
         // Now set up the listener for real-time updates
-        unsubscribe = onSnapshot(
+        unsubscribeSchool = onSnapshot(
           schoolDocRef,
           (docSnap) => {
             if (!docSnap.exists()) {
@@ -160,6 +207,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
           setSchoolError("Failed to load school information. Please try refreshing the page.");
         if (!cancelled) setSchool(null);
         if (!cancelled) setSchoolLoading(false);
+        if (!cancelled) setClassCatalogReady(true);
       }
     };
 
@@ -167,7 +215,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
 
     return () => {
       cancelled = true;
-      if (unsubscribe) unsubscribe();
+      unsubscribeSchool?.();
+      unsubscribeSettings?.();
       if (retryTimer) clearTimeout(retryTimer);
     };
   }, [isAuthenticated, user?.id, user?.schoolId, user?.role, refreshTrigger]);
@@ -178,6 +227,8 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         school: school || cachedSchool,
         schoolLoading,
         schoolError,
+        schoolConfig,
+        classCatalogReady,
         refreshSchool,
       }}
     >
