@@ -51,6 +51,10 @@ import {
 import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
 import { logActivity } from "./activityLog";
 import {
+  collectHolidayDateKeys,
+  getExpectedSchoolDayKeys,
+} from "./schoolCalendar";
+import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
   CLASSES_LIST,
@@ -2266,80 +2270,58 @@ class FirestoreService {
   ) {
     await this.requireFeature(schoolId, "basic_exam_reports");
     const attendanceRecords = await this.getClassAttendance(schoolId, classId);
-    const holidayDates = new Set(
-      attendanceRecords.filter((r) => r.isHoliday).map((r) => r.date),
-    );
     const schoolConfig = await this.getSchoolConfig(schoolId);
-    const configHolidayDates = new Set(
-      (schoolConfig.holidayDates || []).map((h) => h.date),
-    );
+    const holidayDates = collectHolidayDateKeys([
+      ...attendanceRecords.filter((r) => r.isHoliday).map((r) => r.date),
+      ...(schoolConfig.holidayDates || []),
+    ]);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const vacationDate = schoolConfig.vacationDate
+      ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
+      : null;
+    const endDate = vacationDate && vacationDate < today ? vacationDate : today;
 
-    let totalDays = 0;
-    let schoolDates: string[] = [];
-    if (schoolConfig.schoolReopenDate) {
-      const reopen = new Date(`${schoolConfig.schoolReopenDate}T00:00:00`);
-      const vacation = schoolConfig.vacationDate
-        ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
-        : null;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      // Use the configured vacation date as the term end when present so
-      // holidays set by admin between reopen and vacate are included in
-      // the total school days calculation. Fall back to today when no
-      // vacation date is configured.
-      const endDate = vacation ? vacation : today;
+    let schoolDates = getExpectedSchoolDayKeys({
+      reopenDate: schoolConfig.schoolReopenDate,
+      endDate,
+      holidayDates: Array.from(holidayDates),
+      vacationDate: schoolConfig.vacationDate,
+      nextTermBegins: schoolConfig.nextTermBegins,
+    });
 
-      if (!Number.isNaN(reopen.getTime())) {
-        const current = new Date(reopen);
-        while (current <= endDate) {
-          const day = current.getDay();
-          const isWeekend = day === 0 || day === 6;
-          if (!isWeekend) {
-            const dateKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`;
-            if (
-              !holidayDates.has(dateKey) &&
-              !configHolidayDates.has(dateKey)
-            ) {
-              totalDays++;
-              schoolDates.push(dateKey);
-            }
-          }
-          current.setDate(current.getDate() + 1);
-        }
-      }
+    // Schools without term dates fall back to dates where attendance was
+    // actually recorded. A set prevents legacy duplicate records inflating totals.
+    if (!schoolDates.length) {
+      schoolDates = Array.from(
+        new Set(
+          attendanceRecords
+            .filter((r) => !r.isHoliday && !holidayDates.has(r.date))
+            .map((r) => r.date),
+        ),
+      ).sort();
     }
 
-    if (!totalDays) {
-      const nonHoliday = attendanceRecords.filter(
-        (r) => !r.isHoliday && !configHolidayDates.has(r.date),
-      );
-      totalDays = nonHoliday.length;
-      schoolDates = nonHoliday.map((r) => r.date).sort();
-    }
-    const presentDays = attendanceRecords.filter(
-      (r) =>
-        !r.isHoliday &&
-        !configHolidayDates.has(r.date) &&
-        r.presentStudentIds.includes(studentId),
-    ).length;
+    const schoolDateSet = new Set(schoolDates);
+    const normalizedStudentId = studentId.trim();
+    const presentDates = Array.from(
+      new Set(
+        attendanceRecords
+          .filter(
+            (r) =>
+              !r.isHoliday &&
+              schoolDateSet.has(r.date) &&
+              r.presentStudentIds?.some(
+                (id) => id.trim() === normalizedStudentId,
+              ),
+          )
+          .map((r) => r.date),
+      ),
+    ).sort();
+    const totalDays = schoolDates.length;
+    const presentDays = presentDates.length;
     const attendancePercentage =
       totalDays === 0 ? 0 : Math.round((presentDays / totalDays) * 100);
-
-    if (!schoolDates.length) {
-      schoolDates = attendanceRecords
-        .filter((r) => !r.isHoliday && !configHolidayDates.has(r.date))
-        .map((r) => r.date)
-        .sort();
-    }
-    const presentDates = attendanceRecords
-      .filter(
-        (r) =>
-          !r.isHoliday &&
-          !configHolidayDates.has(r.date) &&
-          r.presentStudentIds.includes(studentId),
-      )
-      .map((r) => r.date)
-      .sort();
 
     const q = query(
       collection(firestore, "assessments"),
