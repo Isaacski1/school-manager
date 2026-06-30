@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // Isolate the command-center theme from any dashboard-wide `.dark` class.
+  darkMode: ["selector", ".ai-dark"],
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",

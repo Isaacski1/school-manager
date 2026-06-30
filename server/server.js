@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import v8 from "v8";
 import { fileURLToPath } from "url";
 import express from "express";
 import admin from "firebase-admin";
@@ -8,6 +9,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +17,98 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
+
+const GOOGLE_AI_MODEL = "gemma-4-31b-it";
+let googleAiClient = null;
+
+const getGoogleAiClient = () => {
+  const apiKey = String(process.env.GOOGLE_API_KEY || "").trim();
+  if (!apiKey) {
+    const error = new Error("Google AI Studio API key is not configured");
+    error.code = "GOOGLE_AI_NOT_CONFIGURED";
+    throw error;
+  }
+  if (!googleAiClient) {
+    googleAiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: { timeout: 30000 },
+    });
+  }
+  return googleAiClient;
+};
+
+const logGoogleAiError = (scope, error) => {
+  console.error(`[${scope}] Google AI request failed:`, {
+    name: error?.name || "Error",
+    code: error?.code || error?.status || null,
+    status: error?.status || error?.response?.status || null,
+    message: String(error?.message || error || "Unknown Google AI error").slice(
+      0,
+      500,
+    ),
+  });
+};
+
+const generateGoogleAiJson = async ({
+  systemInstruction,
+  messages,
+  temperature = 0.2,
+  maxOutputTokens = 900,
+  timeoutMs = 15000,
+}) => {
+  const client = getGoogleAiClient();
+  const effectiveTimeoutMs = Math.max(3000, timeoutMs);
+  const abortSignal = AbortSignal.timeout(effectiveTimeoutMs);
+  const contents = (Array.isArray(messages) ? messages : [])
+    .filter(
+      (message) =>
+        message &&
+        ["user", "assistant", "model"].includes(String(message.role || "")) &&
+        String(message.content || "").trim(),
+    )
+    .map((message) => ({
+      role: message.role === "assistant" ? "model" : message.role,
+      parts: [{ text: String(message.content).trim() }],
+    }));
+
+  let response;
+  try {
+    response = await client.models.generateContent({
+      model: GOOGLE_AI_MODEL,
+      contents,
+      config: {
+        systemInstruction,
+        temperature,
+        maxOutputTokens,
+        responseMimeType: "application/json",
+        abortSignal,
+        httpOptions: { timeout: effectiveTimeoutMs },
+      },
+    });
+  } catch (error) {
+    if (
+      error?.name === "AbortError" ||
+      error?.name === "TimeoutError" ||
+      /abort|timed out|timeout/i.test(String(error?.message || ""))
+    ) {
+      const timeoutError = new Error(
+        `Google AI did not respond within ${effectiveTimeoutMs} ms`,
+      );
+      timeoutError.name = "GoogleAiTimeoutError";
+      timeoutError.code = "GOOGLE_AI_TIMEOUT";
+      timeoutError.cause = error;
+      throw timeoutError;
+    }
+    throw error;
+  }
+  const text = String(response?.text || "").trim();
+  if (!text) {
+    const error = new Error("Google AI returned an empty response");
+    error.code = "GOOGLE_AI_EMPTY_RESPONSE";
+    throw error;
+  }
+  return text;
+};
 
 const escapeHtml = (unsafe) => {
   return String(unsafe || "")
@@ -269,6 +363,11 @@ const REQUEST_METRICS_MAX_POINTS = Math.max(
 const REQUEST_METRICS = [];
 let ACTIVE_REQUESTS = 0;
 let lastRequestMetricsPruneAt = 0;
+const PLATFORM_HEALTH_CACHE_TTL_MS = Math.max(
+  30 * 1000,
+  parsePositiveNumber(process.env.PLATFORM_HEALTH_CACHE_TTL_MS, 60 * 1000),
+);
+let platformHealthCache = null;
 const HAS_HRTIME_BIGINT = Boolean(
   process?.hrtime && typeof process.hrtime.bigint === "function",
 );
@@ -354,12 +453,16 @@ app.use((req, res, next) => {
         : null;
     const method = String(req.method || "GET").toUpperCase();
     const path = normalizeRequestPath(req.originalUrl || req.url || "/");
-    ACTIVE_REQUESTS += 1;
+    const trackRequest = path !== "/api/superadmin/system-health";
+    if (trackRequest) {
+      ACTIVE_REQUESTS += 1;
+    }
 
     let finalized = false;
     const finalizeMetric = (statusCode, aborted = false) => {
       if (finalized) return;
       finalized = true;
+      if (!trackRequest) return;
       ACTIVE_REQUESTS = Math.max(0, ACTIVE_REQUESTS - 1);
       const elapsedMs = resolveElapsedMs({
         startedAtMs,
@@ -600,6 +703,437 @@ async function authMiddleware(req, res, next) {
     return res.status(403).json({ error: "Forbidden: Invalid token" });
   }
 }
+
+const SCHOOL_ASSISTANT_ROUTES = Object.freeze({
+  "/admin": "Dashboard",
+  "/admin/students": "Students",
+  "/admin/student-history": "Student History",
+  "/admin/teachers": "Teachers",
+  "/admin/attendance": "Attendance",
+  "/admin/teacher-attendance": "Teacher Attendance",
+  "/admin/reports": "Academic Reports",
+  "/admin/report-card": "Report Cards",
+  "/admin/timetable": "Timetable",
+  "/admin/assessment": "Assessment",
+  "/admin/fees": "Fees & Payments",
+  "/admin/payroll": "Staff Payroll",
+  "/admin/activity": "Activity",
+  "/admin/payment-settings": "Online Payment",
+  "/admin/reminders": "SMS Reminders",
+  "/admin/backups": "Backups",
+  "/admin/billing": "Billing",
+  "/admin/settings": "Settings",
+});
+
+const SCHOOL_ASSISTANT_GUIDE = `
+School Manager GH admin navigation:
+- Students manages learner records.
+- Student History shows historical learner records.
+- Teachers manages teacher profiles, assignments, and account access.
+- Attendance records learner attendance by class and date.
+- Teacher Attendance reviews staff attendance.
+- Assessment manages assessment setup.
+- Academic Reports reviews academic performance.
+- Report Cards prepares, generates, and prints report cards.
+- Timetable manages lessons, teachers, subjects, and times.
+- Fees & Payments manages fees, invoices, balances, and payments.
+- Online Payment configures online payment details.
+- SMS Reminders sends reviewed messages to selected recipients.
+- Staff Payroll manages staff payment profiles and payroll runs.
+- Activity reviews account activity.
+- Backups manages school backups.
+- Billing reviews subscription and renewal status.
+- Settings manages the school profile and academic settings.
+`;
+
+app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) => {
+  try {
+    const apiKey = String(process.env.GOOGLE_API_KEY || "").trim();
+    if (!apiKey) {
+      return res.status(503).json({
+        code: "ASSISTANT_NOT_CONFIGURED",
+        message: "The AI assistant has not been configured yet.",
+      });
+    }
+
+    const userSnap = await admin.firestore().collection("users").doc(req.user.uid).get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    if (userData.role !== "school_admin") {
+      return res.status(403).json({
+        code: "ADMIN_ONLY",
+        message: "The School Assistant is available to school administrators only.",
+      });
+    }
+
+    const schoolId = String(userData.schoolId || "").trim();
+    if (!schoolId) {
+      return res.status(400).json({
+        code: "SCHOOL_CONTEXT_MISSING",
+        message: "Your administrator account is not linked to a school.",
+      });
+    }
+
+    const [
+      schoolSnap,
+      studentCountSnap,
+      maleCountSnap,
+      femaleCountSnap,
+      teacherCountSnap,
+      classCountSnap,
+    ] = await Promise.all([
+      admin.firestore().collection("schools").doc(schoolId).get(),
+      admin
+        .firestore()
+        .collection("students")
+        .where("schoolId", "==", schoolId)
+        .count()
+        .get(),
+      admin
+        .firestore()
+        .collection("students")
+        .where("schoolId", "==", schoolId)
+        .where("gender", "==", "Male")
+        .count()
+        .get(),
+      admin
+        .firestore()
+        .collection("students")
+        .where("schoolId", "==", schoolId)
+        .where("gender", "==", "Female")
+        .count()
+        .get(),
+      admin
+        .firestore()
+        .collection("users")
+        .where("schoolId", "==", schoolId)
+        .where("role", "==", "teacher")
+        .count()
+        .get(),
+      admin
+        .firestore()
+        .collection("classes")
+        .where("schoolId", "==", schoolId)
+        .count()
+        .get(),
+    ]);
+    const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
+    const schoolContext = {
+      schoolName: String(schoolData.name || userData.schoolName || "Your school").slice(0, 160),
+      totalStudents: Number(studentCountSnap.data().count || 0),
+      maleStudents: Number(maleCountSnap.data().count || 0),
+      femaleStudents: Number(femaleCountSnap.data().count || 0),
+      totalTeachers: Number(teacherCountSnap.data().count || 0),
+      totalClasses: Number(classCountSnap.data().count || 0),
+    };
+
+    const message =
+      typeof req.body?.message === "string"
+        ? req.body.message.trim().slice(0, 1500)
+        : "";
+    const pathname =
+      typeof req.body?.pathname === "string" &&
+      Object.hasOwn(SCHOOL_ASSISTANT_ROUTES, req.body.pathname)
+        ? req.body.pathname
+        : "/admin";
+    const history = Array.isArray(req.body?.history)
+      ? req.body.history
+          .slice(-10)
+          .filter(
+            (item) =>
+              item &&
+              (item.role === "user" || item.role === "assistant") &&
+              typeof item.content === "string",
+          )
+          .map((item) => ({
+            role: item.role,
+            content: item.content.trim().slice(0, 2000),
+          }))
+          .filter((item) => item.content)
+      : [];
+
+    if (!message) {
+      return res.status(400).json({ message: "Please enter a question." });
+    }
+
+    const normalizedQuestion = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+    const asksAboutAttendance =
+      /\b(attendance|absent|absence|present|register|registers)\b/.test(
+        normalizedQuestion,
+      );
+    const asksForStudentCount =
+      /\bhow many\b/.test(normalizedQuestion) &&
+      /\b(student|students|learner|learners)\b/.test(normalizedQuestion) &&
+      !asksAboutAttendance;
+    const asksForGenderBreakdown =
+      /\b(male|males|boy|boys)\b/.test(normalizedQuestion) &&
+      /\b(female|females|girl|girls)\b/.test(normalizedQuestion) &&
+      /\b(how many|number|count|total)\b/.test(normalizedQuestion);
+    const asksForTeacherCount =
+      /\bhow many\b/.test(normalizedQuestion) &&
+      /\b(teacher|teachers|staff)\b/.test(normalizedQuestion) &&
+      !asksAboutAttendance;
+    const asksForClassCount =
+      /\bhow many\b/.test(normalizedQuestion) &&
+      /\b(class|classes)\b/.test(normalizedQuestion) &&
+      !asksAboutAttendance;
+    if (asksForGenderBreakdown) {
+      const unspecified =
+        schoolContext.totalStudents -
+        schoolContext.maleStudents -
+        schoolContext.femaleStudents;
+      const unspecifiedText =
+        unspecified > 0
+          ? ` ${unspecified} additional student${unspecified === 1 ? " has" : "s have"} no Male/Female value recorded.`
+          : "";
+      return res.json({
+        answer: `${schoolContext.schoolName} has ${schoolContext.maleStudents} male students and ${schoolContext.femaleStudents} female students.${unspecifiedText}`,
+        action: {
+          label: "Open Students",
+          path: "/admin/students",
+        },
+      });
+    }
+    if (asksForStudentCount) {
+      const noun = schoolContext.totalStudents === 1 ? "student" : "students";
+      return res.json({
+        answer: `${schoolContext.schoolName} currently has ${schoolContext.totalStudents} ${noun} recorded in School Manager GH.`,
+        action: {
+          label: "Open Students",
+          path: "/admin/students",
+        },
+      });
+    }
+    if (asksForTeacherCount) {
+      const noun = schoolContext.totalTeachers === 1 ? "teacher" : "teachers";
+      return res.json({
+        answer: `${schoolContext.schoolName} currently has ${schoolContext.totalTeachers} ${noun} recorded in School Manager GH.`,
+        action: { label: "Open Teachers", path: "/admin/teachers" },
+      });
+    }
+    if (asksForClassCount) {
+      const noun = schoolContext.totalClasses === 1 ? "class" : "classes";
+      return res.json({
+        answer: `${schoolContext.schoolName} currently has ${schoolContext.totalClasses} ${noun} recorded in School Manager GH.`,
+        action: { label: "Open Settings", path: "/admin/settings" },
+      });
+    }
+    if (asksAboutAttendance) {
+      const formatSchoolDate = (date) =>
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Africa/Accra",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(date);
+      const explicitDate = message.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
+      const targetDate = (() => {
+        if (explicitDate) return explicitDate;
+        const date = new Date();
+        if (/\byesterday\b/.test(normalizedQuestion)) {
+          date.setUTCDate(date.getUTCDate() - 1);
+        }
+        return formatSchoolDate(date);
+      })();
+
+      const [settingsSnap, studentsSnap, attendanceSnap] = await Promise.all([
+        admin.firestore().collection("settings").doc(schoolId).get(),
+        admin
+          .firestore()
+          .collection("students")
+          .where("schoolId", "==", schoolId)
+          .get(),
+        admin
+          .firestore()
+          .collection("attendance")
+          .where("schoolId", "==", schoolId)
+          .where("date", "==", targetDate)
+          .get(),
+      ]);
+
+      const configuredClasses = Array.isArray(settingsSnap.data()?.classRooms)
+        ? settingsSnap
+            .data()
+            .classRooms.filter((classRoom) => classRoom?.isActive !== false)
+            .map((classRoom) => ({
+              id: String(classRoom.id || ""),
+              name: String(classRoom.name || classRoom.id || "Unknown class"),
+            }))
+            .filter((classRoom) => classRoom.id)
+        : [];
+      const students = studentsSnap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(
+          (student) =>
+            student.studentStatus !== "graduated" &&
+            student.studentStatus !== "stopped",
+        );
+      const attendanceRecords = attendanceSnap.docs
+        .map((docSnap) => docSnap.data())
+        .filter((record) => !record.isHoliday);
+      const knownClassIds = new Set([
+        ...configuredClasses.map((classRoom) => classRoom.id),
+        ...students.map((student) => String(student.classId || "")).filter(Boolean),
+      ]);
+      const classNames = new Map(
+        configuredClasses.map((classRoom) => [classRoom.id, classRoom.name]),
+      );
+      const requestedClass = [...knownClassIds].find((classId) => {
+        const name = String(classNames.get(classId) || classId)
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        return (
+          normalizedQuestion.includes(` ${classId.toLowerCase()} `) ||
+          (name && normalizedQuestion.includes(name))
+        );
+      });
+      const scopedClassIds = requestedClass ? [requestedClass] : [...knownClassIds];
+      const summaries = scopedClassIds.map((classId) => {
+        const classStudents = students.filter(
+          (student) => String(student.classId || "") === classId,
+        );
+        const record = attendanceRecords.find(
+          (item) => String(item.classId || "") === classId,
+        );
+        const presentIds = new Set(
+          Array.isArray(record?.presentStudentIds) ? record.presentStudentIds : [],
+        );
+        const absentStudents = record
+          ? classStudents.filter((student) => !presentIds.has(student.id))
+          : [];
+        return {
+          classId,
+          className: String(classNames.get(classId) || classId),
+          registeredStudents: classStudents.length,
+          registerSubmitted: Boolean(record),
+          present: record
+            ? classStudents.filter((student) => presentIds.has(student.id)).length
+            : 0,
+          absentStudents,
+        };
+      });
+      const submitted = summaries.filter((summary) => summary.registerSubmitted);
+      const missing = summaries.filter(
+        (summary) => !summary.registerSubmitted && summary.registeredStudents > 0,
+      );
+      const present = submitted.reduce((sum, summary) => sum + summary.present, 0);
+      const absent = submitted.reduce(
+        (sum, summary) => sum + summary.absentStudents.length,
+        0,
+      );
+      const rate = present + absent > 0 ? Math.round((present / (present + absent)) * 100) : 0;
+      const wantsAbsentNames =
+        /\b(who|which|list|name|names|absent)\b/.test(normalizedQuestion);
+      const absentStudents = submitted.flatMap((summary) =>
+        summary.absentStudents.map((student) => ({
+          name: String(student.name || student.fullName || "Unnamed student"),
+          className: summary.className,
+        })),
+      );
+
+      const scopeLabel = requestedClass
+        ? ` for ${String(classNames.get(requestedClass) || requestedClass)}`
+        : "";
+      const parts = [
+        `Attendance for ${targetDate}${scopeLabel}: ${present} present and ${absent} absent across ${submitted.length} submitted register${submitted.length === 1 ? "" : "s"} (${rate}% attendance).`,
+      ];
+      if (missing.length > 0) {
+        parts.push(
+          `Missing registers: ${missing.map((summary) => summary.className).join(", ")}.`,
+        );
+      }
+      if (wantsAbsentNames && absentStudents.length > 0) {
+        const visible = absentStudents
+          .slice(0, 25)
+          .map((student) => `${student.name} (${student.className})`);
+        parts.push(
+          `Absent learners: ${visible.join(", ")}${absentStudents.length > visible.length ? `, plus ${absentStudents.length - visible.length} more` : ""}.`,
+        );
+      }
+      if (submitted.length === 0) {
+        parts.push("No attendance register has been submitted for this date.");
+      }
+
+      return res.json({
+        answer: parts.join("\n"),
+        action: { label: "View Attendance", path: "/admin/attendance" },
+      });
+    }
+
+    const routeList = Object.entries(SCHOOL_ASSISTANT_ROUTES)
+      .map(([path, label]) => `${path} = ${label}`)
+      .join("\n");
+    const systemPrompt = `You are School Assistant, a personal product guide for a school administrator using School Manager GH.
+Be warm, concise, practical, and confident. Answer only questions about using School Manager GH or closely related school administration workflows.
+Use the current page and conversation history to understand follow-up questions.
+Never claim that you performed an action, changed data, sent a message, or saw school records. Never request passwords, API keys, card data, or secrets.
+If this guide does not establish a fact, say so instead of inventing a feature. When useful, recommend exactly one approved route.
+
+Current page: ${SCHOOL_ASSISTANT_ROUTES[pathname]} (${pathname})
+${SCHOOL_ASSISTANT_GUIDE}
+Live school summary (read-only and authoritative):
+${JSON.stringify(schoolContext)}
+Approved routes:
+${routeList}
+
+Return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
+Use null for action when navigation is unnecessary. The path must be approved.`;
+
+    const rawContent = await generateGoogleAiJson({
+      systemInstruction: systemPrompt,
+      messages: [...history, { role: "user", content: message }],
+      temperature: 0.25,
+      maxOutputTokens: 600,
+      timeoutMs: 30000,
+    });
+
+    const normalizedContent = rawContent
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "");
+    let parsed;
+    try {
+      parsed = JSON.parse(normalizedContent);
+    } catch {
+      const jsonStart = normalizedContent.indexOf("{");
+      const jsonEnd = normalizedContent.lastIndexOf("}");
+      if (jsonStart < 0 || jsonEnd <= jsonStart) {
+        throw new Error("Google AI returned a non-JSON assistant response.");
+      }
+      parsed = JSON.parse(normalizedContent.slice(jsonStart, jsonEnd + 1));
+    }
+    const answer =
+      typeof parsed?.answer === "string" ? parsed.answer.trim().slice(0, 4000) : "";
+    const actionPath =
+      typeof parsed?.action?.path === "string" &&
+      Object.hasOwn(SCHOOL_ASSISTANT_ROUTES, parsed.action.path)
+        ? parsed.action.path
+        : null;
+    if (!answer) {
+      throw new Error("Google AI returned an invalid assistant response.");
+    }
+
+    return res.json({
+      answer,
+      action: actionPath
+        ? {
+            path: actionPath,
+            label:
+              typeof parsed.action.label === "string"
+                ? parsed.action.label.trim().slice(0, 50)
+                : `Open ${SCHOOL_ASSISTANT_ROUTES[actionPath]}`,
+          }
+        : null,
+    });
+  } catch (error) {
+    logGoogleAiError("SchoolAssistant", error);
+    return res.status(502).json({
+      code: "ASSISTANT_ERROR",
+      message: "The AI assistant could not answer right now.",
+    });
+  }
+});
 
 app.post("/api/schools/branding", authMiddleware, async (req, res) => {
   try {
@@ -1592,6 +2126,243 @@ app.post("/api/parent/notices/:noticeId/read", authMiddleware, async (req, res) 
   }
 });
 
+const PLATFORM_BROADCAST_ROLES = new Set([
+  "school_admin",
+  "teacher",
+  "parent",
+]);
+
+const normalizeBroadcastMillis = (value) => {
+  if (!value) return null;
+  if (typeof value === "number") return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value?._seconds === "number") return value._seconds * 1000;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolvePlatformBroadcastViewer = async (req) => {
+  const uid = String(req.user?.uid || "").trim();
+  const callerSnap = uid
+    ? await admin.firestore().collection("users").doc(uid).get()
+    : null;
+  const caller = callerSnap?.exists ? callerSnap.data() || {} : {};
+  const role = String(
+    caller.role || req.user?.role || req.user?.userRole || "",
+  ).toLowerCase();
+  const schoolIds = new Set(
+    [caller.schoolId, req.user?.schoolId]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+
+  if (role === "parent") {
+    const linkedStudentIds = [
+      ...(Array.isArray(caller.studentIds) ? caller.studentIds : []),
+      ...(Array.isArray(caller.linkedStudentIds) ? caller.linkedStudentIds : []),
+      ...(Array.isArray(req.user?.studentIds) ? req.user.studentIds : []),
+      ...(Array.isArray(req.user?.linkedStudentIds)
+        ? req.user.linkedStudentIds
+        : []),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .slice(0, 25);
+
+    if (linkedStudentIds.length > 0) {
+      const studentRefs = linkedStudentIds.map((studentId) =>
+        admin.firestore().collection("students").doc(studentId),
+      );
+      const studentDocs = await admin.firestore().getAll(...studentRefs);
+      studentDocs.forEach((studentDoc) => {
+        if (!studentDoc.exists) return;
+        const schoolId = String(studentDoc.data()?.schoolId || "").trim();
+        if (schoolId) schoolIds.add(schoolId);
+      });
+    }
+  }
+
+  return { uid, role, schoolIds: [...schoolIds], caller };
+};
+
+const platformBroadcastMatchesViewer = (broadcast, viewer, now = Date.now()) => {
+  const publishAt = normalizeBroadcastMillis(broadcast.publishAt);
+  const expiresAt = normalizeBroadcastMillis(broadcast.expiresAt);
+  const audienceRoles = Array.isArray(broadcast.audienceRoles)
+    ? broadcast.audienceRoles.map((value) => String(value || "").toLowerCase())
+    : [];
+  const targetSchoolIds = Array.isArray(broadcast.targetSchoolIds)
+    ? broadcast.targetSchoolIds.map((value) => String(value || ""))
+    : [];
+
+  const isPublished =
+    broadcast.status === "PUBLISHED" || broadcast.status === "SCHEDULED";
+  const isLive = !publishAt || publishAt <= now;
+  const isActive = !expiresAt || expiresAt > now;
+  const matchesRole =
+    audienceRoles.length === 0 || audienceRoles.includes(viewer.role);
+  const matchesSchool =
+    broadcast.targetType === "ALL" ||
+    (broadcast.targetType === "SCHOOLS" &&
+      targetSchoolIds.some((schoolId) => viewer.schoolIds.includes(schoolId)));
+
+  return isPublished && isLive && isActive && matchesRole && matchesSchool;
+};
+
+/**
+ * Load the current dashboard user's eligible, unread platform broadcasts.
+ * GET /api/platform-broadcasts/inbox
+ */
+app.get("/api/platform-broadcasts/inbox", authMiddleware, async (req, res) => {
+  try {
+    const viewer = await resolvePlatformBroadcastViewer(req);
+    if (!viewer.uid || !PLATFORM_BROADCAST_ROLES.has(viewer.role)) {
+      return res.json({ success: true, broadcasts: [] });
+    }
+
+    const broadcastSnap = await admin
+      .firestore()
+      .collection("platformBroadcasts")
+      .orderBy("createdAt", "desc")
+      .limit(100)
+      .get();
+    const now = Date.now();
+    const eligible = broadcastSnap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      .filter((broadcast) =>
+        platformBroadcastMatchesViewer(broadcast, viewer, now),
+      );
+
+    const receiptRefs = eligible.map((broadcast) => {
+      const receiptId = crypto
+        .createHash("sha256")
+        .update(`${broadcast.id}:${viewer.uid}`)
+        .digest("hex");
+      return admin
+        .firestore()
+        .collection("platformBroadcastReceipts")
+        .doc(receiptId);
+    });
+    const receiptDocs = receiptRefs.length
+      ? await admin.firestore().getAll(...receiptRefs)
+      : [];
+    const hiddenBroadcastIds = new Set();
+    receiptDocs.forEach((receiptDoc) => {
+      if (!receiptDoc.exists) return;
+      const receipt = receiptDoc.data() || {};
+      const snoozedUntil = Number(receipt.snoozedUntil || 0);
+      if (
+        receipt.acknowledgedAt ||
+        receipt.dismissedAt ||
+        (snoozedUntil > now)
+      ) {
+        hiddenBroadcastIds.add(String(receipt.broadcastId || ""));
+      }
+    });
+
+    const priorityRank = { CRITICAL: 0, IMPORTANT: 1, NORMAL: 2 };
+    const broadcasts = eligible
+      .filter((broadcast) => !hiddenBroadcastIds.has(broadcast.id))
+      .sort((left, right) => {
+        const priorityDelta =
+          (priorityRank[left.priority] ?? 3) -
+          (priorityRank[right.priority] ?? 3);
+        if (priorityDelta !== 0) return priorityDelta;
+        return (
+          Number(normalizeBroadcastMillis(right.createdAt) || 0) -
+          Number(normalizeBroadcastMillis(left.createdAt) || 0)
+        );
+      })
+      .slice(0, 10);
+
+    return res.json({ success: true, broadcasts });
+  } catch (error) {
+    console.error("Platform broadcast inbox error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to load platform announcements.",
+    });
+  }
+});
+
+/**
+ * Record an impression, dismissal, snooze, or acknowledgement.
+ * POST /api/platform-broadcasts/:broadcastId/receipt
+ */
+app.post(
+  "/api/platform-broadcasts/:broadcastId/receipt",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const broadcastId = String(req.params.broadcastId || "").trim();
+      const action = String(req.body?.action || "").toLowerCase();
+      const allowedActions = new Set([
+        "impression",
+        "read",
+        "acknowledge",
+        "dismiss",
+        "snooze",
+      ]);
+      if (!broadcastId || !allowedActions.has(action)) {
+        return res.status(400).json({ error: "A valid receipt action is required." });
+      }
+
+      const viewer = await resolvePlatformBroadcastViewer(req);
+      if (!viewer.uid || !PLATFORM_BROADCAST_ROLES.has(viewer.role)) {
+        return res.status(403).json({ error: "Broadcast receipt is not available for this role." });
+      }
+
+      const broadcastRef = admin
+        .firestore()
+        .collection("platformBroadcasts")
+        .doc(broadcastId);
+      const broadcastSnap = await broadcastRef.get();
+      if (
+        !broadcastSnap.exists ||
+        !platformBroadcastMatchesViewer(
+          { id: broadcastSnap.id, ...broadcastSnap.data() },
+          viewer,
+        )
+      ) {
+        return res.status(404).json({ error: "Announcement not found." });
+      }
+
+      const now = Date.now();
+      const actionFields = {
+        impression: { shownAt: now },
+        read: { readAt: now },
+        acknowledge: { readAt: now, acknowledgedAt: now, snoozedUntil: null },
+        dismiss: { readAt: now, dismissedAt: now, snoozedUntil: null },
+        snooze: { readAt: now, snoozedUntil: now + 4 * 60 * 60 * 1000 },
+      }[action];
+      const receiptId = crypto
+        .createHash("sha256")
+        .update(`${broadcastId}:${viewer.uid}`)
+        .digest("hex");
+      const receiptRef = admin
+        .firestore()
+        .collection("platformBroadcastReceipts")
+        .doc(receiptId);
+      const receipt = {
+        broadcastId,
+        userId: viewer.uid,
+        userRole: viewer.role,
+        schoolIds: viewer.schoolIds,
+        updatedAt: now,
+        ...actionFields,
+      };
+
+      await receiptRef.set(receipt, { merge: true });
+      return res.json({ success: true, receipt });
+    } catch (error) {
+      console.error("Platform broadcast receipt error:", error);
+      return res.status(500).json({
+        error: error.message || "Failed to update announcement receipt.",
+      });
+    }
+  },
+);
+
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
@@ -1600,8 +2371,9 @@ const SCHOOL_SETTLEMENT_PERCENTAGE = 100 - PLATFORM_FEE_PERCENTAGE;
 const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+const SUPERADMIN_GOOGLE_API_KEY = String(
+  process.env.GOOGLE_API_KEY || "",
+).trim();
 const DEMO_NOTIFY_EMAIL =
   process.env.DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const DEMO_NOTIFY_WHATSAPP =
@@ -1614,12 +2386,19 @@ const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "School Manager GH";
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
 const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "";
-const SUPER_ADMIN_ASSISTANT_NAME = "Isaacski AI";
+const SUPER_ADMIN_ASSISTANT_NAME = "School Manager GH AI";
 const SUPERADMIN_AI_MODE = (
-  process.env.SUPERADMIN_AI_MODE || "openai_first"
+  process.env.SUPERADMIN_AI_MODE || "google_first"
 ).toLowerCase();
-const SUPERADMIN_OPENAI_TIMEOUT_MS = Number(
-  process.env.SUPERADMIN_OPENAI_TIMEOUT_MS || 12000,
+const SUPERADMIN_AI_TIMEOUT_MS = Math.min(
+  45000,
+  Math.max(
+    10000,
+    Number(
+      process.env.SUPERADMIN_AI_TIMEOUT_MS ||
+        25000,
+    ) || 25000,
+  ),
 );
 const AI_CONTEXT_CACHE_TTL_MS = Number(
   process.env.SUPERADMIN_AI_CACHE_TTL_MS || 45000,
@@ -1914,13 +2693,16 @@ const writeTrialNotificationAudit = async ({ schoolId, adminEmail, schoolName, n
 };
 
 const buildAiSystemPrompt = (dataContext) => {
-  const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the Super Admin assistant for School Manager GH.
-You are a precise operations copilot for the platform owner.
-Answer directly, concretely, and accurately from DATA_CONTEXT only.
-If the user asks for analysis, summarize with real numbers, names, IDs, dates, and notable exceptions when relevant.
+  const base = `You are ${SUPER_ADMIN_ASSISTANT_NAME}, the owner-level AI agent for School Manager GH.
+You are a precise operations command agent for the platform owner.
+Answer directly, concretely, and helpfully.
+For School Manager GH platform questions, answer accurately from DATA_CONTEXT only.
+For general knowledge, planning, writing, troubleshooting, or explanation questions that do not depend on private platform data, answer normally using your general reasoning.
+If the user asks for platform analysis, summarize with real numbers, names, IDs, dates, and notable exceptions when relevant.
 If the user asks for an action and you have enough information, propose one action.
 If fields are missing, ask only for the missing fields and do not invent values.
-You can propose admin actions, but you must NEVER execute them yourself.
+You can prepare owner actions, but you must NEVER execute them yourself.
+Mutating work must follow preview -> validate -> explicit owner confirmation -> execute -> audit -> undo when supported.
 When you want an action, return JSON with {"reply": "...", "action": {"type": "...", "description": "...", "payload": {...}}}.
 If no action is needed, return JSON with {"reply": "..."}.
 Allowed action types:
@@ -1938,9 +2720,10 @@ Allowed action types:
 - create_platform_broadcast: payload { title, message, type?, priority?, targetType?, targetSchoolIds?, publishNow?, publishAt?, expiresAt? }
 Use clear, short descriptions in "description".
 Never include secrets or API keys.
-Do not fabricate data. If data is missing, say so plainly.
+Do not fabricate platform data. If platform data is missing, say so plainly.
 Do not claim certainty when information is missing or ambiguous.
 Never say an action is already completed.
+Never say data was changed, created, deleted, emailed, broadcast, reset, or updated until the confirm endpoint succeeds.
 Always respond in JSON only.`;
 
   if (!dataContext) return base;
@@ -2133,6 +2916,14 @@ const buildAiModelContext = (dataContext = {}) => {
         entityId: trimToString(log.entityId, 120) || null,
         createdAt: toMillisValue(log.createdAt || log.timestamp),
       })),
+    },
+    systemHealth: dataContext.systemHealth || {
+      activeRequests: 0,
+      retainedPoints: 0,
+      last1m: null,
+      last5m: null,
+      topSlowRoutes: [],
+      problemRoutes: [],
     },
   };
 };
@@ -2443,6 +3234,238 @@ const buildSlowRouteSummary = (entries = [], maxRows = 8) => {
       return right.requests - left.requests;
     })
     .slice(0, Math.max(1, Number(maxRows) || 8));
+};
+
+const buildProblemRouteSummary = (entries = [], maxRows = 8) => {
+  const routeMap = new Map();
+  entries.forEach((entry) => {
+    const method = String(entry.method || "GET").toUpperCase();
+    const path = normalizeRequestPath(entry.path || "/");
+    const key = `${method} ${path}`;
+    if (!routeMap.has(key)) {
+      routeMap.set(key, {
+        route: key,
+        requests: 0,
+        errors: 0,
+        serverErrors: 0,
+        rateLimited: 0,
+        aborted: 0,
+        lastStatusCode: 0,
+        lastSeenAt: 0,
+      });
+    }
+    const bucket = routeMap.get(key);
+    const statusCode = Number(entry.statusCode || 0);
+    bucket.requests += 1;
+    bucket.lastStatusCode = statusCode;
+    bucket.lastSeenAt = Math.max(bucket.lastSeenAt, Number(entry.timestampMs || 0));
+    if (statusCode >= 400 || statusCode <= 0) bucket.errors += 1;
+    if (statusCode >= 500) bucket.serverErrors += 1;
+    if (statusCode === 429) bucket.rateLimited += 1;
+    if (entry.aborted || statusCode === 499) bucket.aborted += 1;
+  });
+
+  return Array.from(routeMap.values())
+    .filter(
+      (bucket) =>
+        bucket.errors > 0 ||
+        bucket.serverErrors > 0 ||
+        bucket.rateLimited > 0 ||
+        bucket.aborted > 0,
+    )
+    .map((bucket) => ({
+      route: bucket.route,
+      requests: bucket.requests,
+      errors: bucket.errors,
+      serverErrors: bucket.serverErrors,
+      rateLimited: bucket.rateLimited,
+      aborted: bucket.aborted,
+      errorRatePct: bucket.requests
+        ? roundMetric((bucket.errors / bucket.requests) * 100, 2)
+        : 0,
+      lastStatusCode: bucket.lastStatusCode,
+      lastSeenAt: bucket.lastSeenAt,
+    }))
+    .sort((left, right) => {
+      if (right.serverErrors !== left.serverErrors) {
+        return right.serverErrors - left.serverErrors;
+      }
+      if (right.errorRatePct !== left.errorRatePct) {
+        return right.errorRatePct - left.errorRatePct;
+      }
+      return right.errors - left.errors;
+    })
+    .slice(0, Math.max(1, Number(maxRows) || 8));
+};
+
+const buildOpsHealthSummary = ({
+  firestore,
+  requestWindow,
+  pressures,
+  problemRoutes,
+  slowRoutes,
+  backgroundJobs,
+}) => {
+  const findings = [];
+  const recommendations = [];
+  const statusBuckets = requestWindow?.statusBuckets || {};
+  const errorRate = Number(requestWindow?.errorRatePct || 0);
+  const p95Latency = Number(requestWindow?.p95LatencyMs || 0);
+  const cpuPressure = Number(pressures?.cpuPressure || 0);
+  const memoryPressure = Number(pressures?.memoryPressure || 0);
+  const limiterPressure = Number(pressures?.limiterPressure || 0);
+  const topProblemRoute = Array.isArray(problemRoutes) ? problemRoutes[0] : null;
+  const topSlowRoute = Array.isArray(slowRoutes) ? slowRoutes[0] : null;
+  const activeInvoiceJobs = Number(backgroundJobs?.invoiceNotifications?.active || 0);
+  const queuedInvoiceJobs = Number(backgroundJobs?.invoiceNotifications?.queued || 0);
+
+  let status = "healthy";
+  let headline = "System is healthy";
+  let summary =
+    "No critical pressure, database outage, or error spike is visible in the current telemetry window.";
+
+  const addFinding = (severity, title, detail) => {
+    findings.push({ severity, title, detail });
+    if (severity === "critical") status = "critical";
+    else if (severity === "warning" && status !== "critical") status = "degraded";
+  };
+
+  if (firestore?.status === "unavailable") {
+    addFinding(
+      "critical",
+      "Firestore is unavailable",
+      firestore.error || "The database connectivity probe failed.",
+    );
+    recommendations.push(
+      "Check Firebase service-account credentials, network access, and Google Cloud/Firebase status before investigating the UI.",
+    );
+  } else if (firestore?.status === "degraded") {
+    addFinding(
+      "warning",
+      "Firestore is partially degraded",
+      firestore.error || "The database responded, but one or more count probes failed.",
+    );
+    recommendations.push(
+      "Review backend logs for Firestore index or permission errors, then retry the health refresh.",
+    );
+  }
+
+  if (errorRate >= 5 || Number(statusBuckets.server5xx || 0) > 0) {
+    addFinding(
+      errorRate >= 5 ? "critical" : "warning",
+      "API errors are elevated",
+      `${errorRate}% of recent requests failed; ${Number(statusBuckets.server5xx || 0)} were server-side 5xx responses.`,
+    );
+    recommendations.push(
+      topProblemRoute
+        ? `Start with ${topProblemRoute.route}; it has ${topProblemRoute.errors} recent error${topProblemRoute.errors === 1 ? "" : "s"}.`
+        : "Open server logs around the most recent failed request and trace the exact backend error first.",
+    );
+  } else if (Number(statusBuckets.client4xx || 0) > 0) {
+    addFinding(
+      "info",
+      "Some client-side errors are present",
+      `${Number(statusBuckets.client4xx || 0)} recent request${Number(statusBuckets.client4xx || 0) === 1 ? "" : "s"} returned 4xx responses.`,
+    );
+  }
+
+  if (p95Latency >= 3000) {
+    addFinding(
+      "critical",
+      "Requests are very slow",
+      `P95 latency is ${p95Latency} ms in the last 5 minutes.`,
+    );
+    recommendations.push(
+      topSlowRoute
+        ? `Profile ${topSlowRoute.route}; it is the slowest recent route at ${topSlowRoute.p95LatencyMs} ms P95.`
+        : "Check slow Firestore queries, external APIs, and CPU saturation.",
+    );
+  } else if (p95Latency >= 1000) {
+    addFinding(
+      "warning",
+      "Requests are slowing down",
+      `P95 latency is ${p95Latency} ms in the last 5 minutes.`,
+    );
+    recommendations.push(
+      topSlowRoute
+        ? `Inspect ${topSlowRoute.route}; it is currently the slowest recent route.`
+        : "Watch the slow-route table and compare latency after the next refresh.",
+    );
+  }
+
+  if (cpuPressure >= 90) {
+    addFinding("critical", "CPU pressure is critical", `CPU pressure is ${cpuPressure}%.`);
+    recommendations.push(
+      "Reduce expensive synchronous work, inspect request spikes, or scale the backend instance.",
+    );
+  } else if (cpuPressure >= 70) {
+    addFinding("warning", "CPU pressure is high", `CPU pressure is ${cpuPressure}%.`);
+  }
+
+  if (memoryPressure >= 90) {
+    addFinding(
+      "critical",
+      "Memory pressure is critical",
+      `Heap usage is ${memoryPressure}% of the Node heap limit.`,
+    );
+    recommendations.push(
+      "Look for large exports, PDF generation, unbounded arrays, or leaked timers/listeners before increasing memory.",
+    );
+  } else if (memoryPressure >= 75) {
+    addFinding(
+      "warning",
+      "Memory pressure is rising",
+      `Heap usage is ${memoryPressure}% of the Node heap limit.`,
+    );
+  }
+
+  if (limiterPressure >= 90 || Number(statusBuckets.rateLimited429 || 0) > 0) {
+    addFinding(
+      limiterPressure >= 90 ? "critical" : "warning",
+      "Rate-limit pressure is high",
+      `${Number(statusBuckets.rateLimited429 || 0)} recent request${Number(statusBuckets.rateLimited429 || 0) === 1 ? "" : "s"} hit HTTP 429.`,
+    );
+    recommendations.push(
+      "Check whether one client, automation, or a failing frontend loop is repeatedly calling the API.",
+    );
+  }
+
+  if (queuedInvoiceJobs > 0 || activeInvoiceJobs > 0) {
+    addFinding(
+      "info",
+      "Invoice notification jobs are active",
+      `${queuedInvoiceJobs} queued and ${activeInvoiceJobs} currently running.`,
+    );
+  }
+
+  if (findings.length === 0) {
+    findings.push({
+      severity: "info",
+      title: "No active incidents detected",
+      detail: "Traffic, latency, database connectivity, and resource pressure are inside normal thresholds.",
+    });
+    recommendations.push(
+      "Keep monitoring after deployments or high-traffic periods; use the route tables below if users report slowness.",
+    );
+  }
+
+  if (status === "critical") {
+    headline = "Attention required";
+    summary =
+      "One or more critical signals need investigation before assuming the frontend is at fault.";
+  } else if (status === "degraded") {
+    headline = "Performance degraded";
+    summary =
+      "The platform is running, but one or more warning thresholds are active.";
+  }
+
+  return {
+    status,
+    headline,
+    summary,
+    findings,
+    recommendations: [...new Set(recommendations)].slice(0, 6),
+  };
 };
 
 const normalizeSchoolForView = (docId, data = {}) => {
@@ -2985,9 +4008,16 @@ const buildAiDataContext = async (options = {}) => {
   const openSuspiciousEvents = suspiciousEvents.filter(
     (row) => String(row?.status || "").toUpperCase() === "OPEN",
   ).length;
+  const nowMs = Date.now();
+  const oneMinuteEntries = REQUEST_METRICS.filter(
+    (entry) => entry.timestampMs >= nowMs - 60 * 1000,
+  );
+  const fiveMinuteEntries = REQUEST_METRICS.filter(
+    (entry) => entry.timestampMs >= nowMs - 5 * 60 * 1000,
+  );
 
   const context = {
-    generatedAt: Date.now(),
+    generatedAt: nowMs,
     totals: {
       schools: schools.length,
       activeSchools: schools.filter((s) => s.status === "active").length,
@@ -3014,6 +4044,14 @@ const buildAiDataContext = async (options = {}) => {
     suspiciousEvents,
     auditLogs,
     usersByRole,
+    systemHealth: {
+      activeRequests: ACTIVE_REQUESTS,
+      retainedPoints: REQUEST_METRICS.length,
+      last1m: summarizeRequestWindow(oneMinuteEntries, 60 * 1000),
+      last5m: summarizeRequestWindow(fiveMinuteEntries, 5 * 60 * 1000),
+      topSlowRoutes: buildSlowRouteSummary(fiveMinuteEntries, 5),
+      problemRoutes: buildProblemRouteSummary(fiveMinuteEntries, 5),
+    },
   };
 
   setMapCacheEntry(
@@ -3037,6 +4075,10 @@ const detectAiPromptIntents = (prompt = "") => {
     .trim();
   const mentionsInstitution =
     /\b(school|academy|college|campus|institute)\b/.test(plainPrompt);
+  const hasReadOnlyQuestionIntent =
+    /\b(which|what|who|when|where|why|how|show|list|tell|find|search|latest|recent|recently|newest|last|added|created)\b/.test(
+      plainPrompt,
+    ) || /\?$/.test(String(prompt || "").trim());
 
   const isGreeting =
     /^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(
@@ -3067,7 +4109,9 @@ const detectAiPromptIntents = (prompt = "") => {
     /\b(reset|change)\b/.test(plainPrompt) &&
     /\b(password|passcode)\b/.test(plainPrompt);
   const wantsCreateSchool =
-    /\b(create|add|new)\b/.test(plainPrompt) && /\bschool\b/.test(plainPrompt);
+    /\b(create|add|new)\b/.test(plainPrompt) &&
+    /\bschool\b/.test(plainPrompt) &&
+    !hasReadOnlyQuestionIntent;
   const wantsSchoolStatusChange =
     /\b(activate|deactivate|disable|enable|suspend|unsuspend)\b/.test(
       plainPrompt,
@@ -3101,6 +4145,16 @@ const detectAiPromptIntents = (prompt = "") => {
     /\b(security|failed login|login history|suspicious|audit)\b/.test(
       plainPrompt,
     );
+  const asksPlatformKnowledge =
+    /\b(mfa|2fa|two factor|two-factor|multi factor|multi-factor|security settings|what does (?:it|this|that) do|how does (?:it|this|that) work|explain)\b/.test(
+      plainPrompt,
+    );
+  const asksSchoolsData =
+    mentionsInstitution &&
+    hasReadOnlyQuestionIntent &&
+    /\b(added|created|active|inactive|latest|recent|list|show|which|status|plan|students?)\b/.test(
+      plainPrompt,
+    );
   const asksPlans = /\b(plan|plans|max students|student limit)\b/.test(
     plainPrompt,
   );
@@ -3127,6 +4181,8 @@ const detectAiPromptIntents = (prompt = "") => {
     wantsSubscriptionPlanAssign,
     asksUsers,
     asksSecurity,
+    asksPlatformKnowledge,
+    asksSchoolsData,
     asksPlans,
     asksBackups,
     asksBroadcasts,
@@ -3138,7 +4194,8 @@ const isGenericLocalFallbackReply = (reply = "") => {
   const normalized = String(reply || "").toLowerCase();
   return (
     normalized.includes("didn't fully catch") ||
-    normalized.includes("please rephrase with one clear goal")
+    normalized.includes("please rephrase with one clear goal") ||
+    normalized.includes("can you clarify your goal in one sentence")
   );
 };
 
@@ -3282,52 +4339,36 @@ const parseAiResponse = (rawText) => {
   }
 };
 
-const callSuperAdminOpenAi = async ({ messages = [], dataContext = {} }) => {
-  if (!OPENAI_API_KEY) {
-    throw new Error("OpenAI API key is not configured");
+const callSuperAdminGoogleAi = async ({ messages = [], dataContext = {} }) => {
+  if (!SUPERADMIN_GOOGLE_API_KEY) {
+    throw new Error("Google AI Studio API key is not configured");
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    Math.max(2500, SUPERADMIN_OPENAI_TIMEOUT_MS),
-  );
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        temperature: 0.15,
-        messages: [
-          {
-            role: "system",
-            content: buildAiSystemPrompt(buildAiModelContext(dataContext)),
-          },
-          ...messages,
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error?.message || "OpenAI request failed");
-    }
-
-    const content = data?.choices?.[0]?.message?.content || "";
-    const parsed = parseAiResponse(content);
-    if (!parsed?.reply) {
-      throw new Error("OpenAI returned an empty reply");
-    }
-    return parsed;
-  } finally {
-    clearTimeout(timeoutId);
+  const compactMessages = messages
+    .slice(-12)
+    .filter(
+      (message) =>
+        message &&
+        ["user", "assistant"].includes(String(message.role || "")),
+    )
+    .map((message) => ({
+      role: message.role,
+      content: trimToString(message.content, 4000),
+    }));
+  const content = await generateGoogleAiJson({
+    systemInstruction: buildAiSystemPrompt(
+      buildAiModelContext(dataContext),
+    ),
+    messages: compactMessages,
+    temperature: 0.15,
+    maxOutputTokens: 900,
+    timeoutMs: SUPERADMIN_AI_TIMEOUT_MS,
+  });
+  const parsed = parseAiResponse(content);
+  if (!parsed?.reply) {
+    throw new Error("Google AI returned an empty reply");
   }
+  return parsed;
 };
 
 const extractEmailFromText = (text = "") => {
@@ -3646,10 +4687,14 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     .trim();
   const mentionsInstitution =
     /\b(school|academy|college|campus|institute)\b/.test(plainPrompt);
+  const hasReadOnlyQuestionIntent =
+    /\b(which|what|who|when|where|why|how|show|list|tell|find|search|latest|recent|recently|newest|last|added|created)\b/.test(
+      plainPrompt,
+    ) || /\?$/.test(String(prompt || "").trim());
   const hasActionVerb =
     /\b(create|add|new|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|delete|remove|assign|apply|provision)\b/i.test(
       prompt,
-    );
+    ) && !hasReadOnlyQuestionIntent;
   const schools = Array.isArray(dataContext?.schools) ? dataContext.schools : [];
   const users = Array.isArray(dataContext?.users) ? dataContext.users : [];
   const schoolAdmins = Array.isArray(dataContext?.schoolAdmins)
@@ -3660,6 +4705,7 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     ? dataContext.broadcasts
     : [];
   const backups = Array.isArray(dataContext?.backups) ? dataContext.backups : [];
+  const payments = Array.isArray(dataContext?.payments) ? dataContext.payments : [];
   const securityLoginLogs = Array.isArray(dataContext?.securityLoginLogs)
     ? dataContext.securityLoginLogs
     : [];
@@ -3676,6 +4722,10 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     inactiveSchools: schools.filter((school) => school.status === "inactive")
       .length,
   };
+  const systemHealth =
+    dataContext?.systemHealth && typeof dataContext.systemHealth === "object"
+      ? dataContext.systemHealth
+      : null;
 
   if (!prompt) {
     return {
@@ -3728,7 +4778,19 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   if (asksCapabilities) {
     return {
       reply:
-        "I can read Super Admin data across schools, users, plans, payments, activity, security, backups, and broadcasts. I can also prepare confirmable actions like creating schools, creating school admins, updating admin emails, resetting passwords, changing school status or plans, managing configured plans, and drafting platform broadcasts.",
+        "I can read owner-level platform data across schools, users, plans, payments, activity, security, backups, broadcasts, and system health. I can also prepare confirmable actions like creating schools, creating school admins, updating admin emails, resetting passwords, changing school status or plans, managing configured plans, and drafting platform broadcasts.",
+      action: null,
+    };
+  }
+
+  if (
+    /\b(mfa|2fa|two factor|two-factor|multi factor|multi-factor)\b/i.test(
+      prompt,
+    )
+  ) {
+    return {
+      reply:
+        "MFA (multi-factor authentication) adds a second verification step after an admin enters a password, which helps protect the platform if that password is stolen. In School Manager GH, Security Settings lets you choose whether the policy applies to Super Admins and/or School Admins, then set enforcement to Off, Optional, or Required. Important: the page currently stores and checks the intended policy, but the Firebase enrollment and sign-in challenge UI is not fully rolled out yet, so keep enforcement Optional until that flow is complete.",
       action: null,
     };
   }
@@ -3740,7 +4802,113 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   ) {
     return {
       reply:
-        "Yes. I can work as your Super Admin agent: I prepare the exact action, you confirm once, then I execute it. I support school/user/plan operations including create, update, activate/deactivate, assignment, and plan configuration changes.",
+        "Yes. I can work as your owner-level command agent: I prepare the exact action, you confirm once, then I execute it. I support platform operations including schools, users, plans, billing reviews, security reviews, broadcasts, and reversible changes where supported.",
+      action: null,
+    };
+  }
+
+  const asksNextActions =
+    /\b(what should i do next|next action|recommend|recommendation|priority|priorities|risks?|issues?|attention)\b/i.test(
+      prompt,
+    ) && !hasActionVerb;
+  if (asksNextActions) {
+    const failedLogins = securityLoginLogs.filter(
+      (row) => String(row?.status || "").toUpperCase() === "FAILED",
+    ).length;
+    const openSuspiciousEvents = suspiciousEvents.filter(
+      (row) => String(row?.status || "").toUpperCase() === "OPEN",
+    ).length;
+    const failedPayments = payments.filter(
+      (payment) =>
+        normalizePaymentStatus(
+          payment?.status || payment?.billingStatus || payment?.paymentStatus,
+        ) === "failed",
+    ).length;
+    const inactiveSchools = schools.filter(
+      (school) => String(school?.status || "").toLowerCase() === "inactive",
+    ).length;
+    const schoolsWithoutRecentBackup = schools.filter((school) => {
+      const schoolId = normalizeSchoolId(school?.id || school?.schoolId);
+      if (!schoolId) return false;
+      return !backups.some(
+        (backup) => normalizeSchoolId(backup?.schoolId) === schoolId,
+      );
+    }).length;
+    const healthProblemRoutes = Array.isArray(systemHealth?.problemRoutes)
+      ? systemHealth.problemRoutes.length
+      : 0;
+    const recommendations = [];
+    if (openSuspiciousEvents > 0) {
+      recommendations.push(
+        `Review ${openSuspiciousEvents} open suspicious security event${openSuspiciousEvents === 1 ? "" : "s"}.`,
+      );
+    }
+    if (failedLogins > 0) {
+      recommendations.push(
+        `Check ${failedLogins} failed login event${failedLogins === 1 ? "" : "s"} for repeated emails or schools.`,
+      );
+    }
+    if (failedPayments > 0) {
+      recommendations.push(
+        `Review ${failedPayments} failed payment record${failedPayments === 1 ? "" : "s"} before following up with schools.`,
+      );
+    }
+    if (healthProblemRoutes > 0) {
+      recommendations.push(
+        `Inspect ${healthProblemRoutes} recent problem route${healthProblemRoutes === 1 ? "" : "s"} in System Health.`,
+      );
+    }
+    if (inactiveSchools > 0) {
+      recommendations.push(
+        `Review ${inactiveSchools} inactive school${inactiveSchools === 1 ? "" : "s"} and decide whether to reactivate, follow up, or keep disabled.`,
+      );
+    }
+    if (schoolsWithoutRecentBackup > 0) {
+      recommendations.push(
+        `Check backup coverage: ${schoolsWithoutRecentBackup} loaded school${schoolsWithoutRecentBackup === 1 ? "" : "s"} had no recent backup record in the loaded sample.`,
+      );
+    }
+    if (!recommendations.length) {
+      recommendations.push(
+        "No urgent risk signal is visible in the loaded owner snapshot. Review revenue, latest schools, and System Health after deployments or high-traffic periods.",
+      );
+    }
+    return {
+      reply: `Recommended owner priorities: ${recommendations.slice(0, 5).join(" ")}${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksSystemHealth =
+    /\b(system health|health|server|latency|slow route|problem route|errors?|api status|backend)\b/i.test(
+      prompt,
+    ) && !hasActionVerb;
+  if (asksSystemHealth) {
+    const last5m = systemHealth?.last5m || {};
+    const problemRoutes = Array.isArray(systemHealth?.problemRoutes)
+      ? systemHealth.problemRoutes
+      : [];
+    const slowRoutes = Array.isArray(systemHealth?.topSlowRoutes)
+      ? systemHealth.topSlowRoutes
+      : [];
+    const topProblem = problemRoutes[0];
+    const topSlow = slowRoutes[0];
+    const parts = [
+      `System health snapshot: ${Number(systemHealth?.activeRequests || 0)} active requests, ${Number(last5m.totalRequests || 0)} requests in the last 5 minutes, ${Number(last5m.errorRatePct || 0)}% error rate, and ${Number(last5m.p95LatencyMs || 0)} ms P95 latency.`,
+    ];
+    if (topProblem) {
+      parts.push(
+        `Top problem route: ${topProblem.route} with ${topProblem.errors} error${topProblem.errors === 1 ? "" : "s"}.`,
+      );
+    }
+    if (topSlow) {
+      parts.push(
+        `Slowest route: ${topSlow.route} at ${topSlow.p95LatencyMs} ms P95.`,
+      );
+    }
+    parts.push("Open System Health for full route tables and pressure meters.");
+    return {
+      reply: `${parts.join(" ")}${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
       action: null,
     };
   }
@@ -3757,6 +4925,42 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
     ).length;
     return {
       reply: `Current snapshot: ${totals.schools} schools (${totals.activeSchools} active, ${totals.inactiveSchools} inactive), ${schoolAdmins.length} school admin accounts (${activeAdmins} active), ${teachersCount} teachers, and ${plans.length} configured plans.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
+      action: null,
+    };
+  }
+
+  const asksLatestAddedSchool =
+    /\bschools?\b/i.test(prompt) &&
+    /\b(which|what|show|list|tell|find|latest|recent|recently|newest|last|added|created)\b/i.test(
+      prompt,
+    ) &&
+    !hasActionVerb;
+  if (asksLatestAddedSchool) {
+    if (!schools.length) {
+      return {
+        reply:
+          "I could not find any loaded schools yet. Please refresh and try again, or check that schools are being saved in the schools collection.",
+        action: null,
+      };
+    }
+
+    const sortedSchools = [...schools].sort((a, b) => {
+      const aCreated = parseFlexibleDate(a?.createdAt)?.getTime() || 0;
+      const bCreated = parseFlexibleDate(b?.createdAt)?.getTime() || 0;
+      return bCreated - aCreated;
+    });
+    const newestSchool = sortedSchools[0];
+    const createdAt = parseFlexibleDate(newestSchool?.createdAt);
+    const latestPreview = sortedSchools
+      .slice(0, 5)
+      .map((school) => {
+        const when = parseFlexibleDate(school?.createdAt);
+        return `${school?.name || school?.id || "Unnamed school"} (${school?.code || school?.id || "no code"})${when ? ` - added ${when.toLocaleString()}` : ""}`;
+      })
+      .join("; ");
+
+    return {
+      reply: `The most recently added school I found is ${newestSchool?.name || newestSchool?.id || "Unnamed school"}${newestSchool?.code ? ` (${newestSchool.code})` : ""}${createdAt ? `, added on ${createdAt.toLocaleString()}` : ""}. Latest schools: ${latestPreview}.${asOfLabel ? ` Data as of ${asOfLabel}.` : ""}`,
       action: null,
     };
   }
@@ -4017,9 +5221,6 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
       prompt,
     );
   if (asksFinance) {
-    const payments = Array.isArray(dataContext?.payments)
-      ? dataContext.payments
-      : [];
     const { label: periodLabel, start: periodStart } = resolvePeriodRange(prompt);
     const filteredPayments = payments.filter((payment) => {
       const rawDate =
@@ -4234,7 +5435,9 @@ const buildLocalAiResponse = ({ messages = [], dataContext = {} }) => {
   }
 
   const wantsCreateSchool =
-    /\b(create|add|new)\b/i.test(prompt) && /\bschool\b/i.test(prompt);
+    /\b(create|add|new)\b/i.test(prompt) &&
+    /\bschool\b/i.test(prompt) &&
+    !hasReadOnlyQuestionIntent;
   if (wantsCreateSchool) {
     const schoolNameFromQuote = extractQuotedText(prompt);
     const schoolNameMatch = prompt.match(
@@ -5172,78 +6375,66 @@ app.get(
       // Smart schools fetcher with fast fallback for better reliability
       const safeGetSchools = async () => {
         try {
-          // Try ordered query first with timeout
-          const orderedRows = await withTimeoutFallback(
-            fetchCollectionRows({
-              collectionName: "schools",
-              limitCount: schoolsLimit,
-              orderField: "createdAt",
-              selectFields: [
-                "name",
-                "code",
-                "logoUrl",
-                "phone",
-                "address",
-                "plan",
-                "status",
-                "featurePlan",
-                "createdBy",
-                "createdAt",
-                "planEndsAt",
-                "studentsCount",
-                "limits",
-                "billing",
-                "subscription",
-              ],
-            }),
-            Math.max(500, DASHBOARD_QUERY_TIMEOUT_MS - 500),
-            null,
-          );
+          const schoolFields = [
+            "name",
+            "code",
+            "logoUrl",
+            "phone",
+            "address",
+            "plan",
+            "status",
+            "featurePlan",
+            "createdBy",
+            "createdAt",
+            "planEndsAt",
+            "studentsCount",
+            "limits",
+            "billing",
+            "subscription",
+          ];
+          // Run the ordered query and its index-free fallback concurrently.
+          const [orderedRows, unorderedRows] = await Promise.all([
+            withTimeoutFallback(
+              fetchCollectionRows({
+                collectionName: "schools",
+                limitCount: schoolsLimit,
+                orderField: "createdAt",
+                selectFields: schoolFields,
+              }),
+              Math.max(500, DASHBOARD_QUERY_TIMEOUT_MS - 500),
+              null,
+            ),
+            withTimeoutFallback(
+              fetchCollectionRows({
+                collectionName: "schools",
+                limitCount: schoolsLimit,
+                orderField: "",
+                selectFields: schoolFields,
+              }),
+              1200,
+              [],
+            ),
+          ]);
 
           if (Array.isArray(orderedRows) && orderedRows.length > 0) {
             return orderedRows;
           }
-
-          // If ordered query fails/times out, use unordered query as fallback
-          const unorderedRows = await withTimeoutFallback(
-            fetchCollectionRows({
-              collectionName: "schools",
-              limitCount: schoolsLimit,
-              orderField: "", // No ordering for faster response
-              selectFields: [
-                "name",
-                "code",
-                "logoUrl",
-                "phone",
-                "address",
-                "plan",
-                "status",
-                "featurePlan",
-                "createdBy",
-                "createdAt",
-                "planEndsAt",
-                "studentsCount",
-                "limits",
-                "billing",
-                "subscription",
-              ],
-            }),
-            1000,
-            [],
-          );
-
           if (Array.isArray(unorderedRows) && unorderedRows.length > 0) {
             return unorderedRows;
           }
 
           // Final fallback mirrors /api/superadmin/schools-page, which is the
           // reliable source for the dedicated Schools screen.
-          const page = await listCollectionPage({
-            collectionName: "schools",
-            orderField: "createdAt",
-            direction: "desc",
-            limitCount: Math.min(schoolsLimit, 250),
-          });
+          const page = await withTimeoutFallback(
+            listCollectionPage({
+              collectionName: "schools",
+              orderField: "createdAt",
+              direction: "desc",
+              limitCount: Math.min(schoolsLimit, 250),
+            }),
+            1200,
+            { items: [] },
+          );
           return Array.isArray(page.items) ? page.items : [];
         } catch (err) {
           console.error("Error fetching schools:", err?.message);
@@ -5300,7 +6491,7 @@ app.get(
       ]);
 
       const schools = schoolRows.map((row) => normalizeSchoolForView(row.id, row));
-      const schoolTotals = await buildSchoolTotals({
+      const schoolTotalsPromise = buildSchoolTotals({
         db,
         schoolRows,
         timeoutMs: 2500,
@@ -5346,12 +6537,14 @@ app.get(
         );
 
       const [
+        schoolTotals,
         attendanceSnap,
         teacherAttendanceSnap,
         assessmentsSnap,
         timetablesSnap,
         noticesSnap,
       ] = await Promise.all([
+        schoolTotalsPromise,
         runChecklistQuery(() =>
           db
             .collection("attendance")
@@ -5866,20 +7059,152 @@ app.get(
       const now = Date.now();
       pruneRequestMetrics(now);
 
+      let platformSnapshot = platformHealthCache;
+      let platformSnapshotCached = Boolean(
+        platformSnapshot &&
+          now - platformSnapshot.generatedAt < PLATFORM_HEALTH_CACHE_TTL_MS,
+      );
+
+      if (!platformSnapshotCached) {
+        const firestoreStartedAt = Date.now();
+        try {
+          const db = admin.firestore();
+          // Probe basic connectivity separately. Aggregate count failures should
+          // degrade the scale panel, not incorrectly mark Firestore offline.
+          await db.collection("schools").limit(1).get();
+
+          const countCollection = async (collectionName, filters = []) => {
+            let query = db.collection(collectionName);
+            filters.forEach(([field, operator, value]) => {
+              query = query.where(field, operator, value);
+            });
+            const snapshot = await query.count().get();
+            return Number(snapshot.data().count || 0);
+          };
+
+          const countEntries = [
+            ["schools", countCollection("schools")],
+            ["activeSchools", countCollection("schools", [["status", "==", "active"]])],
+            ["students", countCollection("students")],
+            ["users", countCollection("users")],
+            ["schoolAdmins", countCollection("users", [["role", "==", "school_admin"]])],
+            ["teachers", countCollection("users", [["role", "==", "teacher"]])],
+            ["parents", countCollection("users", [["role", "==", "parent"]])],
+          ];
+          const countResults = await Promise.allSettled(
+            countEntries.map(([, promise]) => promise),
+          );
+          const previousTotals = platformHealthCache?.totals || {};
+          const totals = {};
+          const failedCounts = [];
+
+          countResults.forEach((result, index) => {
+            const key = countEntries[index][0];
+            if (result.status === "fulfilled") {
+              totals[key] = result.value;
+            } else {
+              totals[key] = Number(previousTotals[key] || 0);
+              failedCounts.push(key);
+              console.error(
+                `System health count failed (${key}):`,
+                result.reason?.message || result.reason,
+              );
+            }
+          });
+
+          platformSnapshot = {
+            generatedAt: Date.now(),
+            firestore: {
+              status: failedCounts.length ? "degraded" : "healthy",
+              latencyMs: Date.now() - firestoreStartedAt,
+              checkedAt: Date.now(),
+              error: failedCounts.length
+                ? `Unavailable counts: ${failedCounts.join(", ")}`
+                : null,
+            },
+            totals,
+          };
+          platformHealthCache = platformSnapshot;
+          platformSnapshotCached = false;
+        } catch (firestoreError) {
+          console.error(
+            "System health Firestore probe failed:",
+            firestoreError.message || firestoreError,
+          );
+          platformSnapshot = {
+            generatedAt: Date.now(),
+            firestore: {
+              status: "unavailable",
+              latencyMs: null,
+              checkedAt: Date.now(),
+              error: "Firestore health check failed",
+            },
+            totals: platformHealthCache?.totals || {
+              schools: 0,
+              activeSchools: 0,
+              students: 0,
+              users: 0,
+              schoolAdmins: 0,
+              teachers: 0,
+              parents: 0,
+            },
+          };
+        }
+      }
+
       const oneMinuteEntries = REQUEST_METRICS.filter(
         (entry) => entry.timestampMs >= now - 60 * 1000,
       );
       const fiveMinuteEntries = REQUEST_METRICS.filter(
         (entry) => entry.timestampMs >= now - 5 * 60 * 1000,
       );
+      const oneMinuteSummary = summarizeRequestWindow(oneMinuteEntries, 60 * 1000);
+      const fiveMinuteSummary = summarizeRequestWindow(
+        fiveMinuteEntries,
+        5 * 60 * 1000,
+      );
+      const topSlowRoutes = buildSlowRouteSummary(fiveMinuteEntries, 8);
+      const problemRoutes = buildProblemRouteSummary(fiveMinuteEntries, 8);
 
       const memoryUsage = process.memoryUsage();
+      const heapStatistics = v8.getHeapStatistics();
       const bytesToMb = (value) => roundMetric(Number(value || 0) / (1024 * 1024), 2);
 
       const cpuCores = Math.max(1, Array.isArray(os.cpus()) ? os.cpus().length : 1);
       const loadAverageRaw =
         typeof os.loadavg === "function" ? os.loadavg() : [0, 0, 0];
       const loadAverage = loadAverageRaw.map((value) => roundMetric(value, 2));
+      const heapLimitMb = bytesToMb(heapStatistics.heap_size_limit);
+      const heapUsedMb = bytesToMb(memoryUsage.heapUsed);
+      const cpuPressure = roundMetric((loadAverageRaw[0] / cpuCores) * 100, 2);
+      const memoryPressure = heapLimitMb
+        ? roundMetric((heapUsedMb / Math.max(1, heapLimitMb)) * 100, 2)
+        : 0;
+      const estimated15MinCalls =
+        Number(fiveMinuteSummary.requestsPerMinute || 0) * 15;
+      const limiterPressure = roundMetric(
+        (estimated15MinCalls / Math.max(1, API_LIMIT_MAX_REQUESTS)) * 100,
+        2,
+      );
+      const backgroundJobs = {
+        invoiceNotifications: {
+          queued: invoiceNotificationQueue.length,
+          active: activeInvoiceNotificationJobs,
+          concurrency: INVOICE_NOTIFICATION_CONCURRENCY,
+        },
+      };
+      const ops = buildOpsHealthSummary({
+        firestore: platformSnapshot.firestore,
+        requestWindow: fiveMinuteSummary,
+        pressures: {
+          cpuPressure,
+          memoryPressure,
+          limiterPressure,
+        },
+        problemRoutes,
+        slowRoutes: topSlowRoutes,
+        backgroundJobs,
+      });
 
       return res.json({
         success: true,
@@ -5893,14 +7218,15 @@ app.get(
           cpuCores,
           loadAverage,
           normalizedLoadPct: {
-            oneMinute: roundMetric((loadAverageRaw[0] / cpuCores) * 100, 2),
+            oneMinute: cpuPressure,
             fiveMinutes: roundMetric((loadAverageRaw[1] / cpuCores) * 100, 2),
             fifteenMinutes: roundMetric((loadAverageRaw[2] / cpuCores) * 100, 2),
           },
           memoryMb: {
             rss: bytesToMb(memoryUsage.rss),
-            heapUsed: bytesToMb(memoryUsage.heapUsed),
+            heapUsed: heapUsedMb,
             heapTotal: bytesToMb(memoryUsage.heapTotal),
+            heapLimit: heapLimitMb,
             external: bytesToMb(memoryUsage.external),
             arrayBuffers: bytesToMb(memoryUsage.arrayBuffers),
           },
@@ -5909,9 +7235,10 @@ app.get(
           active: ACTIVE_REQUESTS,
           retainedPoints: REQUEST_METRICS.length,
           retentionMinutes: Math.round(REQUEST_METRICS_RETENTION_MS / 60000),
-          last1m: summarizeRequestWindow(oneMinuteEntries, 60 * 1000),
-          last5m: summarizeRequestWindow(fiveMinuteEntries, 5 * 60 * 1000),
-          topSlowRoutes: buildSlowRouteSummary(fiveMinuteEntries, 8),
+          last1m: oneMinuteSummary,
+          last5m: fiveMinuteSummary,
+          topSlowRoutes,
+          problemRoutes,
         },
         limiters: {
           api: {
@@ -5923,13 +7250,16 @@ app.get(
             limit: AUTH_LIMIT_MAX_REQUESTS,
           },
         },
-        backgroundJobs: {
-          invoiceNotifications: {
-            queued: invoiceNotificationQueue.length,
-            active: activeInvoiceNotificationJobs,
-            concurrency: INVOICE_NOTIFICATION_CONCURRENCY,
-          },
+        dependencies: {
+          firestore: platformSnapshot.firestore,
         },
+        platform: {
+          cached: platformSnapshotCached,
+          cacheAgeMs: Math.max(0, now - platformSnapshot.generatedAt),
+          totals: platformSnapshot.totals,
+        },
+        backgroundJobs,
+        ops,
       });
     } catch (error) {
       console.error("System health metrics error:", error.message || error);
@@ -7031,6 +8361,58 @@ app.post(
  * Super Admin AI chat (read + propose actions)
  * POST /api/superadmin/ai-chat
  */
+const buildLightweightAiContext = () => ({
+  generatedAt: Date.now(),
+  totals: {},
+  schools: [],
+  users: [],
+  schoolAdmins: [],
+  plans: [],
+  recentActivity: [],
+  payments: [],
+  broadcasts: [],
+  backups: [],
+  securityLoginLogs: [],
+  suspiciousEvents: [],
+  auditLogs: [],
+  usersByRole: {},
+  systemHealth: {
+    activeRequests: ACTIVE_REQUESTS,
+    retainedPoints: REQUEST_METRICS.length,
+    last1m: summarizeRequestWindow(
+      REQUEST_METRICS.filter(
+        (entry) => entry.timestampMs >= Date.now() - 60 * 1000,
+      ),
+      60 * 1000,
+    ),
+    last5m: summarizeRequestWindow(
+      REQUEST_METRICS.filter(
+        (entry) => entry.timestampMs >= Date.now() - 5 * 60 * 1000,
+      ),
+      5 * 60 * 1000,
+    ),
+    topSlowRoutes: [],
+    problemRoutes: [],
+  },
+});
+
+const withAiContextDeadline = async (contextPromise, timeoutMs = 7000) => {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      contextPromise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("AI data context timed out")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 app.post(
   "/api/superadmin/ai-chat",
   authLimiter,
@@ -7049,117 +8431,164 @@ app.post(
         .find((message) => message?.role === "user")?.content;
       const latestPrompt = String(latestUserMessage || "");
       const promptIntent = detectAiPromptIntents(latestPrompt);
-      const openAiEnabled =
-        Boolean(OPENAI_API_KEY) && SUPERADMIN_AI_MODE !== "local_only";
-      const openAiPreferred =
-        openAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
+      const googleAiEnabled =
+        Boolean(SUPERADMIN_GOOGLE_API_KEY) &&
+        SUPERADMIN_AI_MODE !== "local_only";
+      const googleAiPreferred =
+        googleAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
+      const needsSchoolContext =
+        promptIntent.asksSchoolsData ||
+        promptIntent.wantsSummary ||
+        promptIntent.wantsCreateSchool ||
+        promptIntent.wantsSchoolAdminAction ||
+        promptIntent.wantsSchoolStatusChange ||
+        promptIntent.wantsSchoolPlanChange ||
+        promptIntent.wantsSchoolFeaturePlanChange ||
+        promptIntent.wantsSubscriptionPlanAssign ||
+        promptIntent.asksBroadcasts;
+      const needsUserContext =
+        promptIntent.asksUsers ||
+        promptIntent.wantsSummary ||
+        promptIntent.wantsSchoolAdminAction ||
+        promptIntent.wantsResetPassword ||
+        promptIntent.wantsSchoolAdminEmailChange;
+      const needsSecurityContext =
+        promptIntent.asksSecurity && !promptIntent.asksPlatformKnowledge;
+      const needsPrivatePlatformData =
+        needsSchoolContext ||
+        needsUserContext ||
+        needsSecurityContext ||
+        promptIntent.asksFinance ||
+        promptIntent.asksPlans ||
+        promptIntent.asksBackups ||
+        promptIntent.asksBroadcasts ||
+        promptIntent.wantsPlanConfigAction ||
+        promptIntent.wantsSubscriptionPlanAssign;
       const shouldSkipContext =
-        promptIntent.isSmallTalk || promptIntent.asksCapabilities;
+        promptIntent.isSmallTalk ||
+        promptIntent.asksCapabilities ||
+        promptIntent.asksPlatformKnowledge ||
+        !needsPrivatePlatformData;
 
-      const dataContext = shouldSkipContext
-        ? {
-            generatedAt: Date.now(),
-            totals: {
-              schools: 0,
-              activeSchools: 0,
-              inactiveSchools: 0,
-              users: 0,
-              schoolAdmins: 0,
-              teachers: 0,
-              plans: 0,
-              payments: 0,
-              broadcasts: 0,
-              backups: 0,
-              failedLogins: 0,
-              openSuspiciousEvents: 0,
-            },
-            schools: [],
-            users: [],
-            schoolAdmins: [],
-            plans: [],
-            recentActivity: [],
-            payments: [],
-            broadcasts: [],
-            backups: [],
-            securityLoginLogs: [],
-            suspiciousEvents: [],
-            auditLogs: [],
-            usersByRole: {},
-          }
-        : await buildAiDataContext({
-            includeSchools: true,
-            includeActivity: true,
-            includeSchoolAdmins: true,
-            includeUsers: true,
-            includePlans: true,
-            includePayments: true,
-            includeBroadcasts: true,
-            includeBackups: true,
-            includeSecurityLogs: true,
-            includeSuspiciousEvents: true,
-            includeAuditLogs: true,
-            schoolsLimit: 260,
-            activityLimit: 220,
-            schoolAdminsLimit: 220,
-            usersLimit: 520,
-            plansLimit: 160,
-            paymentsLimit: 520,
-            broadcastsLimit: 180,
-            backupsLimit: 220,
-            securityLogsLimit: 300,
-            suspiciousEventsLimit: 220,
-            auditLogsLimit: 260,
+      let dataContext = buildLightweightAiContext();
+      let contextFallbackReason = null;
+      if (!shouldSkipContext) {
+        try {
+          dataContext = await withAiContextDeadline(
+            buildAiDataContext({
+            includeSchools: needsSchoolContext,
+            includeActivity: false,
+            includeSchoolAdmins: needsUserContext,
+            includeUsers: needsUserContext,
+            includePlans:
+              promptIntent.asksPlans ||
+              promptIntent.wantsSummary ||
+              promptIntent.wantsPlanConfigAction ||
+              promptIntent.wantsSubscriptionPlanAssign,
+            includePayments: promptIntent.asksFinance,
+            includeBroadcasts: promptIntent.asksBroadcasts,
+            includeBackups: promptIntent.asksBackups,
+            includeSecurityLogs: needsSecurityContext,
+            includeSuspiciousEvents: needsSecurityContext,
+            includeAuditLogs: needsSecurityContext,
+            schoolsLimit: 140,
+            schoolAdminsLimit: 140,
+            usersLimit: 240,
+            plansLimit: 80,
+            paymentsLimit: 240,
+            broadcastsLimit: 80,
+            backupsLimit: 100,
+            securityLogsLimit: 140,
+            suspiciousEventsLimit: 100,
+            auditLogsLimit: 120,
             forceRefresh: promptIntent.asksFreshData,
-          });
-      const localParsed = buildLocalAiResponse({
-        messages,
-        dataContext,
-      });
+            }),
+          );
+        } catch (contextError) {
+          contextFallbackReason = String(
+            contextError?.message || "Platform data context unavailable",
+          );
+          console.warn(
+            "AI data context unavailable, continuing without private data:",
+            contextFallbackReason,
+          );
+        }
+      }
+      const localParsed =
+        contextFallbackReason && needsPrivatePlatformData
+          ? {
+              reply:
+                "I could not load the current platform records quickly enough to answer accurately. I will not guess or present empty totals as real data. Please try the question again in a moment.",
+              action: null,
+            }
+          : buildLocalAiResponse({
+              messages,
+              dataContext,
+            });
       let parsed = localParsed;
       let aiMode = "local";
-      const shouldTryOpenAi =
-        openAiEnabled &&
+      let googleAiFallbackReason = null;
+      const hasTrustedLocalKnowledge =
+        promptIntent.asksPlatformKnowledge &&
+        !isGenericLocalFallbackReply(localParsed?.reply);
+      const shouldTryGoogleAi =
+        googleAiEnabled &&
         !promptIntent.isSmallTalk &&
-        !promptIntent.asksCapabilities;
+        !promptIntent.asksCapabilities &&
+        !hasTrustedLocalKnowledge;
       const promptLooksActionOrComplex =
         /\b(create|add|new|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|delete|remove|assign|apply|provision|publish|broadcast|announcement|compare|analyze|why|which|best|worst|top|recent)\b/i.test(
           latestPrompt,
         );
-      const shouldUseOpenAi =
-        shouldTryOpenAi &&
-        (openAiPreferred ||
+      const shouldUseGoogleAi =
+        shouldTryGoogleAi &&
+        (googleAiPreferred ||
           isGenericLocalFallbackReply(localParsed?.reply) ||
           (!localParsed?.action && promptLooksActionOrComplex));
 
-      if (shouldUseOpenAi) {
+      if (shouldUseGoogleAi) {
         try {
-          const parsedOpenAi = await callSuperAdminOpenAi({
+          const parsedGoogleAi = await callSuperAdminGoogleAi({
             messages,
             dataContext,
           });
-          if (parsedOpenAi?.reply) {
-            const openAiReply = String(parsedOpenAi.reply || "").trim();
+          if (parsedGoogleAi?.reply) {
+            const googleAiReply = String(parsedGoogleAi.reply || "").trim();
             const shouldMergeLocalAction =
-              !parsedOpenAi.action && Boolean(localParsed?.action);
+              !parsedGoogleAi.action && Boolean(localParsed?.action);
             parsed = shouldMergeLocalAction
               ? {
-                  reply: /\bconfirm\b/i.test(openAiReply)
-                    ? openAiReply
-                    : `${openAiReply}${/[.!?]$/.test(openAiReply) ? "" : "."} I also prepared the matching action. Confirm when ready.`,
+                  reply: /\bconfirm\b/i.test(googleAiReply)
+                    ? googleAiReply
+                    : `${googleAiReply}${/[.!?]$/.test(googleAiReply) ? "" : "."} I also prepared the matching action. Confirm when ready.`,
                   action: localParsed.action,
                 }
-              : parsedOpenAi;
-            aiMode = "openai";
+              : parsedGoogleAi;
+            // Preserve the existing wire value expected by the unchanged frontend.
+            aiMode = "deepseek";
           }
-        } catch (openAiError) {
-          console.warn(
-            "OpenAI chat failed, switching to local assistant mode:",
-            openAiError?.message || openAiError,
+        } catch (googleAiError) {
+          const googleAiErrorMessage = String(
+            googleAiError?.message || googleAiError || "",
           );
-          if (!localParsed?.reply) {
+          if (/quota|resource exhausted|429/i.test(googleAiErrorMessage)) {
+            googleAiFallbackReason = "Google AI quota is temporarily unavailable";
+          } else if (/timed out|abort|timeout/i.test(googleAiErrorMessage)) {
+            googleAiFallbackReason = "Google AI request timed out";
+          } else if (/api key|unauthorized|permission|401|403/i.test(googleAiErrorMessage)) {
+            googleAiFallbackReason = "Google AI authentication failed";
+          } else if (/not found|404|model/i.test(googleAiErrorMessage)) {
+            googleAiFallbackReason = "Google AI model is unavailable";
+          } else {
+            googleAiFallbackReason = "Google AI request failed";
+          }
+          logGoogleAiError("SuperAdminAI", googleAiError);
+          if (
+            !localParsed?.reply ||
+            isGenericLocalFallbackReply(localParsed?.reply)
+          ) {
             parsed = {
-              reply:
-                "I could not complete that request right now. Please try again.",
+              reply: `${googleAiFallbackReason}. I am running in Limited mode, so I can still answer supported platform snapshots and prepare safe owner actions, but broad personal-AI questions need Google AI to be available.`,
               action: null,
             };
           } else {
@@ -7176,7 +8605,12 @@ app.post(
 
       const responseMs = Date.now() - responseStart;
       const fallbackUsed =
-        openAiEnabled && shouldUseOpenAi && aiMode !== "openai";
+        googleAiEnabled && shouldUseGoogleAi && aiMode !== "deepseek";
+      const limitedMode =
+        aiMode === "local" &&
+        !hasTrustedLocalKnowledge &&
+        !promptIntent.isSmallTalk &&
+        !promptIntent.asksCapabilities;
 
       void logActivity({
         eventType: "superadmin_ai_chat",
@@ -7189,6 +8623,7 @@ app.post(
           actionType: parsed?.action?.type || null,
           mode: aiMode,
           responseMs,
+          contextFallbackReason,
         },
       });
 
@@ -7205,8 +8640,10 @@ app.post(
         reply: parsed.reply || "",
         action: parsed.action || null,
         mode: aiMode,
+        limitedMode,
         dataAsOf: dataContext?.generatedAt || null,
         responseMs,
+        contextWarning: contextFallbackReason,
       });
     } catch (error) {
       console.error("AI chat error:", error.message || error);
@@ -8419,7 +9856,12 @@ app.get(
       );
       const responseSeries = chatRows
         .map((row) => Number(row.responseMs || 0))
-        .filter((value) => Number.isFinite(value) && value > 0)
+        .filter(
+          (value) =>
+            Number.isFinite(value) &&
+            value > 0 &&
+            value <= 30000,
+        )
         .sort((a, b) => a - b);
       const totalChats = chatRows.length;
       const avgResponseMs = responseSeries.length

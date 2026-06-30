@@ -22,6 +22,7 @@
     "deploy:staging:firestore": "firebase deploy --project noble-care-management-system --only firestore"
   },
   "dependencies": {
+    "@google/genai": "^2.10.0",
     "@types/jszip": "^3.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",

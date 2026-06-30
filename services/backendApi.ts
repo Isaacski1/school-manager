@@ -7,8 +7,19 @@
 import { getIdTokenWithRetry } from "./authToken";
 import { API_BASE_URL } from "../src/config";
 import { getFriendlyErrorMessage } from "./errorMessages";
+import { PlatformBroadcast } from "../types";
 
 const BACKEND_URL = API_BASE_URL;
+
+export type SchoolAssistantChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type SchoolAssistantChatResponse = {
+  answer: string;
+  action?: { label: string; path: string } | null;
+};
 
 const buildQueryString = (params: Record<string, any>) => {
   const search = new URLSearchParams();
@@ -29,6 +40,16 @@ class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+export async function askSchoolAssistant(payload: {
+  message: string;
+  pathname: string;
+  history: SchoolAssistantChatMessage[];
+}): Promise<SchoolAssistantChatResponse> {
+  return apiRequest<SchoolAssistantChatResponse>("/api/admin/school-assistant/chat", {
+    body: payload,
+  });
 }
 
 /**
@@ -672,6 +693,7 @@ export type SuperAdminSystemHealth = {
       rss: number;
       heapUsed: number;
       heapTotal: number;
+      heapLimit: number;
       external: number;
       arrayBuffers: number;
     };
@@ -690,6 +712,17 @@ export type SuperAdminSystemHealth = {
       maxLatencyMs: number;
       errorRatePct: number;
     }>;
+    problemRoutes: Array<{
+      route: string;
+      requests: number;
+      errors: number;
+      serverErrors: number;
+      rateLimited: number;
+      aborted: number;
+      errorRatePct: number;
+      lastStatusCode: number;
+      lastSeenAt: number;
+    }>;
   };
   limiters: {
     api: {
@@ -700,6 +733,45 @@ export type SuperAdminSystemHealth = {
       windowMs: number;
       limit: number;
     };
+  };
+  dependencies: {
+    firestore: {
+      status: "healthy" | "degraded" | "unavailable";
+      latencyMs: number | null;
+      checkedAt: number;
+      error?: string | null;
+    };
+  };
+  platform: {
+    cached: boolean;
+    cacheAgeMs: number;
+    totals: {
+      schools: number;
+      activeSchools: number;
+      students: number;
+      users: number;
+      schoolAdmins: number;
+      teachers: number;
+      parents: number;
+    };
+  };
+  backgroundJobs: {
+    invoiceNotifications: {
+      queued: number;
+      active: number;
+      concurrency: number;
+    };
+  };
+  ops: {
+    status: "healthy" | "degraded" | "critical";
+    headline: string;
+    summary: string;
+    findings: Array<{
+      severity: "info" | "warning" | "critical";
+      title: string;
+      detail: string;
+    }>;
+    recommendations: string[];
   };
 };
 
@@ -789,9 +861,11 @@ export async function superAdminAiChat(payload: {
 }): Promise<{
   reply: string;
   action?: AiChatAction | null;
-  mode?: "local" | "openai";
+  mode?: "local" | "deepseek";
+  limitedMode?: boolean;
   dataAsOf?: number | null;
   responseMs?: number;
+  contextWarning?: string | null;
 }> {
   return apiRequest("/api/superadmin/ai-chat", {
     body: payload,
@@ -928,6 +1002,27 @@ export async function markParentDashboardNoticeRead(payload: {
   return apiRequest(`/api/parent/notices/${encodeURIComponent(payload.noticeId)}/read`, {
     body: payload,
   });
+}
+
+export async function getPlatformBroadcastInbox(): Promise<{
+  success: boolean;
+  broadcasts: PlatformBroadcast[];
+}> {
+  return apiRequest("/api/platform-broadcasts/inbox", {
+    method: "GET",
+  });
+}
+
+export async function updatePlatformBroadcastReceipt(
+  broadcastId: string,
+  action: "impression" | "read" | "acknowledge" | "dismiss" | "snooze",
+): Promise<{ success: boolean; receipt: Record<string, any> }> {
+  return apiRequest(
+    `/api/platform-broadcasts/${encodeURIComponent(broadcastId)}/receipt`,
+    {
+      body: { action },
+    },
+  );
 }
 
 

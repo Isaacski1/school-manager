@@ -1105,6 +1105,12 @@ service cloud.firestore {
       allow list: if isAuthenticated();
     }
 
+    // Written by the trusted backend; Super Admin can review delivery analytics.
+    match /platformBroadcastReceipts/{receiptId} {
+      allow read: if isSuperAdmin();
+      allow create, update, delete: if false;
+    }
+
     // Security login logs (super admin only)
     match /securityLoginLogs/{logId} {
       allow create: if isSuperAdmin();

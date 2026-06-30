@@ -58,6 +58,7 @@ import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
 import InstallPrompt from "./components/InstallPrompt";
 import WhatsAppBroadcastProgress from "./components/WhatsAppBroadcastProgress";
+import PlatformAnnouncementPopup from "./components/PlatformAnnouncementPopup";
 
 // Public Marketing Pages
 const MarketingHome = lazy(() => import("./pages/public/MarketingHome"));
@@ -342,6 +343,7 @@ const AppContent = () => {
     <ErrorBoundary>
       <InstallPrompt />
       {user?.role === UserRole.SCHOOL_ADMIN && <WhatsAppBroadcastProgress />}
+      <PlatformAnnouncementPopup />
       <Suspense fallback={
         <SplashScreen 
           message={splashMessage} 

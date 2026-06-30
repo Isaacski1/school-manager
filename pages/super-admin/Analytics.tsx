@@ -442,41 +442,41 @@ const Analytics = () => {
 
   return (
     <Layout title="Analytics & Reports">
-      <div className="relative isolate space-y-6 pb-8">
+      <div className="relative isolate min-w-0 space-y-5 overflow-x-hidden pb-6 sm:space-y-6 sm:pb-8">
         <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[540px] bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(16,185,129,0.14),transparent_28%),linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0))]" />
 
-        <section className="relative overflow-hidden rounded-[36px] border border-slate-200/80 bg-[linear-gradient(135deg,#061526_0%,#0b4a82_40%,#0f766e_100%)] px-5 py-6 text-white shadow-[0_28px_80px_-42px_rgba(8,47,73,0.72)] sm:px-8 sm:py-8">
+        <section className="relative overflow-hidden rounded-[24px] border border-slate-200/80 bg-[linear-gradient(135deg,#061526_0%,#0b4a82_40%,#0f766e_100%)] px-4 py-5 text-white shadow-[0_28px_80px_-42px_rgba(8,47,73,0.72)] sm:rounded-[32px] sm:px-6 sm:py-7 lg:px-8 lg:py-8">
           <div className="absolute inset-y-0 right-0 w-[48%] bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.18),transparent_68%)]" />
           <div className="absolute -top-20 left-1/3 h-52 w-52 rounded-full bg-white/10 blur-3xl" />
           <div className="absolute -bottom-24 right-10 h-56 w-56 rounded-full bg-emerald-300/20 blur-3xl" />
-          <div className="relative grid gap-8 xl:grid-cols-[1.2fr_0.8fr] xl:items-end">
-            <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100">
+          <div className="relative grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(280px,0.88fr)] lg:items-stretch xl:gap-8">
+            <div className="min-w-0 max-w-3xl lg:self-center">
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100 sm:text-[11px] sm:tracking-[0.22em]">
                 <Sparkles className="h-4 w-4" />
                 Platform Command Center
               </div>
-              <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white sm:text-4xl lg:text-[2.8rem]">
+              <h1 className="mt-4 max-w-3xl break-words text-[clamp(2rem,5.5vw,3.35rem)] font-semibold leading-[1.04] tracking-tight text-white sm:mt-5">
                 Super Admin analytics redesigned for modern reporting.
               </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-100/88 sm:text-base">
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-100/88 sm:text-base sm:leading-7">
                 Review growth, revenue, feature adoption, and school engagement
                 from one cleaner workspace built to scale from mobile to large
                 desktop screens.
               </p>
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/10 px-3.5 py-2 text-sm text-white/90">
+              <div className="mt-5 flex flex-col gap-2.5 sm:mt-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+                <span className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/18 bg-white/10 px-3.5 py-2 text-xs text-white/90 sm:w-auto sm:justify-start sm:text-sm">
                   <TrendingUp className="h-4 w-4 text-cyan-200" />
                   12-month rolling analytics
                 </span>
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/10 px-3.5 py-2 text-sm text-white/90">
+                <span className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/18 bg-white/10 px-3.5 py-2 text-xs text-white/90 sm:w-auto sm:justify-start sm:text-sm">
                   <Activity className="h-4 w-4 text-amber-200" />
                   {compact(recentActions)} recent actions
                 </span>
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
-              <div className="rounded-[28px] border border-white/16 bg-white/10 p-5 backdrop-blur-md">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:gap-4">
+              <div className="min-w-0 rounded-[22px] border border-white/16 bg-white/10 p-4 backdrop-blur-md sm:p-5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-100/80">
                   Active footprint
                 </p>
@@ -487,7 +487,7 @@ const Analytics = () => {
                   {activeSchools} of {totalSchools} schools are active.
                 </p>
               </div>
-              <div className="rounded-[28px] border border-white/16 bg-white/10 p-5 backdrop-blur-md">
+              <div className="min-w-0 rounded-[22px] border border-white/16 bg-white/10 p-4 backdrop-blur-md sm:p-5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-100/80">
                   Revenue pulse
                 </p>
@@ -502,7 +502,7 @@ const Analytics = () => {
                   average monthly revenue.
                 </p>
               </div>
-              <div className="rounded-[28px] border border-white/16 bg-white/10 p-5 backdrop-blur-md">
+              <div className="min-w-0 rounded-[22px] border border-white/16 bg-white/10 p-4 backdrop-blur-md sm:p-5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/80">
                   Sync status
                 </p>
@@ -522,7 +522,7 @@ const Analytics = () => {
         {loading && !lastLoadedAt ? (
           <div className="space-y-6 animate-pulse">
             <div className="h-56 rounded-[32px] bg-slate-200/80" />
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, index) => (
                 <div
                   key={index}
@@ -541,7 +541,7 @@ const Analytics = () => {
               {metrics.map((metric) => (
                 <div
                   key={metric.label}
-                  className={`relative overflow-hidden rounded-[28px] border border-white/80 bg-gradient-to-br ${metric.tone} p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.35)]`}
+                  className={`relative min-w-0 overflow-hidden rounded-[24px] border border-white/80 bg-gradient-to-br ${metric.tone} p-4 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.35)] sm:p-5`}
                 >
                   <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.65),transparent_70%)]" />
                   <div className="relative flex h-full flex-col gap-5">
@@ -566,7 +566,7 @@ const Analytics = () => {
               ))}
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
+            <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)]">
               <section className={panelShell}>
                 <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -587,7 +587,7 @@ const Analytics = () => {
                       void loadData({ forceRefresh: true });
                     }}
                     disabled={loading}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200/80 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                   >
                     <RefreshCw
                       className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
@@ -677,7 +677,7 @@ const Analytics = () => {
                   </div>
                 </div>
                 <div className="mt-4 rounded-[28px] border border-slate-200/80 bg-slate-950 p-5 text-white">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
                         Plan distribution
@@ -725,7 +725,7 @@ const Analytics = () => {
               </section>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+            <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
               <section className={panelShell}>
                 <div className="mb-6">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
@@ -775,11 +775,11 @@ const Analytics = () => {
               </section>
 
               <section className={panelShell}>
-                <div className="mb-6 flex items-start gap-3">
+                <div className="mb-6 flex min-w-0 items-start gap-3">
                   <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white">
                     <BarChart3 className="h-5 w-5" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
                       Usage report
                     </p>
@@ -871,7 +871,7 @@ const Analytics = () => {
               </section>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-2">
+            <div className="grid min-w-0 gap-6 xl:grid-cols-2">
               <section
                 className={`${panelShell} bg-[linear-gradient(160deg,rgba(255,255,255,0.96),rgba(240,249,255,0.92))]`}
               >
@@ -918,7 +918,7 @@ const Analytics = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 sm:text-right">
+                        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3 sm:text-right">
                           <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50 px-3 py-2">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
                               Activity
@@ -989,7 +989,7 @@ const Analytics = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 sm:text-right">
+                        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3 sm:text-right">
                           <div className="rounded-2xl border border-rose-200/80 bg-rose-50 px-3 py-2">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-rose-700">
                               Idle window

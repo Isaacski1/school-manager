@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../../components/Layout";
+import PlatformAnnouncementPopup from "../../components/PlatformAnnouncementPopup";
 import { showToast } from "../../services/toast";
 import { firestore } from "../../services/firebase";
 import {
@@ -13,22 +14,35 @@ import {
   Timestamp,
   updateDoc,
 } from "firebase/firestore";
-import { PlatformBroadcast, School } from "../../types";
+import { PlatformBroadcast, School, UserRole } from "../../types";
 import {
   Building2,
   CheckCircle2,
   Clock3,
+  Eye,
   Filter,
   Globe2,
   Info,
+  Image as ImageIcon,
+  Link2,
   Megaphone,
   RadioTower,
   Save,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
+  Users,
   Wrench,
 } from "lucide-react";
+
+const DEFAULT_ANNOUNCEMENT_IMAGE =
+  "/assets/announcements/school-hallway.png";
+const AUDIENCE_OPTIONS = [
+  { role: UserRole.SCHOOL_ADMIN, label: "School Admins" },
+  { role: UserRole.TEACHER, label: "Teachers" },
+  { role: UserRole.PARENT, label: "Parents" },
+] as const;
 
 const Broadcasts: React.FC = () => {
   const [broadcasts, setBroadcasts] = useState<PlatformBroadcast[]>([]);
@@ -36,6 +50,7 @@ const Broadcasts: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [form, setForm] = useState({
     title: "",
     message: "",
@@ -52,6 +67,15 @@ const Broadcasts: React.FC = () => {
     maintenanceStart: "",
     maintenanceEnd: "",
     maintenanceDowntime: false,
+    audienceRoles: [
+      UserRole.SCHOOL_ADMIN,
+      UserRole.TEACHER,
+      UserRole.PARENT,
+    ] as UserRole[],
+    imageUrl: "",
+    actionLabel: "",
+    actionUrl: "",
+    requireAcknowledgement: false,
   });
 
   useEffect(() => {
@@ -69,14 +93,14 @@ const Broadcasts: React.FC = () => {
         ]);
         setBroadcasts(
           broadcastSnap.docs.map((docSnap) => ({
-            id: docSnap.id,
             ...(docSnap.data() as PlatformBroadcast),
+            id: docSnap.id,
           })),
         );
         setSchools(
           schoolsSnap.docs.map((docSnap) => ({
-            id: docSnap.id,
             ...(docSnap.data() as School),
+            id: docSnap.id,
           })),
         );
       } catch (error: any) {
@@ -170,6 +194,15 @@ const Broadcasts: React.FC = () => {
     });
   };
 
+  const handleToggleAudience = (role: UserRole) => {
+    setForm((prev) => ({
+      ...prev,
+      audienceRoles: prev.audienceRoles.includes(role)
+        ? prev.audienceRoles.filter((item) => item !== role)
+        : [...prev.audienceRoles, role],
+    }));
+  };
+
   const handleSubmit = async (status: PlatformBroadcast["status"]) => {
     if (!form.title.trim() || !form.message.trim()) {
       showToast("Title and message are required.", { type: "error" });
@@ -177,6 +210,19 @@ const Broadcasts: React.FC = () => {
     }
     if (form.targetType === "SCHOOLS" && form.targetSchoolIds.length === 0) {
       showToast("Select at least one school.", { type: "error" });
+      return;
+    }
+    if (form.audienceRoles.length === 0) {
+      showToast("Select at least one dashboard audience.", { type: "error" });
+      return;
+    }
+    if (
+      form.actionUrl.trim() &&
+      !/^(https?:\/\/|\/|#)/i.test(form.actionUrl.trim())
+    ) {
+      showToast("Action link must be a full URL or an app path beginning with /.", {
+        type: "error",
+      });
       return;
     }
 
@@ -209,6 +255,12 @@ const Broadcasts: React.FC = () => {
         publishAt,
         expiresAt,
         status,
+        audienceRoles: form.audienceRoles,
+        imageUrl: form.imageUrl.trim() || DEFAULT_ANNOUNCEMENT_IMAGE,
+        actionLabel: form.actionLabel.trim() || null,
+        actionUrl: form.actionUrl.trim() || null,
+        requireAcknowledgement: form.requireAcknowledgement,
+        updatedAt: Date.now(),
         ...(form.version ? { version: form.version } : {}),
         ...(form.whatsNew
           ? {
@@ -245,6 +297,15 @@ const Broadcasts: React.FC = () => {
         maintenanceStart: "",
         maintenanceEnd: "",
         maintenanceDowntime: false,
+        audienceRoles: [
+          UserRole.SCHOOL_ADMIN,
+          UserRole.TEACHER,
+          UserRole.PARENT,
+        ],
+        imageUrl: "",
+        actionLabel: "",
+        actionUrl: "",
+        requireAcknowledgement: false,
       }));
     } catch (error: any) {
       console.error("Failed to save broadcast", error);
@@ -291,6 +352,41 @@ const Broadcasts: React.FC = () => {
 
   return (
     <Layout title="Broadcast & Communication">
+      {previewOpen && (
+        <PlatformAnnouncementPopup
+          previewBroadcast={{
+            id: "broadcast-preview",
+            title: form.title.trim() || "Your announcement title",
+            message:
+              form.message.trim() ||
+              "Your broadcast message will appear here exactly as dashboard users will read it.",
+            type: form.type,
+            priority: form.priority,
+            targetType: form.targetType,
+            targetSchoolIds: form.targetSchoolIds,
+            audienceRoles: form.audienceRoles,
+            imageUrl: form.imageUrl.trim() || DEFAULT_ANNOUNCEMENT_IMAGE,
+            actionLabel: form.actionLabel.trim() || null,
+            actionUrl: form.actionUrl.trim() || null,
+            requireAcknowledgement: form.requireAcknowledgement,
+            createdAt: Date.now(),
+            createdBy: "super_admin",
+            publishAt: Date.now(),
+            expiresAt: null,
+            status: "PUBLISHED",
+            version: form.version || undefined,
+            whatsNew: form.whatsNew
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean),
+            effectiveDate: form.effectiveDate || null,
+            maintenanceStart: form.maintenanceStart || null,
+            maintenanceEnd: form.maintenanceEnd || null,
+            maintenanceDowntime: form.maintenanceDowntime,
+          }}
+          onPreviewClose={() => setPreviewOpen(false)}
+        />
+      )}
       <div className="mx-auto max-w-7xl p-3 space-y-6 sm:p-6">
         <div className="relative overflow-hidden rounded-3xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-indigo-50 p-4 shadow-sm sm:p-6 lg:p-8">
           <div className="absolute -top-24 -right-16 h-48 w-48 rounded-full bg-cyan-200/30 blur-3xl" />
@@ -391,6 +487,57 @@ const Broadcasts: React.FC = () => {
                 placeholder="Write your broadcast message"
               />
             </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+              <div className="relative h-40 overflow-hidden bg-slate-200 sm:h-52">
+                <img
+                  src={form.imageUrl.trim() || DEFAULT_ANNOUNCEMENT_IMAGE}
+                  alt="Announcement preview"
+                  className="h-full w-full object-cover"
+                  onError={(event) => {
+                    if (
+                      event.currentTarget.src.endsWith(
+                        DEFAULT_ANNOUNCEMENT_IMAGE,
+                      )
+                    ) {
+                      return;
+                    }
+                    event.currentTarget.src = DEFAULT_ANNOUNCEMENT_IMAGE;
+                  }}
+                />
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/55 to-transparent px-4 pb-3 pt-10">
+                  <p className="text-xs font-semibold text-white/80">
+                    Dashboard popup preview
+                  </p>
+                  <p className="truncate text-base font-bold text-white">
+                    {form.title || "Your announcement title"}
+                  </p>
+                </div>
+              </div>
+              <div className="p-4">
+                <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <ImageIcon size={16} className="text-blue-600" />
+                  Announcement image
+                </label>
+                <input
+                  type="url"
+                  value={form.imageUrl}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      imageUrl: event.target.value,
+                    }))
+                  }
+                  placeholder="Optional HTTPS image URL"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Leave blank to use the optimized School Manager GH education
+                  artwork shown above.
+                </p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -584,6 +731,108 @@ const Broadcasts: React.FC = () => {
               </div>
             </div>
 
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex items-start gap-3">
+                <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                  <Users size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Dashboard audience
+                  </h3>
+                  <p className="text-xs leading-5 text-slate-500">
+                    Select who should receive this announcement popup.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {AUDIENCE_OPTIONS.map((option) => {
+                  const selected = form.audienceRoles.includes(option.role);
+                  return (
+                    <label
+                      key={option.role}
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition ${
+                        selected
+                          ? "border-blue-200 bg-blue-50 text-blue-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => handleToggleAudience(option.role)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <Link2 size={15} />
+                  Optional action label
+                </label>
+                <input
+                  value={form.actionLabel}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      actionLabel: event.target.value,
+                    }))
+                  }
+                  placeholder="Learn more"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Action link
+                </label>
+                <input
+                  value={form.actionUrl}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      actionUrl: event.target.value,
+                    }))
+                  }
+                  placeholder="/admin/billing or https://..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                />
+              </div>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-blue-100 bg-white p-3 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.requireAcknowledgement}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      requireAcknowledgement: event.target.checked,
+                    }))
+                  }
+                  className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <ShieldCheck
+                  size={18}
+                  className="mt-0.5 shrink-0 text-blue-700"
+                />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">
+                    Require acknowledgement
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                    Users must choose “I understand”. They may snooze the
+                    announcement for four hours, but cannot permanently dismiss
+                    it.
+                  </span>
+                </span>
+              </label>
+            </div>
+
             {form.targetType === "SCHOOLS" && (
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -607,8 +856,8 @@ const Broadcasts: React.FC = () => {
               </div>
             )}
 
-            {!form.sendNow && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {!form.sendNow && (
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">
                     Schedule Publish
@@ -625,7 +874,8 @@ const Broadcasts: React.FC = () => {
                     }
                   />
                 </div>
-                <div>
+              )}
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">
                     Expiry Date
                   </label>
@@ -641,10 +891,17 @@ const Broadcasts: React.FC = () => {
                     }
                   />
                 </div>
-              </div>
-            )}
+            </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 font-semibold text-blue-800 transition hover:bg-blue-100 sm:w-auto"
+              >
+                <Eye size={16} />
+                Preview popup
+              </button>
               <button
                 type="button"
                 onClick={() =>

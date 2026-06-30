@@ -61,6 +61,13 @@ import {
   ThumbsUp,
   ThumbsDown,
   Undo2,
+  X,
+  BrainCircuit,
+  Command,
+  Cpu,
+  LockKeyhole,
+  Moon,
+  Sun,
 } from "lucide-react";
 import {
   AreaChart,
@@ -2298,7 +2305,8 @@ const EarningsOverview: React.FC<{
 type AiConversationMessage = AiChatMessage & {
   id: string;
   createdAt: number;
-  mode?: "local" | "openai";
+  mode?: "local" | "deepseek";
+  limitedMode?: boolean;
   responseMs?: number;
   dataAsOf?: number | null;
 };
@@ -2335,10 +2343,20 @@ const sortAiConversations = (items: AiConversationEntry[]) =>
       b.updatedAt - a.updatedAt,
   );
 
-const getAiModeLabel = (mode?: AiConversationMessage["mode"]) => {
-  if (mode === "openai") return "OpenAI";
-  if (mode === "local") return "Limited mode";
+const getAiModeLabel = (
+  mode?: AiConversationMessage["mode"],
+  limitedMode?: boolean,
+) => {
+  if (mode === "deepseek") return "DeepSeek";
+  if (mode === "local") return limitedMode ? "Limited mode" : "Fast answer";
   return "";
+};
+
+const formatAiLatency = (value?: number | null) => {
+  const milliseconds = Number(value || 0);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "0 ms";
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
 };
 
 const buildApiMessages = (
@@ -2394,9 +2412,12 @@ const buildApiMessages = (
 };
 
 const Dashboard: React.FC = () => {
-  const AI_ASSISTANT_NAME = "Isaacski AI";
-  const AI_HISTORY_STORAGE_KEY = "super_admin_ai_history_v1";
-  const AI_FEEDBACK_STORAGE_KEY = "super_admin_ai_feedback_v1";
+  const AI_ASSISTANT_NAME = "School Manager GH AI";
+  const AI_HISTORY_STORAGE_KEY = "super_admin_school_manager_gh_ai_history_v1";
+  const AI_FEEDBACK_STORAGE_KEY = "super_admin_school_manager_gh_ai_feedback_v1";
+  const AI_LEGACY_HISTORY_STORAGE_KEY = "super_admin_ai_history_v1";
+  const AI_LEGACY_FEEDBACK_STORAGE_KEY = "super_admin_ai_feedback_v1";
+  const AI_THEME_STORAGE_KEY = "super_admin_school_manager_gh_ai_theme_v1";
   const createAiConversation = (): AiConversationEntry => {
     const now = Date.now();
     return {
@@ -2411,7 +2432,7 @@ const Dashboard: React.FC = () => {
           createdAt: now,
           role: "assistant",
           content:
-            "Hello Super Admin. I can help analyze system data and propose actions. Ask me anything.",
+            "Hello Owner. I am School Manager GH AI, your DeepSeek-powered command agent for platform operations. I can analyze system data, prepare actions, and wait for your confirmation before changing anything.",
         },
       ],
       pendingAction: null,
@@ -2423,6 +2444,8 @@ const Dashboard: React.FC = () => {
     String(reply || "")
       .replace(/^isaacski ai is active\.?\s*/i, "")
       .replace(/^isaacski ai summary:\s*/i, "")
+      .replace(/^school manager gh ai is active\.?\s*/i, "")
+      .replace(/^school manager gh ai summary:\s*/i, "")
       .trim();
   const toConversationMessage = (
     role: AiChatMessage["role"],
@@ -2515,6 +2538,10 @@ const Dashboard: React.FC = () => {
   );
   const DASHBOARD_CACHE_TTL_MS = 45_000;
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiDarkMode, setAiDarkMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(AI_THEME_STORAGE_KEY) === "dark";
+  });
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiValidationLoading, setAiValidationLoading] = useState(false);
@@ -2534,7 +2561,9 @@ const Dashboard: React.FC = () => {
   >(() => {
     if (typeof window === "undefined") return {};
     try {
-      const raw = window.localStorage.getItem(AI_FEEDBACK_STORAGE_KEY);
+      const raw =
+        window.localStorage.getItem(AI_FEEDBACK_STORAGE_KEY) ||
+        window.localStorage.getItem(AI_LEGACY_FEEDBACK_STORAGE_KEY);
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : {};
@@ -2547,7 +2576,9 @@ const Dashboard: React.FC = () => {
     () => {
       if (typeof window === "undefined") return [createAiConversation()];
       try {
-        const raw = window.localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+        const raw =
+          window.localStorage.getItem(AI_HISTORY_STORAGE_KEY) ||
+          window.localStorage.getItem(AI_LEGACY_HISTORY_STORAGE_KEY);
         if (!raw) return [createAiConversation()];
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed) || parsed.length === 0) {
@@ -2573,27 +2604,36 @@ const Dashboard: React.FC = () => {
               typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
             pinned: Boolean(item.pinned),
             messages: (item.messages as AiConversationMessage[]).map(
-              (message, index) => ({
-                id:
-                  typeof message.id === "string" && message.id
-                    ? message.id
-                    : `msg-${Date.now()}-${index}`,
-                createdAt:
-                  typeof message.createdAt === "number"
-                    ? message.createdAt
-                    : Date.now(),
-                role: message.role || "assistant",
-                content: String(message.content || ""),
-                mode: message.mode,
-                responseMs:
-                  typeof message.responseMs === "number"
-                    ? message.responseMs
-                    : undefined,
-                dataAsOf:
-                  typeof message.dataAsOf === "number"
-                    ? message.dataAsOf
-                    : null,
-              }),
+              (message, index) => {
+                const legacyMode = String((message as any)?.mode || "");
+                const normalizedMode =
+                  legacyMode === "openai"
+                    ? "deepseek"
+                    : legacyMode === "deepseek" || legacyMode === "local"
+                      ? (legacyMode as AiConversationMessage["mode"])
+                      : undefined;
+                return {
+                  id:
+                    typeof message.id === "string" && message.id
+                      ? message.id
+                      : `msg-${Date.now()}-${index}`,
+                  createdAt:
+                    typeof message.createdAt === "number"
+                      ? message.createdAt
+                      : Date.now(),
+                  role: message.role || "assistant",
+                  content: String(message.content || ""),
+                  mode: normalizedMode,
+                  responseMs:
+                    typeof message.responseMs === "number"
+                      ? message.responseMs
+                      : undefined,
+                  dataAsOf:
+                    typeof message.dataAsOf === "number"
+                      ? message.dataAsOf
+                      : null,
+                };
+              },
             ),
             pendingAction: (item.pendingAction || null) as AiChatAction | null,
             pendingValidation:
@@ -2729,6 +2769,17 @@ const Dashboard: React.FC = () => {
     refreshAiMetrics();
   }, [aiOpen, refreshAiMetrics]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        AI_THEME_STORAGE_KEY,
+        aiDarkMode ? "dark" : "light",
+      );
+    } catch {
+      // Ignore storage failures; the in-session theme still works.
+    }
+  }, [AI_THEME_STORAGE_KEY, aiDarkMode]);
+
   useEffect(
     () => () => {
       if (typingTimerRef.current) {
@@ -2748,13 +2799,19 @@ const Dashboard: React.FC = () => {
           clearClientCache(DASHBOARD_CACHE_KEY);
         }
         // Load dashboard data with reasonable limits
-        const payload = await getSuperAdminDashboardOverview({
-          forceRefresh: Boolean(forceRefresh),
-          schoolsLimit: 500, // Reasonable limit with pagination
-          activityLimit: 50, // Recent activity only
-          paymentsLimit: 100, // Recent payments only
-          checklistLimit: 200, // Checklist data
-        });
+        const payload = await resolveClientCache(
+          DASHBOARD_CACHE_KEY,
+          2 * 60 * 1000,
+          () =>
+            getSuperAdminDashboardOverview({
+              forceRefresh: Boolean(forceRefresh),
+              schoolsLimit: 200,
+              activityLimit: 30,
+              paymentsLimit: 60,
+              checklistLimit: 100,
+            }),
+          { forceRefresh },
+        );
 
         let normalizedSchools: School[] = (payload?.schools || []).map((row: any) => ({
           ...(row || {}),
@@ -3497,6 +3554,7 @@ const Dashboard: React.FC = () => {
           conversationId,
           toConversationMessage("assistant", normalizedReply, {
             mode: response.mode,
+            limitedMode: response.limitedMode,
             responseMs: response.responseMs,
             dataAsOf: response.dataAsOf ?? null,
           }),
@@ -3867,100 +3925,127 @@ const Dashboard: React.FC = () => {
         <Modal
           isOpen={aiOpen}
           onClose={closeAiModal}
-          title={`${AI_ASSISTANT_NAME} Assistant`}
-          className="mx-auto max-w-[94vw] lg:max-w-7xl xl:translate-x-32"
+          hideDefaultHeader
+          contentClassName="p-0"
+          overlayClassName="!items-stretch !p-0 sm:!items-center sm:!p-4"
+          className="mx-auto h-[100dvh] !max-h-none !max-w-none overflow-hidden !rounded-none border-0 bg-transparent shadow-[0_30px_90px_rgba(15,23,42,0.28)] sm:h-[90vh] sm:!max-h-[90vh] sm:!max-w-[96vw] sm:!rounded-[2rem] sm:border sm:border-white/70 lg:!max-w-7xl xl:translate-x-32"
         >
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-blue-50 p-4 shadow-sm">
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                    <ShieldCheck size={14} />
-                    Super Admin � Secure Assistant Workspace
+          <div data-ai-theme={aiDarkMode ? "dark" : "light"} className={`${aiDarkMode ? "ai-dark" : ""} relative h-full min-h-0 overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(45,212,191,0.34),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(99,102,241,0.28),transparent_28%),linear-gradient(135deg,#f8fdff_0%,#eef8ff_45%,#f8fbff_100%)] text-slate-900 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_12%_8%,rgba(8,145,178,0.2),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(79,70,229,0.2),transparent_28%),linear-gradient(135deg,#020617_0%,#0f172a_48%,#111827_100%)] dark:text-slate-100 sm:max-h-[90vh]`}>
+            <div className="pointer-events-none absolute -left-24 top-20 h-52 w-52 rounded-full bg-cyan-300/25 blur-3xl motion-safe:animate-pulse" />
+            <div className="pointer-events-none absolute -right-20 top-8 h-60 w-60 rounded-full bg-indigo-300/25 blur-3xl motion-safe:animate-pulse" />
+            <div className="pointer-events-none absolute bottom-0 left-1/3 h-44 w-44 rounded-full bg-emerald-300/20 blur-3xl" />
+            <div className="relative flex h-full min-h-0 flex-col">
+              <header className="shrink-0 border-b border-white/70 bg-white/60 px-3 py-3 shadow-sm backdrop-blur-2xl transition-colors dark:border-slate-700/70 dark:bg-slate-950/65 sm:px-6 sm:py-4">
+                <div className="flex items-start justify-between gap-3 lg:items-center">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="relative shrink-0">
+                      <div className="absolute inset-0 rounded-2xl bg-cyan-400/40 blur-md motion-safe:animate-pulse" />
+                      <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-950 via-[#0B4A82] to-cyan-500 text-white shadow-lg shadow-cyan-500/25 sm:h-12 sm:w-12 sm:rounded-2xl">
+                        <BrainCircuit size={22} />
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="truncate text-lg font-black tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+                          {AI_ASSISTANT_NAME}
+                        </h2>
+                        <span className="hidden items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 sm:inline-flex">
+                          <Command size={12} />
+                          Owner Command Center
+                        </span>
+                      </div>
+                      <p className="mt-0.5 line-clamp-1 max-w-3xl text-xs leading-5 text-slate-600 dark:text-slate-300 sm:mt-1 sm:text-sm sm:leading-6">
+                        Ask questions, inspect platform health, prepare safe actions, and confirm only when you are ready.
+                      </p>
+                    </div>
                   </div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/90 px-3 py-1 text-[11px] font-medium text-cyan-700">
-                    <Sparkles size={13} />
-                    {AI_ASSISTANT_NAME} � Live Session
+                  <div className="flex shrink-0 items-center gap-1.5 lg:justify-end">
+                    <span className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 sm:inline-flex">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
+                      Ready
+                    </span>
+                    <span className="hidden items-center gap-2 rounded-full border border-indigo-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 md:inline-flex">
+                      <Cpu size={13} />
+                      DeepSeek aware
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAiDarkMode((current) => !current)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/90 text-slate-500 shadow-sm transition hover:-translate-y-0.5 hover:text-slate-900 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white dark:focus:ring-cyan-900/50 sm:h-10 sm:w-10"
+                      aria-label={
+                        aiDarkMode
+                          ? "Use light mode in School Manager GH AI"
+                          : "Use dark mode in School Manager GH AI"
+                      }
+                      title={aiDarkMode ? "Light mode" : "Dark mode"}
+                      aria-pressed={aiDarkMode}
+                    >
+                      {aiDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+                    </button>
+                    <button
+                      onClick={closeAiModal}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/90 text-slate-500 shadow-sm transition hover:-translate-y-0.5 hover:text-slate-900 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white dark:focus:ring-cyan-900/50 sm:h-10 sm:w-10"
+                      aria-label="Close AI command center"
+                    >
+                      <X size={18} />
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
-                      Avg latency
-                    </p>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {aiMetricsLoading
-                        ? "..."
-                        : `${aiMetrics?.avgResponseMs ?? 0} ms`}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
-                      P95 latency
-                    </p>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {aiMetricsLoading
-                        ? "..."
-                        : `${aiMetrics?.p95ResponseMs ?? 0} ms`}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
-                      Positive feedback
-                    </p>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {aiMetricsLoading
-                        ? "..."
-                        : `${aiMetrics?.feedbackPositiveRate ?? 0}%`}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-cyan-100 bg-white/90 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
-                      Fallback usage
-                    </p>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {aiMetricsLoading
-                        ? "..."
-                        : `${aiMetrics?.fallbackRate ?? 0}%`}
-                    </p>
-                  </div>
+                <div className="mt-2 grid grid-cols-4 gap-1.5 sm:mt-4 sm:gap-2">
+                  {[
+                    ["Avg latency", aiMetricsLoading ? "..." : formatAiLatency(aiMetrics?.avgResponseMs)],
+                    ["P95 latency", aiMetricsLoading ? "..." : formatAiLatency(aiMetrics?.p95ResponseMs)],
+                    ["Feedback", aiMetricsLoading ? "..." : `${aiMetrics?.feedbackPositiveRate ?? 0}%`],
+                    ["Local fallback", aiMetricsLoading ? "..." : `${aiMetrics?.fallbackRate ?? 0}%`],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="min-w-0 rounded-xl border border-white/80 bg-white/70 px-2 py-2 shadow-sm backdrop-blur transition dark:border-slate-700 dark:bg-slate-900/75 motion-safe:hover:-translate-y-0.5 motion-safe:hover:shadow-md sm:rounded-2xl sm:px-3 sm:py-2.5"
+                    >
+                      <p className="truncate text-[8px] font-bold uppercase tracking-[0.08em] text-slate-400 dark:text-slate-500 sm:text-[10px] sm:tracking-[0.16em]">
+                        {label}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs font-black text-slate-900 dark:text-white sm:mt-1 sm:text-sm">
+                        {value}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            </div>
+              </header>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
-              <aside className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 shadow-sm">
+              <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden p-2 sm:gap-3 sm:p-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-1">
+              <aside className="shrink-0 rounded-2xl border border-white/80 bg-white/70 p-2.5 shadow-xl shadow-slate-200/50 backdrop-blur-2xl transition-colors dark:border-slate-700/80 dark:bg-slate-900/75 dark:shadow-black/30 sm:rounded-[1.6rem] sm:p-3 lg:min-h-0">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <button
                     onClick={createNewConversation}
-                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-3.5 py-2.5 text-xs font-bold text-white shadow-lg shadow-slate-950/15 transition motion-safe:hover:-translate-y-0.5 hover:bg-slate-800"
                   >
                     <Plus size={14} />
                     New Chat
                   </button>
                   <button
                     onClick={() => setAiHistoryOpenMobile((prev) => !prev)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 lg:hidden"
+                    className="inline-flex items-center gap-1 rounded-2xl border border-white/80 bg-white/80 px-3 py-2.5 text-xs font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
                   >
                     <MessageSquare size={14} />
                     History
                   </button>
                 </div>
-                <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5">
-                  <Search size={14} className="text-slate-400" />
+                <div className={`mb-3 items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 shadow-inner shadow-slate-100 dark:border-slate-700 dark:bg-slate-950/70 dark:shadow-black/30 ${aiHistoryOpenMobile ? "flex" : "hidden lg:flex"}`}>
+                  <Search size={14} className="text-slate-400 dark:text-slate-500" />
                   <input
                     value={aiHistorySearch}
                     onChange={(e) => setAiHistorySearch(e.target.value)}
                     placeholder="Search history"
-                    className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"
+                    className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
                   />
                 </div>
                 <div
-                  className={`space-y-2 overflow-y-auto pr-1 ${aiHistoryOpenMobile ? "max-h-64" : "max-h-0 lg:max-h-[560px]"} transition-all duration-300 lg:max-h-[560px]`}
+                  className={`space-y-2 overflow-y-auto pr-1 ${aiHistoryOpenMobile ? "max-h-64" : "max-h-0 lg:max-h-[560px]"} transition-all duration-300 lg:max-h-[calc(92vh-255px)]`}
                 >
                   {filteredAiConversations.length === 0 && (
-                    <div className="rounded-xl border border-dashed border-slate-200 bg-white p-3 text-center">
-                      <p className="text-xs text-slate-500">
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4 text-center dark:border-slate-700 dark:bg-slate-800/70">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         No matching conversations
                       </p>
                     </div>
@@ -3968,10 +4053,10 @@ const Dashboard: React.FC = () => {
                   {filteredAiConversations.map((conversation) => (
                     <div
                       key={conversation.id}
-                      className={`rounded-xl border px-3 py-2.5 transition-all ${
+                      className={`rounded-2xl border px-3 py-3 transition-all motion-safe:hover:-translate-y-0.5 ${
                         activeConversation?.id === conversation.id
-                          ? "border-cyan-300 bg-cyan-50 shadow-sm"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          ? "border-cyan-300 bg-gradient-to-br from-cyan-50 to-white shadow-md shadow-cyan-100/70 dark:border-cyan-700 dark:from-cyan-950/70 dark:to-slate-900 dark:shadow-black/30"
+                          : "border-white/80 bg-white/75 hover:border-cyan-200 hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-cyan-800 dark:hover:bg-slate-800"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -3982,14 +4067,14 @@ const Dashboard: React.FC = () => {
                           }}
                           className="flex-1 text-left"
                         >
-                          <p className="line-clamp-2 text-xs font-semibold text-slate-800">
+                          <p className="line-clamp-2 text-xs font-semibold text-slate-800 dark:text-slate-100">
                             {conversation.title}
                           </p>
-                          <p className="mt-1 text-[10px] text-slate-500">
+                          <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
                             {formatConversationTime(conversation.updatedAt)}
                           </p>
                         </button>
-                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                           {conversation.messages.length}
                         </span>
                       </div>
@@ -3999,7 +4084,7 @@ const Dashboard: React.FC = () => {
                           className={`rounded-lg p-1.5 transition ${
                             conversation.pinned
                               ? "bg-amber-100 text-amber-700"
-                              : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                              : "text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
                           }`}
                           title={conversation.pinned ? "Unpin" : "Pin"}
                         >
@@ -4007,14 +4092,14 @@ const Dashboard: React.FC = () => {
                         </button>
                         <button
                           onClick={() => renameConversation(conversation.id)}
-                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
                           title="Rename"
                         >
                           <Pencil size={13} />
                         </button>
                         <button
                           onClick={() => deleteConversation(conversation.id)}
-                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-300"
                           title="Delete"
                         >
                           <Trash2 size={13} />
@@ -4025,31 +4110,47 @@ const Dashboard: React.FC = () => {
                 </div>
               </aside>
 
-              <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_48%)]" />
-                <div className="relative border-b border-slate-100 px-4 py-3 sm:px-5">
+              <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-white/80 bg-white/78 shadow-xl shadow-slate-200/60 backdrop-blur-2xl transition-colors dark:border-slate-700/80 dark:bg-slate-900/80 dark:shadow-black/30 sm:rounded-[1.6rem]">
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.7),rgba(248,250,252,0.8))] dark:bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.12),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.82),rgba(2,6,23,0.9))]" />
+                <div className="relative hidden border-b border-white/80 px-4 py-3 dark:border-slate-700 sm:block sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">
+                      <p className="truncate text-base font-black text-slate-900 dark:text-white">
                         {activeConversation?.title || "New chat"}
                       </p>
-                      <p className="text-xs text-slate-500">
-                        Select a previous conversation from history to continue
-                        where you left off.
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Live workspace for answers, previews, confirmation, audit, and undo.
                       </p>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Ready
+                    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-1.5 text-[11px] font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-200">
+                      <LockKeyhole size={13} className="text-emerald-600" />
+                      Confirm-first safety
                     </div>
                   </div>
                 </div>
 
                 <div
                   ref={aiMessagesViewportRef}
-                  className="relative h-[360px] overflow-y-auto bg-slate-50/80 p-4 sm:h-[440px] sm:p-5"
+                  className="relative min-h-0 flex-1 overscroll-contain overflow-y-auto bg-slate-50/60 p-3 transition-colors dark:bg-slate-950/35 sm:p-5"
                 >
-                  <div className="space-y-3">
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-white/80 to-transparent dark:from-slate-950/80" />
+                  <div className="relative space-y-4">
+                    <div className="border-b border-slate-200/70 px-1 pb-3 dark:border-slate-700 sm:hidden">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-slate-900 dark:text-white">
+                            {activeConversation?.title || "New chat"}
+                          </p>
+                          <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            Answers, previews, confirmation, audit, and undo.
+                          </p>
+                        </div>
+                        <div className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-200 bg-white/90 px-2 py-1 text-[9px] font-bold text-emerald-700 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                          <LockKeyhole size={10} />
+                          Confirm-first
+                        </div>
+                      </div>
+                    </div>
                     {(activeConversation?.messages || []).map((message) => {
                       const feedbackKey = `${activeConversation?.id}:${message.id}`;
                       const feedback = aiMessageFeedback[feedbackKey];
@@ -4062,11 +4163,11 @@ const Dashboard: React.FC = () => {
                             message.role === "user"
                               ? "justify-end"
                               : "justify-start"
-                          }`}
+                          } motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1`}
                         >
                           <div className="max-w-[92%] sm:max-w-[80%]">
                             {isEditingMessage ? (
-                              <div className="rounded-2xl border border-cyan-200 bg-white p-3 shadow-sm">
+                                <div className="rounded-[1.35rem] border border-cyan-200 bg-white/95 p-3 shadow-lg shadow-cyan-100/60 dark:border-cyan-900 dark:bg-slate-900 dark:shadow-black/30">
                                 <textarea
                                   value={aiEditDraft}
                                   onChange={(event) => setAiEditDraft(event.target.value)}
@@ -4077,13 +4178,13 @@ const Dashboard: React.FC = () => {
                                     }
                                   }}
                                   rows={3}
-                                  className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+                                  className="w-full resize-y rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-cyan-900/50"
                                   placeholder="Edit message and regenerate..."
                                 />
                                 <div className="mt-2 flex items-center justify-end gap-2">
                                   <button
                                     onClick={cancelAiMessageEdit}
-                                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                                   >
                                     Cancel
                                   </button>
@@ -4092,7 +4193,7 @@ const Dashboard: React.FC = () => {
                                       void saveAiMessageEditAndRegenerate(message.id)
                                     }
                                     disabled={aiLoading || !aiEditDraft.trim()}
-                                    className="rounded-lg bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="rounded-xl bg-gradient-to-r from-[#0B4A82] to-cyan-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     Save & Regenerate
                                   </button>
@@ -4100,10 +4201,10 @@ const Dashboard: React.FC = () => {
                               </div>
                             ) : (
                               <div
-                                className={`rounded-2xl px-4 py-3 text-sm shadow-sm transition-all ${
+                                className={`rounded-[1.35rem] px-4 py-3 text-sm leading-6 shadow-sm transition-all ${
                                   message.role === "user"
-                                    ? "bg-gradient-to-r from-[#0B4A82] to-[#1160A8] text-white"
-                                    : "border border-slate-200 bg-white text-slate-700"
+                                    ? "bg-gradient-to-br from-[#0B4A82] via-[#1160A8] to-cyan-600 text-white shadow-lg shadow-blue-900/15"
+                                    : "border border-white/90 bg-white/95 text-slate-700 shadow-md shadow-slate-200/60 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 dark:shadow-black/30"
                                 }`}
                               >
                                 {message.content}
@@ -4119,10 +4220,10 @@ const Dashboard: React.FC = () => {
                                   {(message.responseMs || message.mode) && (
                                     <span className="text-[10px] text-slate-400">
                                       {message.mode
-                                        ? `${getAiModeLabel(message.mode)} � `
+                                        ? `${getAiModeLabel(message.mode, message.limitedMode)} · `
                                         : ""}
                                       {message.responseMs
-                                        ? `${message.responseMs} ms`
+                                        ? formatAiLatency(message.responseMs)
                                         : ""}
                                     </span>
                                   )}
@@ -4203,10 +4304,10 @@ const Dashboard: React.FC = () => {
                     })}
                     {aiLoading && (
                       <div className="flex justify-start">
-                        <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" />
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:120ms]" />
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:240ms]" />
+                        <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-bounce" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-bounce [animation-delay:120ms]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-bounce [animation-delay:240ms]" />
                           Thinking...
                         </div>
                       </div>
@@ -4215,16 +4316,17 @@ const Dashboard: React.FC = () => {
                 </div>
 
                 {activeConversation?.pendingAction && (
-                  <div className="border-t border-amber-200 bg-amber-50/70 p-4">
-                    <div className="text-sm font-semibold text-amber-900">
-                      Action suggested
+                  <div className="relative border-t border-amber-200/80 bg-gradient-to-r from-amber-50 via-white to-orange-50 p-4 dark:border-amber-900/70 dark:from-amber-950/60 dark:via-slate-900 dark:to-orange-950/50">
+                    <div className="flex items-center gap-2 text-sm font-black text-amber-950 dark:text-amber-100">
+                      <Sparkles size={15} className="text-amber-600" />
+                      Action preview ready
                     </div>
-                    <div className="mt-1 text-xs text-amber-800">
+                    <div className="mt-1 text-xs text-amber-800 dark:text-amber-300">
                       {activeConversation.pendingAction.description ||
                         activeConversation.pendingAction.type}
                     </div>
                     {activeConversation.pendingValidation && (
-                      <div className="mt-2 space-y-1 rounded-xl border border-amber-200 bg-white/80 p-2.5 text-[11px] text-amber-900">
+                      <div className="mt-2 space-y-1 rounded-2xl border border-amber-200 bg-white/85 p-3 text-[11px] text-amber-900 shadow-sm dark:border-amber-900 dark:bg-slate-950/70 dark:text-amber-200">
                         <div className="font-semibold">
                           Validation:{" "}
                           {activeConversation.pendingValidation.valid
@@ -4249,20 +4351,30 @@ const Dashboard: React.FC = () => {
                             )}
                           </div>
                         )}
+                        <div>
+                          <div className="font-semibold">Payload preview</div>
+                          <pre className="mt-1 max-h-28 overflow-auto rounded-xl bg-slate-950/90 p-2 text-[10px] leading-4 text-amber-50">
+                            {JSON.stringify(
+                              activeConversation.pendingValidation.payload,
+                              null,
+                              2,
+                            )}
+                          </pre>
+                        </div>
                       </div>
                     )}
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <button
                         onClick={confirmAiAction}
                         disabled={aiValidationLoading || aiLoading}
-                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                        className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {aiValidationLoading ? "Validating..." : "Confirm action"}
+                        {aiValidationLoading ? "Validating..." : "Confirm & execute"}
                       </button>
                       <button
                         onClick={cancelAiAction}
                         disabled={aiLoading}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                        className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                       >
                         Cancel
                       </button>
@@ -4271,20 +4383,20 @@ const Dashboard: React.FC = () => {
                 )}
 
                 {activeConversation?.lastUndo && (
-                  <div className="border-t border-cyan-200 bg-cyan-50/60 p-4">
+                  <div className="border-t border-cyan-200 bg-cyan-50/70 p-4 dark:border-cyan-900 dark:bg-cyan-950/35">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div className="text-sm font-semibold text-cyan-900">
-                          Undo available
+                        <div className="text-sm font-semibold text-cyan-900 dark:text-cyan-100">
+                          Undo window active
                         </div>
-                        <div className="text-xs text-cyan-800">
-                          You can rollback the last action while the undo window is active.
+                        <div className="text-xs text-cyan-800 dark:text-cyan-300">
+                          You can roll back the last reversible action while the undo window is active.
                         </div>
                       </div>
                       <button
                         onClick={undoAiAction}
                         disabled={aiLoading}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-300 bg-white px-3.5 py-2 text-xs font-bold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-cyan-800 dark:bg-slate-800 dark:text-cyan-300 dark:hover:bg-slate-700"
                       >
                         <Undo2 size={12} />
                         Undo action
@@ -4293,7 +4405,7 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
-                <div className="border-t border-slate-100 bg-white p-3 sm:p-4">
+                <div className="relative border-t border-white/80 bg-white/85 p-3 shadow-[0_-18px_40px_rgba(15,23,42,0.05)] backdrop-blur transition-colors dark:border-slate-700 dark:bg-slate-950/85 dark:shadow-black/20 sm:p-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <textarea
                       value={aiInput}
@@ -4305,13 +4417,13 @@ const Dashboard: React.FC = () => {
                         }
                       }}
                       rows={2}
-                      className="w-full min-w-0 max-h-40 min-h-[56px] sm:min-h-[48px] sm:flex-1 resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
-                      placeholder={`Ask ${AI_ASSISTANT_NAME}...`}
+                      className="w-full min-w-0 max-h-40 min-h-[64px] resize-y rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 text-sm text-slate-700 shadow-inner shadow-slate-100 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:shadow-black/20 dark:placeholder:text-slate-500 dark:focus:ring-cyan-900/50 sm:min-h-[54px] sm:flex-1"
+                      placeholder="Ask anything or prepare an owner action..."
                     />
                     <button
                       onClick={sendAiMessage}
                       disabled={aiLoading || aiTyping || !aiInput.trim()}
-                      className="inline-flex h-11 w-full sm:w-auto sm:shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4A82] to-[#1160A8] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#0B4A82] via-[#1160A8] to-cyan-600 px-5 text-sm font-black text-white shadow-lg shadow-cyan-900/15 transition motion-safe:hover:-translate-y-0.5 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:shrink-0"
                     >
                       <SendHorizontal size={16} />
                       Send
@@ -4319,6 +4431,7 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
               </section>
+            </div>
             </div>
           </div>
         </Modal>

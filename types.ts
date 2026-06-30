@@ -265,6 +265,12 @@ export interface PlatformBroadcast {
   maintenanceStart?: string | Date | number | null;
   maintenanceEnd?: string | Date | number | null;
   maintenanceDowntime?: boolean;
+  audienceRoles?: UserRole[];
+  imageUrl?: string | null;
+  actionLabel?: string | null;
+  actionUrl?: string | null;
+  requireAcknowledgement?: boolean;
+  updatedAt?: Date | number | null;
 }
 
 export type LoginStatus = "SUCCESS" | "FAILED";

@@ -22,6 +22,9 @@ import { firestore } from "../services/firebase";
 import { UserRole, SystemNotification } from "../types";
 import Toast from "./Toast";
 import UserAvatar from "./UserAvatar";
+import SchoolAssistantDrawer, {
+  SchoolAssistantLauncher,
+} from "./SchoolAssistantDrawer";
 import { showToast } from "../services/toast";
 
 import {
@@ -53,6 +56,8 @@ import {
   HandCoins,
   ChevronLeft,
   ChevronRight,
+  Moon,
+  Sun,
 } from "lucide-react";
 
 // WhatsApp SVG icon (official brand logo)
@@ -67,6 +72,8 @@ interface LayoutProps {
   title: string;
 }
 
+const SUPER_ADMIN_THEME_STORAGE_KEY = "super_admin_dashboard_theme_v1";
+
 const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const { user, logout, updateUser } = useAuth();
   const { school } = useSchool();
@@ -78,6 +85,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     null
   , [school?.id, user?.schoolId]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [schoolAssistantOpen, setSchoolAssistantOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebarCollapsed");
     return saved === "true";
@@ -155,6 +163,24 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const isTeacher = user?.role === UserRole.TEACHER;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const isParent = user?.role === UserRole.PARENT;
+  const [superAdminDarkMode, setSuperAdminDarkMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      window.localStorage.getItem(SUPER_ADMIN_THEME_STORAGE_KEY) === "dark"
+    );
+  });
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    try {
+      window.localStorage.setItem(
+        SUPER_ADMIN_THEME_STORAGE_KEY,
+        superAdminDarkMode ? "dark" : "light",
+      );
+    } catch {
+      // The selected theme still works for the current session.
+    }
+  }, [isSuperAdmin, superAdminDarkMode]);
   const isFreePlan = (school as any)?.plan === "free";
   const hasFeature = (feature: FeatureKey) =>
     canAccessFeature(user, school, feature);
@@ -520,7 +546,12 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   };
 
   return (
-    <div className="h-screen bg-[#fafafa] flex overflow-hidden">
+    <div
+      data-super-admin-theme={
+        isSuperAdmin ? (superAdminDarkMode ? "dark" : "light") : undefined
+      }
+      className="h-screen bg-[#fafafa] flex overflow-hidden transition-colors duration-300"
+    >
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
@@ -616,7 +647,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               <NavItem
                 href="/super-admin/dashboard?assistant=1"
                 icon={<MessageSquare size={18} />}
-                label="Isaacski AI"
+                label="School Manager GH AI"
               />
               <NavItem
                 href="/super-admin/schools"
@@ -653,6 +684,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 href="/super-admin/analytics"
                 icon={<BarChart3 size={18} />}
                 label="Analytics"
+              />
+              <NavItem
+                href="/super-admin/system-health"
+                icon={<Activity size={18} />}
+                label="System Health"
               />
               <NavItem
                 href="/super-admin/payments"
@@ -772,6 +808,20 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("academic_year") && (
                 <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
               )}
+              <button
+                type="button"
+                onClick={() => {
+                  setSchoolAssistantOpen(true);
+                  setSidebarOpen(false);
+                }}
+                title={isCollapsed ? "School Assistant" : ""}
+                className={`flex w-[calc(100%_-_1.5rem)] items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[17px] font-medium text-[#E6F0FA] transition-all hover:bg-[#0B4A82] hover:text-white ${
+                  isCollapsed ? "justify-center px-0 mx-2 w-[calc(100%_-_1rem)]" : ""
+                }`}
+              >
+                <MessageSquare size={18} />
+                {!isCollapsed && <span className="truncate">School Assistant</span>}
+              </button>
             </>
           ) : isTeacher ? (
             <>
@@ -831,6 +881,23 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-4">
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setSuperAdminDarkMode((current) => !current)}
+                  className="super-admin-theme-toggle inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
+                  aria-label={
+                    superAdminDarkMode
+                      ? "Switch Super Admin dashboard to light mode"
+                      : "Switch Super Admin dashboard to dark mode"
+                  }
+                  aria-pressed={superAdminDarkMode}
+                  title={superAdminDarkMode ? "Light mode" : "Dark mode"}
+                >
+                  {superAdminDarkMode ? <Sun size={19} /> : <Moon size={19} />}
+                </button>
+              )}
+
               {/* Notifications */}
               {(isAdmin || isSuperAdmin) && (
                 <div className="relative" ref={notificationRef}>
@@ -915,6 +982,18 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
           {children}
         </main>
       </div>
+
+      {isAdmin ? (
+        <>
+          {!schoolAssistantOpen ? (
+            <SchoolAssistantLauncher onClick={() => setSchoolAssistantOpen(true)} />
+          ) : null}
+          <SchoolAssistantDrawer
+            open={schoolAssistantOpen}
+            onClose={() => setSchoolAssistantOpen(false)}
+          />
+        </>
+      ) : null}
 
       <Toast />
     </div>
