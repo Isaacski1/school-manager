@@ -1265,7 +1265,10 @@ const SystemSettings = () => {
 
   return (
     <Layout title="System Settings">
-      <div className="mx-auto max-w-7xl space-y-6">
+      <div
+        className="mx-auto max-w-7xl space-y-6"
+        data-assistant-focus="settings"
+      >
         <div className="relative overflow-hidden rounded-3xl border border-slate-200/70 bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-5 shadow-sm sm:p-7">
           <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
           <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />

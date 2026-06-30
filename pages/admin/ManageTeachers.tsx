@@ -489,11 +489,12 @@ const ManageTeachers = () => {
 
   return (
     <Layout title="Manage Teachers">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+      <div data-assistant-focus="teachers-list" className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <h2 className="font-semibold text-slate-800">Staff List</h2>
 
           <button
+            data-assistant-focus="teachers-add"
             onClick={() => {
               if (!schoolId) {
                 showToast(
@@ -583,7 +584,7 @@ const ManageTeachers = () => {
                         {classNames.map((name) => (
                           <span
                             key={name}
-                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap"
+                            className="teacher-class-badge inline-flex items-center whitespace-nowrap rounded-full border border-blue-200 bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700"
                           >
                             {name}
                           </span>

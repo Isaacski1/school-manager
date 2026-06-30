@@ -2091,7 +2091,7 @@ const TeacherDashboard = () => {
                                   },
                                 }))
                               }
-                              className="text-xs px-2 py-1 bg-purple-50 text-purple-700 rounded-full border border-purple-200 hover:bg-purple-100 transition-colors text-left truncate max-w-full"
+                              className="teacher-remark-suggestion max-w-full truncate rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-left text-xs text-purple-700 transition-colors hover:bg-purple-100"
                               title={suggestion}
                             >
                               {suggestion.length > 50

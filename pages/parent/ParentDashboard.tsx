@@ -345,7 +345,7 @@ export default function ParentDashboard() {
               <UserIcon className="w-5 h-5 text-slate-400" />
               <h2 className="font-semibold text-slate-800">My Children</h2>
             </div>
-            <span className="text-xs font-medium px-2 py-1 bg-slate-200 text-slate-600 rounded-full">
+            <span className="parent-children-count rounded-full bg-slate-200 px-2 py-1 text-xs font-medium text-slate-600">
               {students.length} {students.length === 1 ? 'Child' : 'Children'}
             </span>
           </div>

@@ -38,12 +38,12 @@ const comingSoonFeatures = [
 const StaffPayroll: React.FC = () => {
   return (
     <Layout title="Staff Payroll">
-      <div className="space-y-6">
+      <div className="space-y-6" data-assistant-focus="payroll">
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                <div className="payroll-header-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
                   <CreditCard size={22} />
                 </div>
                 <div>
@@ -114,7 +114,7 @@ const StaffPayroll: React.FC = () => {
                     "Notify staff after successful payment",
                   ].map((item, index) => (
                     <div key={item} className="flex items-center gap-3">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
+                      <div className="payroll-step-number flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
                         {index + 1}
                       </div>
                       <span className="text-sm font-medium text-slate-700">{item}</span>

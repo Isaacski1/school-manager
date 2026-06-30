@@ -368,7 +368,7 @@ const AttendanceView: React.FC<AttendanceViewProps> = ({ student, onClose }) => 
                           )}
                         </div>
                         {day.isCurrentMonth && (
-                          <div className={`text-[10px] sm:text-xs px-0.5 sm:px-1 py-0.5 rounded border text-center truncate ${getAttendanceColor(day.attendance)}`}>
+                          <div className={`parent-attendance-status parent-attendance-status-${day.attendance} truncate rounded border px-0.5 py-0.5 text-center text-[10px] sm:px-1 sm:text-xs ${getAttendanceColor(day.attendance)}`}>
                             {day.attendance === "present" && "Present"}
                             {day.attendance === "absent" && "Absent"}
                             {day.attendance === "holiday" && "Holiday"}

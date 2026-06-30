@@ -437,12 +437,12 @@ const AssessmentPage = () => {
                     (100)
                   </span>
                 </th>
-                <th className="px-4 py-3 w-24 text-center bg-slate-200">
+                <th className="assessment-result-header w-24 bg-slate-200 px-4 py-3 text-center">
                   Total
                   <br />
                   <span className="text-[10px] normal-case">(100%)</span>
                 </th>
-                <th className="px-4 py-3 w-20 text-center bg-slate-200">
+                <th className="assessment-result-header w-20 bg-slate-200 px-4 py-3 text-center">
                   Grade
                 </th>
               </tr>

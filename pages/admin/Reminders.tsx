@@ -556,7 +556,10 @@ const Reminders: React.FC = () => {
 
   return (
     <Layout title="SMS Reminders">
-      <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6 px-0">
+      <div
+        className="max-w-6xl mx-auto space-y-4 sm:space-y-6 px-0"
+        data-assistant-focus="sms-reminders"
+      >
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-blue-700 p-4 sm:p-6 text-white shadow-lg">

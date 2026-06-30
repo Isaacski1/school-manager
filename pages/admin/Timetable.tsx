@@ -390,7 +390,10 @@ const Timetable = () => {
 
   return (
     <Layout title="Manage Timetable">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-auto md:h-[calc(100vh-8rem)]">
+      <div
+        className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-auto md:h-[calc(100vh-8rem)]"
+        data-assistant-focus="timetable"
+      >
         {/* Header Controls */}
         <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-center gap-4 bg-slate-50">
           <div className="flex items-center gap-4">

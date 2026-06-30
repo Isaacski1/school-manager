@@ -456,7 +456,10 @@ const ActivityMonitor: React.FC = () => {
 
   return (
     <Layout title="Activity Monitor">
-      <div className="space-y-4 sm:space-y-6">
+      <div
+        className="space-y-4 sm:space-y-6"
+        data-assistant-focus="activity"
+      >
         <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-white to-[#E6F0FA] p-4 sm:p-6 shadow-sm">
           <div className="absolute right-3 top-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0B4A82] text-white shadow-lg sm:right-4 sm:top-4 sm:h-16 sm:w-16">
             <Activity size={22} className="sm:hidden" />

@@ -395,11 +395,11 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const getStatusColor = (status?: string) => {
     switch (status) {
       case "Paid":
-        return "bg-green-100 text-green-700 border-green-300";
+        return "parent-fee-status parent-fee-status-paid bg-green-100 text-green-700 border-green-300";
       case "Part-paid":
-        return "bg-yellow-100 text-yellow-700 border-yellow-300";
+        return "parent-fee-status parent-fee-status-part-paid bg-yellow-100 text-yellow-700 border-yellow-300";
       case "Unpaid":
-        return "bg-red-100 text-red-700 border-red-300";
+        return "parent-fee-status parent-fee-status-unpaid bg-red-100 text-red-700 border-red-300";
       default:
         return "bg-gray-100 text-gray-600 border-gray-300";
     }
@@ -836,7 +836,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                         }
                         setShowPaymentModal(true);
                       }}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-md shadow-blue-100"
+                      className="parent-pay-online-button flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-blue-100 transition-all hover:bg-blue-700"
                     >
                       <CreditCard size={16} />
                       Pay Online Now

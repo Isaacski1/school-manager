@@ -6,6 +6,7 @@ export type SchoolAssistantTopic = {
   steps: string[];
   path?: string;
   actionLabel?: string;
+  focusTarget?: string;
   relatedIds: string[];
   contexts: string[];
 };

@@ -2614,7 +2614,7 @@ const FeesPayments: React.FC = () => {
 
   return (
     <Layout title="Finance & Payments">
-      <div className="relative rounded-[32px] bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div data-assistant-focus="fees-overview" className="relative rounded-[32px] bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.1),_transparent_40%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.1),_transparent_35%)]" />
         <div className="relative space-y-8">
           <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
@@ -3835,6 +3835,7 @@ const FeesPayments: React.FC = () => {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div
               ref={feeSetupRef}
+              data-assistant-focus="fees-setup"
               className={`relative overflow-hidden ${DASH_PANEL} p-6`}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -4275,6 +4276,7 @@ const FeesPayments: React.FC = () => {
 
             <div
               ref={recordPaymentRef}
+              data-assistant-focus="fees-record-payment"
               className={`relative overflow-hidden ${DASH_PANEL} p-6`}
             >
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_rgba(11,74,130,0.12),_transparent_35%)]" />
@@ -4541,7 +4543,7 @@ const FeesPayments: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
+            <div data-assistant-focus="fees-outstanding" className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
               <h2 className="text-lg font-semibold text-slate-900">
                 Defaulters
               </h2>
@@ -5219,7 +5221,7 @@ const FeesPayments: React.FC = () => {
                         key={step}
                         className={`rounded-full border px-3 py-1.5 ${
                           onboardingStep === step
-                            ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                            ? "finance-onboarding-step-active border-indigo-600 bg-indigo-50 font-semibold text-indigo-700"
                             : "border-slate-200"
                         }`}
                       >

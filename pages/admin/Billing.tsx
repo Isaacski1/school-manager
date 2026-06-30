@@ -373,7 +373,10 @@ const Billing: React.FC = () => {
 
   return (
     <Layout title="Billing & Subscription">
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div
+        className="max-w-5xl mx-auto space-y-6"
+        data-assistant-focus="billing"
+      >
         {showSuccess && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-6 shadow-sm">
             <div className="flex items-center gap-3">

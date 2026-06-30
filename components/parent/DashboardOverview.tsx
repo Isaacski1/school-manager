@@ -328,7 +328,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 flex flex-col justify-center">
+        <div className="parent-summary-fees flex flex-col justify-center rounded-2xl border border-orange-100 bg-orange-50 p-5">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
               <CreditCard size={16} />
@@ -347,7 +347,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           </p>
         </div>
 
-        <div className="bg-purple-50 rounded-2xl p-5 border border-purple-100 flex flex-col justify-center">
+        <div className="parent-summary-attendance flex flex-col justify-center rounded-2xl border border-purple-100 bg-purple-50 p-5">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
               <Activity size={16} />

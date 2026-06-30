@@ -860,10 +860,33 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
       /\b(attendance|absent|absence|present|register|registers)\b/.test(
         normalizedQuestion,
       );
+    const asksAboutStudentFees =
+      /\b(student|students|learner|learners|parent|parents)\b/.test(
+        normalizedQuestion,
+      ) &&
+      /\b(fee|fees|payment|payments|paid|unpaid|owing|owe|owes|balance|balances|debt|debtor|defaulters?)\b/.test(
+        normalizedQuestion,
+      );
+    const asksNeverPaidFees =
+      asksAboutStudentFees &&
+      /\b(hasn t paid|haven t paid|has not paid|have not paid|not paid at all|never paid|no payment|zero payment|completely unpaid)\b/.test(
+        normalizedQuestion,
+      );
+    const asksPartPaidFees =
+      asksAboutStudentFees &&
+      /\b(part paid|partially paid|partial payment|paid some|still owe)\b/.test(
+        normalizedQuestion,
+      );
+    const asksFullyPaidFees =
+      asksAboutStudentFees &&
+      /\b(fully paid|paid in full|completed payment|cleared (?:their )?fees|no balance)\b/.test(
+        normalizedQuestion,
+      );
     const asksForStudentCount =
       /\bhow many\b/.test(normalizedQuestion) &&
       /\b(student|students|learner|learners)\b/.test(normalizedQuestion) &&
-      !asksAboutAttendance;
+      !asksAboutAttendance &&
+      !asksAboutStudentFees;
     const asksForGenderBreakdown =
       /\b(male|males|boy|boys)\b/.test(normalizedQuestion) &&
       /\b(female|females|girl|girls)\b/.test(normalizedQuestion) &&
@@ -876,6 +899,202 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
       /\bhow many\b/.test(normalizedQuestion) &&
       /\b(class|classes)\b/.test(normalizedQuestion) &&
       !asksAboutAttendance;
+    if (asksAboutStudentFees) {
+      const safeGet = async (promise) => {
+        try {
+          return await promise;
+        } catch (error) {
+          console.warn("[SchoolAssistant] Optional finance query failed:", {
+            message: String(error?.message || error || "Unknown error").slice(
+              0,
+              240,
+            ),
+          });
+          return null;
+        }
+      };
+      const [
+        configSnap,
+        financeSettingsSnap,
+        scopedLedgerSnap,
+        rootLedgerSnap,
+        scopedPaymentSnap,
+        rootPaymentSnap,
+        feeStudentsSnap,
+      ] = await Promise.all([
+        safeGet(admin.firestore().collection("settings").doc(schoolId).get()),
+        safeGet(
+          admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId)
+            .collection("financeSettings")
+            .doc("main")
+            .get(),
+        ),
+        safeGet(
+          admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId)
+            .collection("feeLedgers")
+            .get(),
+        ),
+        safeGet(
+          admin
+            .firestore()
+            .collection("student_ledgers")
+            .where("schoolId", "==", schoolId)
+            .get(),
+        ),
+        safeGet(
+          admin
+            .firestore()
+            .collection("schools")
+            .doc(schoolId)
+            .collection("payments")
+            .get(),
+        ),
+        safeGet(
+          admin
+            .firestore()
+            .collection("payments")
+            .where("schoolId", "==", schoolId)
+            .get(),
+        ),
+        safeGet(
+          admin
+            .firestore()
+            .collection("students")
+            .where("schoolId", "==", schoolId)
+            .get(),
+        ),
+      ]);
+
+      const config = configSnap?.exists ? configSnap.data() || {} : {};
+      const academicYear = String(config.academicYear || "").trim();
+      const currentTerm = String(config.currentTerm || "").trim();
+      const financeVersion = financeSettingsSnap?.exists
+        ? String(financeSettingsSnap.data()?.financeVersion || "v1")
+        : "v1";
+      const preferredLedgers =
+        financeVersion === "v2"
+          ? scopedLedgerSnap?.docs || []
+          : rootLedgerSnap?.docs || [];
+      const alternateLedgers =
+        financeVersion === "v2"
+          ? rootLedgerSnap?.docs || []
+          : scopedLedgerSnap?.docs || [];
+      const preferredPayments =
+        financeVersion === "v2"
+          ? scopedPaymentSnap?.docs || []
+          : rootPaymentSnap?.docs || [];
+      const alternatePayments =
+        financeVersion === "v2"
+          ? rootPaymentSnap?.docs || []
+          : scopedPaymentSnap?.docs || [];
+      const ledgerDocs =
+        preferredLedgers.length > 0 ? preferredLedgers : alternateLedgers;
+      const paymentDocs =
+        preferredPayments.length > 0 ? preferredPayments : alternatePayments;
+      const activeStudentIds = new Set(
+        (feeStudentsSnap?.docs || [])
+          .filter((studentDoc) => {
+            const status = String(
+              studentDoc.data()?.studentStatus || "active",
+            ).toLowerCase();
+            return status !== "graduated" && status !== "stopped";
+          })
+          .map((studentDoc) => studentDoc.id),
+      );
+      const scopedLedgers = ledgerDocs
+        .map((ledgerDoc) => ({ id: ledgerDoc.id, ...ledgerDoc.data() }))
+        .filter((ledger) => {
+          if (!ledger.studentId || !Array.isArray(ledger.fees)) return false;
+          if (
+            activeStudentIds.size > 0 &&
+            !activeStudentIds.has(String(ledger.studentId))
+          ) {
+            return false;
+          }
+          if (academicYear && String(ledger.academicYear || "") !== academicYear) {
+            return false;
+          }
+          if (currentTerm && String(ledger.term || "") !== currentTerm) {
+            return false;
+          }
+          return ledger.fees.length > 0;
+        });
+      const payments = paymentDocs
+        .map((paymentDoc) => paymentDoc.data() || {})
+        .filter((payment) => payment.studentId);
+      const summaries = scopedLedgers.map((ledger) => {
+        const totalDue = ledger.fees.reduce(
+          (sum, fee) => sum + Number(fee?.amount || 0),
+          0,
+        );
+        const openingPaid = ledger.fees.reduce(
+          (sum, fee) => sum + Number(fee?.openingPaidAmount || 0),
+          0,
+        );
+        const recordedPaid = payments
+          .filter(
+            (payment) =>
+              String(payment.studentId || "") === String(ledger.studentId) &&
+              (!academicYear ||
+                String(payment.academicYear || "") === academicYear) &&
+              (!currentTerm || String(payment.term || "") === currentTerm),
+          )
+          .reduce(
+            (sum, payment) => sum + Number(payment.amountPaid || 0),
+            0,
+          );
+        const totalPaid = openingPaid + recordedPaid;
+        const balance = Math.max(0, totalDue - totalPaid);
+        return { totalDue, totalPaid, balance };
+      });
+      const neverPaid = summaries.filter(
+        (summary) => summary.totalDue > 0 && summary.totalPaid <= 0,
+      ).length;
+      const partPaid = summaries.filter(
+        (summary) => summary.totalPaid > 0 && summary.balance > 0,
+      ).length;
+      const fullyPaid = summaries.filter(
+        (summary) => summary.totalDue > 0 && summary.balance <= 0,
+      ).length;
+      const outstanding = summaries.filter(
+        (summary) => summary.balance > 0,
+      ).length;
+      const totalOutstanding = summaries.reduce(
+        (sum, summary) => sum + summary.balance,
+        0,
+      );
+      const scopeLabel = [academicYear, currentTerm]
+        .filter(Boolean)
+        .join(", ");
+
+      let answer;
+      if (summaries.length === 0) {
+        answer = `I could not find any active student fee ledgers${scopeLabel ? ` for ${scopeLabel}` : ""}. Open Fees & Payments to confirm fees have been assigned to students.`;
+      } else if (asksNeverPaidFees) {
+        answer = `${neverPaid} student${neverPaid === 1 ? " has" : "s have"} made no fee payment at all${scopeLabel ? ` for ${scopeLabel}` : ""}.`;
+      } else if (asksPartPaidFees) {
+        answer = `${partPaid} student${partPaid === 1 ? " has" : "s have"} made a partial payment and still owe a balance${scopeLabel ? ` for ${scopeLabel}` : ""}.`;
+      } else if (asksFullyPaidFees) {
+        answer = `${fullyPaid} student${fullyPaid === 1 ? " has" : "s have"} fully paid the assigned fees${scopeLabel ? ` for ${scopeLabel}` : ""}.`;
+      } else {
+        answer = `${outstanding} student${outstanding === 1 ? " has" : "s have"} an outstanding fee balance${scopeLabel ? ` for ${scopeLabel}` : ""}, totalling GHS ${totalOutstanding.toFixed(2)}. Of these, ${neverPaid} have made no payment and ${partPaid} have paid partially.`;
+      }
+
+      return res.json({
+        answer,
+        action: {
+          label: "Open Fees & Payments",
+          path: "/admin/fees",
+          target: "fees-outstanding",
+        },
+      });
+    }
     if (asksForGenderBreakdown) {
       const unspecified =
         schoolContext.totalStudents -
@@ -890,6 +1109,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         action: {
           label: "Open Students",
           path: "/admin/students",
+          target: "students-list",
         },
       });
     }
@@ -900,6 +1120,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         action: {
           label: "Open Students",
           path: "/admin/students",
+          target: "students-list",
         },
       });
     }
@@ -907,14 +1128,22 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
       const noun = schoolContext.totalTeachers === 1 ? "teacher" : "teachers";
       return res.json({
         answer: `${schoolContext.schoolName} currently has ${schoolContext.totalTeachers} ${noun} recorded in School Manager GH.`,
-        action: { label: "Open Teachers", path: "/admin/teachers" },
+        action: {
+          label: "Open Teachers",
+          path: "/admin/teachers",
+          target: "teachers-list",
+        },
       });
     }
     if (asksForClassCount) {
       const noun = schoolContext.totalClasses === 1 ? "class" : "classes";
       return res.json({
         answer: `${schoolContext.schoolName} currently has ${schoolContext.totalClasses} ${noun} recorded in School Manager GH.`,
-        action: { label: "Open Settings", path: "/admin/settings" },
+        action: {
+          label: "Open Settings",
+          path: "/admin/settings",
+          target: "settings",
+        },
       });
     }
     if (asksAboutAttendance) {
@@ -1057,7 +1286,11 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
 
       return res.json({
         answer: parts.join("\n"),
-        action: { label: "View Attendance", path: "/admin/attendance" },
+        action: {
+          label: "View Attendance",
+          path: "/admin/attendance",
+          target: "attendance-summary",
+        },
       });
     }
 

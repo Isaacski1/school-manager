@@ -1180,7 +1180,10 @@ const ReportCard = () => {
 
   return (
     <Layout title="Generate Report Card">
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+      <div
+        className="bg-white p-6 rounded-xl shadow-sm border border-slate-100"
+        data-assistant-focus="report-cards"
+      >
         <h3 className="text-xl font-semibold text-slate-800 mb-4">
           Select Student
         </h3>

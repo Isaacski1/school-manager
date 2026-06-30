@@ -86,7 +86,10 @@ const TeacherAttendanceStats = () => {
 
   return (
     <Layout title="Teacher Attendance Analytics">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)]">
+      <div
+        className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)]"
+        data-assistant-focus="teacher-attendance"
+      >
         {/* Header & Filters */}
         <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col lg:flex-row justify-between lg:items-center gap-4 bg-slate-50">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">

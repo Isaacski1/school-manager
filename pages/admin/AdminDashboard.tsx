@@ -2683,25 +2683,29 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch xl:grid-cols-[minmax(86px,0.55fr)_minmax(86px,0.55fr)_minmax(0,1.8fr)]">
-          <div className="rounded-[18px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-              Female
-            </div>
-            <div className="mt-2 text-xl font-bold text-[#0B4A82]">
-              {stats.femaleStudents}
+        <div className="mt-5 grid grid-cols-2 items-start gap-3">
+          <div className="flex justify-center">
+            <div className="flex h-20 w-20 flex-col items-center justify-center rounded-full border border-sky-200/80 bg-sky-50/90 text-center shadow-sm">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+                Female
+              </div>
+              <div className="mt-1 text-xl font-extrabold text-[#0B4A82]">
+                {stats.femaleStudents}
+              </div>
             </div>
           </div>
-          <div className="rounded-[18px] border border-white/80 bg-white/82 px-4 py-3 text-center shadow-sm">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-              Male
-            </div>
-            <div className="mt-2 text-xl font-bold text-amber-600">
-              {stats.maleStudents}
+          <div className="flex justify-center">
+            <div className="flex h-20 w-20 flex-col items-center justify-center rounded-full border border-amber-200/80 bg-amber-50/90 text-center shadow-sm">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                Male
+              </div>
+              <div className="mt-1 text-xl font-extrabold text-amber-600">
+                {stats.maleStudents}
+              </div>
             </div>
           </div>
 
-          <div className="min-w-0 sm:col-span-2 xl:col-span-1">
+          <div className="col-span-2 min-w-0">
             <div className="h-full rounded-[18px] border border-white/80 bg-white/88 px-4 py-3 shadow-sm">
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -2718,7 +2722,7 @@ const AdminDashboard = () => {
               </div>
 
               {hasClassActivity ? (
-                <div className="max-h-44 space-y-2.5 overflow-y-auto pr-1.5 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.75)_transparent]">
+                <div className="max-h-32 space-y-2.5 overflow-y-auto pr-1.5 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.75)_transparent]">
                   {classActivity.map((c) => {
                     const percentage = Math.min(
                       100,
@@ -2760,12 +2764,9 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+        <div className="mt-4 flex items-center text-xs text-slate-500">
           <div className={DASHBOARD_INFO_PILL}>
             Updated <RelativeTimeText timestamp={lastUpdated} fallback="—" />
-          </div>
-          <div className="hidden sm:block text-[11px] uppercase tracking-[0.18em] text-amber-700/80">
-            Modern / responsive / structured
           </div>
         </div>
       </div>
@@ -3013,7 +3014,7 @@ const AdminDashboard = () => {
 
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center leading-none">
-                  <span className="block text-[clamp(1.6rem,7vw,2.2rem)] font-bold tracking-tight text-slate-900">
+                  <span className="dashboard-donut-total block text-[clamp(1.6rem,7vw,2.2rem)] font-bold tracking-tight text-slate-900">
                     {totalStudents}
                   </span>
                   <span className="mt-2 block text-[clamp(0.52rem,1.9vw,0.72rem)] font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -3189,11 +3190,24 @@ const AdminDashboard = () => {
                     totalGrades > 0
                       ? Math.round((count / totalGrades) * 100)
                       : 0;
-                  let barColor = "from-emerald-400 to-emerald-600";
-                  if (grade === "B") barColor = "from-[#E6F0FA] to-[#1160A8]";
-                  if (grade === "C") barColor = "from-amber-300 to-amber-500";
-                  if (grade === "D") barColor = "from-orange-300 to-orange-500";
-                  if (grade === "F") barColor = "from-red-400 to-red-600";
+                  let barGradient =
+                    "linear-gradient(90deg, #34d399, #059669)";
+                  if (grade === "B") {
+                    barGradient =
+                      "linear-gradient(90deg, #bae6fd, #0284c7)";
+                  }
+                  if (grade === "C") {
+                    barGradient =
+                      "linear-gradient(90deg, #fde047, #eab308)";
+                  }
+                  if (grade === "D") {
+                    barGradient =
+                      "linear-gradient(90deg, #fdba74, #f97316)";
+                  }
+                  if (grade === "F") {
+                    barGradient =
+                      "linear-gradient(90deg, #fb7185, #dc2626)";
+                  }
 
                   return (
                     <div key={grade} className="flex items-center gap-4">
@@ -3203,8 +3217,11 @@ const AdminDashboard = () => {
                       <div className="flex-1">
                         <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden">
                           <div
-                            className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-1000`}
-                            style={{ width: `${percentage}%` }}
+                            className="absolute left-0 top-0 h-full rounded-full transition-all duration-1000"
+                            style={{
+                              width: `${percentage}%`,
+                              background: barGradient,
+                            }}
                             title={`${count} students — ${percentage}%`}
                           />
                         </div>
@@ -3235,28 +3252,40 @@ const AdminDashboard = () => {
             <div className="mt-4 flex flex-wrap gap-4 items-center">
               <div className="flex items-center gap-2">
                 <span
-                  className="w-4 h-4 rounded-sm block bg-gradient-to-r from-emerald-400 to-emerald-600"
+                  className="block h-4 w-4 rounded-sm"
+                  style={{
+                    background: "linear-gradient(90deg, #34d399, #059669)",
+                  }}
                   aria-hidden
                 ></span>
                 <span className="text-xs text-slate-600">A — Excellent</span>
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className="w-4 h-4 rounded-sm block bg-gradient-to-r from-[#E6F0FA] to-[#1160A8]"
+                  className="block h-4 w-4 rounded-sm"
+                  style={{
+                    background: "linear-gradient(90deg, #bae6fd, #0284c7)",
+                  }}
                   aria-hidden
                 ></span>
                 <span className="text-xs text-slate-600">B — Very Good</span>
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className="w-4 h-4 rounded-sm block bg-gradient-to-r from-amber-300 to-amber-500"
+                  className="block h-4 w-4 rounded-sm"
+                  style={{
+                    background: "linear-gradient(90deg, #fde047, #eab308)",
+                  }}
                   aria-hidden
                 ></span>
                 <span className="text-xs text-slate-600">C — Satisfactory</span>
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className="w-4 h-4 rounded-sm block bg-gradient-to-r from-orange-300 to-orange-500"
+                  className="block h-4 w-4 rounded-sm"
+                  style={{
+                    background: "linear-gradient(90deg, #fdba74, #f97316)",
+                  }}
                   aria-hidden
                 ></span>
                 <span className="text-xs text-slate-600">
@@ -3265,7 +3294,10 @@ const AdminDashboard = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className="w-4 h-4 rounded-sm block bg-gradient-to-r from-red-400 to-red-600"
+                  className="block h-4 w-4 rounded-sm"
+                  style={{
+                    background: "linear-gradient(90deg, #fb7185, #dc2626)",
+                  }}
                   aria-hidden
                 ></span>
                 <span className="text-xs text-slate-600">
@@ -3310,7 +3342,7 @@ const AdminDashboard = () => {
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${i === 0 ? "bg-amber-500" : "bg-slate-300"}`}
+                      className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-black ${i === 0 ? "bg-amber-500" : "bg-slate-300"}`}
                     >
                       {i + 1}
                     </div>
@@ -4158,7 +4190,7 @@ const AdminDashboard = () => {
             {showSummaryLoading && <SectionLoadingBadge />}
           </div>
           <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8"
+            className="grid grid-cols-1 items-start gap-6 mb-8 sm:grid-cols-2 lg:grid-cols-3"
             style={DASHBOARD_DEFERRED_RENDER_STYLE}
           >
             {showSkeletons ? (
@@ -4865,7 +4897,7 @@ const AdminDashboard = () => {
               {/* Teacher Term Attendance Statistics */}
               {schoolConfig.schoolReopenDate !==
                 new Date().toISOString().split("T")[0] && (
-                <div className="bg-gradient-to-br from-[#E6F0FA] via-[#E6F0FA] to-white rounded-2xl shadow-lg border border-[#E6F0FA] flex flex-col min-h-[280px] hover:shadow-xl transition-shadow duration-300">
+                <div className="teacher-attendance-summary-card bg-gradient-to-br from-[#E6F0FA] via-[#E6F0FA] to-white rounded-2xl shadow-lg border border-[#E6F0FA] flex flex-col min-h-[280px] hover:shadow-xl transition-shadow duration-300">
                   <div className="p-3 sm:p-4 border-b border-[#E6F0FA] flex justify-between items-center">
                     <div>
                       <h3 className="font-bold text-[#0B4A82] text-base sm:text-lg">

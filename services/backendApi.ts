@@ -18,7 +18,7 @@ export type SchoolAssistantChatMessage = {
 
 export type SchoolAssistantChatResponse = {
   answer: string;
-  action?: { label: string; path: string } | null;
+  action?: { label: string; path: string; target?: string } | null;
 };
 
 const buildQueryString = (params: Record<string, any>) => {

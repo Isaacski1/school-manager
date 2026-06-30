@@ -417,7 +417,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
               </div>
               <p className="text-2xl font-bold text-blue-800">{overallStats.average.toFixed(1)}%</p>
             </div>
-            <div className={`rounded-xl p-4 border ${getGradeColor(overallStats.overallGrade.grade)}`}>
+            <div className={`parent-report-grade parent-report-grade-${overallStats.overallGrade.grade.toLowerCase()} rounded-xl p-4 border ${getGradeColor(overallStats.overallGrade.grade)}`}>
               <div className="flex items-center gap-2 mb-2">
                 <FileText size={18} />
                 <span className="text-sm font-medium">Overall Grade</span>
@@ -474,7 +474,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                           <p className="text-sm text-slate-500">{summary.length} subject(s)</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <div className={`px-4 py-2 rounded-lg font-bold ${getGradeColor(termGrade.grade)}`}>
+                          <div className={`parent-report-grade parent-report-grade-${termGrade.grade.toLowerCase()} rounded-lg px-4 py-2 font-bold ${getGradeColor(termGrade.grade)}`}>
                             Average: {termGrade.grade} ({termAverage.toFixed(1)}%)
                           </div>
                           <button
@@ -526,7 +526,7 @@ const ReportCardView: React.FC<ReportCardViewProps> = ({ student, onClose }) => 
                                 <td className="px-3 py-3 text-center text-slate-600 border-l border-slate-200">{s.best.examScore ?? 0}</td>
                                 <td className="px-3 py-3 text-center font-bold text-slate-800 bg-slate-50">{score}</td>
                                 <td className="px-3 py-3 text-center bg-slate-50">
-                                  <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold ${getGradeColor(gradeInfo.grade)}`}>
+                                  <span className={`parent-report-grade parent-report-grade-${gradeInfo.grade.toLowerCase()} inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${getGradeColor(gradeInfo.grade)}`}>
                                     {gradeInfo.grade}
                                   </span>
                                 </td>

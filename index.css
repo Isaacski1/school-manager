@@ -74,11 +74,37 @@
   scrollbar-width: none;
 }
 
+@keyframes assistantGuidedPulse {
+  0% {
+    outline-color: rgb(34 211 238 / 0);
+    box-shadow: 0 0 0 0 rgb(34 211 238 / 0);
+  }
+  18%,
+  72% {
+    outline-color: rgb(34 211 238 / 0.95);
+    box-shadow:
+      0 0 0 7px rgb(34 211 238 / 0.2),
+      0 14px 38px rgb(8 145 178 / 0.24);
+  }
+  100% {
+    outline-color: rgb(34 211 238 / 0);
+    box-shadow: 0 0 0 0 rgb(34 211 238 / 0);
+  }
+}
+
+.assistant-guided-highlight {
+  position: relative;
+  z-index: 2;
+  outline: 3px solid transparent;
+  outline-offset: 5px;
+  animation: assistantGuidedPulse 4.2s ease-out both;
+}
+
 /*
- * Super Admin theme
- * Scoped to the shared Super Admin layout so school, teacher and parent
- * dashboards keep their existing appearance. The AI command center is
- * deliberately excluded because it has its own independent theme toggle.
+ * Admin dashboard theme
+ * Scoped to the shared layout for Super Admin, School Admin, Teacher, and
+ * Parent accounts. The Super Admin AI command center remains excluded because
+ * it has its own toggle.
  */
 [data-super-admin-theme] {
   color-scheme: light;
@@ -291,6 +317,34 @@
   color: #fda4af !important;
 }
 
+/* Keep alert and action text readable against the dashboard's navy surfaces. */
+[data-super-admin-theme="dark"] [class*="text-red-6"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-red-7"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-red-8"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-red-9"]:not([data-ai-theme] *) {
+  color: #fca5a5 !important;
+}
+
+[data-super-admin-theme="dark"] [class*="text-blue-6"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-blue-7"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-blue-8"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-blue-9"]:not([data-ai-theme] *) {
+  color: #7dd3fc !important;
+}
+
+[data-super-admin-theme="dark"] [class*="text-sky-6"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-sky-7"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-sky-8"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-sky-9"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-cyan-6"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-cyan-7"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-cyan-8"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-cyan-9"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-[#0B4A82]"]:not([data-ai-theme] *),
+[data-super-admin-theme="dark"] [class*="text-[#0b4a82]"]:not([data-ai-theme] *) {
+  color: #7dd3fc !important;
+}
+
 [data-super-admin-theme="dark"] [class*="text-slate-9"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-slate-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-9"]:not([data-ai-theme] *),
@@ -310,6 +364,214 @@
 [data-super-admin-theme="dark"] [class*="text-gray-5"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-4"]:not([data-ai-theme] *) {
   color: #94a3b8 !important;
+}
+
+/* The donut center remains white in dark mode, so its total must stay dark. */
+[data-super-admin-theme="dark"]
+  .dashboard-donut-total.dashboard-donut-total {
+  color: #0f172a !important;
+}
+
+[data-super-admin-theme="dark"]
+  .teacher-attendance-summary-card.teacher-attendance-summary-card {
+  background: linear-gradient(145deg, #13233a 0%, #0f1d31 55%, #0b1729 100%) !important;
+  border-color: #36506f !important;
+  box-shadow: 0 18px 45px -28px rgb(2 132 199 / 0.45);
+}
+
+[data-super-admin-theme="dark"] .teacher-class-badge.teacher-class-badge {
+  background: #123352 !important;
+  border-color: #3478a9 !important;
+  color: #bae6fd !important;
+}
+
+[data-super-admin-theme="dark"]
+  .attendance-day-absent.attendance-day-absent {
+  background: #fecaca !important;
+  color: #7f1d1d !important;
+}
+
+[data-super-admin-theme="dark"]
+  .attendance-day-present.attendance-day-present {
+  background: #065f46 !important;
+  color: #ecfdf5 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .student-grade-badge.student-grade-badge {
+  color: #111827 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .finance-onboarding-step-active.finance-onboarding-step-active {
+  background: #164e63 !important;
+  border-color: #22d3ee !important;
+  color: #ecfeff !important;
+  box-shadow: 0 0 0 3px rgb(34 211 238 / 0.12);
+}
+
+[data-super-admin-theme="dark"]
+  .payroll-step-number.payroll-step-number {
+  background: #bae6fd !important;
+  color: #0f172a !important;
+  box-shadow: 0 0 0 1px #7dd3fc;
+}
+
+[data-super-admin-theme="dark"]
+  .payroll-header-icon.payroll-header-icon {
+  background: #123352 !important;
+  color: #7dd3fc !important;
+  box-shadow: 0 0 0 1px #3478a9;
+}
+
+[data-super-admin-theme="dark"]
+  .recovery-metric-recycle.recovery-metric-recycle {
+  background: #4c0519 !important;
+  color: #fecdd3 !important;
+  box-shadow: 0 0 0 1px #9f1239;
+}
+
+[data-super-admin-theme="dark"]
+  .recovery-metric-coverage.recovery-metric-coverage {
+  background: #164e63 !important;
+  color: #cffafe !important;
+  box-shadow: 0 0 0 1px #0e7490;
+}
+
+[data-super-admin-theme="dark"]
+  .recovery-recycle-badge.recovery-recycle-badge {
+  background: #fecdd3 !important;
+  color: #881337 !important;
+  box-shadow: 0 0 0 1px #fda4af;
+}
+
+[data-super-admin-theme="dark"]
+  .school-assistant-drawer.school-assistant-drawer {
+  background: #071224 !important;
+  border-color: #334155 !important;
+  color: #e2e8f0;
+  box-shadow: -22px 0 60px rgb(2 6 23 / 0.58);
+}
+
+[data-super-admin-theme="dark"]
+  .school-assistant-drawer.school-assistant-drawer
+  > header,
+[data-super-admin-theme="dark"]
+  .school-assistant-drawer.school-assistant-drawer
+  > footer {
+  background: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .assessment-result-header.assessment-result-header {
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .teacher-performance-grade.teacher-performance-grade {
+  color: #111827 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .teacher-performance-grade-a.teacher-performance-grade-a {
+  color: #a7f3d0 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .teacher-remark-suggestion.teacher-remark-suggestion {
+  background: #2e1065 !important;
+  border-color: #a855f7 !important;
+  color: #e9d5ff !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-attendance-status-present.parent-attendance-status-present {
+  background: #064e3b !important;
+  border-color: #34d399 !important;
+  color: #d1fae5 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-attendance-status-absent.parent-attendance-status-absent {
+  background: #fecaca !important;
+  border-color: #f87171 !important;
+  color: #7f1d1d !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-attendance-status-holiday.parent-attendance-status-holiday {
+  background: #dbeafe !important;
+  border-color: #60a5fa !important;
+  color: #1e3a8a !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-children-count.parent-children-count {
+  background: #1e3a5f !important;
+  color: #dbeafe !important;
+  box-shadow: 0 0 0 1px #3b82f6;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-pay-online-button.parent-pay-online-button {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 24px -14px rgb(37 99 235 / 0.85) !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-fee-status-paid.parent-fee-status-paid {
+  background: #064e3b !important;
+  border-color: #34d399 !important;
+  color: #d1fae5 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-fee-status-part-paid.parent-fee-status-part-paid {
+  background: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+  color: #78350f !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-fee-status-unpaid.parent-fee-status-unpaid {
+  background: #fecaca !important;
+  border-color: #f87171 !important;
+  color: #7f1d1d !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-report-grade-c.parent-report-grade-c {
+  background: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+  color: #713f12 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-summary-fees.parent-summary-fees {
+  background: #451a03 !important;
+  border-color: #b45309 !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-summary-fees.parent-summary-fees
+  [class*="text-orange"] {
+  color: #fed7aa !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-summary-attendance.parent-summary-attendance {
+  background: #2e1065 !important;
+  border-color: #7e22ce !important;
+}
+
+[data-super-admin-theme="dark"]
+  .parent-summary-attendance.parent-summary-attendance
+  [class*="text-purple"] {
+  color: #e9d5ff !important;
 }
 
 [data-super-admin-theme="dark"] [class*="border-slate-"]:not([data-ai-theme] *),
@@ -340,7 +602,7 @@
   border-color: #334155;
 }
 
-[data-super-admin-theme="dark"] .super-admin-theme-toggle {
+[data-super-admin-theme="dark"] .dashboard-theme-toggle {
   border-color: #334155 !important;
   background: #0f172a !important;
   color: #fbbf24 !important;

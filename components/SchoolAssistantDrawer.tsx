@@ -193,6 +193,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
             steps: [response.answer],
             path: response.action?.path,
             actionLabel: response.action?.label,
+            focusTarget: response.action?.target,
             relatedIds: [],
             contexts: [],
           },
@@ -238,7 +239,65 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
   const handleNavigate = (topic: SchoolAssistantTopic) => {
     if (!topic.path) return;
     onClose();
-    navigate(topic.path);
+    const focusTargets: Record<string, string> = {
+      "add-student": "students-add",
+      "edit-student": "students-list",
+      "move-student": "students-list",
+      "student-history": "student-history-search",
+      "add-teacher": "teachers-add",
+      "assign-teacher": "teachers-list",
+      "teacher-login": "teachers-list",
+      "record-attendance": "attendance-summary",
+      "edit-attendance": "attendance-summary",
+      "attendance-report": "attendance-summary",
+      "teacher-attendance": "teacher-attendance",
+      "create-report-card": "report-cards",
+      "enter-scores": "academic-reports",
+      "teacher-remarks": "report-cards",
+      "academic-reports": "academic-reports",
+      "create-fee": "fees-setup",
+      "record-payment": "fees-record-payment",
+      "unpaid-fees": "fees-outstanding",
+      "fee-reminder": "sms-reminders",
+      "payment-settings": "payment-settings",
+      "sms-reminder": "sms-reminders",
+      "parent-contact": "students-list",
+      timetable: "timetable",
+      payroll: "payroll",
+      activity: "activity",
+      backups: "backups",
+      settings: "settings",
+      billing: "billing",
+      features: "billing",
+    };
+    const pathTargets: Record<string, string> = {
+      "/admin/students": "students-list",
+      "/admin/student-history": "student-history-search",
+      "/admin/teachers": "teachers-list",
+      "/admin/attendance": "attendance-summary",
+      "/admin/teacher-attendance": "teacher-attendance",
+      "/admin/reports": "academic-reports",
+      "/admin/report-card": "report-cards",
+      "/admin/fees": "fees-overview",
+      "/admin/payment-settings": "payment-settings",
+      "/admin/reminders": "sms-reminders",
+      "/admin/timetable": "timetable",
+      "/admin/payroll": "payroll",
+      "/admin/activity": "activity",
+      "/admin/backups": "backups",
+      "/admin/settings": "settings",
+      "/admin/billing": "billing",
+    };
+    navigate(topic.path, {
+      state: {
+        assistantGuide: {
+          target:
+            topic.focusTarget ||
+            focusTargets[topic.id] ||
+            pathTargets[topic.path],
+        },
+      },
+    });
   };
 
   const handleFeedback = (messageId: string, value: "up" | "down") => {
@@ -269,7 +328,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
             role="dialog"
             aria-modal="true"
             aria-label="School Assistant"
-            className="fixed inset-y-0 right-0 z-[80] flex w-full flex-col border-l border-slate-200 bg-[#f8fbff] shadow-[-18px_0_55px_rgba(15,74,130,0.16)] sm:w-[440px]"
+            className="school-assistant-drawer fixed inset-y-0 right-0 z-[80] flex w-full flex-col border-l border-slate-200 bg-[#f8fbff] shadow-[-18px_0_55px_rgba(15,74,130,0.16)] sm:w-[440px]"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
@@ -387,22 +446,30 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="rounded-2xl rounded-tl-md border border-slate-200 bg-white p-4 shadow-sm">
-                            <p className="font-semibold text-slate-900">
-                              Here’s how:
-                            </p>
-                            <ol className="mt-3 space-y-2.5">
-                              {message.topic.steps.map((step, index) => (
-                                <li
-                                  key={`${message.id}-${index}`}
-                                  className="flex gap-3 text-sm leading-6 text-slate-600"
-                                >
-                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-bold text-[#0B4A82]">
-                                    {index + 1}
-                                  </span>
-                                  <span>{step}</span>
-                                </li>
-                              ))}
-                            </ol>
+                            {message.topic.id.startsWith("ai-") ? (
+                              <div className="whitespace-pre-line text-sm leading-6 text-slate-700">
+                                {message.topic.steps.join("\n")}
+                              </div>
+                            ) : (
+                              <>
+                                <p className="font-semibold text-slate-900">
+                                  Here’s how:
+                                </p>
+                                <ol className="mt-3 space-y-2.5">
+                                  {message.topic.steps.map((step, index) => (
+                                    <li
+                                      key={`${message.id}-${index}`}
+                                      className="flex gap-3 text-sm leading-6 text-slate-600"
+                                    >
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-bold text-[#0B4A82]">
+                                        {index + 1}
+                                      </span>
+                                      <span>{step}</span>
+                                    </li>
+                                  ))}
+                                </ol>
+                              </>
+                            )}
                             {message.topic.path ? (
                               <button
                                 type="button"

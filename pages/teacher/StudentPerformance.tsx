@@ -638,7 +638,7 @@ const StudentPerformance = () => {
                                   </td>
                                   <td className="px-4 py-3">
                                     <span
-                                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getGradeColor(
+                                      className={`teacher-performance-grade teacher-performance-grade-${grade.grade.toLowerCase()} inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getGradeColor(
                                         grade.grade,
                                       )}`}
                                     >

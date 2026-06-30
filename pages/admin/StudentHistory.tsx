@@ -559,7 +559,10 @@ const StudentHistory = () => {
                   {stoppedStudents.length}
                 </p>
               </div>
-              <div className="flex-1 min-w-[220px]">
+              <div
+                className="flex-1 min-w-[220px]"
+                data-assistant-focus="student-history-search"
+              >
                 <div className="relative">
                   <Search
                     className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"

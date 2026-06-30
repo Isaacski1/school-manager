@@ -76,7 +76,7 @@ const ENTRY_STYLES: Record<BackupType, { badge: string; card: string }> = {
       "border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50",
   },
   "recycle-bin": {
-    badge: "bg-rose-100 text-rose-900",
+    badge: "recovery-recycle-badge bg-rose-100 text-rose-900",
     card:
       "border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-orange-50",
   },
@@ -615,7 +615,7 @@ const ManageBackups = () => {
 
   return (
     <Layout title="Recovery Center">
-      <div className="space-y-8 pb-8">
+      <div className="space-y-8 pb-8" data-assistant-focus="backups">
         <section className="relative overflow-hidden rounded-[36px] bg-[radial-gradient(circle_at_top_left,_rgba(34,197,94,0.28),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.28),_transparent_34%),linear-gradient(135deg,_#020617_0%,_#0f172a_45%,_#1e293b_100%)] p-6 text-white shadow-[0_45px_140px_-70px_rgba(15,23,42,0.95)] lg:p-8">
           <div className="absolute -left-16 top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" />
           <div className="absolute right-0 top-0 h-48 w-48 rounded-full bg-cyan-400/20 blur-3xl" />
@@ -710,14 +710,16 @@ const ManageBackups = () => {
                 value: recycleBin.length,
                 note: "Recently deleted records",
                 icon: <Archive size={16} />,
-                iconClass: "bg-rose-100 text-rose-700",
+                iconClass:
+                  "recovery-metric-recycle bg-rose-100 text-rose-700",
               },
               {
                 label: "Latest Coverage",
                 value: latestFullBackup ? getCollectionCount(latestFullBackup) : 0,
                 note: "Collections in the newest snapshot",
                 icon: <Database size={16} />,
-                iconClass: "bg-cyan-100 text-cyan-700",
+                iconClass:
+                  "recovery-metric-coverage bg-cyan-100 text-cyan-700",
               },
             ].map((item) => (
               <div

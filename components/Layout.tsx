@@ -72,7 +72,9 @@ interface LayoutProps {
   title: string;
 }
 
-const SUPER_ADMIN_THEME_STORAGE_KEY = "super_admin_dashboard_theme_v1";
+const DASHBOARD_THEME_STORAGE_KEY = "school_manager_dashboard_theme_v1";
+const LEGACY_SUPER_ADMIN_THEME_STORAGE_KEY =
+  "super_admin_dashboard_theme_v1";
 
 const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const { user, logout, updateUser } = useAuth();
@@ -107,6 +109,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const notificationRef = useRef<HTMLDivElement>(null);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const mainContentRef = useRef<HTMLElement>(null);
 
   const compressImageToBase64 = (file: File, maxPx = 300, quality = 0.7): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -159,28 +162,82 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     };
   }, [showNotifications]);
 
+  useEffect(() => {
+    const guide = (
+      location.state as {
+        assistantGuide?: { target?: string };
+      } | null
+    )?.assistantGuide;
+    if (!guide || !mainContentRef.current) return;
+
+    let stopped = false;
+    let attempts = 0;
+    let highlightTimer: number | undefined;
+    let retryTimer: number | undefined;
+    const findTarget = () => {
+      const root = mainContentRef.current;
+      if (!root) return null;
+      if (!guide.target) return null;
+      return root.querySelector<HTMLElement>(
+        `[data-assistant-focus="${CSS.escape(guide.target)}"]`,
+      );
+    };
+
+    const focusDestination = () => {
+      if (stopped) return;
+      const target = findTarget();
+      if (!target && attempts < 16) {
+        attempts += 1;
+        retryTimer = window.setTimeout(focusDestination, 150);
+        return;
+      }
+      if (!target) return;
+
+      target.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+      target.classList.remove("assistant-guided-highlight");
+      window.requestAnimationFrame(() => {
+        target.classList.add("assistant-guided-highlight");
+      });
+      highlightTimer = window.setTimeout(() => {
+        target.classList.remove("assistant-guided-highlight");
+      }, 4200);
+    };
+
+    retryTimer = window.setTimeout(focusDestination, 120);
+    return () => {
+      stopped = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      if (highlightTimer) window.clearTimeout(highlightTimer);
+    };
+  }, [location.key, location.state]);
+
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
   const isTeacher = user?.role === UserRole.TEACHER;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const isParent = user?.role === UserRole.PARENT;
-  const [superAdminDarkMode, setSuperAdminDarkMode] = useState(() => {
+  const [dashboardDarkMode, setDashboardDarkMode] = useState(() => {
     if (typeof window === "undefined") return false;
-    return (
-      window.localStorage.getItem(SUPER_ADMIN_THEME_STORAGE_KEY) === "dark"
-    );
+    const savedTheme =
+      window.localStorage.getItem(DASHBOARD_THEME_STORAGE_KEY) ||
+      window.localStorage.getItem(LEGACY_SUPER_ADMIN_THEME_STORAGE_KEY);
+    return savedTheme === "dark";
   });
 
   useEffect(() => {
-    if (!isSuperAdmin) return;
+    if (!isAdmin && !isSuperAdmin && !isTeacher && !isParent) return;
     try {
       window.localStorage.setItem(
-        SUPER_ADMIN_THEME_STORAGE_KEY,
-        superAdminDarkMode ? "dark" : "light",
+        DASHBOARD_THEME_STORAGE_KEY,
+        dashboardDarkMode ? "dark" : "light",
       );
     } catch {
       // The selected theme still works for the current session.
     }
-  }, [isSuperAdmin, superAdminDarkMode]);
+  }, [dashboardDarkMode, isAdmin, isParent, isSuperAdmin, isTeacher]);
   const isFreePlan = (school as any)?.plan === "free";
   const hasFeature = (feature: FeatureKey) =>
     canAccessFeature(user, school, feature);
@@ -548,7 +605,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   return (
     <div
       data-super-admin-theme={
-        isSuperAdmin ? (superAdminDarkMode ? "dark" : "light") : undefined
+        isAdmin || isSuperAdmin || isTeacher || isParent
+          ? dashboardDarkMode
+            ? "dark"
+            : "light"
+          : undefined
       }
       className="h-screen bg-[#fafafa] flex overflow-hidden transition-colors duration-300"
     >
@@ -881,20 +942,20 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-4">
-              {isSuperAdmin && (
+              {(isAdmin || isSuperAdmin || isTeacher || isParent) && (
                 <button
                   type="button"
-                  onClick={() => setSuperAdminDarkMode((current) => !current)}
-                  className="super-admin-theme-toggle inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
+                  onClick={() => setDashboardDarkMode((current) => !current)}
+                  className="dashboard-theme-toggle inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
                   aria-label={
-                    superAdminDarkMode
-                      ? "Switch Super Admin dashboard to light mode"
-                      : "Switch Super Admin dashboard to dark mode"
+                    dashboardDarkMode
+                      ? "Switch dashboard to light mode"
+                      : "Switch dashboard to dark mode"
                   }
-                  aria-pressed={superAdminDarkMode}
-                  title={superAdminDarkMode ? "Light mode" : "Dark mode"}
+                  aria-pressed={dashboardDarkMode}
+                  title={dashboardDarkMode ? "Light mode" : "Dark mode"}
                 >
-                  {superAdminDarkMode ? <Sun size={19} /> : <Moon size={19} />}
+                  {dashboardDarkMode ? <Sun size={19} /> : <Moon size={19} />}
                 </button>
               )}
 
@@ -978,7 +1039,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-5 lg:p-6 xl:p-8">
+        <main ref={mainContentRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-5 lg:p-6 xl:p-8">
           {children}
         </main>
       </div>

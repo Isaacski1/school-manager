@@ -798,7 +798,11 @@ const ManageStudents = () => {
                     <div key={idx} className="flex items-center justify-center">
                       <div
                         title={`${iso}: ${isPresent ? "Present" : "Absent"}`}
-                        className={`${baseClasses} ${weekendClasses} ${isPresent ? "bg-emerald-100 text-emerald-800 shadow-sm" : "bg-red-100 text-red-800 shadow-sm"}`}
+                        className={`${baseClasses} ${weekendClasses} ${
+                          isPresent
+                            ? "attendance-day-present bg-emerald-100 text-emerald-800 shadow-sm"
+                            : "attendance-day-absent bg-red-100 text-red-800 shadow-sm"
+                        }`}
                       >
                         {dayNum}
                       </div>
@@ -860,7 +864,7 @@ const ManageStudents = () => {
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white/80 shadow-sm overflow-hidden">
+        <div data-assistant-focus="students-list" className="rounded-2xl border bg-white/80 shadow-sm overflow-hidden">
           {/* Toolbar */}
           <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex gap-2">
@@ -886,6 +890,7 @@ const ManageStudents = () => {
                 Promote Students
               </button>
               <button
+                data-assistant-focus="students-add"
                 onClick={handleOpenAdd}
                 className="flex items-center justify-center gap-2 rounded-full bg-emerald-600 text-white px-5 py-2 text-sm font-semibold shadow-sm transition hover:scale-[1.01] hover:bg-emerald-700"
               >
@@ -1271,7 +1276,7 @@ const ManageStudents = () => {
             <div className="border-t border-slate-100 bg-slate-50 px-6 py-4 flex justify-end">
               <button
                 onClick={closeAdmissionModal}
-                className="px-6 py-2 bg-slate-200 text-slate-800 rounded-lg font-semibold hover:bg-slate-300 transition"
+                className="rounded-lg bg-slate-200 px-6 py-2 font-semibold text-black transition hover:bg-slate-300"
               >
                 Close
               </button>
@@ -2143,7 +2148,7 @@ const ManageStudents = () => {
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <span
-                                  className={`px-2 py-1 rounded text-xs font-bold ${getGradeColor(grade)}`}
+                                  className={`student-grade-badge rounded px-2 py-1 text-xs font-bold ${getGradeColor(grade)}`}
                                 >
                                   {score > 0 ? grade : "-"}
                                 </span>

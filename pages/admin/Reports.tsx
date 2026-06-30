@@ -271,6 +271,7 @@ const Reports = () => {
 
       <div
         id="report-content"
+        data-assistant-focus="academic-reports"
         className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col md:h-[calc(100vh-8rem)] print:h-auto print:border-none print:shadow-none"
       >
         {/* Header */}
