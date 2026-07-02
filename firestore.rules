@@ -64,6 +64,14 @@ service cloud.firestore {
       );
     }
 
+    function hasCurrentSubscription(schoolId) {
+      let school = get(/databases/$(database)/documents/schools/$(schoolId)).data;
+      return school.get('plan', '') == 'free' ||
+        !school.keys().hasAny(['planEndsAt']) ||
+        !(school.planEndsAt is timestamp) ||
+        request.time < school.planEndsAt + duration.value(7, 'd');
+    }
+
     function isActiveSchoolId(schoolId) {
       return schoolId != null &&
         exists(/databases/$(database)/documents/schools/$(schoolId)) &&
@@ -71,7 +79,8 @@ service cloud.firestore {
           get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'active' ||
           get(/databases/$(database)/documents/schools/$(schoolId)).data.status == 'trial_active' ||
           !get(/databases/$(database)/documents/schools/$(schoolId)).data.keys().hasAny(['status'])
-        );
+        ) &&
+        hasCurrentSubscription(schoolId);
     }
 
     function isParentOf(guardianPhone) {

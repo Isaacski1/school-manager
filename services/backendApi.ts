@@ -923,6 +923,48 @@ export async function getSuperAdminAiMetrics(): Promise<{
   feedbackPositiveRate: number;
   positiveFeedback: number;
   negativeFeedback: number;
+  googleAi: {
+    status:
+      | "healthy"
+      | "tracking"
+      | "warning"
+      | "critical"
+      | "degraded"
+      | "exhausted";
+    model: string;
+    resetTimeZone: string;
+    limits: {
+      requestsPerMinute: number | null;
+      tokensPerMinute: number | null;
+      requestsPerDay: number | null;
+    };
+    utilization: {
+      requestsPerMinute: number | null;
+      tokensPerMinute: number | null;
+      requestsPerDay: number | null;
+    };
+    thisMinute: {
+      requests: number;
+      tokens: number;
+    };
+    today: {
+      requests: number;
+      promptTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      failures: number;
+      quotaHits: number;
+      timeouts: number;
+      activeSchools: number;
+    };
+    lastQuotaErrorAt: number | null;
+    topSchools: Array<{
+      schoolId: string;
+      requests: number;
+      tokens: number;
+      failures: number;
+    }>;
+  };
 }> {
   return apiRequest("/api/superadmin/ai-metrics", { method: "GET" });
 }

@@ -21,7 +21,7 @@ import { CreditCard, ShieldCheck, Calendar, ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const Billing: React.FC = () => {
-  const { school } = useSchool();
+  const { school, refreshSchool } = useSchool();
   const navigate = useNavigate();
   const [processing, setProcessing] = useState(false);
   const [amount, setAmount] = useState("0");
@@ -33,7 +33,9 @@ const Billing: React.FC = () => {
 
   const formatAmount = (value?: number, currency = "GHS") => {
     if (!value && value !== 0) return "-";
-    const normalized = value >= 100 ? value / 100 : value;
+    // Paystack stores every transaction amount in the currency's smallest
+    // unit. For GHS, 10 means 10 pesewas (GHS 0.10), not GHS 10.
+    const normalized = value / 100;
     return new Intl.NumberFormat("en-GH", {
       style: "currency",
       currency,
@@ -119,6 +121,25 @@ const Billing: React.FC = () => {
 
   const isFreePlan = billingStatus.plan === "free";
   const isTrialPlan = billingStatus.plan === "trial";
+  const specialPricing = useMemo(() => {
+    const pricing = (school as any)?.billing?.specialPricing;
+    const amount = Number(pricing?.amount);
+    const cycle = String(pricing?.cycle || "").toLowerCase();
+    if (
+      !pricing?.enabled ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !["monthly", "termly", "yearly"].includes(cycle)
+    ) {
+      return null;
+    }
+    return {
+      amount,
+      cycle: cycle as "monthly" | "termly" | "yearly",
+      note: String(pricing?.note || "").trim(),
+    };
+  }, [school]);
+  const effectiveBillingCycle = specialPricing?.cycle || billingStatus.plan;
 
   const parseSchoolDate = (value?: string | null) => {
     if (!value) return null;
@@ -141,6 +162,8 @@ const Billing: React.FC = () => {
   }, [billingStatus.status, subscriptionPaymentHistory]);
 
   const expectedAmount = useMemo(() => {
+    if (specialPricing) return specialPricing.amount;
+
     const billingCycle = billingStatus.plan || "monthly"; // monthly | termly | yearly
     const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
 
@@ -154,8 +177,8 @@ const Billing: React.FC = () => {
     }
 
     if (billingCycle === "termly") {
-      // 3 months × base × 0.90 (10% discount)
-      const total = base * 3 * 0.9;
+      // 4 months × base × 0.90 (10% discount)
+      const total = base * 4 * 0.9;
 
       // Pro-rate if mid-term
       const startType = (school as any)?.billing?.startType || "term_start";
@@ -183,7 +206,7 @@ const Billing: React.FC = () => {
     }
 
     return base;
-  }, [billingStatus.plan, school, schoolConfig]);
+  }, [billingStatus.plan, school, schoolConfig, specialPricing]);
 
   useEffect(() => {
     if (isFreePlan) return;
@@ -286,7 +309,7 @@ const Billing: React.FC = () => {
   useEffect(() => {
     if (isFreePlan) return;
     const params = new URLSearchParams(window.location.search);
-    const reference = params.get("reference");
+    const reference = params.get("reference") || params.get("trxref");
     if (!reference) return;
 
     const verifyAndRedirect = async () => {
@@ -295,9 +318,10 @@ const Billing: React.FC = () => {
         const result = await verifySchoolPayment({ reference });
         if (String(result?.status || "").toLowerCase() === "success") {
           setShowSuccess(true);
+          refreshSchool();
           setTimeout(() => {
-            navigate("/", { replace: true });
-          }, 3500);
+            navigate("/admin", { replace: true });
+          }, 1800);
           return;
         }
 
@@ -319,7 +343,7 @@ const Billing: React.FC = () => {
     };
 
     verifyAndRedirect();
-  }, [isFreePlan, navigate]);
+  }, [isFreePlan, navigate, refreshSchool]);
 
   const handlePay = async () => {
     if (isFreePlan) return;
@@ -334,6 +358,10 @@ const Billing: React.FC = () => {
       const response = await initiateSchoolBilling({
         amount: numericAmount * 100,
         currency: "GHS",
+        metadata: {
+          billingCycle: effectiveBillingCycle,
+          specialPricingApplied: Boolean(specialPricing),
+        },
       });
       window.location.href = response.authorizationUrl;
     } catch (error: any) {
@@ -373,10 +401,7 @@ const Billing: React.FC = () => {
 
   return (
     <Layout title="Billing & Subscription">
-      <div
-        className="max-w-5xl mx-auto space-y-6"
-        data-assistant-focus="billing"
-      >
+      <div className="max-w-5xl mx-auto space-y-6">
         {showSuccess && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-6 shadow-sm">
             <div className="flex items-center gap-3">
@@ -403,7 +428,8 @@ const Billing: React.FC = () => {
               Billing & Subscription
             </h1>
             <p className="text-sm text-slate-600 mt-2">
-              Pay monthly via Mobile Money and keep your school active.
+              Pay your {effectiveBillingCycle} subscription via Mobile Money
+              and keep your school active.
             </p>
           </div>
         </div>
@@ -416,7 +442,10 @@ const Billing: React.FC = () => {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  Pay Monthly (MoMo)
+                  Pay{" "}
+                  {effectiveBillingCycle.charAt(0).toUpperCase() +
+                    effectiveBillingCycle.slice(1)}{" "}
+                  (MoMo)
                 </h2>
                 <p className="text-sm text-slate-500">
                   MTN, Telecel, AirtelTigo supported via Paystack.
@@ -454,7 +483,7 @@ const Billing: React.FC = () => {
             </p> */}
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+          <div data-assistant-focus="billing" className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
               <div className="h-10 w-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
                 <ShieldCheck size={18} />
@@ -476,7 +505,7 @@ const Billing: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Billing Cycle</span>
                 <span className="font-semibold text-slate-800 capitalize">
-                  {billingStatus.plan}
+                  {effectiveBillingCycle}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -485,9 +514,14 @@ const Billing: React.FC = () => {
                   GH₵ {expectedAmount.toLocaleString()}
                 </span>
               </div>
-              {billingStatus.plan !== "monthly" && (
+              {specialPricing ? (
+                <div className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
+                  Special pricing applied
+                  {specialPricing.note ? ` — ${specialPricing.note}` : ""}
+                </div>
+              ) : effectiveBillingCycle !== "monthly" && (
                 <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-2">
-                  {billingStatus.plan === "termly" ? "10% termly discount applied" : "20% yearly discount applied"}
+                  {effectiveBillingCycle === "termly" ? "10% termly discount applied" : "20% yearly discount applied"}
                 </div>
               )}
               <div className="flex items-center justify-between pt-1 border-t border-slate-100">

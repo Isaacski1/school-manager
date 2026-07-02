@@ -58,7 +58,9 @@ import {
   ChevronRight,
   Moon,
   Sun,
+  CircleHelp,
 } from "lucide-react";
+import GuidedTour from "./GuidedTour";
 
 // WhatsApp SVG icon (official brand logo)
 const WhatsAppIcon = ({ size = 18 }: { size?: number }) => (
@@ -88,6 +90,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   , [school?.id, user?.schoolId]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [schoolAssistantOpen, setSchoolAssistantOpen] = useState(false);
+  const [tourRestartSignal, setTourRestartSignal] = useState(0);
+  const [tourCompleted, setTourCompleted] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebarCollapsed");
     return saved === "true";
@@ -100,6 +104,15 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const isBillingRoute = location.pathname.startsWith("/admin/billing");
+  const [subscriptionClock, setSubscriptionClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setSubscriptionClock(Date.now()),
+      30_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Notification State
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
@@ -242,9 +255,20 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const hasFeature = (feature: FeatureKey) =>
     canAccessFeature(user, school, feature);
   const subscriptionGate = useMemo(() => {
-    if (!school || isFreePlan || isSuperAdmin || isParent) return null;
+    if (!school || isFreePlan || isSuperAdmin) return null;
     const normalizeDate = (raw: any) => {
       if (!raw) return null;
+      if (
+        typeof raw === "object" &&
+        typeof raw.seconds === "number" &&
+        typeof raw.toDate !== "function"
+      ) {
+        const date = new Date(
+          raw.seconds * 1000 +
+            Math.floor(Number(raw.nanoseconds || 0) / 1_000_000),
+        );
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
       const date =
         raw instanceof Date
           ? raw
@@ -265,38 +289,37 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     const rawCreatedAt =
       (school as any)?.createdAt || (school as any)?.billing?.createdAt || null;
 
-    let baseDate = normalizeDate(rawLastPayment) || normalizeDate(rawCreatedAt);
-    if (!baseDate) return null;
+    const lastPaymentAt = normalizeDate(rawLastPayment);
+    const createdAt = normalizeDate(rawCreatedAt);
+    const calculateEndDate = (baseDate: Date | null) => {
+      if (!baseDate) return null;
+      const endDate = new Date(baseDate);
+      endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
+      return endDate;
+    };
 
-    if (rawLastPayment) {
-      baseDate = new Date(baseDate);
-      baseDate.setDate(1);
-      baseDate.setHours(0, 0, 0, 0);
-    }
-
+    const paymentBasedEndsAt = calculateEndDate(lastPaymentAt);
+    const fallbackEndsAt = calculateEndDate(createdAt);
     const planEndsAt =
-      explicitEndsAt ||
-      (() => {
-        const endDate = new Date(baseDate);
-        endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
-        return endDate;
-      })();
+      explicitEndsAt && lastPaymentAt && lastPaymentAt > explicitEndsAt
+        ? new Date(
+            Math.max(
+              explicitEndsAt.getTime(),
+              paymentBasedEndsAt?.getTime() || 0,
+            ),
+          )
+        : explicitEndsAt || paymentBasedEndsAt || fallbackEndsAt;
+    if (!planEndsAt) return null;
 
     const graceMs = 7 * 24 * 60 * 60 * 1000;
     const graceEndsAt = new Date(planEndsAt.getTime() + graceMs);
-    const now = new Date();
-    if (now < graceEndsAt) return null;
-
-    const status = String((school as any)?.billing?.status || "")
-      .toLowerCase()
-      .trim();
-    if (["active", "success", "paid"].includes(status)) return null;
+    if (subscriptionClock < graceEndsAt.getTime()) return null;
 
     return {
       planEndsAt,
       graceEndsAt,
     };
-  }, [school, isFreePlan, isSuperAdmin]);
+  }, [school, isFreePlan, isSuperAdmin, subscriptionClock]);
 
   const formatPaymentAmount = (amount?: number, currency = "GHS") => {
     if (!amount && amount !== 0) return "";
@@ -588,6 +611,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     return (
       <Link
         to={href}
+        data-tour={href}
         onClick={() => setSidebarOpen(false)}
         title={isCollapsed ? label : ""}
         className={`flex items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[17px] font-medium transition-all
@@ -871,6 +895,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               )}
               <button
                 type="button"
+                data-tour="school-assistant"
                 onClick={() => {
                   setSchoolAssistantOpen(true);
                   setSidebarOpen(false);
@@ -942,6 +967,19 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-4">
+              {(isAdmin || isTeacher || isParent) && !tourCompleted && (
+                <button
+                  type="button"
+                  onClick={() => setTourRestartSignal((current) => current + 1)}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
+                  aria-label="Start dashboard tour"
+                  title="Dashboard tour"
+                >
+                  <CircleHelp size={19} />
+                  <span className="hidden lg:inline">Help</span>
+                </button>
+              )}
+
               {(isAdmin || isSuperAdmin || isTeacher || isParent) && (
                 <button
                   type="button"
@@ -1039,12 +1077,50 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         </header>
 
         {/* Main Content */}
-        <main ref={mainContentRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-5 lg:p-6 xl:p-8">
-          {children}
+        <main data-tour="dashboard-content" ref={mainContentRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3 sm:p-4 md:p-5 lg:p-6 xl:p-8">
+          {subscriptionGate && !isBillingRoute ? (
+            <div className="flex min-h-[calc(100vh-9rem)] items-center justify-center">
+              <section className="w-full max-w-xl rounded-[28px] border border-amber-200 bg-white p-6 text-center shadow-[0_24px_70px_-38px_rgba(15,23,42,0.45)] sm:p-10">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                  <Lock size={30} />
+                </div>
+                <p className="mt-6 text-xs font-semibold uppercase tracking-[0.2em] text-amber-700">
+                  Access paused
+                </p>
+                <h1 className="mt-2 text-2xl font-bold text-slate-900">
+                  School subscription expired
+                </h1>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  The seven-day grace period ended on{" "}
+                  <span className="font-semibold text-slate-800">
+                    {subscriptionGate.graceEndsAt.toLocaleDateString()}
+                  </span>
+                  . School Manager GH access will resume after the subscription
+                  is renewed.
+                </p>
+                {isAdmin ? (
+                  <Link
+                    to="/admin/billing"
+                    className="mt-7 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#083b69]"
+                  >
+                    <Wallet size={18} />
+                    Renew Subscription
+                  </Link>
+                ) : (
+                  <p className="mt-6 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600">
+                    Please contact your school administrator to renew the
+                    subscription.
+                  </p>
+                )}
+              </section>
+            </div>
+          ) : (
+            children
+          )}
         </main>
       </div>
 
-      {isAdmin ? (
+      {isAdmin && !subscriptionGate ? (
         <>
           {!schoolAssistantOpen ? (
             <SchoolAssistantLauncher onClick={() => setSchoolAssistantOpen(true)} />
@@ -1054,6 +1130,24 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
             onClose={() => setSchoolAssistantOpen(false)}
           />
         </>
+      ) : null}
+
+      {user?.id && (isAdmin || isTeacher || isParent) && !subscriptionGate ? (
+        <GuidedTour
+          role={isAdmin ? "school_admin" : isTeacher ? "teacher" : "parent"}
+          userId={user.id}
+          userName={user.fullName}
+          autoStart={
+            (isAdmin && location.pathname === "/admin") ||
+            (isTeacher && location.pathname === "/teacher") ||
+            (isParent && location.pathname === "/parent")
+          }
+          restartSignal={tourRestartSignal}
+          darkMode={dashboardDarkMode}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onCloseSidebar={() => setSidebarOpen(false)}
+          onCompletionStateChange={setTourCompleted}
+        />
       ) : null}
 
       <Toast />

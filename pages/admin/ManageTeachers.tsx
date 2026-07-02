@@ -84,6 +84,26 @@ const ManageTeachers = () => {
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
+  const openCreateTeacherModal = () => {
+    if (!schoolId) {
+      showToast(
+        "School ID is not available yet. Please refresh and try again.",
+        { type: "error" },
+      );
+      return;
+    }
+
+    setFormData({
+      role: UserRole.TEACHER,
+      fullName: "",
+      email: "",
+      password: "",
+      assignedClassIds: [],
+    });
+    setShowPassword(false);
+    setShowModal(true);
+  };
+
   // ✅ Fetch only teachers for THIS school
   const fetchData = async () => {
     if (!schoolId) {
@@ -495,16 +515,7 @@ const ManageTeachers = () => {
 
           <button
             data-assistant-focus="teachers-add"
-            onClick={() => {
-              if (!schoolId) {
-                showToast(
-                  "School ID is not available yet. Please refresh and try again.",
-                  { type: "error" },
-                );
-                return;
-              }
-              setShowModal(true);
-            }}
+            onClick={openCreateTeacherModal}
             className="flex items-center bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium w-full sm:w-auto justify-center sm:justify-start"
           >
             <Plus size={16} className="mr-2" />
@@ -672,13 +683,19 @@ const ManageTeachers = () => {
               Teacher
             </h3>
 
-            <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-4 pt-2"
+              autoComplete="off"
+            >
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">
                   Full Name
                 </label>
                 <input
                   type="text"
+                  name="new-teacher-full-name"
+                  autoComplete="off"
                   required
                   className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder-slate-400"
                   value={formData.fullName || ""}
@@ -695,6 +712,8 @@ const ManageTeachers = () => {
                 </label>
                 <input
                   type="email"
+                  name="new-teacher-email"
+                  autoComplete="off"
                   required
                   className="w-full border border-slate-300 p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder-slate-400"
                   value={formData.email || ""}
@@ -713,6 +732,8 @@ const ManageTeachers = () => {
                 <div className="relative">
                   <input
                     type={showPassword ? "text" : "password"}
+                    name="new-teacher-password"
+                    autoComplete="new-password"
                     className="w-full border border-slate-300 p-2.5 pr-10 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder-slate-400"
                     value={formData.password || ""}
                     onChange={(e) =>

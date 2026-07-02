@@ -580,6 +580,19 @@ const AdminDashboard = () => {
 
   const normalizePlanEndsAt = (raw: any) => {
     if (!raw) return null;
+    if (
+      typeof raw === "object" &&
+      typeof raw.seconds === "number" &&
+      typeof raw.toDate !== "function"
+    ) {
+      const cachedTimestamp = new Date(
+        raw.seconds * 1000 +
+          Math.floor(Number(raw.nanoseconds || 0) / 1_000_000),
+      );
+      return Number.isNaN(cachedTimestamp.getTime())
+        ? null
+        : cachedTimestamp;
+    }
     const date =
       raw instanceof Date
         ? raw
@@ -597,39 +610,54 @@ const AdminDashboard = () => {
     return 1;
   };
 
+  const [subscriptionNow, setSubscriptionNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setSubscriptionNow(Date.now()),
+      30_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
   const resolvePlanEndsAt = () => {
     const plan = (school as any)?.plan || "monthly";
     if (plan === "free") return null;
 
     const explicitEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
-    if (explicitEndsAt) return explicitEndsAt;
-
     const rawLastPayment = (school as any)?.billing?.lastPaymentAt || null;
     const rawCreatedAt =
       school?.createdAt || (school as any)?.billing?.createdAt || null;
 
-    const parseDate = (raw: any) => {
-      if (!raw) return null;
-      const date =
-        raw instanceof Date
-          ? raw
-          : new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
-      if (Number.isNaN(date.getTime())) return null;
-      return date;
+    const parseDate = (raw: any) => normalizePlanEndsAt(raw);
+    const lastPaymentAt = parseDate(rawLastPayment);
+    const createdAt = parseDate(rawCreatedAt);
+    const calculateEndDate = (baseDate: Date | null) => {
+      if (!baseDate) return null;
+      const endDate = new Date(baseDate);
+      endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
+      return endDate;
     };
 
-    let baseDate = parseDate(rawLastPayment) || parseDate(rawCreatedAt);
-    if (!baseDate) return null;
-
-    if (rawLastPayment) {
-      baseDate = new Date(baseDate);
-      baseDate.setDate(1);
-      baseDate.setHours(0, 0, 0, 0);
+    const paymentBasedEndsAt = calculateEndDate(lastPaymentAt);
+    if (
+      explicitEndsAt &&
+      lastPaymentAt &&
+      lastPaymentAt.getTime() > explicitEndsAt.getTime()
+    ) {
+      return new Date(
+        Math.max(
+          explicitEndsAt.getTime(),
+          paymentBasedEndsAt?.getTime() || 0,
+        ),
+      );
     }
 
-    const endDate = new Date(baseDate);
-    endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
-    return endDate;
+    return (
+      explicitEndsAt ||
+      paymentBasedEndsAt ||
+      calculateEndDate(createdAt)
+    );
   };
 
   const resolvedPlanEndsAt = useMemo(
@@ -645,19 +673,24 @@ const AdminDashboard = () => {
 
   const subscriptionPlanEndsAt = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
-    if ((school as any)?.plan === "trial" || (school as any)?.status === "trial_active") return null;
+    if ((school as any)?.plan === "trial") return null;
     if (!resolvedPlanEndsAt) return null;
-    return resolvedPlanEndsAt.getTime() > Date.now()
+    return resolvedPlanEndsAt.getTime() > subscriptionNow
       ? resolvedPlanEndsAt
       : null;
-  }, [resolvedPlanEndsAt, school?.plan, (school as any)?.status]);
+  }, [resolvedPlanEndsAt, school?.plan, subscriptionNow]);
+  const isRenewalDueSoon = Boolean(
+    subscriptionPlanEndsAt &&
+      subscriptionPlanEndsAt.getTime() - subscriptionNow <=
+        7 * 24 * 60 * 60 * 1000,
+  );
 
   const trialPlanEndsAt = useMemo(() => {
-    if ((school as any)?.plan !== "trial" && (school as any)?.status !== "trial_active") return null;
+    if ((school as any)?.plan !== "trial") return null;
     const planEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
     if (!planEndsAt) return null;
-    return planEndsAt.getTime() > Date.now() ? planEndsAt : null;
-  }, [school?.planEndsAt, school?.plan, (school as any)?.status]);
+    return planEndsAt.getTime() > subscriptionNow ? planEndsAt : null;
+  }, [school?.planEndsAt, school?.plan, subscriptionNow]);
 
   const gracePeriod = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
@@ -666,10 +699,9 @@ const AdminDashboard = () => {
     const graceEndsAt = new Date(
       resolvedPlanEndsAt.getTime() + 7 * 24 * 60 * 60 * 1000,
     );
-    const nowMs = Date.now();
     if (
-      nowMs < resolvedPlanEndsAt.getTime() ||
-      nowMs >= graceEndsAt.getTime()
+      subscriptionNow < resolvedPlanEndsAt.getTime() ||
+      subscriptionNow >= graceEndsAt.getTime()
     ) {
       return null;
     }
@@ -677,7 +709,7 @@ const AdminDashboard = () => {
     return {
       graceEndsAt,
     };
-  }, [resolvedPlanEndsAt, school?.plan]);
+  }, [resolvedPlanEndsAt, school?.plan, subscriptionNow]);
 
   // Advanced visualization state
   const [heatmapData, setHeatmapData] = useState<
@@ -3835,21 +3867,27 @@ const AdminDashboard = () => {
                         Subscription Countdown
                       </p>
                       <h3 className="text-xl font-bold text-slate-900 mt-1">
-                        Renewal due soon
+                        {isRenewalDueSoon
+                          ? "Renewal due soon"
+                          : "Subscription active"}
                       </h3>
                       <p className="text-sm text-slate-600 mt-2">
-                        Your subscription ends on{" "}
+                        Your subscription {isRenewalDueSoon ? "ends" : "is active until"}{" "}
                         <span className="font-semibold text-slate-800">
                           {subscriptionPlanEndsAt.toLocaleDateString()}
                         </span>
-                        . Renew before the end date to avoid interruption.
+                        {isRenewalDueSoon
+                          ? ". Renew before the end date to avoid interruption."
+                          : "."}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3">
                     <div className="px-4 py-2 rounded-full text-sm font-semibold bg-[#0B4A82] text-white">
-                      Subscription ends
+                      {isRenewalDueSoon
+                        ? "Subscription ends soon"
+                        : "Subscription active"}
                     </div>
                     <div className="px-4 py-2 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700">
                       <div className="text-xs uppercase text-slate-400">

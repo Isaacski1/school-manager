@@ -33,18 +33,21 @@ const formatDate = (value?: Timestamp | number | string | null) => {
   return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
 };
 
-const normalizeAmount = (amount?: number) => {
+const normalizeAmount = (amount?: number, reference?: string) => {
   if (!amount && amount !== 0) return 0;
+  if (/^(sch_|sms_)/i.test(String(reference || ""))) return amount / 100;
   return amount >= 100 ? amount / 100 : amount;
 };
 
 const formatAmount = (
   amount?: number,
   currency = "GHS",
-  options?: { normalized?: boolean },
+  options?: { normalized?: boolean; reference?: string },
 ) => {
   if (!amount && amount !== 0) return "-";
-  const normalized = options?.normalized ? amount : normalizeAmount(amount);
+  const normalized = options?.normalized
+    ? amount
+    : normalizeAmount(amount, options?.reference);
   return new Intl.NumberFormat("en-GH", {
     style: "currency",
     currency,
@@ -227,7 +230,9 @@ const Payments: React.FC = () => {
 
       totals.set(key, {
         name: current.name || resolvedName,
-        value: current.value + normalizeAmount(payment.amount),
+        value:
+          current.value +
+          normalizeAmount(payment.amount, payment.reference),
       });
     });
     return Array.from(totals.values()).sort((a, b) => b.value - a.value);
@@ -467,7 +472,9 @@ const Payments: React.FC = () => {
                       {payment.adminEmail || "-"}
                     </td>
                     <td className="py-3 pr-4 text-slate-700">
-                      {formatAmount(payment.amount, payment.currency)}
+                      {formatAmount(payment.amount, payment.currency, {
+                        reference: payment.reference,
+                      })}
                     </td>
                     <td className="py-3 pr-4 text-slate-600">
                       {payment.currency || "GHS"}

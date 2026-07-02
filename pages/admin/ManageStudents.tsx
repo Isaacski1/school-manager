@@ -843,7 +843,7 @@ const ManageStudents = () => {
               workspace.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-              <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
+              <span data-assistant-focus="students-summary" className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm">
                 <Users className="h-4 w-4 text-indigo-500" />
                 Total: {totalStudents}
               </span>

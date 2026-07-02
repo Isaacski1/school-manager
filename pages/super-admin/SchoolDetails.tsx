@@ -88,8 +88,8 @@ const PAID_PLAN_OPTIONS: Array<{
   {
     value: "termly",
     label: "Termly",
-    description: "Three months access for a school-term billing cycle.",
-    months: 3,
+    description: "Four months access for a school-term billing cycle.",
+    months: 4,
   },
   {
     value: "yearly",
@@ -575,8 +575,10 @@ const SchoolDetails = () => {
       showToast("Phone number is too short.", { type: "error" });
       return false;
     }
-    if (formState.planEndsAt) {
-      const chosen = new Date(formState.planEndsAt);
+    const originalPlanEndsAt = formatPlanEndsAt(school?.planEndsAt);
+    const planEndDateChanged = formState.planEndsAt !== originalPlanEndsAt;
+    if (formState.planEndsAt && planEndDateChanged) {
+      const chosen = new Date(`${formState.planEndsAt}T00:00:00`);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       if (chosen < today) {
@@ -1115,7 +1117,7 @@ const SchoolDetails = () => {
                     </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] gap-3">
                     {PAID_PLAN_OPTIONS.map((option) => {
                       const optionMeta = PLAN_META[option.value];
                       const isCurrent = formState.plan === option.value;
@@ -1127,7 +1129,7 @@ const SchoolDetails = () => {
                           type="button"
                           onClick={() => handleQuickPlanChange(option.value)}
                           disabled={!!planUpdating || isCurrent}
-                          className={`group relative overflow-hidden rounded-[24px] border p-0 text-left transition-all duration-200 ${
+                          className={`group relative min-w-0 overflow-hidden rounded-[24px] border p-0 text-left transition-all duration-200 ${
                             isCurrent
                               ? `${optionMeta.softClass} shadow-lg`
                               : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
@@ -1136,8 +1138,8 @@ const SchoolDetails = () => {
                           <div
                             className={`absolute inset-x-0 top-0 h-1.5 ${optionMeta.dotClass}`}
                           />
-                          <div className="relative p-5">
-                            <div className="flex items-center justify-between gap-3">
+                          <div className="relative p-4 sm:p-5">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
                               <span className="text-base font-semibold text-slate-900">
                                 {option.label}
                               </span>
@@ -1151,7 +1153,7 @@ const SchoolDetails = () => {
                             <p className="mt-3 text-sm leading-6 text-slate-500">
                               {option.description}
                             </p>
-                            <div className="mt-5 flex items-center justify-between text-xs font-semibold">
+                            <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
                               <span className="text-slate-400">
                                 {isUpdating
                                   ? "Applying..."

@@ -1,37 +1,43 @@
-**Design QA**
+**Source visual truth**
 
-- Source visual truth: `C:\Users\USER\.codex\generated_images\019f1025-70fa-7ee1-835d-690b6d2dd296\call_LAaYbNZHN7zBsrqEmbYumare.png`
-- Implementation target: School Admin dashboard with the School Assistant drawer open
-- Intended viewport: 1440 x 1024
-- State: drawer open, contextual suggestions visible
-- Implementation screenshot: unavailable
+- User-provided Financial Flow Analysis reference image in the current conversation.
+
+**Implementation**
+
+- `pages/super-admin/Dashboard.tsx`
+- Super Admin dashboard, Financial Flow Analysis module.
+
+**Viewport and state**
+
+- Intended states: light and dark themes; Revenue and Transactions modes; 3M, 6M, and 12M ranges.
+- Intended viewports: mobile, tablet, laptop, and large desktop.
 
 **Full-view comparison evidence**
 
-Blocked. The selected Browser workflow is present, but its required browser-control runtime is not available in this session. Product Design policy requires explicit user permission before using standalone Playwright as the fallback capture path.
+- Blocked: the in-app browser automation connection was unavailable, so a rendered implementation screenshot could not be captured.
 
-**Focused region comparison evidence**
+**Focused-region comparison evidence**
 
-Blocked for the same reason. The assistant drawer cannot yet be captured at the matching viewport for comparison.
+- Blocked for the same reason. Static code review covered the header controls, KPI grid, combined chart, tooltip, collection-leader panel, empty state, and responsive breakpoints.
 
 **Findings**
 
-- No code-level P0/P1/P2 issues were found by TypeScript or production compilation.
-- Visual fidelity, responsive drawer behavior, console health, and the launcher-to-answer interaction remain unverified in a rendered browser.
+- [P2] Rendered visual fidelity remains unverified.
+  - Location: Financial Flow Analysis module.
+  - Evidence: the reference image is available, but no matching implementation screenshot could be captured.
+  - Impact: spacing, tooltip placement, chart density, and breakpoint behavior cannot be confirmed visually.
+  - Fix: capture the Super Admin dashboard at desktop and mobile widths, compare it with the supplied reference, and correct visible differences.
 
 **Patches made**
 
-- Implemented a responsive right-side assistant drawer matching the selected concept.
-- Added page-aware suggestions, animated message states, knowledge matching, feedback controls, and route navigation.
-- Corrected the sidebar assistant button width calculation for expanded and collapsed navigation.
+- Rebuilt the module as a full-width responsive financial workspace.
+- Added functional Revenue/Transactions and 3M/6M/12M controls.
+- Added responsive KPI cards with real derived values.
+- Added a combined bar, trend-area, trend-line, and average-reference chart.
+- Added a real-data collection ranking panel with an honest empty state.
+- Added light/dark theme styling, focus states, and reduced-motion support.
+- Corrected the mobile segmented-control grid.
 
-**Implementation checklist**
-
-- Capture the Admin dashboard at 1440 x 1024.
-- Open the floating assistant launcher.
-- Submit an attendance or fees question.
-- Verify the answer and route action.
-- Compare the open drawer with the selected source visual.
-- Repeat at a mobile viewport.
+**Final result**
 
 final result: blocked

@@ -474,7 +474,7 @@ const GetStarted = () => {
                           <div className="billing-cycle-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                             {([
                               { key: "monthly", label: "Monthly", discount: null, price: (base: number) => base },
-                              { key: "termly", label: "Termly", discount: "10% off", price: (base: number) => Math.round(base * 3 * 0.9) },
+                              { key: "termly", label: "Termly", discount: "10% off", price: (base: number) => Math.round(base * 4 * 0.9) },
                               { key: "yearly", label: "Yearly", discount: "20% off", price: (base: number) => Math.round(base * 12 * 0.8) },
                             ] as const).map(({ key, label, discount, price }) => {
                               const base = formData.featurePlan === "starter" ? 100 : 300;

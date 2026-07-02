@@ -39,6 +39,7 @@ import {
   CheckCircle,
   AlertTriangle,
   TrendingUp,
+  TrendingDown,
   Activity,
   ArrowUpRight,
   ArrowDownRight,
@@ -78,6 +79,13 @@ import {
   Tooltip,
   BarChart,
   Bar,
+  ComposedChart,
+  Line,
+  LineChart,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 
@@ -343,6 +351,29 @@ const normalizeAmount = (amount?: number) => {
   if (!amount) return 0;
   return amount >= 100 ? amount / 100 : amount;
 };
+
+const normalizeBillingAmount = (amount?: number) => {
+  if (!amount) return 0;
+  return amount / 100;
+};
+
+const isPaystackBillingPayment = (payment: PaymentRecord) => {
+  const reference = String(payment.reference || "");
+  const moduleValue = String((payment as any).module || "").toLowerCase();
+  const typeValue = String((payment as any).type || "").toLowerCase();
+  const categoryValue = String((payment as any).category || "").toLowerCase();
+  return (
+    /^(sch_|sms_)/i.test(reference) ||
+    moduleValue === "billing" ||
+    ["subscription", "sms_topup"].includes(typeValue) ||
+    ["subscription", "sms_topup"].includes(categoryValue)
+  );
+};
+
+const normalizeRecordedPaymentAmount = (payment: PaymentRecord) =>
+  isPaystackBillingPayment(payment)
+    ? normalizeBillingAmount(payment.amount)
+    : normalizeAmount(payment.amount);
 
 const normalizeMethodLabel = (value?: string) => {
   const raw = String(value || "").trim();
@@ -711,7 +742,123 @@ const ChartTooltip: React.FC<{
   );
 };
 
+const FINANCIAL_STREAMS = [
+  { key: "newSubsPlot", label: "New Subs", color: "#083B66" },
+  { key: "renewalsPlot", label: "Renewals", color: "#2E78A6" },
+  { key: "addOnsPlot", label: "Add-ons", color: "#C6A75E" },
+] as const;
+
+const FinancialMiniSparkline: React.FC<{
+  data: Array<{ trend: number }>;
+  width?: number;
+  height?: number;
+}> = ({ data, width = 92, height = 32 }) => (
+  <LineChart width={width} height={height} data={data}>
+    <Line
+      type="monotone"
+      dataKey="trend"
+      stroke="#0B4A82"
+      strokeWidth={2}
+      dot={false}
+      isAnimationActive={false}
+    />
+  </LineChart>
+);
+
+const FinancialFlowTooltip: React.FC<{
+  active?: boolean;
+  payload?: any[];
+  chartMetric: "revenue" | "count";
+}> = ({ active, payload, chartMetric }) => {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+
+  const streamRows = FINANCIAL_STREAMS.map((stream) => ({
+    ...stream,
+    value: Number(row[stream.key] || 0),
+  }));
+  const streamTotal = streamRows.reduce((sum, stream) => sum + stream.value, 0);
+
+  return (
+    <div className="min-w-[230px] rounded-xl border border-slate-200 bg-white/95 p-3.5 shadow-2xl backdrop-blur-xl">
+      <div className="border-b border-slate-100 pb-2.5">
+        <p className="text-sm font-black text-slate-950">{row.tooltipLabel}</p>
+        <p className="mt-0.5 text-[10px] text-slate-500">
+          {Number(row.count || 0)} verified transaction
+          {Number(row.count || 0) === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      <div className="mt-3 grid grid-cols-[1fr_78px] items-center gap-3">
+        <div className="space-y-2">
+          {streamRows.map((stream) => (
+            <div
+              key={stream.key}
+              className="flex items-center justify-between gap-3 text-[11px]"
+            >
+              <span className="inline-flex items-center gap-2 text-slate-600">
+                <span
+                  className="h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: stream.color }}
+                />
+                {stream.label}
+              </span>
+              <strong className="text-slate-950">
+                {chartMetric === "revenue"
+                  ? formatCurrency(stream.value)
+                  : stream.value.toLocaleString()}
+              </strong>
+            </div>
+          ))}
+        </div>
+
+        <div className="relative flex items-center justify-center">
+          <RechartsPieChart width={76} height={76}>
+            <Pie
+              data={streamRows}
+              dataKey="value"
+              nameKey="label"
+              cx="50%"
+              cy="50%"
+              innerRadius={19}
+              outerRadius={34}
+              stroke="#ffffff"
+              strokeWidth={1.5}
+              isAnimationActive={false}
+            >
+              {streamRows.map((stream) => (
+                <Cell key={stream.key} fill={stream.color} />
+              ))}
+            </Pie>
+          </RechartsPieChart>
+          <span className="pointer-events-none absolute text-[8px] font-black text-slate-700">
+            {streamTotal > 0 ? "100%" : "0%"}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5 text-xs">
+        <span className="font-semibold text-slate-500">Total collected</span>
+        <strong className="text-slate-950">
+          {chartMetric === "revenue"
+            ? formatCurrency(Number(row.revenue) || 0)
+            : Number(row.count || 0).toLocaleString()}
+        </strong>
+      </div>
+    </div>
+  );
+};
+
 type PaymentStatus = "success" | "pending" | "failed";
+type EarningsDrilldown =
+  | "total_revenue"
+  | "revenue_30d"
+  | "successful_payments"
+  | "success_rate"
+  | "active_paid_schools"
+  | "expired_subscriptions"
+  | "estimated_mrr"
+  | "estimated_arr";
 
 type PaymentRecord = {
   id: string;
@@ -720,6 +867,9 @@ type PaymentRecord = {
   status?: string;
   normalizedStatus?: PaymentStatus;
   module?: string;
+  type?: string;
+  category?: string;
+  reference?: string;
   schoolId?: string;
   schoolName?: string;
   createdAt?: Timestamp | number | string;
@@ -728,6 +878,10 @@ type PaymentRecord = {
   channel?: string;
   provider?: string;
   paymentType?: string;
+  plan?: string;
+  planType?: string;
+  subscriptionPlan?: string;
+  billingPlan?: string;
 };
 
 type ActivityEntry = {
@@ -818,6 +972,8 @@ const EarningsOverview: React.FC<{
 }) => {
   const [revenueRange, setRevenueRange] = useState<RevenueRangeValue>(12);
   const [chartMetric, setChartMetric] = useState<"revenue" | "count">("revenue");
+  const [earningsDrilldown, setEarningsDrilldown] =
+    useState<EarningsDrilldown | null>(null);
 
   const normalizedBillingPayments = useMemo(() => {
     return billingPayments.map((payment) => {
@@ -826,7 +982,7 @@ const EarningsOverview: React.FC<{
         ...payment,
         createdAt,
         normalizedStatus: normalizePaymentStatus(payment.status),
-        normalizedAmount: normalizeAmount(payment.amount),
+        normalizedAmount: normalizeBillingAmount(payment.amount),
         normalizedMethod: normalizeMethodLabel(
           payment.paymentMethod ||
             payment.method ||
@@ -845,7 +1001,7 @@ const EarningsOverview: React.FC<{
         ...payment,
         createdAt,
         normalizedStatus: normalizePaymentStatus(payment.status),
-        normalizedAmount: normalizeAmount(payment.amount),
+        normalizedAmount: normalizeRecordedPaymentAmount(payment),
         normalizedMethod: normalizeMethodLabel(
           payment.paymentMethod ||
             payment.method ||
@@ -856,6 +1012,35 @@ const EarningsOverview: React.FC<{
       };
     });
   }, [payments]);
+
+  const successfulBillingPayments = useMemo(
+    () =>
+      normalizedBillingPayments
+        .filter((payment) => payment.normalizedStatus === "success")
+        .sort(
+          (a, b) =>
+            (b.createdAt?.getTime?.() || 0) -
+            (a.createdAt?.getTime?.() || 0),
+        ),
+    [normalizedBillingPayments],
+  );
+
+  const recentSuccessfulBillingPayments = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return successfulBillingPayments.filter(
+      (payment) => (payment.createdAt?.getTime?.() || 0) >= cutoff,
+    );
+  }, [successfulBillingPayments]);
+
+  const activePaidSchools = useMemo(
+    () =>
+      schools.filter(
+        (school) =>
+          school.status === "active" &&
+          !["free", "trial"].includes(normalizePlan(school.plan)),
+      ),
+    [schools],
+  );
 
   const latestBillingBySchool = useMemo(() => {
     const map = new Map<string, { amount: number; date: Date }>();
@@ -877,27 +1062,70 @@ const EarningsOverview: React.FC<{
     const buckets = buildRollingMonths(12);
     const totals = buildRecord(
       buckets.map((b) => b.key),
-      () => 0,
+      () => ({
+        revenue: 0,
+        count: 0,
+        newSubs: 0,
+        renewals: 0,
+        addOns: 0,
+        newSubsCount: 0,
+        renewalsCount: 0,
+        addOnsCount: 0,
+      }),
     );
-    const counts = buildRecord(
-      buckets.map((b) => b.key),
-      () => 0,
+    const seenSchools = new Set<string>();
+    const chronologicalPayments = [...normalizedBillingPayments].sort(
+      (a, b) =>
+        (a.createdAt?.getTime?.() || 0) - (b.createdAt?.getTime?.() || 0),
     );
-    normalizedBillingPayments.forEach((payment) => {
+
+    chronologicalPayments.forEach((payment) => {
       if (payment.normalizedStatus !== "success") return;
       if (!payment.createdAt) return;
       const key = getMonthKey(payment.createdAt);
-      if (totals[key] === undefined) return;
-      totals[key] += payment.normalizedAmount;
-      counts[key] += 1;
+      const schoolKey = normalizeText(payment.schoolId);
+      const descriptor = [
+        payment.module,
+        payment.paymentType,
+        payment.plan,
+        payment.planType,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const isAddOn = /(add[\s-]?on|sms|top[\s-]?up|credit)/i.test(descriptor);
+      const isNewSubscription = Boolean(schoolKey && !seenSchools.has(schoolKey));
+
+      if (totals[key] !== undefined) {
+        totals[key].revenue += payment.normalizedAmount;
+        totals[key].count += 1;
+        if (isAddOn) {
+          totals[key].addOns += payment.normalizedAmount;
+          totals[key].addOnsCount += 1;
+        } else if (isNewSubscription) {
+          totals[key].newSubs += payment.normalizedAmount;
+          totals[key].newSubsCount += 1;
+        } else {
+          totals[key].renewals += payment.normalizedAmount;
+          totals[key].renewalsCount += 1;
+        }
+      }
+
+      if (schoolKey) seenSchools.add(schoolKey);
     });
     return buckets.map((bucket) => ({
       label: bucket.fullLabel,
       axisLabel: bucket.shortLabel,
       tooltipLabel: bucket.fullLabel,
       date: bucket.date,
-      revenue: totals[bucket.key] || 0,
-      count: counts[bucket.key] || 0,
+      revenue: totals[bucket.key]?.revenue || 0,
+      count: totals[bucket.key]?.count || 0,
+      newSubs: totals[bucket.key]?.newSubs || 0,
+      renewals: totals[bucket.key]?.renewals || 0,
+      addOns: totals[bucket.key]?.addOns || 0,
+      newSubsCount: totals[bucket.key]?.newSubsCount || 0,
+      renewalsCount: totals[bucket.key]?.renewalsCount || 0,
+      addOnsCount: totals[bucket.key]?.addOnsCount || 0,
     }));
   }, [normalizedBillingPayments]);
 
@@ -946,6 +1174,64 @@ const EarningsOverview: React.FC<{
 
     return { total, average, peakValue, peakLabel, growth };
   }, [filteredRevenueTrend, chartMetric]);
+
+  const financialFlowChartData = useMemo(() => {
+    const metricKey = chartMetric === "revenue" ? "revenue" : "count";
+    return filteredRevenueTrend.map((item, index) => {
+      const start = Math.max(0, index - 2);
+      const window = filteredRevenueTrend.slice(start, index + 1);
+      const trend =
+        window.reduce(
+          (sum, entry) => sum + Number(entry[metricKey] || 0),
+          0,
+        ) / Math.max(1, window.length);
+      const previous =
+        index > 0
+          ? Number(filteredRevenueTrend[index - 1][metricKey] || 0)
+          : 0;
+      const current = Number(item[metricKey] || 0);
+      const movement =
+        previous > 0
+          ? ((current - previous) / previous) * 100
+          : current > 0
+            ? 100
+            : 0;
+      return {
+        ...item,
+        trend,
+        movement,
+        newSubsPlot:
+          chartMetric === "revenue" ? item.newSubs : item.newSubsCount,
+        renewalsPlot:
+          chartMetric === "revenue" ? item.renewals : item.renewalsCount,
+        addOnsPlot:
+          chartMetric === "revenue" ? item.addOns : item.addOnsCount,
+      };
+    });
+  }, [chartMetric, filteredRevenueTrend]);
+
+  const subscriptionTierPerformance = useMemo(() => {
+    const total = financialFlowChartData.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.newSubsPlot || 0) +
+        Number(item.renewalsPlot || 0) +
+        Number(item.addOnsPlot || 0),
+      0,
+    );
+
+    return FINANCIAL_STREAMS.map((stream) => {
+      const value = financialFlowChartData.reduce(
+        (sum, item) => sum + Number(item[stream.key] || 0),
+        0,
+      );
+      return {
+        ...stream,
+        value,
+        share: total > 0 ? (value / total) * 100 : 0,
+      };
+    }).sort((a, b) => b.value - a.value);
+  }, [financialFlowChartData]);
 
   const paymentStatusTrend = useMemo(() => {
     const buckets = buildRollingMonths(6);
@@ -1106,7 +1392,7 @@ const EarningsOverview: React.FC<{
       if (!latestPayment) return;
       let monthlyValue = 0;
       if (plan === "monthly") monthlyValue = latestPayment.amount;
-      if (plan === "termly") monthlyValue = latestPayment.amount / 3;
+      if (plan === "termly") monthlyValue = latestPayment.amount / 4;
       if (plan === "yearly") monthlyValue = latestPayment.amount / 12;
       byPlan[plan] += monthlyValue;
       mrr += monthlyValue;
@@ -1299,6 +1585,7 @@ const EarningsOverview: React.FC<{
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {[
           {
+            drilldown: "total_revenue" as EarningsDrilldown,
             label: "Total Revenue",
             value: formatCurrency(paymentMetrics.paidAmount),
             hint: "All time",
@@ -1308,6 +1595,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-emerald-100/70",
           },
           {
+            drilldown: "revenue_30d" as EarningsDrilldown,
             label: "Revenue (30d)",
             value: formatCurrency(paymentMetrics.last30Amount),
             hint: "Last 30 days",
@@ -1317,6 +1605,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-blue-100/70",
           },
           {
+            drilldown: "successful_payments" as EarningsDrilldown,
             label: "Successful Payments",
             value: paymentMetrics.paidCount,
             hint: "Verified transactions",
@@ -1326,6 +1615,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-emerald-100/70",
           },
           {
+            drilldown: "success_rate" as EarningsDrilldown,
             label: "Success Rate",
             value: `${paymentMetrics.successRate}%`,
             hint: "Across all payments",
@@ -1335,12 +1625,9 @@ const EarningsOverview: React.FC<{
             glow: "shadow-cyan-100/70",
           },
           {
+            drilldown: "active_paid_schools" as EarningsDrilldown,
             label: "Active Paid Schools",
-            value: schools.filter(
-              (s) =>
-                s.status === "active" &&
-                !["free", "trial"].includes(normalizePlan(s.plan)),
-            ).length,
+            value: activePaidSchools.length,
             hint: "Currently billable",
             icon: <Users size={18} />,
             gradient: "from-indigo-400/20 via-indigo-200/30 to-white",
@@ -1348,6 +1635,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-indigo-100/70",
           },
           {
+            drilldown: "expired_subscriptions" as EarningsDrilldown,
             label: "Expired Subscriptions",
             value: expiredSubscriptions.length,
             hint: "Grace ended",
@@ -1357,6 +1645,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-rose-100/70",
           },
           {
+            drilldown: "estimated_mrr" as EarningsDrilldown,
             label: "Estimated MRR",
             value: formatCurrency(mrrMetrics.mrr),
             hint: "Monthly recurring",
@@ -1366,6 +1655,7 @@ const EarningsOverview: React.FC<{
             glow: "shadow-amber-100/70",
           },
           {
+            drilldown: "estimated_arr" as EarningsDrilldown,
             label: "Estimated ARR",
             value: formatCurrency(mrrMetrics.arr),
             hint: "Annualized",
@@ -1375,9 +1665,12 @@ const EarningsOverview: React.FC<{
             glow: "shadow-violet-100/70",
           },
         ].map((item) => (
-          <div
+          <button
+            type="button"
             key={item.label}
-            className={`min-w-0 rounded-2xl border border-slate-100 bg-gradient-to-br ${item.gradient} p-4 sm:p-5 shadow-sm hover:shadow-lg transition-all ${item.glow}`}
+            onClick={() => setEarningsDrilldown(item.drilldown)}
+            className={`group min-w-0 rounded-2xl border border-slate-100 bg-gradient-to-br ${item.gradient} p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/40 sm:p-5 ${item.glow}`}
+            aria-label={`View details for ${item.label}`}
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1 pr-0 sm:pr-3">
@@ -1393,7 +1686,7 @@ const EarningsOverview: React.FC<{
                 <p className="text-xs text-slate-500 mt-2">{item.hint}</p>
               </div>
               <span
-                className={`h-11 w-11 sm:h-10 sm:w-10 self-end sm:self-auto flex-shrink-0 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow-md`}
+                className={`h-11 w-11 sm:h-10 sm:w-10 self-end sm:self-auto flex-shrink-0 rounded-2xl ${item.ring} text-white flex items-center justify-center shadow-md transition-transform group-hover:scale-105`}
               >
                 {item.icon}
               </span>
@@ -1401,74 +1694,75 @@ const EarningsOverview: React.FC<{
             <div className="mt-4 h-1.5 rounded-full bg-white/70 border border-white/60 overflow-hidden">
               <div className={`h-full ${item.ring}`} style={{ width: "62%" }} />
             </div>
-          </div>
+            <div className="mt-3 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+              <span>View details</span>
+              <ArrowUpRight size={14} />
+            </div>
+          </button>
         ))}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card className="xl:col-span-2 p-4 sm:p-6">
-          <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <h4 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <TrendingUp size={20} className="text-[#0B4A82]" />
-                Financial Flow Analysis
-              </h4>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Monitor platform billing trends, collection volume, and transaction frequencies
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                <span>
-                  {revenueDateSpan || "Building date range"}
-                </span>
-                <span className="h-1 w-1 rounded-full bg-slate-300" />
-                <span>
-                  {filteredRevenueTrend.length > 0
-                    ? `${filteredRevenueTrend.length} months tracked`
-                    : "Building chart data"}
-                </span>
-              </div>
-            </div>
-            
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-              {/* Metric Selector */}
-              <div className="flex rounded-xl border border-slate-100 bg-slate-50 p-1 shadow-inner w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setChartMetric("revenue")}
-                  className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
-                    chartMetric === "revenue"
-                      ? "bg-white text-[#0B4A82] shadow-sm"
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  Revenue
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChartMetric("count")}
-                  className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
-                    chartMetric === "count"
-                      ? "bg-white text-emerald-600 shadow-sm"
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  Transactions
-                </button>
+        <Card className="financial-flow-card xl:col-span-3 overflow-hidden !rounded-[1.75rem] !border-slate-200 !p-0 shadow-[0_20px_55px_rgba(15,23,42,0.08)] dark:!border-slate-700 dark:!bg-slate-900">
+          <div className="border-b border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50/40 px-4 py-5 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-blue-950/30 sm:px-6 lg:px-7">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-start gap-3.5">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0B4A82] to-[#062E52] text-white shadow-lg shadow-blue-950/15">
+                    <TrendingUp size={22} />
+                  </span>
+                  <div className="min-w-0">
+                    <h4 className="text-xl font-black tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+                      Financial Flow Analysis
+                    </h4>
+                    <p className="mt-1 max-w-md text-sm leading-5 text-slate-600 dark:text-slate-300">
+                      Verified subscription collections over time
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  <span>{revenueDateSpan || "Building date range"}</span>
+                  <span className="h-1 w-1 rounded-full bg-slate-400" />
+                  <span>
+                    {filteredRevenueTrend.length} month
+                    {filteredRevenueTrend.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="h-1 w-1 rounded-full bg-slate-400" />
+                  <span>Successful payments only</span>
+                </div>
               </div>
 
-              {/* Range Selector */}
-              <div className="flex rounded-xl border border-slate-100 bg-slate-50 p-1 shadow-inner w-full sm:w-auto">
+              <div className="grid w-full grid-cols-6 rounded-2xl border border-slate-200 bg-slate-200/65 p-1.5 shadow-inner dark:border-slate-700 dark:bg-slate-950/70 sm:grid-cols-7 xl:w-auto">
+                {(["revenue", "count"] as const).map((metric) => {
+                  const active = chartMetric === metric;
+                  return (
+                    <button
+                      key={metric}
+                      type="button"
+                      onClick={() => setChartMetric(metric)}
+                      aria-pressed={active}
+                      className={`col-span-3 rounded-xl px-3 py-2.5 text-xs font-black transition-all focus:outline-none focus:ring-2 focus:ring-cyan-400 sm:col-span-2 sm:text-sm ${
+                        active
+                          ? "bg-white text-slate-950 shadow-md dark:bg-slate-800 dark:text-white"
+                          : "text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+                      }`}
+                    >
+                      {metric === "revenue" ? "Revenue" : "Transactions"}
+                    </button>
+                  );
+                })}
                 {REVENUE_RANGE_OPTIONS.map((option) => {
-                  const isActive = revenueRange === option.value;
+                  const active = revenueRange === option.value;
                   return (
                     <button
                       key={option.value}
                       type="button"
                       onClick={() => setRevenueRange(option.value)}
-                      className={`flex-1 sm:flex-none rounded-lg px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold transition-all ${
-                        isActive
-                          ? "bg-[#0B4A82] text-white shadow-sm"
-                          : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                      aria-pressed={active}
+                      className={`col-span-2 rounded-xl px-2.5 py-2.5 text-xs font-black transition-all focus:outline-none focus:ring-2 focus:ring-cyan-400 sm:col-span-1 sm:text-sm ${
+                        active
+                          ? "bg-[#0B4A82] text-white shadow-md shadow-blue-950/20"
+                          : "text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
                       }`}
                     >
                       {option.label}
@@ -1479,149 +1773,350 @@ const EarningsOverview: React.FC<{
             </div>
           </div>
 
-          {/* Advanced Performance Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
-              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                {chartMetric === "revenue" ? "Total Revenue" : "Total Txns"}
-              </div>
-              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight">
-                {chartMetric === "revenue"
-                  ? formatCurrency(rangeStats.total)
-                  : `${rangeStats.total} txns`}
-              </div>
-              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
-                For selected {revenueRange} months
-              </div>
+          <div className="px-4 py-5 sm:px-6 lg:px-7 lg:py-6">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                {
+                  label:
+                    chartMetric === "revenue"
+                      ? "Collected revenue"
+                      : "Transactions",
+                  eyebrow:
+                    chartMetric === "revenue"
+                      ? "Total collected revenue"
+                      : "Verified payment volume",
+                  value:
+                    chartMetric === "revenue"
+                      ? formatCurrency(rangeStats.total)
+                      : rangeStats.total.toLocaleString(),
+                  hint: `${revenueRange}-month total`,
+                  icon: <BadgeDollarSign size={17} />,
+                  accent: "text-[#0B4A82] bg-blue-50 dark:bg-blue-950/50",
+                },
+                {
+                  label: "Monthly average",
+                  eyebrow: "Monthly average benchmark",
+                  value:
+                    chartMetric === "revenue"
+                      ? formatCurrency(rangeStats.average)
+                      : rangeStats.average.toFixed(1),
+                  hint: "Benchmark",
+                  icon: <Activity size={17} />,
+                  accent: "text-cyan-700 bg-cyan-50 dark:bg-cyan-950/50",
+                  sparkline: true,
+                },
+                {
+                  label: "Peak month",
+                  eyebrow: "Peak performance month",
+                  value:
+                    chartMetric === "revenue"
+                      ? formatCurrency(rangeStats.peakValue)
+                      : rangeStats.peakValue.toLocaleString(),
+                  hint: rangeStats.peakLabel,
+                  icon: <ArrowUpRight size={17} />,
+                  accent: "text-violet-700 bg-violet-50 dark:bg-violet-950/50",
+                  peakArrow: true,
+                },
+                {
+                  label: "Latest movement",
+                  eyebrow: "Latest monthly movement",
+                  value: `${rangeStats.growth >= 0 ? "+" : ""}${rangeStats.growth.toFixed(1)}%`,
+                  hint: "Month over month",
+                  icon:
+                    rangeStats.growth >= 0 ? (
+                      <TrendingUp size={17} />
+                    ) : (
+                      <TrendingDown size={17} />
+                    ),
+                  accent:
+                    rangeStats.growth >= 0
+                      ? "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50"
+                      : "text-rose-700 bg-rose-50 dark:bg-rose-950/50",
+                  tone:
+                    rangeStats.growth >= 0
+                      ? "text-emerald-600 dark:text-emerald-300"
+                      : "text-rose-600 dark:text-rose-300",
+                },
+              ].map((stat) => (
+                <article
+                  key={stat.label}
+                  className="group min-w-0 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:bg-slate-950/55 sm:p-4"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] font-black uppercase tracking-[0.13em] text-slate-800 dark:text-slate-200 sm:text-xs">
+                        {stat.label}
+                      </p>
+                      <p className="mt-0.5 truncate text-[9px] text-slate-500 dark:text-slate-400 sm:text-[10px]">
+                        {stat.eyebrow}
+                      </p>
+                    </div>
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${stat.accent}`}>
+                      {stat.icon}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex min-w-0 items-center gap-2">
+                    <p
+                      className={`min-w-0 truncate text-xl font-black tabular-nums tracking-tight text-slate-950 dark:text-white sm:text-2xl ${stat.tone || ""}`}
+                      title={String(stat.value)}
+                    >
+                      {stat.value}
+                    </p>
+                    {stat.peakArrow ? (
+                      <ArrowUpRight
+                        size={18}
+                        className="shrink-0 text-[#0B4A82] dark:text-cyan-300"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="mt-1 flex min-h-8 items-end justify-between gap-2">
+                    <p className="truncate text-xs font-medium text-slate-600 dark:text-slate-400">
+                      {stat.hint}
+                    </p>
+                    {stat.sparkline ? (
+                      <div className="shrink-0 overflow-hidden rounded-lg bg-blue-50/80 px-1 dark:bg-blue-950/30">
+                        <FinancialMiniSparkline
+                          data={financialFlowChartData}
+                          width={72}
+                          height={28}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
             </div>
 
-            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
-              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Monthly Average
+            <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950/55">
+              <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div>
+                  <p className="text-base font-black text-slate-950 dark:text-white sm:text-lg">
+                    Monthly {chartMetric === "revenue" ? "collections" : "transactions"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    Hover or tap a column to inspect that month
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-bold text-slate-600 dark:text-slate-300 sm:text-xs">
+                  <div className="hidden items-center rounded-lg bg-slate-50 px-1 dark:bg-slate-900 sm:flex">
+                    <FinancialMiniSparkline
+                      data={financialFlowChartData}
+                      width={84}
+                      height={30}
+                    />
+                  </div>
+                  {FINANCIAL_STREAMS.map((stream) => (
+                    <span key={stream.key} className="inline-flex items-center gap-2">
+                      <span
+                        className="h-3 w-3 rounded"
+                        style={{ backgroundColor: stream.color }}
+                      />
+                      {stream.label}
+                    </span>
+                  ))}
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-5 border-t-2 border-dashed border-amber-500" />
+                    Monthly average
+                  </span>
+                </div>
               </div>
-              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight">
-                {chartMetric === "revenue"
-                  ? formatCurrency(rangeStats.average)
-                  : `${rangeStats.average.toFixed(1)} / mo`}
-              </div>
-              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
-                Prorated monthly trend
-              </div>
-            </div>
 
-            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
-              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Peak Month
-              </div>
-              <div className="mt-1.5 text-lg sm:text-xl font-extrabold text-slate-800 tracking-tight truncate" title={rangeStats.peakLabel}>
-                {chartMetric === "revenue"
-                  ? formatCurrency(rangeStats.peakValue)
-                  : `${rangeStats.peakValue} txns`}
-              </div>
-              <div className="text-[10px] sm:text-xs text-[#0B4A82] font-semibold mt-1 truncate">
-                {rangeStats.peakLabel}
-              </div>
-            </div>
+              <div className="grid min-w-0 lg:grid-cols-[minmax(0,1fr)_290px]">
+                <div className="min-w-0 border-b border-slate-200 dark:border-slate-700 lg:border-b-0 lg:border-r">
+                  <ChartSurface
+                    height={390}
+                    className="financial-flow-chart overflow-hidden bg-gradient-to-b from-slate-50/80 to-white p-1 dark:from-slate-900 dark:to-slate-950 sm:p-3"
+                  >
+                    {filteredRevenueTrend.length > 0 && hasVisibleRevenueTrend ? (
+                      ({ width, height }) => (
+                        <ComposedChart
+                          width={width}
+                          height={height}
+                          data={financialFlowChartData}
+                          margin={{
+                            left: width < 520 ? 0 : 8,
+                            right: width < 520 ? 2 : 14,
+                            top: 24,
+                            bottom: 8,
+                          }}
+                          barCategoryGap={revenueRange === 12 ? "30%" : "48%"}
+                        >
+                          <defs>
+                            <linearGradient
+                              id={`financialFlowArea-${chartMetric}`}
+                              x1="0"
+                              y1="0"
+                              x2="0"
+                              y2="1"
+                            >
+                              <stop offset="0%" stopColor="#0F6EB8" stopOpacity={0.28} />
+                              <stop offset="100%" stopColor="#0F6EB8" stopOpacity={0.02} />
+                            </linearGradient>
+                            <linearGradient
+                              id={`financialFlowBar-${chartMetric}`}
+                              x1="0"
+                              y1="0"
+                              x2="0"
+                              y2="1"
+                            >
+                              <stop offset="0%" stopColor={chartMetric === "revenue" ? "#0F6EB8" : "#10B981"} />
+                              <stop offset="100%" stopColor={chartMetric === "revenue" ? "#062E52" : "#047857"} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="4 5" stroke="#CBD5E1" vertical={false} opacity={0.7} />
+                          <XAxis
+                            dataKey="axisLabel"
+                            tickLine={false}
+                            axisLine={false}
+                            interval="preserveStartEnd"
+                            minTickGap={width < 520 ? 20 : 12}
+                            tick={{ fontSize: width < 520 ? 9 : 11, fill: "#64748B", fontWeight: 700 }}
+                            dy={10}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            allowDecimals={chartMetric === "revenue"}
+                            width={width < 520 ? 48 : 68}
+                            tick={{ fontSize: width < 520 ? 9 : 11, fill: "#64748B", fontWeight: 700 }}
+                            tickFormatter={(value) =>
+                              chartMetric === "revenue"
+                                ? formatCompactCurrency(value)
+                                : Number(value).toLocaleString()
+                            }
+                          />
+                          <Tooltip
+                            cursor={{ fill: "rgba(148,163,184,0.10)" }}
+                            content={<FinancialFlowTooltip chartMetric={chartMetric} />}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="trend"
+                            stroke="none"
+                            fill={`url(#financialFlowArea-${chartMetric})`}
+                            isAnimationActive
+                            animationDuration={450}
+                          />
+                          <ReferenceLine
+                            y={rangeStats.average}
+                            stroke="#D4A72C"
+                            strokeDasharray="7 6"
+                            strokeWidth={1.5}
+                          />
+                          {FINANCIAL_STREAMS.map((stream, index) => (
+                            <Bar
+                              key={stream.key}
+                              dataKey={stream.key}
+                              name={stream.label}
+                              stackId="financial-streams"
+                              minPointSize={() => 0}
+                              fill={stream.color}
+                              radius={
+                                index === FINANCIAL_STREAMS.length - 1
+                                  ? [6, 6, 0, 0]
+                                  : [0, 0, 0, 0]
+                              }
+                              maxBarSize={44}
+                              isAnimationActive
+                              animationDuration={450}
+                            />
+                          ))}
+                          <Line
+                            type="monotone"
+                            dataKey="trend"
+                            name="3-month trend"
+                            stroke="#083B66"
+                            strokeWidth={2.5}
+                            dot={false}
+                            activeDot={{ r: 4, fill: "#0EA5E9", stroke: "#fff", strokeWidth: 2 }}
+                            isAnimationActive
+                            animationDuration={500}
+                          />
+                        </ComposedChart>
+                      )
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-4">
+                        <EmptyState
+                          icon={<BadgeDollarSign className="text-slate-300" size={40} />}
+                          title={`No ${chartMetric === "revenue" ? "revenue" : "transactions"} in this range`}
+                          description={`Successful payments recorded in the selected ${revenueRange}-month period will appear here.`}
+                        />
+                      </div>
+                    )}
+                  </ChartSurface>
+                </div>
 
-            <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/50 border border-slate-100/80 hover:bg-slate-50 transition-colors">
-              <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Growth Rate (MoM)
-              </div>
-              <div className={`mt-1.5 text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-1 ${
-                rangeStats.growth >= 0 ? "text-emerald-600" : "text-rose-500"
-              }`}>
-                {rangeStats.growth >= 0 ? "+" : ""}{rangeStats.growth.toFixed(1)}%
-              </div>
-              <div className="text-[10px] sm:text-xs text-slate-400 mt-1">
-                Latest month vs. previous
+                <aside className="min-w-0 bg-slate-50/70 p-4 dark:bg-slate-900/70 sm:p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-slate-950 dark:text-white">
+                        Top Performing Subscription Tiers
+                      </p>
+                      <p className="mt-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400">
+                        Revenue streams ranked for the selected period
+                      </p>
+                    </div>
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-[#0B4A82] dark:bg-blue-950/60 dark:text-cyan-300">
+                      <TrendingUp size={17} />
+                    </span>
+                  </div>
+
+                  <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950/60">
+                    <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-slate-200 px-3 py-2 text-[9px] font-black uppercase tracking-[0.12em] text-slate-400 dark:border-slate-700">
+                      <span>Revenue stream</span>
+                      <span>{chartMetric === "revenue" ? "Collected" : "Volume"}</span>
+                    </div>
+                    {subscriptionTierPerformance.map((tier) => (
+                      <div
+                        key={tier.key}
+                        className="border-b border-slate-100 px-3 py-3 last:border-b-0 dark:border-slate-800"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="inline-flex min-w-0 items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200">
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                              style={{ backgroundColor: tier.color }}
+                            />
+                            <span className="truncate">{tier.label}</span>
+                          </span>
+                          <strong className="shrink-0 text-xs tabular-nums text-slate-950 dark:text-white">
+                            {chartMetric === "revenue"
+                              ? formatCurrency(tier.value)
+                              : tier.value.toLocaleString()}
+                          </strong>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                            <div
+                              className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none"
+                              style={{
+                                width: `${tier.share}%`,
+                                backgroundColor: tier.color,
+                              }}
+                            />
+                          </div>
+                          <span className="w-10 text-right text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                            {tier.share.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/80 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+                    <p className="text-[9px] font-black uppercase tracking-[0.14em] text-[#0B4A82] dark:text-cyan-300">
+                      Leading stream
+                    </p>
+                    <p className="mt-1.5 text-xs leading-5 text-slate-700 dark:text-slate-300">
+                      {rangeStats.total > 0
+                        ? `${subscriptionTierPerformance[0]?.label || "The leading stream"} contributes ${subscriptionTierPerformance[0]?.share.toFixed(0) || 0}% of verified ${chartMetric === "revenue" ? "revenue" : "transactions"} in this period.`
+                        : "There are no successful subscription collections in the selected period."}
+                    </p>
+                  </div>
+                </aside>
               </div>
             </div>
           </div>
-
-          <ChartSurface
-            height={288}
-            className="rounded-xl border border-slate-100 bg-gradient-to-br from-slate-50/50 to-white overflow-hidden p-2"
-          >
-            {filteredRevenueTrend && filteredRevenueTrend.length > 0 && hasVisibleRevenueTrend ? (
-              ({ width, height }) => (
-                <AreaChart
-                  width={width}
-                  height={height}
-                  data={filteredRevenueTrend}
-                  margin={{ left: 10, right: 10, top: 10, bottom: 10 }}
-                >
-                  <defs>
-                    <linearGradient
-                      id="revGradient"
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="1"
-                    >
-                      <stop
-                        offset="0%"
-                        stopColor={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
-                        stopOpacity={0.25}
-                      />
-                      <stop
-                        offset="100%"
-                        stopColor={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
-                        stopOpacity={0.0}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="4 4" stroke="#F1F5F9" vertical={false} />
-                  <XAxis
-                    dataKey="axisLabel"
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94A3B8", fontWeight: 500 }}
-                    dy={8}
-                    minTickGap={20}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94A3B8", fontWeight: 500 }}
-                    dx={-8}
-                    width={40}
-                    tickFormatter={(value) => 
-                      chartMetric === "revenue"
-                        ? formatCompactCurrency(value)
-                        : value
-                    }
-                  />
-                  <Tooltip content={<ChartTooltip trendData={revenueTrend} />} />
-                  <Area
-                    type="monotone"
-                    dataKey={chartMetric}
-                    name={chartMetric === "revenue" ? "Revenue" : "Transactions"}
-                    stroke={chartMetric === "revenue" ? "#0B4A82" : "#10B981"}
-                    strokeWidth={3}
-                    fill="url(#revGradient)"
-                    activeDot={{
-                      r: 6,
-                      strokeWidth: 2,
-                      stroke: "#ffffff",
-                      fill: chartMetric === "revenue" ? "#0B4A82" : "#10B981",
-                      className: "shadow-lg"
-                    }}
-                    isAnimationActive={true}
-                  />
-                </AreaChart>
-              )
-            ) : (
-              <div className="h-full flex items-center justify-center">
-                <EmptyState
-                  icon={
-                    <BadgeDollarSign className="text-slate-300" size={40} />
-                  }
-                  title={`No ${chartMetric === "revenue" ? "revenue" : "transactions"} in this range`}
-                  description={`The chart will draw once successful payments are recorded in the selected ${revenueRange}-month period.`}
-                />
-              </div>
-            )}
-          </ChartSurface>
         </Card>
 
         <Card className="min-w-0 p-4 sm:p-6">
@@ -1659,7 +2154,7 @@ const EarningsOverview: React.FC<{
                     dataKey="success"
                     stackId="a"
                     name="Success"
-                    minPointSize={0}
+                    minPointSize={() => 0}
                     fill="#10b981"
                     isAnimationActive={false}
                   />
@@ -1667,7 +2162,7 @@ const EarningsOverview: React.FC<{
                     dataKey="pending"
                     stackId="a"
                     name="Pending"
-                    minPointSize={0}
+                    minPointSize={() => 0}
                     fill="#f59e0b"
                     isAnimationActive={false}
                   />
@@ -1675,7 +2170,7 @@ const EarningsOverview: React.FC<{
                     dataKey="failed"
                     stackId="a"
                     name="Failed"
-                    minPointSize={0}
+                    minPointSize={() => 0}
                     fill="#f43f5e"
                     isAnimationActive={false}
                   />
@@ -2298,6 +2793,313 @@ const EarningsOverview: React.FC<{
           </div>
         )}
       </Card>
+
+      <Modal
+        isOpen={Boolean(earningsDrilldown)}
+        onClose={() => setEarningsDrilldown(null)}
+        hideDefaultHeader
+        contentClassName="p-0"
+        overlayClassName="!items-end !p-0 sm:!items-center sm:!p-4"
+        className="!max-h-[92dvh] !max-w-4xl overflow-hidden !rounded-t-[1.75rem] !rounded-b-none border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:!bg-slate-900 sm:!rounded-[1.75rem]"
+      >
+        <div className="flex max-h-[92dvh] min-h-0 flex-col">
+          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50/60 px-4 py-4 dark:border-slate-700 dark:from-slate-900 dark:to-blue-950/30 sm:px-6">
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#0B4A82] dark:text-cyan-300">
+                Earnings drill-down
+              </p>
+              <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-white">
+                {
+                  {
+                    total_revenue: "Total Revenue",
+                    revenue_30d: "Revenue — Last 30 Days",
+                    successful_payments: "Successful Payments",
+                    success_rate: "Payment Success Rate",
+                    active_paid_schools: "Active Paid Schools",
+                    expired_subscriptions: "Expired Subscriptions",
+                    estimated_mrr: "Estimated Monthly Recurring Revenue",
+                    estimated_arr: "Estimated Annual Recurring Revenue",
+                  }[earningsDrilldown || "total_revenue"]
+                }
+              </h3>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                {earningsDrilldown === "expired_subscriptions"
+                  ? "Schools whose subscription grace period has ended."
+                  : earningsDrilldown === "active_paid_schools"
+                    ? "Schools currently active on a paid subscription."
+                    : earningsDrilldown === "estimated_mrr" ||
+                        earningsDrilldown === "estimated_arr"
+                      ? "The active schools and values behind this estimate."
+                      : "The verified payment records behind this metric."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEarningsDrilldown(null)}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+              aria-label="Close details"
+            >
+              <X size={19} />
+            </button>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            {earningsDrilldown === "success_rate" ? (
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  {
+                    label: "Successful",
+                    value: paymentMetrics.paidCount,
+                    tone: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300",
+                  },
+                  {
+                    label: "Pending",
+                    value: paymentMetrics.pendingCount,
+                    tone: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300",
+                  },
+                  {
+                    label: "Failed",
+                    value: paymentMetrics.failedCount,
+                    tone: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300",
+                  },
+                ].map((status) => (
+                  <div
+                    key={status.label}
+                    className={`rounded-2xl border p-3 sm:p-4 ${status.tone}`}
+                  >
+                    <p className="text-[9px] font-black uppercase tracking-wide sm:text-xs">
+                      {status.label}
+                    </p>
+                    <p className="mt-2 text-xl font-black sm:text-2xl">
+                      {status.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {earningsDrilldown === "expired_subscriptions" ? (
+              expiredSubscriptions.length > 0 ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {expiredSubscriptions.map((school) => {
+                    const daysOverdue = Math.max(
+                      0,
+                      Math.floor(
+                        (Date.now() - school.graceEndsAt.getTime()) /
+                          (24 * 60 * 60 * 1000),
+                      ),
+                    );
+                    return (
+                      <article
+                        key={school.id}
+                        className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4 dark:border-rose-900 dark:bg-rose-950/20"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h4 className="truncate font-black text-slate-950 dark:text-white">
+                              {school.name}
+                            </h4>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              {school.code} · {normalizePlan(school.plan)} plan
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[10px] font-black text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                            {daysOverdue}d overdue
+                          </span>
+                        </div>
+                        <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <dt className="text-slate-400">Plan ended</dt>
+                            <dd className="mt-1 font-bold text-slate-700 dark:text-slate-200">
+                              {school.planEndsAt.toLocaleDateString()}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-slate-400">Grace ended</dt>
+                            <dd className="mt-1 font-bold text-slate-700 dark:text-slate-200">
+                              {school.graceEndsAt.toLocaleDateString()}
+                            </dd>
+                          </div>
+                        </dl>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Link
+                            to={`/super-admin/schools/${school.id}`}
+                            onClick={() => setEarningsDrilldown(null)}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-[#0B4A82] px-3 py-2 text-xs font-bold text-white hover:bg-[#083B66]"
+                          >
+                            <Eye size={14} />
+                            View school
+                          </Link>
+                          <Link
+                            to="/super-admin/payments"
+                            onClick={() => setEarningsDrilldown(null)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 dark:border-rose-900 dark:bg-slate-900 dark:text-rose-300"
+                          >
+                            <Wallet size={14} />
+                            Review payment
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<CheckCircle className="text-emerald-500" size={38} />}
+                  title="No expired subscriptions"
+                  description="Every paid school is currently within its active period or grace window."
+                />
+              )
+            ) : null}
+
+            {earningsDrilldown === "active_paid_schools" ||
+            earningsDrilldown === "estimated_mrr" ||
+            earningsDrilldown === "estimated_arr" ? (
+              activePaidSchools.length > 0 ? (
+                <div className="space-y-3">
+                  {(earningsDrilldown === "estimated_mrr" ||
+                    earningsDrilldown === "estimated_arr") && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/25">
+                      <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                        {earningsDrilldown === "estimated_mrr"
+                          ? `${formatCurrency(mrrMetrics.mrr)} estimated each month`
+                          : `${formatCurrency(mrrMetrics.arr)} annualized from the monthly estimate`}
+                      </p>
+                      <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-400">
+                        This is an operational estimate, not a reconciled bank balance.
+                      </p>
+                    </div>
+                  )}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {activePaidSchools.map((school) => (
+                      <article
+                        key={school.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h4 className="truncate font-black text-slate-950 dark:text-white">
+                              {school.name}
+                            </h4>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              {school.code} · {school.phone || "No phone"}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-black capitalize text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                            {normalizePlan(school.plan)}
+                          </span>
+                        </div>
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            {school.planEndsAt
+                              ? `Renews/ends ${school.planEndsAt.toLocaleDateString()}`
+                              : "No end date recorded"}
+                          </span>
+                          <Link
+                            to={`/super-admin/schools/${school.id}`}
+                            onClick={() => setEarningsDrilldown(null)}
+                            className="inline-flex shrink-0 items-center gap-1 text-xs font-black text-[#0B4A82] dark:text-cyan-300"
+                          >
+                            Open <ArrowUpRight size={13} />
+                          </Link>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<Users className="text-slate-300" size={38} />}
+                  title="No active paid schools"
+                  description="Paid schools will appear here once their subscription becomes active."
+                />
+              )
+            ) : null}
+
+            {earningsDrilldown === "total_revenue" ||
+            earningsDrilldown === "revenue_30d" ||
+            earningsDrilldown === "successful_payments" ||
+            earningsDrilldown === "success_rate" ? (
+              (() => {
+                const rows =
+                  earningsDrilldown === "revenue_30d"
+                    ? recentSuccessfulBillingPayments
+                    : earningsDrilldown === "success_rate"
+                      ? normalizedBillingPayments
+                      : successfulBillingPayments;
+                return rows.length > 0 ? (
+                  <div className={`${earningsDrilldown === "success_rate" ? "mt-5" : ""} overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700`}>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[650px] text-sm">
+                        <thead className="bg-slate-50 text-left text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-950/60 dark:text-slate-400">
+                          <tr>
+                            <th className="px-4 py-3">Date</th>
+                            <th className="px-4 py-3">School</th>
+                            <th className="px-4 py-3">Amount</th>
+                            <th className="px-4 py-3">Method</th>
+                            <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {rows.map((payment) => (
+                            <tr key={payment.id} className="text-slate-700 dark:text-slate-200">
+                              <td className="px-4 py-3 text-xs">
+                                {payment.createdAt?.toLocaleDateString() || "—"}
+                              </td>
+                              <td className="px-4 py-3 font-bold">
+                                {payment.schoolName || "Unknown school"}
+                              </td>
+                              <td className="px-4 py-3 font-black text-emerald-600 dark:text-emerald-300">
+                                {formatCurrency(payment.normalizedAmount)}
+                              </td>
+                              <td className="px-4 py-3 text-xs">
+                                {payment.normalizedMethod}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[10px] font-black capitalize ${
+                                    payment.normalizedStatus === "success"
+                                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                      : payment.normalizedStatus === "pending"
+                                        ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                                        : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                                  }`}
+                                >
+                                  {payment.normalizedStatus}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                {payment.schoolId ? (
+                                  <Link
+                                    to={`/super-admin/schools/${payment.schoolId}`}
+                                    onClick={() => setEarningsDrilldown(null)}
+                                    className="font-black text-[#0B4A82] dark:text-cyan-300"
+                                  >
+                                    View school
+                                  </Link>
+                                ) : (
+                                  <span className="text-xs text-slate-400">Unavailable</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={<BadgeDollarSign className="text-slate-300" size={38} />}
+                    title="No matching payment records"
+                    description="Verified transactions for this metric will appear here."
+                  />
+                );
+              })()
+            ) : null}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
@@ -2334,6 +3136,42 @@ type AiMetricsSnapshot = {
   feedbackPositiveRate: number;
   positiveFeedback: number;
   negativeFeedback: number;
+  googleAi: {
+    status:
+      | "healthy"
+      | "tracking"
+      | "warning"
+      | "critical"
+      | "degraded"
+      | "exhausted";
+    model: string;
+    resetTimeZone: string;
+    limits: {
+      requestsPerMinute: number | null;
+      tokensPerMinute: number | null;
+      requestsPerDay: number | null;
+    };
+    utilization: {
+      requestsPerMinute: number | null;
+      tokensPerMinute: number | null;
+      requestsPerDay: number | null;
+    };
+    thisMinute: {
+      requests: number;
+      tokens: number;
+    };
+    today: {
+      requests: number;
+      promptTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      failures: number;
+      quotaHits: number;
+      timeouts: number;
+      activeSchools: number;
+    };
+    lastQuotaErrorAt: number | null;
+  };
 };
 
 const sortAiConversations = (items: AiConversationEntry[]) =>
@@ -2357,6 +3195,71 @@ const formatAiLatency = (value?: number | null) => {
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "0 ms";
   if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
   return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
+};
+
+const formatCompactMetric = (value?: number | null) =>
+  new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Math.max(0, Number(value || 0)));
+
+const getGoogleAiStatusMeta = (status?: AiMetricsSnapshot["googleAi"]["status"]) => {
+  switch (status) {
+    case "exhausted":
+      return {
+        label: "Free quota reached",
+        detail: "Google rejected at least one request today. Limited mode is protecting users.",
+        badgeClass:
+          "border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-800 dark:bg-rose-950/80 dark:text-rose-200",
+        panelClass:
+          "border-rose-200 bg-rose-50/90 dark:border-rose-900 dark:bg-rose-950/45",
+      };
+    case "critical":
+      return {
+        label: "Near quota limit",
+        detail: "At least one configured Google limit is above 90%.",
+        badgeClass:
+          "border-orange-300 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-950/80 dark:text-orange-200",
+        panelClass:
+          "border-orange-200 bg-orange-50/90 dark:border-orange-900 dark:bg-orange-950/45",
+      };
+    case "warning":
+      return {
+        label: "Usage rising",
+        detail: "At least one configured Google limit is above 75%.",
+        badgeClass:
+          "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/80 dark:text-amber-200",
+        panelClass:
+          "border-amber-200 bg-amber-50/90 dark:border-amber-900 dark:bg-amber-950/45",
+      };
+    case "degraded":
+      return {
+        label: "Google AI degraded",
+        detail: "Some Google requests failed or timed out today.",
+        badgeClass:
+          "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/80 dark:text-amber-200",
+        panelClass:
+          "border-amber-200 bg-amber-50/90 dark:border-amber-900 dark:bg-amber-950/45",
+      };
+    case "tracking":
+      return {
+        label: "Usage tracking",
+        detail: "Requests and tokens are tracked. Add the AI Studio limits on Render to enable percentage warnings.",
+        badgeClass:
+          "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-800 dark:bg-sky-950/80 dark:text-sky-200",
+        panelClass:
+          "border-sky-200 bg-sky-50/90 dark:border-sky-900 dark:bg-sky-950/45",
+      };
+    default:
+      return {
+        label: "Google AI healthy",
+        detail: "No quota errors or elevated usage detected today.",
+        badgeClass:
+          "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200",
+        panelClass:
+          "border-emerald-200 bg-emerald-50/90 dark:border-emerald-900 dark:bg-emerald-950/45",
+      };
+  }
 };
 
 const buildApiMessages = (
@@ -2546,6 +3449,7 @@ const Dashboard: React.FC = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiValidationLoading, setAiValidationLoading] = useState(false);
   const [aiMetricsLoading, setAiMetricsLoading] = useState(false);
+  const [aiUsageOpen, setAiUsageOpen] = useState(false);
   const [aiTyping, setAiTyping] = useState(false);
   const [aiHistoryOpenMobile, setAiHistoryOpenMobile] = useState(false);
   const [aiHistorySearch, setAiHistorySearch] = useState("");
@@ -2669,6 +3573,10 @@ const Dashboard: React.FC = () => {
       );
     });
   }, [aiConversations, aiHistorySearch]);
+  const googleAiStatusMeta = useMemo(
+    () => getGoogleAiStatusMeta(aiMetrics?.googleAi?.status),
+    [aiMetrics?.googleAi?.status],
+  );
 
   const refreshAiMetrics = useCallback(async () => {
     setAiMetricsLoading(true);
@@ -2717,6 +3625,7 @@ const Dashboard: React.FC = () => {
 
   const closeAiModal = useCallback(() => {
     setAiOpen(false);
+    setAiUsageOpen(false);
     const params = new URLSearchParams(location.search);
     const hadAssistantFlag = params.has("assistant") || params.has("ai");
     if (!hadAssistantFlag) return;
@@ -3139,9 +4048,9 @@ const Dashboard: React.FC = () => {
         paymentTypeValue.includes("billing") ||
         paymentTypeValue.includes("subscription");
 
-      // Also include payments that have schoolId and amount (indicating school subscription payment)
-      const isSchoolSubscription =
-        (payment as any).schoolId && (payment as any).amount;
+      const isSchoolSubscription = /^sch_/i.test(
+        String((payment as any).reference || ""),
+      );
 
       return (
         isBillingModule ||
@@ -3182,8 +4091,7 @@ const Dashboard: React.FC = () => {
     // Use billingPayments for accurate earnings metrics
     billingPayments.forEach((payment) => {
       const status = normalizePaymentStatus(payment.status);
-      const amountRaw = payment.amount ?? 0;
-      const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
+      const amount = normalizeBillingAmount(payment.amount);
       const createdAt =
         payment.createdAt instanceof Timestamp
           ? payment.createdAt.toDate()
@@ -3248,8 +4156,7 @@ const Dashboard: React.FC = () => {
     return payments
       .filter((payment) => normalizePaymentStatus(payment.status) === "success")
       .map((payment) => {
-        const amountRaw = payment.amount ?? 0;
-        const amount = amountRaw >= 100 ? amountRaw / 100 : amountRaw;
+        const amount = normalizeRecordedPaymentAmount(payment);
         const createdAt =
           payment.createdAt instanceof Timestamp
             ? payment.createdAt.toDate()
@@ -3928,16 +4835,16 @@ const Dashboard: React.FC = () => {
           hideDefaultHeader
           contentClassName="p-0"
           overlayClassName="!items-stretch !p-0 sm:!items-center sm:!p-4"
-          className="mx-auto h-[100dvh] !max-h-none !max-w-none overflow-hidden !rounded-none border-0 bg-transparent shadow-[0_30px_90px_rgba(15,23,42,0.28)] sm:h-[90vh] sm:!max-h-[90vh] sm:!max-w-[96vw] sm:!rounded-[2rem] sm:border sm:border-white/70 lg:!max-w-7xl xl:translate-x-32"
+          className="mx-auto h-[100dvh] !max-h-none !w-full !max-w-none overflow-hidden !rounded-none border-0 bg-transparent shadow-[0_30px_90px_rgba(15,23,42,0.28)] sm:h-[96vh] sm:!max-h-[96vh] sm:!w-[calc(100vw-2rem)] sm:!max-w-[calc(100vw-2rem)] sm:!rounded-[2rem] sm:border sm:border-white/70 lg:!w-[calc(100vw-3rem)] lg:!max-w-[calc(100vw-3rem)] xl:!w-[calc(100vw-19rem)] xl:!max-w-[calc(100vw-19rem)] xl:translate-x-[8.5rem]"
         >
-          <div data-ai-theme={aiDarkMode ? "dark" : "light"} className={`${aiDarkMode ? "ai-dark" : ""} relative h-full min-h-0 overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(45,212,191,0.34),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(99,102,241,0.28),transparent_28%),linear-gradient(135deg,#f8fdff_0%,#eef8ff_45%,#f8fbff_100%)] text-slate-900 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_12%_8%,rgba(8,145,178,0.2),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(79,70,229,0.2),transparent_28%),linear-gradient(135deg,#020617_0%,#0f172a_48%,#111827_100%)] dark:text-slate-100 sm:max-h-[90vh]`}>
+            <div data-ai-theme={aiDarkMode ? "dark" : "light"} className={`${aiDarkMode ? "ai-dark" : ""} relative h-full min-h-0 overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(45,212,191,0.34),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(99,102,241,0.28),transparent_28%),linear-gradient(135deg,#f8fdff_0%,#eef8ff_45%,#f8fbff_100%)] text-slate-900 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_12%_8%,rgba(8,145,178,0.2),transparent_30%),radial-gradient(circle_at_85%_4%,rgba(79,70,229,0.2),transparent_28%),linear-gradient(135deg,#020617_0%,#0f172a_48%,#111827_100%)] dark:text-slate-100 sm:max-h-[96vh]`}>
             <div className="pointer-events-none absolute -left-24 top-20 h-52 w-52 rounded-full bg-cyan-300/25 blur-3xl motion-safe:animate-pulse" />
             <div className="pointer-events-none absolute -right-20 top-8 h-60 w-60 rounded-full bg-indigo-300/25 blur-3xl motion-safe:animate-pulse" />
             <div className="pointer-events-none absolute bottom-0 left-1/3 h-44 w-44 rounded-full bg-emerald-300/20 blur-3xl" />
             <div className="relative flex h-full min-h-0 flex-col">
-              <header className="shrink-0 border-b border-white/70 bg-white/60 px-3 py-3 shadow-sm backdrop-blur-2xl transition-colors dark:border-slate-700/70 dark:bg-slate-950/65 sm:px-6 sm:py-4">
-                <div className="flex items-start justify-between gap-3 lg:items-center">
-                  <div className="flex min-w-0 items-start gap-3">
+              <header className="relative z-30 shrink-0 border-b border-white/70 bg-white/60 px-3 py-2.5 shadow-sm backdrop-blur-2xl transition-colors dark:border-slate-700/70 dark:bg-slate-950/65 sm:px-5 sm:py-3">
+                <div className="flex items-center justify-between gap-2 sm:gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                     <div className="relative shrink-0">
                       <div className="absolute inset-0 rounded-2xl bg-cyan-400/40 blur-md motion-safe:animate-pulse" />
                       <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-950 via-[#0B4A82] to-cyan-500 text-white shadow-lg shadow-cyan-500/25 sm:h-12 sm:w-12 sm:rounded-2xl">
@@ -3946,28 +4853,43 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="truncate text-lg font-black tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+                        <h2 className="truncate text-base font-black tracking-tight text-slate-950 dark:text-white sm:text-xl xl:text-2xl">
                           {AI_ASSISTANT_NAME}
                         </h2>
-                        <span className="hidden items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 sm:inline-flex">
+                        <span className="hidden items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 xl:inline-flex">
                           <Command size={12} />
                           Owner Command Center
                         </span>
                       </div>
-                      <p className="mt-0.5 line-clamp-1 max-w-3xl text-xs leading-5 text-slate-600 dark:text-slate-300 sm:mt-1 sm:text-sm sm:leading-6">
+                      <p className="mt-0.5 hidden max-w-3xl truncate text-xs leading-5 text-slate-600 dark:text-slate-300 md:block xl:text-sm">
                         Ask questions, inspect platform health, prepare safe actions, and confirm only when you are ready.
                       </p>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5 lg:justify-end">
-                    <span className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 sm:inline-flex">
+                    <span className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 lg:inline-flex">
                       <span className="h-2 w-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
                       Ready
                     </span>
-                    <span className="hidden items-center gap-2 rounded-full border border-indigo-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 md:inline-flex">
-                      <Cpu size={13} />
-                      DeepSeek aware
-                    </span>
+                     <span className="hidden items-center gap-2 rounded-full border border-indigo-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 xl:inline-flex">
+                       <Cpu size={13} />
+                       Google AI
+                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setAiUsageOpen((current) => !current)}
+                      className={`inline-flex h-9 items-center justify-center gap-2 rounded-full border px-2.5 text-xs font-bold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100 dark:focus:ring-cyan-900/50 sm:h-10 sm:px-3 ${googleAiStatusMeta.badgeClass}`}
+                      aria-expanded={aiUsageOpen}
+                      aria-controls="google-ai-usage-panel"
+                      title="Google AI usage monitor"
+                    >
+                      <Activity size={15} />
+                      <span className="hidden sm:inline">
+                        {aiMetricsLoading
+                          ? "Checking"
+                          : `${formatCompactMetric(aiMetrics?.googleAi?.today.requests)} today`}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setAiDarkMode((current) => !current)}
@@ -3991,30 +4913,167 @@ const Dashboard: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="mt-2 grid grid-cols-4 gap-1.5 sm:mt-4 sm:gap-2">
-                  {[
-                    ["Avg latency", aiMetricsLoading ? "..." : formatAiLatency(aiMetrics?.avgResponseMs)],
-                    ["P95 latency", aiMetricsLoading ? "..." : formatAiLatency(aiMetrics?.p95ResponseMs)],
-                    ["Feedback", aiMetricsLoading ? "..." : `${aiMetrics?.feedbackPositiveRate ?? 0}%`],
-                    ["Local fallback", aiMetricsLoading ? "..." : `${aiMetrics?.fallbackRate ?? 0}%`],
-                  ].map(([label, value]) => (
-                    <div
-                      key={label}
-                      className="min-w-0 rounded-xl border border-white/80 bg-white/70 px-2 py-2 shadow-sm backdrop-blur transition dark:border-slate-700 dark:bg-slate-900/75 motion-safe:hover:-translate-y-0.5 motion-safe:hover:shadow-md sm:rounded-2xl sm:px-3 sm:py-2.5"
-                    >
-                      <p className="truncate text-[8px] font-bold uppercase tracking-[0.08em] text-slate-400 dark:text-slate-500 sm:text-[10px] sm:tracking-[0.16em]">
-                        {label}
-                      </p>
-                      <p className="mt-0.5 truncate text-xs font-black text-slate-900 dark:text-white sm:mt-1 sm:text-sm">
-                        {value}
-                      </p>
+                {aiUsageOpen && (
+                  <div
+                    id="google-ai-usage-panel"
+                    className="absolute inset-x-2 top-[72px] z-40 max-h-[calc(100dvh-90px)] overflow-y-auto rounded-2xl border border-cyan-200 bg-white/95 p-3 shadow-2xl shadow-slate-950/20 backdrop-blur-2xl dark:border-cyan-900 dark:bg-slate-950/95 sm:inset-x-auto sm:right-5 sm:top-[82px] sm:w-[min(680px,calc(100vw-4rem))] sm:p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-black text-slate-950 dark:text-white">
+                            Google AI free-tier monitor
+                          </h3>
+                          <span
+                            className={`rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wide ${googleAiStatusMeta.badgeClass}`}
+                          >
+                            {aiMetricsLoading
+                              ? "Checking"
+                              : googleAiStatusMeta.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                          {googleAiStatusMeta.detail}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAiUsageOpen(false)}
+                        className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                        aria-label="Close Google AI usage monitor"
+                      >
+                        <X size={15} />
+                      </button>
                     </div>
-                  ))}
-                </div>
-              </header>
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden p-2 sm:gap-3 sm:p-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-1">
-              <aside className="shrink-0 rounded-2xl border border-white/80 bg-white/70 p-2.5 shadow-xl shadow-slate-200/50 backdrop-blur-2xl transition-colors dark:border-slate-700/80 dark:bg-slate-900/75 dark:shadow-black/30 sm:rounded-[1.6rem] sm:p-3 lg:min-h-0">
+                    <div className="mt-3 grid grid-cols-4 gap-2">
+                      {[
+                        [
+                          "Requests",
+                          formatCompactMetric(
+                            aiMetrics?.googleAi?.today.requests,
+                          ),
+                        ],
+                        [
+                          "Tokens",
+                          formatCompactMetric(
+                            aiMetrics?.googleAi?.today.totalTokens,
+                          ),
+                        ],
+                        [
+                          "Quota hits",
+                          formatCompactMetric(
+                            aiMetrics?.googleAi?.today.quotaHits,
+                          ),
+                        ],
+                        [
+                          "Schools",
+                          formatCompactMetric(
+                            aiMetrics?.googleAi?.today.activeSchools,
+                          ),
+                        ],
+                      ].map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-900"
+                        >
+                          <p className="truncate text-[8px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 sm:text-[9px]">
+                            {label}
+                          </p>
+                          <p className="mt-1 truncate text-sm font-black text-slate-950 dark:text-white">
+                            {aiMetricsLoading ? "..." : value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      {[
+                        {
+                          label: "Requests / minute",
+                          value: aiMetrics?.googleAi?.thisMinute.requests ?? 0,
+                          limit: aiMetrics?.googleAi?.limits.requestsPerMinute,
+                          usage:
+                            aiMetrics?.googleAi?.utilization.requestsPerMinute,
+                        },
+                        {
+                          label: "Tokens / minute",
+                          value: aiMetrics?.googleAi?.thisMinute.tokens ?? 0,
+                          limit: aiMetrics?.googleAi?.limits.tokensPerMinute,
+                          usage:
+                            aiMetrics?.googleAi?.utilization.tokensPerMinute,
+                        },
+                        {
+                          label: "Requests / day",
+                          value: aiMetrics?.googleAi?.today.requests ?? 0,
+                          limit: aiMetrics?.googleAi?.limits.requestsPerDay,
+                          usage:
+                            aiMetrics?.googleAi?.utilization.requestsPerDay,
+                        },
+                      ].map((quota) => (
+                        <div
+                          key={quota.label}
+                          className="rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900/80"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[10px]">
+                            <span className="font-bold text-slate-600 dark:text-slate-300">
+                              {quota.label}
+                            </span>
+                            <span className="font-black text-slate-900 dark:text-white">
+                              {formatCompactMetric(quota.value)}
+                              {quota.limit
+                                ? ` / ${formatCompactMetric(quota.limit)}`
+                                : ""}
+                            </span>
+                          </div>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                Number(quota.usage || 0) >= 90
+                                  ? "bg-rose-500"
+                                  : Number(quota.usage || 0) >= 75
+                                    ? "bg-amber-500"
+                                    : "bg-emerald-500"
+                              }`}
+                              style={{
+                                width: `${Math.max(0, Math.min(100, Number(quota.usage || 0)))}%`,
+                              }}
+                            />
+                          </div>
+                          <p className="mt-1 text-[9px] text-slate-500 dark:text-slate-400">
+                            {quota.limit
+                              ? `${quota.usage ?? 0}% used`
+                              : "Limit not configured"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-200 pt-3 text-[10px] text-slate-600 dark:border-slate-800 dark:text-slate-300">
+                      <span>
+                        Failures:{" "}
+                        <strong>
+                          {aiMetrics?.googleAi?.today.failures ?? 0}
+                        </strong>
+                      </span>
+                      <span>
+                        Timeouts:{" "}
+                        <strong>
+                          {aiMetrics?.googleAi?.today.timeouts ?? 0}
+                        </strong>
+                      </span>
+                      <span>
+                        Local fallback:{" "}
+                        <strong>{aiMetrics?.fallbackRate ?? 0}%</strong>
+                      </span>
+                      <span>Resets midnight Pacific Time</span>
+                    </div>
+                  </div>
+                )}
+               </header>
+
+              <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden p-2 sm:gap-2.5 sm:p-3 lg:grid-cols-[260px_minmax(0,1fr)] lg:grid-rows-1">
+              <aside className="shrink-0 rounded-2xl border border-white/80 bg-white/70 p-2.5 shadow-xl shadow-slate-200/50 backdrop-blur-2xl transition-colors dark:border-slate-700/80 dark:bg-slate-900/75 dark:shadow-black/30 sm:rounded-[1.6rem] sm:p-3 lg:flex lg:min-h-0 lg:flex-col">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <button
                     onClick={createNewConversation}
@@ -4041,7 +5100,7 @@ const Dashboard: React.FC = () => {
                   />
                 </div>
                 <div
-                  className={`space-y-2 overflow-y-auto pr-1 ${aiHistoryOpenMobile ? "max-h-64" : "max-h-0 lg:max-h-[560px]"} transition-all duration-300 lg:max-h-[calc(92vh-255px)]`}
+                  className={`space-y-2 overflow-y-auto pr-1 ${aiHistoryOpenMobile ? "max-h-64" : "max-h-0 lg:max-h-none"} transition-all duration-300 lg:min-h-0 lg:flex-1`}
                 >
                   {filteredAiConversations.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4 text-center dark:border-slate-700 dark:bg-slate-800/70">

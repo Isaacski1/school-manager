@@ -17,7 +17,7 @@ function getSubscriptionPrice(monthlyPrice: number, cycle: Cycle): { amount: num
   }
 
   if (cycle === "termly") {
-    const undiscounted = monthlyPrice * 3;
+    const undiscounted = monthlyPrice * 4;
     const amount = Math.round(undiscounted * 0.9);
     return { amount, label: "/ term", savings: undiscounted - amount };
   }
@@ -64,7 +64,7 @@ const faqs = [
   { q: "Is there a setup fee?", a: "Yes. Starter Plan has a GH₵ 300 one-time setup fee, and Standard Plan has a GH₵ 1,000 one-time setup fee. These fees are cover onboarding, data migration, configuration, and training, and they can be negotiated if you need a smaller arrangement." },
   { q: "How long does onboarding take?", a: "Starter onboarding is handled remotely. Standard onboarding includes record migration, grading configuration, and 1 day of on-site staff training." },
   { q: "Is my school data safe?", a: "Yes. All data is stored securely on Firebase with role-based access control and regular backups." },
-  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 3 months with a 10% discount, and yearly covers 12 months with a 20% discount. The one-time setup fee is charged only when the school is first onboarded." },
+  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 4 months with a 10% discount, and yearly covers 12 months with a 20% discount. The one-time setup fee is charged only when the school is first onboarded." },
 ];
 
 const featureComparisonRows = [

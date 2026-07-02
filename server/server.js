@@ -19,6 +19,21 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const GOOGLE_AI_MODEL = "gemma-4-31b-it";
+const readOptionalPositiveInteger = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+};
+const GOOGLE_AI_QUOTA_LIMITS = Object.freeze({
+  requestsPerMinute: readOptionalPositiveInteger(
+    process.env.GOOGLE_AI_FREE_RPM_LIMIT,
+  ),
+  tokensPerMinute: readOptionalPositiveInteger(
+    process.env.GOOGLE_AI_FREE_TPM_LIMIT,
+  ),
+  requestsPerDay: readOptionalPositiveInteger(
+    process.env.GOOGLE_AI_FREE_RPD_LIMIT,
+  ),
+});
 let googleAiClient = null;
 
 const getGoogleAiClient = () => {
@@ -55,10 +70,12 @@ const generateGoogleAiJson = async ({
   temperature = 0.2,
   maxOutputTokens = 900,
   timeoutMs = 15000,
+  telemetryContext = {},
 }) => {
   const client = getGoogleAiClient();
   const effectiveTimeoutMs = Math.max(3000, timeoutMs);
   const abortSignal = AbortSignal.timeout(effectiveTimeoutMs);
+  const requestStartedAt = Date.now();
   const contents = (Array.isArray(messages) ? messages : [])
     .filter(
       (message) =>
@@ -86,6 +103,28 @@ const generateGoogleAiJson = async ({
       },
     });
   } catch (error) {
+    const statusCode = Number(
+      error?.status || error?.response?.status || error?.code || 0,
+    );
+    const errorMessage = String(error?.message || error || "");
+    void recordAiTelemetry({
+      type: "google_ai_request",
+      provider: "google",
+      model: GOOGLE_AI_MODEL,
+      scope: telemetryContext?.scope || "unknown",
+      schoolId: telemetryContext?.schoolId || null,
+      actorUid: telemetryContext?.actorUid || null,
+      success: false,
+      statusCode: Number.isFinite(statusCode) ? statusCode : 0,
+      responseMs: Date.now() - requestStartedAt,
+      rateLimited:
+        statusCode === 429 || /quota|resource exhausted|429/i.test(errorMessage),
+      timedOut:
+        error?.name === "AbortError" ||
+        error?.name === "TimeoutError" ||
+        /abort|timed out|timeout/i.test(errorMessage),
+      error: errorMessage.slice(0, 300),
+    });
     if (
       error?.name === "AbortError" ||
       error?.name === "TimeoutError" ||
@@ -107,7 +146,27 @@ const generateGoogleAiJson = async ({
     error.code = "GOOGLE_AI_EMPTY_RESPONSE";
     throw error;
   }
-  return text;
+  const usage = response?.usageMetadata || {};
+  const promptTokens = Number(usage?.promptTokenCount || 0);
+  const outputTokens = Number(usage?.candidatesTokenCount || 0);
+  const totalTokens = Number(
+    usage?.totalTokenCount || promptTokens + outputTokens,
+  );
+  void recordAiTelemetry({
+    type: "google_ai_request",
+    provider: "google",
+    model: GOOGLE_AI_MODEL,
+    scope: telemetryContext?.scope || "unknown",
+    schoolId: telemetryContext?.schoolId || null,
+    actorUid: telemetryContext?.actorUid || null,
+    success: true,
+    statusCode: 200,
+    responseMs: Date.now() - requestStartedAt,
+    promptTokens: Number.isFinite(promptTokens) ? promptTokens : 0,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+  });
+  return { text, usage };
 };
 
 const escapeHtml = (unsafe) => {
@@ -747,6 +806,7 @@ School Manager GH admin navigation:
 `;
 
 app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) => {
+  let telemetrySchoolId = null;
   try {
     const apiKey = String(process.env.GOOGLE_API_KEY || "").trim();
     if (!apiKey) {
@@ -766,6 +826,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
     }
 
     const schoolId = String(userData.schoolId || "").trim();
+    telemetrySchoolId = schoolId || null;
     if (!schoolId) {
       return res.status(400).json({
         code: "SCHOOL_CONTEXT_MISSING",
@@ -1109,7 +1170,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         action: {
           label: "Open Students",
           path: "/admin/students",
-          target: "students-list",
+          target: "students-summary",
         },
       });
     }
@@ -1120,7 +1181,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         action: {
           label: "Open Students",
           path: "/admin/students",
-          target: "students-list",
+          target: "students-summary",
         },
       });
     }
@@ -1313,12 +1374,17 @@ ${routeList}
 Return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
 Use null for action when navigation is unnecessary. The path must be approved.`;
 
-    const rawContent = await generateGoogleAiJson({
+    const { text: rawContent } = await generateGoogleAiJson({
       systemInstruction: systemPrompt,
       messages: [...history, { role: "user", content: message }],
       temperature: 0.25,
       maxOutputTokens: 600,
       timeoutMs: 30000,
+      telemetryContext: {
+        scope: "school_assistant",
+        schoolId,
+        actorUid: req.user.uid,
+      },
     });
 
     const normalizedContent = rawContent
@@ -1361,6 +1427,15 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
     });
   } catch (error) {
     logGoogleAiError("SchoolAssistant", error);
+    void recordAiTelemetry({
+      type: "school_assistant_error",
+      provider: "google",
+      scope: "school_assistant",
+      schoolId: telemetrySchoolId,
+      actorUid: req.user?.uid || null,
+      success: false,
+      error: String(error?.message || error).slice(0, 300),
+    });
     return res.status(502).json({
       code: "ASSISTANT_ERROR",
       message: "The AI assistant could not answer right now.",
@@ -3339,6 +3414,49 @@ const roundMetric = (value, digits = 2) => {
   return Number(numeric.toFixed(digits));
 };
 
+const getPacificDayStartMs = (now = new Date()) => {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  const referenceMs = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    8,
+  );
+  const referenceParts = Object.fromEntries(
+    formatter
+      .formatToParts(new Date(referenceMs))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  const renderedReferenceMs = Date.UTC(
+    referenceParts.year,
+    referenceParts.month - 1,
+    referenceParts.day,
+    referenceParts.hour,
+    referenceParts.minute,
+    referenceParts.second,
+  );
+  const offsetMs = renderedReferenceMs - referenceMs;
+  return (
+    Date.UTC(parts.year, parts.month - 1, parts.day, 0, 0, 0) - offsetMs
+  );
+};
+
 const getPercentileValue = (values = [], percentile = 0.95) => {
   if (!Array.isArray(values) || !values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);
@@ -4572,7 +4690,11 @@ const parseAiResponse = (rawText) => {
   }
 };
 
-const callSuperAdminGoogleAi = async ({ messages = [], dataContext = {} }) => {
+const callSuperAdminGoogleAi = async ({
+  messages = [],
+  dataContext = {},
+  actorUid = null,
+}) => {
   if (!SUPERADMIN_GOOGLE_API_KEY) {
     throw new Error("Google AI Studio API key is not configured");
   }
@@ -4588,7 +4710,7 @@ const callSuperAdminGoogleAi = async ({ messages = [], dataContext = {} }) => {
       role: message.role,
       content: trimToString(message.content, 4000),
     }));
-  const content = await generateGoogleAiJson({
+  const { text: content } = await generateGoogleAiJson({
     systemInstruction: buildAiSystemPrompt(
       buildAiModelContext(dataContext),
     ),
@@ -4596,6 +4718,10 @@ const callSuperAdminGoogleAi = async ({ messages = [], dataContext = {} }) => {
     temperature: 0.15,
     maxOutputTokens: 900,
     timeoutMs: SUPERADMIN_AI_TIMEOUT_MS,
+    telemetryContext: {
+      scope: "super_admin_ai",
+      actorUid,
+    },
   });
   const parsed = parseAiResponse(content);
   if (!parsed?.reply) {
@@ -8784,6 +8910,7 @@ app.post(
           const parsedGoogleAi = await callSuperAdminGoogleAi({
             messages,
             dataContext,
+            actorUid: req.user.uid,
           });
           if (parsedGoogleAi?.reply) {
             const googleAiReply = String(parsedGoogleAi.reply || "").trim();
@@ -10072,12 +10199,14 @@ app.get(
         .firestore()
         .collection("ai_telemetry")
         .where("timestampMs", ">=", cutoffMs)
+        .orderBy("timestampMs", "desc")
         .limit(5000)
         .get();
       const feedbackSnap = await admin
         .firestore()
         .collection("ai_feedback")
         .where("timestampMs", ">=", cutoffMs)
+        .orderBy("timestampMs", "desc")
         .limit(5000)
         .get();
 
@@ -10127,6 +10256,112 @@ app.get(
       const feedbackPositiveRate = feedbackTotal
         ? Number(((positiveFeedback / feedbackTotal) * 100).toFixed(2))
         : 0;
+      const nowMs = Date.now();
+      const minuteCutoffMs = nowMs - 60 * 1000;
+      const pacificDayStartMs = getPacificDayStartMs(new Date(nowMs));
+      const googleRows = telemetryRows.filter(
+        (row) => row.type === "google_ai_request",
+      );
+      const googleMinuteRows = googleRows.filter(
+        (row) => Number(row.timestampMs || 0) >= minuteCutoffMs,
+      );
+      const googleTodayRows = googleRows.filter(
+        (row) => Number(row.timestampMs || 0) >= pacificDayStartMs,
+      );
+      const sumGoogleMetric = (rows, field) =>
+        rows.reduce((sum, row) => sum + Math.max(0, Number(row[field] || 0)), 0);
+      const quotaHitsToday = googleTodayRows.filter(
+        (row) => row.rateLimited || Number(row.statusCode || 0) === 429,
+      ).length;
+      const timeoutsToday = googleTodayRows.filter((row) => row.timedOut).length;
+      const failedToday = googleTodayRows.filter(
+        (row) => row.success === false,
+      ).length;
+      const lastQuotaErrorAt = googleRows.reduce(
+        (latest, row) =>
+          row.rateLimited || Number(row.statusCode || 0) === 429
+            ? Math.max(latest, Number(row.timestampMs || 0))
+            : latest,
+        0,
+      );
+      const requestsThisMinute = googleMinuteRows.length;
+      const tokensThisMinute = sumGoogleMetric(
+        googleMinuteRows,
+        "totalTokens",
+      );
+      const requestsToday = googleTodayRows.length;
+      const totalTokensToday = sumGoogleMetric(googleTodayRows, "totalTokens");
+      const promptTokensToday = sumGoogleMetric(
+        googleTodayRows,
+        "promptTokens",
+      );
+      const outputTokensToday = sumGoogleMetric(
+        googleTodayRows,
+        "outputTokens",
+      );
+      const utilizationPct = (value, limit) =>
+        limit
+          ? Math.min(100, Number(((Number(value || 0) / limit) * 100).toFixed(2)))
+          : null;
+      const utilization = {
+        requestsPerMinute: utilizationPct(
+          requestsThisMinute,
+          GOOGLE_AI_QUOTA_LIMITS.requestsPerMinute,
+        ),
+        tokensPerMinute: utilizationPct(
+          tokensThisMinute,
+          GOOGLE_AI_QUOTA_LIMITS.tokensPerMinute,
+        ),
+        requestsPerDay: utilizationPct(
+          requestsToday,
+          GOOGLE_AI_QUOTA_LIMITS.requestsPerDay,
+        ),
+      };
+      const knownUtilizationValues = Object.values(utilization).filter(
+        (value) => Number.isFinite(value),
+      );
+      const highestKnownUtilization = knownUtilizationValues.length
+        ? Math.max(...knownUtilizationValues)
+        : null;
+      let googleAiStatus = "healthy";
+      if (quotaHitsToday > 0) {
+        googleAiStatus = "exhausted";
+      } else if (
+        highestKnownUtilization !== null &&
+        highestKnownUtilization >= 90
+      ) {
+        googleAiStatus = "critical";
+      } else if (
+        highestKnownUtilization !== null &&
+        highestKnownUtilization >= 75
+      ) {
+        googleAiStatus = "warning";
+      } else if (failedToday > 0 || timeoutsToday > 0) {
+        googleAiStatus = "degraded";
+      } else if (knownUtilizationValues.length === 0) {
+        googleAiStatus = "tracking";
+      }
+      const schoolUsageMap = new Map();
+      googleTodayRows.forEach((row) => {
+        const rowSchoolId = String(row.schoolId || "").trim();
+        if (!rowSchoolId) return;
+        const current = schoolUsageMap.get(rowSchoolId) || {
+          schoolId: rowSchoolId,
+          requests: 0,
+          tokens: 0,
+          failures: 0,
+        };
+        current.requests += 1;
+        current.tokens += Math.max(0, Number(row.totalTokens || 0));
+        if (row.success === false) current.failures += 1;
+        schoolUsageMap.set(rowSchoolId, current);
+      });
+      const topSchools = Array.from(schoolUsageMap.values())
+        .sort(
+          (left, right) =>
+            right.requests - left.requests || right.tokens - left.tokens,
+        )
+        .slice(0, 8);
 
       return res.json({
         success: true,
@@ -10139,6 +10374,29 @@ app.get(
         feedbackPositiveRate,
         positiveFeedback,
         negativeFeedback,
+        googleAi: {
+          status: googleAiStatus,
+          model: GOOGLE_AI_MODEL,
+          resetTimeZone: "America/Los_Angeles",
+          limits: GOOGLE_AI_QUOTA_LIMITS,
+          utilization,
+          thisMinute: {
+            requests: requestsThisMinute,
+            tokens: tokensThisMinute,
+          },
+          today: {
+            requests: requestsToday,
+            promptTokens: promptTokensToday,
+            outputTokens: outputTokensToday,
+            totalTokens: totalTokensToday,
+            failures: failedToday,
+            quotaHits: quotaHitsToday,
+            timeouts: timeoutsToday,
+            activeSchools: schoolUsageMap.size,
+          },
+          lastQuotaErrorAt: lastQuotaErrorAt || null,
+          topSchools,
+        },
       });
     } catch (error) {
       console.error("AI metrics error:", error.message || error);
@@ -10148,6 +10406,18 @@ app.get(
     }
   },
 );
+
+const resolveSubscriptionRenewal = (cycleValue, paidAt = new Date()) => {
+  const cycle = ["monthly", "termly", "yearly"].includes(
+    String(cycleValue || "").toLowerCase(),
+  )
+    ? String(cycleValue).toLowerCase()
+    : "monthly";
+  const months = cycle === "yearly" ? 12 : cycle === "termly" ? 4 : 1;
+  const planEndsAt = new Date(paidAt);
+  planEndsAt.setMonth(planEndsAt.getMonth() + months);
+  return { cycle, planEndsAt };
+};
 
 /**
  * Initialize Paystack subscription for school admin
@@ -10470,18 +10740,46 @@ app.post(
         return res.status(404).json({ error: "School not found" });
       }
 
+      const schoolData = schoolDoc.data() || {};
+      const specialPricing = schoolData?.billing?.specialPricing || {};
+      const specialAmount = Number(specialPricing.amount);
+      const specialCycle = String(specialPricing.cycle || "").toLowerCase();
+      const hasSpecialPricing =
+        specialPricing.enabled === true &&
+        Number.isFinite(specialAmount) &&
+        specialAmount > 0 &&
+        ["monthly", "termly", "yearly"].includes(specialCycle);
+      const requestedAmount = Number(amount);
+      const resolvedAmount = hasSpecialPricing
+        ? Math.round(specialAmount * 100)
+        : Math.round(requestedAmount);
+      if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+        return res.status(400).json({ error: "A valid billing amount is required" });
+      }
+      const configuredCycle = String(schoolData.plan || "monthly").toLowerCase();
+      const billingCycle = hasSpecialPricing
+        ? specialCycle
+        : ["monthly", "termly", "yearly"].includes(configuredCycle)
+          ? configuredCycle
+          : "monthly";
+      const requestOrigin = normalizeOriginValue(req.headers.origin);
+      const callbackUrl = requestOrigin
+        ? `${requestOrigin}/admin/billing`
+        : PAYSTACK_CALLBACK_URL || undefined;
       const reference = `sch_${schoolId}_${Date.now()}`;
       const payload = {
         email: email || userData.email,
-        amount,
+        amount: resolvedAmount,
         currency,
         reference,
-        callback_url: PAYSTACK_CALLBACK_URL || undefined,
+        callback_url: callbackUrl,
         metadata: {
+          ...metadata,
           schoolId,
           adminUid: uid,
           reference,
-          ...metadata,
+          billingCycle,
+          specialPricingApplied: hasSpecialPricing,
         },
       };
 
@@ -10498,7 +10796,7 @@ app.post(
         .set(
           {
             reference,
-            amount,
+            amount: resolvedAmount,
             currency,
             status: "pending",
             schoolId,
@@ -10508,6 +10806,8 @@ app.post(
             module: "billing",
             type: "subscription",
             category: "subscription",
+            billingCycle,
+            specialPricingApplied: hasSpecialPricing,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
@@ -10757,6 +11057,10 @@ app.post(
             reference,
           });
         }
+        const renewal = resolveSubscriptionRenewal(
+          paymentData?.billingCycle,
+          data.paid_at ? new Date(data.paid_at) : new Date(),
+        );
         await admin
           .firestore()
           .collection("schools")
@@ -10770,7 +11074,10 @@ app.post(
                 email: data.customer?.email || null,
                 lastPaymentAt: Date.now(),
               },
-              plan: "monthly",
+              plan: renewal.cycle,
+              planEndsAt: admin.firestore.Timestamp.fromDate(
+                renewal.planEndsAt,
+              ),
               status: "active",
             },
             { merge: true },
@@ -11131,6 +11438,10 @@ app.post("/api/billing/webhook", async (req, res) => {
 
     if (event.event === "charge.success") {
       const subscription = data.subscription || {};
+      const renewal = resolveSubscriptionRenewal(
+        metadata?.billingCycle,
+        data.paid_at ? new Date(data.paid_at) : new Date(),
+      );
       if (paymentReference) {
         await admin
           .firestore()
@@ -11148,6 +11459,10 @@ app.post("/api/billing/webhook", async (req, res) => {
               module: "billing",
               type: "subscription",
               category: "subscription",
+              billingCycle: renewal.cycle,
+              specialPricingApplied:
+                metadata?.specialPricingApplied === true ||
+                metadata?.specialPricingApplied === "true",
             },
             { merge: true },
           );
@@ -11165,7 +11480,10 @@ app.post("/api/billing/webhook", async (req, res) => {
               email: data.customer?.email || null,
               lastPaymentAt: Date.now(),
             },
-            plan: "monthly",
+            plan: renewal.cycle,
+            planEndsAt: admin.firestore.Timestamp.fromDate(
+              renewal.planEndsAt,
+            ),
             status: "active",
           },
           { merge: true },

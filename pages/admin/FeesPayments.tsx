@@ -2614,11 +2614,11 @@ const FeesPayments: React.FC = () => {
 
   return (
     <Layout title="Finance & Payments">
-      <div data-assistant-focus="fees-overview" className="relative rounded-[32px] bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="relative rounded-[32px] bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.1),_transparent_40%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.1),_transparent_35%)]" />
         <div className="relative space-y-8">
           <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-            <div className="relative overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_38%,#0ea5e9_100%)] p-6 text-white shadow-[0_35px_90px_-45px_rgba(11,74,130,0.88)] sm:p-7">
+            <div data-assistant-focus="fees-overview" className="relative overflow-hidden rounded-[32px] border border-slate-900/5 bg-[linear-gradient(135deg,#0f172a_0%,#0B4A82_38%,#0ea5e9_100%)] p-6 text-white shadow-[0_35px_90px_-45px_rgba(11,74,130,0.88)] sm:p-7">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.2),_transparent_35%),radial-gradient(circle_at_85%_20%,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_30%_90%,_rgba(244,114,182,0.18),_transparent_30%)]" />
               <div className="relative">
                 <div className="flex flex-wrap items-start justify-between gap-4">
