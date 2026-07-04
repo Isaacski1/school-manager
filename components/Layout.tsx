@@ -890,9 +890,6 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("backups") && (
                 <NavItem href="/admin/backups" icon={<History size={18} />} label="Backups" />
               )}
-              {hasFeature("academic_year") && (
-                <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
-              )}
               <button
                 type="button"
                 data-tour="school-assistant"
@@ -908,6 +905,9 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <MessageSquare size={18} />
                 {!isCollapsed && <span className="truncate">School Assistant</span>}
               </button>
+              {hasFeature("academic_year") && (
+                <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
+              )}
             </>
           ) : isTeacher ? (
             <>

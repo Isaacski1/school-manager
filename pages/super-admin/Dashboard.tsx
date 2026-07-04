@@ -257,9 +257,21 @@ const ChartSurface: React.FC<{
 };
 
 const normalizePaymentStatus = (status?: string): PaymentStatus => {
-  const normalized = String(status || "pending").toLowerCase();
-  if (["success", "paid", "active"].includes(normalized)) return "success";
-  if (["failed", "failure", "past_due"].includes(normalized)) return "failed";
+  const normalized = String(status || "pending").trim().toLowerCase();
+  if (
+    ["success", "successful", "paid", "completed", "verified", "approved", "active"].includes(
+      normalized,
+    ) ||
+    normalized.includes("success")
+  ) {
+    return "success";
+  }
+  if (
+    ["failed", "failure", "error", "past_due"].includes(normalized) ||
+    normalized.includes("fail")
+  ) {
+    return "failed";
+  }
   if (["abandoned", "cancelled", "canceled"].includes(normalized))
     return "failed";
   return "pending";
@@ -1034,11 +1046,16 @@ const EarningsOverview: React.FC<{
 
   const activePaidSchools = useMemo(
     () =>
-      schools.filter(
-        (school) =>
-          school.status === "active" &&
-          !["free", "trial"].includes(normalizePlan(school.plan)),
-      ),
+      schools
+        .filter(
+          (school) =>
+            school.status === "active" &&
+            !["free", "trial"].includes(normalizePlan(school.plan)),
+        )
+        .map((school) => ({
+          ...school,
+          planEndsAt: toSafeDate(school.planEndsAt),
+        })),
     [schools],
   );
 
@@ -1209,6 +1226,31 @@ const EarningsOverview: React.FC<{
       };
     });
   }, [chartMetric, filteredRevenueTrend]);
+
+  const financialChartScale = useMemo(() => {
+    const largestValue = financialFlowChartData.reduce((max, item) => {
+      const stackedTotal =
+        Number(item.newSubsPlot || 0) +
+        Number(item.renewalsPlot || 0) +
+        Number(item.addOnsPlot || 0);
+      return Math.max(max, stackedTotal, Number(item.trend || 0));
+    }, Number(rangeStats.average || 0));
+
+    if (largestValue <= 0) {
+      return { maximum: 1, ticks: [0, 0.25, 0.5, 0.75, 1] };
+    }
+
+    const magnitude = 10 ** Math.floor(Math.log10(largestValue));
+    const normalized = largestValue / magnitude;
+    const niceNormalized =
+      normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    const maximum = niceNormalized * magnitude;
+
+    return {
+      maximum,
+      ticks: [0, maximum * 0.25, maximum * 0.5, maximum * 0.75, maximum],
+    };
+  }, [financialFlowChartData, rangeStats.average]);
 
   const subscriptionTierPerformance = useMemo(() => {
     const total = financialFlowChartData.reduce(
@@ -1924,8 +1966,8 @@ const EarningsOverview: React.FC<{
               <div className="grid min-w-0 lg:grid-cols-[minmax(0,1fr)_290px]">
                 <div className="min-w-0 border-b border-slate-200 dark:border-slate-700 lg:border-b-0 lg:border-r">
                   <ChartSurface
-                    height={390}
-                    className="financial-flow-chart overflow-hidden bg-gradient-to-b from-slate-50/80 to-white p-1 dark:from-slate-900 dark:to-slate-950 sm:p-3"
+                    height={420}
+                    className="financial-flow-chart overflow-hidden bg-gradient-to-b from-slate-50/80 to-white dark:from-slate-900 dark:to-slate-950"
                   >
                     {filteredRevenueTrend.length > 0 && hasVisibleRevenueTrend ? (
                       ({ width, height }) => (
@@ -1933,13 +1975,20 @@ const EarningsOverview: React.FC<{
                           width={width}
                           height={height}
                           data={financialFlowChartData}
+                          layout="horizontal"
                           margin={{
                             left: width < 520 ? 0 : 8,
                             right: width < 520 ? 2 : 14,
-                            top: 24,
-                            bottom: 8,
+                            top: 20,
+                            bottom: 18,
                           }}
-                          barCategoryGap={revenueRange === 12 ? "30%" : "48%"}
+                          barCategoryGap={
+                            revenueRange === 12
+                              ? "22%"
+                              : revenueRange === 6
+                                ? "34%"
+                                : "42%"
+                          }
                         >
                           <defs>
                             <linearGradient
@@ -1965,7 +2014,9 @@ const EarningsOverview: React.FC<{
                           </defs>
                           <CartesianGrid strokeDasharray="4 5" stroke="#CBD5E1" vertical={false} opacity={0.7} />
                           <XAxis
+                            type="category"
                             dataKey="axisLabel"
+                            allowDuplicatedCategory={false}
                             tickLine={false}
                             axisLine={false}
                             interval="preserveStartEnd"
@@ -1974,6 +2025,11 @@ const EarningsOverview: React.FC<{
                             dy={10}
                           />
                           <YAxis
+                            yAxisId="financial-value"
+                            type="number"
+                            orientation="left"
+                            domain={[0, financialChartScale.maximum]}
+                            ticks={financialChartScale.ticks}
                             tickLine={false}
                             axisLine={false}
                             allowDecimals={chartMetric === "revenue"}
@@ -1990,6 +2046,7 @@ const EarningsOverview: React.FC<{
                             content={<FinancialFlowTooltip chartMetric={chartMetric} />}
                           />
                           <Area
+                            yAxisId="financial-value"
                             type="monotone"
                             dataKey="trend"
                             stroke="none"
@@ -1998,6 +2055,7 @@ const EarningsOverview: React.FC<{
                             animationDuration={450}
                           />
                           <ReferenceLine
+                            yAxisId="financial-value"
                             y={rangeStats.average}
                             stroke="#D4A72C"
                             strokeDasharray="7 6"
@@ -2006,10 +2064,11 @@ const EarningsOverview: React.FC<{
                           {FINANCIAL_STREAMS.map((stream, index) => (
                             <Bar
                               key={stream.key}
+                              yAxisId="financial-value"
                               dataKey={stream.key}
                               name={stream.label}
                               stackId="financial-streams"
-                              minPointSize={() => 0}
+                              minPointSize={(value) => (Number(value) > 0 ? 3 : 0)}
                               fill={stream.color}
                               radius={
                                 index === FINANCIAL_STREAMS.length - 1
@@ -2022,6 +2081,7 @@ const EarningsOverview: React.FC<{
                             />
                           ))}
                           <Line
+                            yAxisId="financial-value"
                             type="monotone"
                             dataKey="trend"
                             name="3-month trend"
@@ -3321,6 +3381,12 @@ const Dashboard: React.FC = () => {
   const AI_LEGACY_HISTORY_STORAGE_KEY = "super_admin_ai_history_v1";
   const AI_LEGACY_FEEDBACK_STORAGE_KEY = "super_admin_ai_feedback_v1";
   const AI_THEME_STORAGE_KEY = "super_admin_school_manager_gh_ai_theme_v1";
+  const AI_WELCOME_MESSAGE =
+    "Hello Isaac. I can help analyze system data and propose actions. Ask me anything.";
+  const LEGACY_AI_WELCOME_MESSAGES = new Set([
+    "Hello Super Admin. I can help analyze system data and propose actions. Ask me anything.",
+    "Hello Owner. I am School Manager GH AI, your DeepSeek-powered command agent for platform operations. I can analyze system data, prepare actions, and wait for your confirmation before changing anything.",
+  ]);
   const createAiConversation = (): AiConversationEntry => {
     const now = Date.now();
     return {
@@ -3334,8 +3400,7 @@ const Dashboard: React.FC = () => {
           id: `msg-${now}-welcome`,
           createdAt: now,
           role: "assistant",
-          content:
-            "Hello Owner. I am School Manager GH AI, your DeepSeek-powered command agent for platform operations. I can analyze system data, prepare actions, and wait for your confirmation before changing anything.",
+          content: AI_WELCOME_MESSAGE,
         },
       ],
       pendingAction: null,
@@ -3526,7 +3591,12 @@ const Dashboard: React.FC = () => {
                       ? message.createdAt
                       : Date.now(),
                   role: message.role || "assistant",
-                  content: String(message.content || ""),
+                  content:
+                    index === 0 &&
+                    (message.role || "assistant") === "assistant" &&
+                    LEGACY_AI_WELCOME_MESSAGES.has(String(message.content || ""))
+                      ? AI_WELCOME_MESSAGE
+                      : String(message.content || ""),
                   mode: normalizedMode,
                   responseMs:
                     typeof message.responseMs === "number"
@@ -3946,7 +4016,7 @@ const Dashboard: React.FC = () => {
   );
 
   useEffect(() => {
-    void loadData();
+    void loadData({ forceRefresh: true });
   }, [loadData]);
 
   // KPI calculations prefer backend aggregate counts when row queries are partial.
@@ -4258,12 +4328,45 @@ const Dashboard: React.FC = () => {
       return aDate - bDate;
     });
 
+  const renewedPlanEndsBySchool = billingPayments.reduce((latest, payment) => {
+    if (normalizePaymentStatus(payment.status) !== "success") return latest;
+    const schoolId = String((payment as any).schoolId || "");
+    if (!schoolId) return latest;
+
+    const paidAt = toSafeDate(
+      (payment as any).paidAt ??
+        (payment as any).verifiedAt ??
+        payment.createdAt,
+    );
+    if (!paidAt) return latest;
+
+    const cycle = normalizePlan((payment as any).billingCycle);
+    if (!["monthly", "termly", "yearly"].includes(cycle)) return latest;
+
+    const renewedUntil = new Date(paidAt);
+    renewedUntil.setMonth(
+      renewedUntil.getMonth() +
+        (cycle === "yearly" ? 12 : cycle === "termly" ? 4 : 1),
+    );
+
+    const current = latest.get(schoolId);
+    if (!current || renewedUntil > current) {
+      latest.set(schoolId, renewedUntil);
+    }
+    return latest;
+  }, new Map<string, Date>());
+
   const expiredSubscriptions = schools
     .filter((s) => normalizePlan(s.plan) !== "free" && s.planEndsAt)
     .map((s) => {
-      const raw = s.planEndsAt as any;
+      const storedPlanEndsAt = toSafeDate(s.planEndsAt);
+      const renewedPlanEndsAt = renewedPlanEndsBySchool.get(s.id) || null;
       const planEndsAt =
-        raw instanceof Timestamp ? raw.toDate() : new Date(raw);
+        storedPlanEndsAt &&
+        (!renewedPlanEndsAt || storedPlanEndsAt > renewedPlanEndsAt)
+          ? storedPlanEndsAt
+          : renewedPlanEndsAt;
+      if (!planEndsAt) return null;
       const graceEndsAt = new Date(
         planEndsAt.getTime() + 7 * 24 * 60 * 60 * 1000,
       );
@@ -4273,6 +4376,11 @@ const Dashboard: React.FC = () => {
         graceEndsAt,
       };
     })
+    .filter(
+      (
+        s,
+      ): s is School & { planEndsAt: Date; graceEndsAt: Date } => s !== null,
+    )
     .filter((s) => !Number.isNaN(s.graceEndsAt.getTime()))
     .filter((s) => new Date() >= s.graceEndsAt)
     .sort((a, b) => a.graceEndsAt.getTime() - b.graceEndsAt.getTime());

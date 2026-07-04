@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
@@ -8,7 +8,14 @@ import { db } from "../../services/mockDb";
 import { getParentDashboardNotices, markParentDashboardNoticeRead } from "../../services/backendApi";
 import { ParentNotice, Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
-import { User as UserIcon, MessageSquare, Clock, CheckCircle2, Loader2 } from "lucide-react";
+import {
+  CalendarDays,
+  User as UserIcon,
+  MessageSquare,
+  Clock,
+  CheckCircle2,
+  Loader2,
+} from "lucide-react";
 import Layout from "../../components/Layout";
 import UserAvatar from "../../components/UserAvatar";
 import AttendanceView from "../../components/parent/AttendanceView";
@@ -16,12 +23,13 @@ import FeesView from "../../components/parent/FeesView";
 import ReportCardView from "../../components/parent/ReportCardView";
 import RemarksView from "../../components/parent/RemarksView";
 import DashboardOverview from "../../components/parent/DashboardOverview";
+import { parseSchoolDate } from "../../services/schoolCalendar";
 
 type ViewType = "attendance" | "fees" | "report" | "remarks" | null;
 
 export default function ParentDashboard() {
   const { user, isAuthenticated } = useAuth();
-  const { school, refreshSchool } = useSchool();
+  const { school, schoolConfig, refreshSchool } = useSchool();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const activeView = (searchParams.get("view") as ViewType) || null;
@@ -34,6 +42,27 @@ export default function ParentDashboard() {
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
     return sessionStorage.getItem("parentDashboard_selectedStudentId") || null;
   });
+  const parentVacationNotice = useMemo(() => {
+    const vacationDate = parseSchoolDate(schoolConfig?.vacationDate);
+    if (!vacationDate) return null;
+
+    const vacationStarts = new Date(vacationDate);
+    vacationStarts.setDate(vacationStarts.getDate() + 1);
+    vacationStarts.setHours(0, 0, 0, 0);
+
+    const nextTermBegins = parseSchoolDate(schoolConfig?.nextTermBegins);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (
+      today < vacationStarts ||
+      (nextTermBegins && today >= nextTermBegins)
+    ) {
+      return null;
+    }
+
+    return { nextTermBegins };
+  }, [schoolConfig?.nextTermBegins, schoolConfig?.vacationDate]);
 
   const getPhoneVariants = (phone: string) => {
     const trimmed = String(phone || "").trim();
@@ -306,7 +335,26 @@ export default function ParentDashboard() {
   return (
     <Layout title="Parent Dashboard">
       <div className="max-w-7xl mx-auto pb-10 px-3 sm:px-4">
-        
+        {parentVacationNotice ? (
+          <section
+            role="status"
+            className="mb-4 flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-4 text-sky-950 shadow-sm sm:px-5"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+              <CalendarDays size={20} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-bold">School is currently on vacation</p>
+              <p className="mt-1 text-sm leading-6 text-sky-800">
+                Parent dashboard access remains available.
+                {parentVacationNotice.nextTermBegins
+                  ? ` School will reopen on ${parentVacationNotice.nextTermBegins.toLocaleDateString()}.`
+                  : " The reopening date will be shared when it is available."}
+              </p>
+            </div>
+          </section>
+        ) : null}
+
         {students.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 text-center max-w-3xl mx-auto mt-10">
             <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">

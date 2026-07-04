@@ -424,6 +424,10 @@ export interface Backup {
   academicYear: string;
   backupType?: BackupType;
   dedupeKey?: string;
+  storageVersion?: number;
+  status?: "writing" | "verified" | "failed";
+  recordCounts?: Record<string, number>;
+  chunks?: Array<{ key: string; chunkIds: string[]; count: number }>;
   recoveryMeta?: RecoveryMeta;
   data?: {
     // Make data optional

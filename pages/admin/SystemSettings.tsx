@@ -157,6 +157,8 @@ const SystemSettings = () => {
   const [showReportCardPreview, setShowReportCardPreview] = useState(false);
   const [showResetReportCardModal, setShowResetReportCardModal] =
     useState(false);
+  const [resettingReportCardSettings, setResettingReportCardSettings] =
+    useState(false);
 
   // Logo/Photo Upload State
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1171,16 +1173,45 @@ const SystemSettings = () => {
   const resetReportCardSettings = () => {
     setShowResetReportCardModal(true);
   };
-  const confirmResetReportCardSettings = () => {
-    setConfig({
-      ...config,
-      reportCardSettings: { ...DEFAULT_REPORT_CARD_SETTINGS },
-    });
-    setShowResetReportCardModal(false);
-    showToast(
-      "Report card customization reset. Click Save Changes to keep it.",
-      { type: "success" },
-    );
+  const confirmResetReportCardSettings = async () => {
+    setResettingReportCardSettings(true);
+    try {
+      const defaultSettings = { ...DEFAULT_REPORT_CARD_SETTINGS };
+      await setDoc(
+        doc(firestore, "settings", schoolId),
+        { reportCardSettings: defaultSettings },
+        { merge: true },
+      );
+      setConfig((current) => ({
+        ...current,
+        reportCardSettings: defaultSettings,
+      }));
+      setShowResetReportCardModal(false);
+      showToast("Report card customization reset to default.", {
+        type: "success",
+      });
+      logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "report_card_customization_reset",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      }).catch((error) =>
+        console.warn("Background activity log failed", error),
+      );
+    } catch (error) {
+      console.error("Failed to reset report card customization", error);
+      showToast("Could not reset the report card customization. Try again.", {
+        type: "error",
+      });
+    } finally {
+      setResettingReportCardSettings(false);
+    }
   };
   const sampleReportCardData = {
     schoolInfo: {
@@ -1310,9 +1341,12 @@ const SystemSettings = () => {
 
         <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
           {/* Left Column */}
-          <div className="space-y-6">
+          <div className="flex flex-col gap-6">
             {/* Profile & Logo Customization */}
-            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+            <div
+              className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6"
+              style={{ order: 1 }}
+            >
               <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                 <span className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
                   <Shield size={18} />
@@ -1376,7 +1410,10 @@ const SystemSettings = () => {
             </div>
 
             {/* Notification Settings */}
-            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+            <div
+              className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6"
+              style={{ order: 4 }}
+            >
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -1489,7 +1526,10 @@ const SystemSettings = () => {
             </div>
 
             {/* Classes & Streams */}
-            <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+            <div
+              className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6"
+              style={{ order: 3 }}
+            >
               <div className="flex items-start justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -1642,7 +1682,10 @@ const SystemSettings = () => {
             </div>
 
             {/* General Config */}
-            <div className="rounded-3xl border border-sky-100 bg-white p-5 shadow-sm sm:p-6">
+            <div
+              className="rounded-3xl border border-sky-100 bg-white p-5 shadow-sm sm:p-6"
+              style={{ order: 2 }}
+            >
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
@@ -1832,7 +1875,10 @@ const SystemSettings = () => {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-indigo-100 bg-white p-5 shadow-sm sm:p-6">
+            <div
+              className="rounded-3xl border border-indigo-100 bg-white p-5 shadow-sm sm:p-6"
+              style={{ order: 5 }}
+            >
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
@@ -2632,13 +2678,13 @@ const SystemSettings = () => {
               </div>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              The reset will only affect this page first. Click{" "}
-              <strong>Save Changes</strong> afterwards to keep the default design.
+              The default design will be saved immediately for this school.
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setShowResetReportCardModal(false)}
+                disabled={resettingReportCardSettings}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
               >
                 Cancel
@@ -2646,9 +2692,12 @@ const SystemSettings = () => {
               <button
                 type="button"
                 onClick={confirmResetReportCardSettings}
-                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-amber-700"
+                disabled={resettingReportCardSettings}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Reset to Default
+                {resettingReportCardSettings
+                  ? "Resetting..."
+                  : "Reset to Default"}
               </button>
             </div>
           </div>

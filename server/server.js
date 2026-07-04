@@ -10,6 +10,10 @@ import dotenv from "dotenv";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI } from "@google/genai";
+import {
+  createTermRolloverService,
+  TERM_ROLLOVER_INTERVAL_MS,
+} from "./termRollover.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -730,6 +734,12 @@ try {
   console.error("Original Error:", error.message);
   process.exit(1);
 }
+
+const termRolloverService = createTermRolloverService({
+  db: admin.firestore(),
+  FieldValue: admin.firestore.FieldValue,
+  Timestamp: admin.firestore.Timestamp,
+});
 
 /**
  * Middleware: Verify Firebase ID token
@@ -4576,7 +4586,11 @@ const normalizePaymentStatus = (status = "") => {
   const raw = String(status || "").toLowerCase();
   if (
     raw === "success" ||
+    raw === "successful" ||
     raw === "paid" ||
+    raw === "completed" ||
+    raw === "verified" ||
+    raw === "approved" ||
     raw === "active" ||
     raw.includes("success")
   ) {
@@ -11082,6 +11096,7 @@ app.post(
             },
             { merge: true },
           );
+        clearSuperAdminViewCache();
 
         await logActivity({
           eventType: "billing_verified_success",
@@ -11488,6 +11503,7 @@ app.post("/api/billing/webhook", async (req, res) => {
           },
           { merge: true },
         );
+      clearSuperAdminViewCache();
 
       await logActivity({
         eventType: "billing_webhook_success",
@@ -15840,6 +15856,104 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Internal server error." });
   }
 });
+
+app.post(
+  "/api/schools/term-rollover/check",
+  authLimiter,
+  authMiddleware,
+  schoolAdminMiddleware,
+  async (req, res) => {
+    try {
+      const schoolId = req.callerDoc?.schoolId;
+      const result = await termRolloverService.rolloverSchool(schoolId, {
+        source: "school_admin_dashboard",
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      console.error("[TermRollover] Admin check failed:", error);
+      return res.status(500).json({
+        error: error?.message || "Term rollover check failed",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/superadmin/schools/:schoolId/term-rollover",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const result = await termRolloverService.rolloverSchool(
+        String(req.params.schoolId || ""),
+        { source: "super_admin_manual" },
+      );
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      console.error("[TermRollover] Super Admin run failed:", error);
+      return res.status(500).json({
+        error: error?.message || "Term rollover failed",
+      });
+    }
+  },
+);
+
+app.post("/api/jobs/term-rollovers", async (req, res) => {
+  const configuredSecret = String(process.env.TERM_ROLLOVER_JOB_SECRET || "");
+  const suppliedSecret = String(req.headers["x-job-secret"] || "");
+  if (!configuredSecret) {
+    return res.status(503).json({ error: "Term rollover job secret is not configured" });
+  }
+  const expected = Buffer.from(configuredSecret);
+  const supplied = Buffer.from(suppliedSecret);
+  if (
+    expected.length !== supplied.length ||
+    !crypto.timingSafeEqual(expected, supplied)
+  ) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const results = await termRolloverService.runDueRollovers({
+      source: "external_scheduler",
+    });
+    return res.json({ success: true, results });
+  } catch (error) {
+    console.error("[TermRollover] External scheduler failed:", error);
+    return res.status(500).json({
+      error: error?.message || "Term rollover job failed",
+    });
+  }
+});
+
+const termRolloverEnabled =
+  String(process.env.TERM_ROLLOVER_ENABLED || "true").toLowerCase() !== "false";
+if (termRolloverEnabled) {
+  const runScheduledTermRollovers = async () => {
+    try {
+      const results = await termRolloverService.runDueRollovers({
+        source: "server_scheduler",
+      });
+      const changed = results.filter((result) => result.changed).length;
+      if (changed > 0) {
+        console.log(`[TermRollover] Completed ${changed} scheduled rollover(s).`);
+      }
+    } catch (error) {
+      console.error("[TermRollover] Scheduler failed:", error);
+    }
+  };
+  const initialTermRolloverTimer = setTimeout(
+    () => void runScheduledTermRollovers(),
+    10_000,
+  );
+  initialTermRolloverTimer.unref?.();
+  const termRolloverTimer = setInterval(
+    () => void runScheduledTermRollovers(),
+    Number(process.env.TERM_ROLLOVER_INTERVAL_MS || TERM_ROLLOVER_INTERVAL_MS),
+  );
+  termRolloverTimer.unref?.();
+}
 
 // Start server
 const PORT = process.env.PORT || 3001;

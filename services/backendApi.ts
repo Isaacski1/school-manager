@@ -1153,4 +1153,17 @@ export async function updateSuperAdminSmsConfig(payload: {
   return apiRequest("/api/superadmin/sms/config", { body: payload });
 }
 
+export async function checkSchoolTermRollover(): Promise<{
+  success: boolean;
+  changed: boolean;
+  reason?: string;
+  backupId?: string;
+  nextPeriod?: { currentTerm: string; academicYear: string };
+}> {
+  return apiRequest("/api/schools/term-rollover/check", {
+    method: "POST",
+    body: {},
+  });
+}
+
 export { BACKEND_URL };

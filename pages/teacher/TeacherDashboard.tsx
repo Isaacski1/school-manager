@@ -795,6 +795,7 @@ const TeacherDashboard = () => {
       try {
         const currentTermNum =
           parseInt((config.currentTerm || `Term ${CURRENT_TERM}`).split(" ")[1], 10) || 1;
+        const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
         const [students, allClassAttendance, allSkills, remarksForClass] =
           await Promise.all([
@@ -815,11 +816,17 @@ const TeacherDashboard = () => {
         );
         const flattenedAssessments = assessmentCollections.flat();
         const currentTermAssessments = flattenedAssessments.filter(
-          (assessment) => assessment.term === currentTermNum,
+          (assessment) =>
+            assessment.term === currentTermNum &&
+            assessment.academicYear === currentAcademicYear,
         );
         setTermAssessments(currentTermAssessments);
         setTermRemarks(
-          remarksForClass.filter((remark) => remark.term === currentTermNum),
+          remarksForClass.filter(
+            (remark) =>
+              remark.term === currentTermNum &&
+              remark.academicYear === currentAcademicYear,
+          ),
         );
 
         const totalScore = currentTermAssessments.reduce((sum, assessment) => {
@@ -831,7 +838,11 @@ const TeacherDashboard = () => {
             : 0;
         setClassAverage(classAvg);
 
-        const termSkills = allSkills.filter((skill) => skill.term === currentTermNum);
+        const termSkills = allSkills.filter(
+          (skill) =>
+            skill.term === currentTermNum &&
+            skill.academicYear === currentAcademicYear,
+        );
         const conductMap: Record<string, number> = {
           Excellent: 5,
           "Very Good": 4,
@@ -2119,13 +2130,15 @@ const TeacherDashboard = () => {
                       const termNum =
                         (parseInt(currentTerm.split(" ")[1], 10) as 1 | 2 | 3) ||
                         1;
+                      const currentAcademicYear =
+                        schoolConfig?.academicYear || ACADEMIC_YEAR;
                       const payloads = studentsForRemarks.map((student) => {
                         const remark: StudentRemark = {
-                          id: `${student.id}_${currentTerm}_${ACADEMIC_YEAR}`,
+                          id: `${student.id}_${currentTerm}_${currentAcademicYear}`,
                           studentId: student.id,
                           classId: selectedClassId,
                           term: termNum,
-                          academicYear: ACADEMIC_YEAR,
+                          academicYear: currentAcademicYear,
                           schoolId: schoolId || schoolConfig?.schoolId || "",
                           remark: remarksData[student.id]?.remark || "",
                           behaviorTag:
@@ -2265,14 +2278,16 @@ const TeacherDashboard = () => {
                       const termNum =
                         (parseInt(currentTerm.split(" ")[1], 10) as 1 | 2 | 3) ||
                         1;
+                      const currentAcademicYear =
+                        schoolConfig?.academicYear || ACADEMIC_YEAR;
                       const payloads = studentsForSkills.map((student) => ({
                         studentName: student.name,
                         skills: {
-                          id: `${student.id}_${currentTerm}_${ACADEMIC_YEAR}`,
+                          id: `${student.id}_${currentTerm}_${currentAcademicYear}`,
                           studentId: student.id,
                           classId: selectedClassId,
                           term: termNum,
-                          academicYear: ACADEMIC_YEAR,
+                          academicYear: currentAcademicYear,
                           schoolId: schoolId || schoolConfig?.schoolId || "",
                           ...skillsData[student.id],
                         } as StudentSkills,

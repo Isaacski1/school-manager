@@ -54,10 +54,14 @@ const WriteRemarks = () => {
           const match = config.currentTerm.match(/\d+/);
           if (match) dynamicTerm = parseInt(match[0], 10);
         }
+        const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
         studentsList.forEach((s) => {
           const found = existingRemarks.find(
-            (r) => r.studentId === s.id && r.term === dynamicTerm,
+            (r) =>
+              r.studentId === s.id &&
+              r.term === dynamicTerm &&
+              r.academicYear === currentAcademicYear,
           );
           remarksMap[s.id] = found?.remark || "";
         });
@@ -90,6 +94,7 @@ const WriteRemarks = () => {
         const match = config.currentTerm.match(/\d+/);
         if (match) dynamicTerm = parseInt(match[0], 10);
       }
+      const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
       const promises = Object.entries(remarks).map(
         async ([studentId, remarkText]) => {
@@ -97,11 +102,11 @@ const WriteRemarks = () => {
           if (!text.trim()) return;
 
           const remark: StudentRemark = {
-            id: `${studentId}_${selectedClassId}_${dynamicTerm}_${ACADEMIC_YEAR}`,
+            id: `${studentId}_${selectedClassId}_${dynamicTerm}_${currentAcademicYear}`,
             studentId,
             classId: selectedClassId,
             term: dynamicTerm as 1 | 2 | 3,
-            academicYear: ACADEMIC_YEAR,
+            academicYear: currentAcademicYear,
             schoolId,
             remark: text,
             behaviorTag: "Good",

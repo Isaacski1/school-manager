@@ -999,33 +999,6 @@ class FirestoreService {
     }
   }
 
-  private shouldRunAutomaticTermTransition(config: SchoolConfig): boolean {
-    if (
-      !config.vacationDate ||
-      !config.nextTermBegins ||
-      config.termTransitionProcessed
-    ) {
-      return false;
-    }
-
-    const vacationDate = new Date(`${config.vacationDate}T00:00:00`);
-    const nextTermDate = new Date(`${config.nextTermBegins}T00:00:00`);
-    if (
-      Number.isNaN(vacationDate.getTime()) ||
-      Number.isNaN(nextTermDate.getTime())
-    ) {
-      return false;
-    }
-
-    vacationDate.setHours(0, 0, 0, 0);
-    nextTermDate.setHours(0, 0, 0, 0);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return today >= vacationDate && today >= nextTermDate;
-  }
-
   async getFinanceSettings(schoolId?: string): Promise<FinanceSettings> {
     await this.requireFeature(schoolId, "fees_payments");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getFinanceSettings");
@@ -1062,27 +1035,6 @@ class FirestoreService {
     if (snap.exists()) {
       const data = snap.data() as SchoolConfig;
       const config = { ...data, schoolId: scopedSchoolId };
-      const actorRole = await this.getCurrentActorRole();
-
-      if (
-        actorRole !== UserRole.TEACHER &&
-        this.shouldRunAutomaticTermTransition(config)
-      ) {
-        const resetConfig = {
-          ...config,
-          schoolReopenDate:
-            config.nextTermBegins || config.schoolReopenDate || "",
-        };
-        await this.resetForNewTerm(resetConfig);
-        const refreshed = await getDoc(docRef);
-        if (refreshed.exists()) {
-          return {
-            ...(refreshed.data() as SchoolConfig),
-            schoolId: scopedSchoolId,
-          };
-        }
-      }
-
       return config;
     }
 
@@ -3090,112 +3042,6 @@ class FirestoreService {
     );
   }
 
-  /**
-   * Reset the system for a new term.
-   */
-  async resetForNewTerm(currentConfig: SchoolConfig): Promise<void> {
-    console.log(
-      "Initiating term transition for:",
-      currentConfig.currentTerm,
-      currentConfig.academicYear,
-    );
-
-    await this.createTermBackup(
-      currentConfig,
-      currentConfig.currentTerm,
-      currentConfig.academicYear,
-      {
-        dedupeKey: `${currentConfig.schoolId}_${currentConfig.currentTerm}_${currentConfig.academicYear}`,
-      },
-    );
-
-    const classIds = CLASSES_LIST.map((c) => c.id);
-
-    const schoolId = this.requireSchoolId(
-      currentConfig.schoolId,
-      "resetForNewTerm",
-    );
-
-    const resetPromises = [
-      (async () => {
-        const q = query(
-          collection(firestore, "attendance"),
-          where("schoolId", "==", schoolId),
-        );
-        const snap = await getDocs(q);
-        const deletions = snap.docs.map((d) =>
-          deleteDoc(doc(firestore, "attendance", d.id)),
-        );
-        await Promise.all(deletions);
-        console.log("Cleared student attendance records.");
-      })(),
-
-      this.resetAllTeacherAttendance(schoolId),
-
-      (async () => {
-        const q = query(
-          collection(firestore, "admin_notifications"),
-          where("schoolId", "==", schoolId),
-        );
-        const snap = await getDocs(q);
-        const deletions = snap.docs.map((d) =>
-          deleteDoc(doc(firestore, "admin_notifications", d.id)),
-        );
-        await Promise.all(deletions);
-        console.log("Cleared system notifications.");
-      })(),
-
-      (async () => {
-        const q = query(
-          collection(firestore, "notices"),
-          where("schoolId", "==", schoolId),
-        );
-        const snap = await getDocs(q);
-        const deletions = snap.docs.map((d) =>
-          deleteDoc(doc(firestore, "notices", d.id)),
-        );
-        await Promise.all(deletions);
-        console.log("Cleared notices.");
-      })(),
-    ];
-    await Promise.all(resetPromises);
-
-    // Calculate the new term number FIRST before resetting assessments
-    let newTerm = 1;
-    let newAcademicYear = currentConfig.academicYear;
-    const currentTermNumber = parseInt(currentConfig.currentTerm.split(" ")[1]);
-
-    if (currentTermNumber === 3) {
-      newTerm = 1;
-      const years = currentConfig.academicYear.split("-").map(Number);
-      newAcademicYear = `${years[0] + 1}-${years[1] + 1}`;
-    } else {
-      newTerm = currentTermNumber + 1;
-    }
-
-    // Preserve assessments/remarks/skills/admin remarks for promotion.
-    console.log(
-      "Preserved assessments and report data for promotion. Skipping assessment reset.",
-    );
-
-    const updatedConfig: SchoolConfig = {
-      ...currentConfig,
-      currentTerm: `Term ${newTerm}`,
-      academicYear: newAcademicYear,
-      termTransitionProcessed: true,
-      schoolReopenDate: currentConfig.schoolReopenDate || "",
-      vacationDate: "",
-      nextTermBegins: "",
-    };
-    await this.updateSchoolConfig(updatedConfig);
-
-    console.log(
-      "SchoolConfig updated for new term:",
-      `Term ${newTerm}`,
-      newAcademicYear,
-    );
-  }
-
   // --- Teacher Attendance Analytics ---
   async getTeacherAttendanceAnalytics(
     schoolId?: string,
@@ -3422,8 +3268,44 @@ class FirestoreService {
     if (!id) return undefined;
     const snap = await getDoc(doc(firestore, "backups", id));
     if (!snap.exists()) return undefined;
-    const data = snap.data() as Backup;
-    return data.schoolId === scopedSchoolId ? data : undefined;
+    const backup = snap.data() as Backup;
+    if (backup.schoolId !== scopedSchoolId) return undefined;
+
+    if (backup.storageVersion === 2 && backup.dataCollectionRef) {
+      const chunksSnapshot = await getDocs(
+        collection(firestore, "backups", id, "chunks"),
+      );
+      const hydratedData: Record<string, any> = { ...(backup.data || {}) };
+      const orderedChunks = chunksSnapshot.docs
+        .map((chunk) => chunk.data() as {
+          key?: string;
+          index?: number;
+          rows?: any[];
+        })
+        .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+      orderedChunks.forEach((chunk) => {
+        if (!chunk.key || !Array.isArray(chunk.rows)) return;
+        hydratedData[chunk.key] = [
+          ...(hydratedData[chunk.key] || []),
+          ...chunk.rows,
+        ];
+      });
+      return { ...backup, data: hydratedData } as Backup;
+    }
+
+    return backup;
+  }
+
+  private async deleteBackupDocument(id: string): Promise<void> {
+    const chunksRef = collection(firestore, "backups", id, "chunks");
+    while (true) {
+      const chunksSnapshot = await getDocs(query(chunksRef, limit(400)));
+      if (chunksSnapshot.empty) break;
+      const batch = writeBatch(firestore);
+      chunksSnapshot.docs.forEach((chunk) => batch.delete(chunk.ref));
+      await batch.commit();
+    }
+    await deleteDoc(doc(firestore, "backups", id));
   }
 
   async restoreBackup(schoolId?: string, id?: string): Promise<void> {
@@ -3774,7 +3656,7 @@ class FirestoreService {
     if (!id) return;
     const existing = await this.getBackupDetails(scopedSchoolId, id);
     if (!existing) return;
-    await deleteDoc(doc(firestore, "backups", id));
+    await this.deleteBackupDocument(id);
   }
 
   async deleteAllBackups(schoolId?: string): Promise<void> {
@@ -3785,9 +3667,7 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
     );
     const snap = await getDocs(q);
-    const deletions = snap.docs.map((d) =>
-      deleteDoc(doc(firestore, "backups", d.id)),
-    );
+    const deletions = snap.docs.map((d) => this.deleteBackupDocument(d.id));
     await Promise.all(deletions);
   }
 

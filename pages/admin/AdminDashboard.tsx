@@ -65,6 +65,7 @@ import {
 } from "../../constants";
 import AttendanceChart from "../../components/dashboard/AttendanceChart";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
+import { checkSchoolTermRollover } from "../../services/backendApi";
 
 const MemoAttendanceChart = React.memo(AttendanceChart);
 
@@ -373,26 +374,6 @@ const getRecentAdmissions = (students: Student[], limit = 5): Student[] =>
       return a.name.localeCompare(b.name);
     })
     .slice(0, limit);
-
-const getNextTermMeta = (currentTerm: string, academicYear: string) => {
-  const match = currentTerm.match(/\d+/);
-  const currentTermNumber = match ? parseInt(match[0], 10) : CURRENT_TERM;
-  let nextTerm = currentTermNumber + 1;
-  let nextAcademicYear = academicYear;
-
-  if (currentTermNumber >= 3) {
-    nextTerm = 1;
-    const years = academicYear.split("-").map(Number);
-    if (years.length === 2 && years.every((y) => !Number.isNaN(y))) {
-      nextAcademicYear = `${years[0] + 1}-${years[1] + 1}`;
-    }
-  }
-
-  return {
-    nextTerm,
-    nextAcademicYear,
-  };
-};
 
 const polarToCartesian = (
   centerX: number,
@@ -956,6 +937,16 @@ const AdminDashboard = () => {
       if (!options?.background) setHeavyLoading(true);
       setError(null);
       try {
+        const rolloverResult = await checkSchoolTermRollover().catch((error) => {
+          console.warn("Term rollover check failed; loading current data", error);
+          return null;
+        });
+        if (rolloverResult?.changed) {
+          showToast("New term opened and the previous term backup was verified.", {
+            type: "success",
+          });
+        }
+
         const localToday = new Date();
         const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
         const teacherRecordsStartDate = new Date(localToday);
@@ -1347,41 +1338,6 @@ const AdminDashboard = () => {
           nextTermBegins: config.nextTermBegins || "",
           holidayDates: config.holidayDates || [],
         }));
-
-        // Check for automatic term transition
-        if (
-          config.nextTermBegins &&
-          new Date() >= new Date(config.nextTermBegins + "T00:00:00") &&
-          !config.termTransitionProcessed
-        ) {
-          try {
-            const { nextTerm, nextAcademicYear } = getNextTermMeta(
-              config.currentTerm,
-              config.academicYear,
-            );
-            const updatedConfig = {
-              ...config,
-              currentTerm: `Term ${nextTerm}`,
-              academicYear: nextAcademicYear,
-              schoolReopenDate: config.nextTermBegins || "",
-              vacationDate: "",
-              nextTermBegins: "",
-              termTransitionProcessed: true,
-            };
-
-            await db.resetForNewTerm(updatedConfig);
-            showToast("Term transition completed automatically.", {
-              type: "success",
-            });
-            // Refetch data after transition
-            setTimeout(() => fetchHeavyData({ background: true }), 1000);
-          } catch (error) {
-            console.error("Auto term transition failed:", error);
-            showToast("Auto term transition failed. Please check settings.", {
-              type: "error",
-            });
-          }
-        }
 
         // Use Dynamic Term Number from config string (e.g. "Term 2" -> 2)
         // Fallback to CURRENT_TERM constant if parsing fails

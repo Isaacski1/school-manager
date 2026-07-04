@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "test": "node --test server/termRollover.test.js",
+    "test:term-rollover": "node --test server/termRollover.test.js",
     "ai:eval": "node scripts/ai-eval.mjs",
     "env:test": "node scripts/switch-env.mjs test",
     "env:prod": "node scripts/switch-env.mjs prod",

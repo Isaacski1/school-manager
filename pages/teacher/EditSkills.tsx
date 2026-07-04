@@ -58,21 +58,25 @@ const EditSkills = () => {
           const match = config.currentTerm.match(/\d+/);
           if (match) dynamicTerm = parseInt(match[0], 10);
         }
+        const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
         studentsList.forEach((s) => {
           const found = existingSkills.find(
-            (sk) => sk.studentId === s.id && sk.term === dynamicTerm,
+            (sk) =>
+              sk.studentId === s.id &&
+              sk.term === dynamicTerm &&
+              sk.academicYear === currentAcademicYear,
           );
           if (found) {
             skillsMap[s.id] = found;
           } else {
             // Default skills for new entry
             skillsMap[s.id] = {
-              id: `${s.id}_${selectedClassId}_${dynamicTerm}_${ACADEMIC_YEAR}`,
+              id: `${s.id}_${selectedClassId}_${dynamicTerm}_${currentAcademicYear}`,
               studentId: s.id,
               classId: selectedClassId,
               term: dynamicTerm as 1 | 2 | 3,
-              academicYear: ACADEMIC_YEAR,
+              academicYear: currentAcademicYear,
               schoolId: schoolId || config?.schoolId || "",
               punctuality: "Good",
               neatness: "Good",
@@ -122,9 +126,16 @@ const EditSkills = () => {
         const match = config.currentTerm.match(/\d+/);
         if (match) dynamicTerm = parseInt(match[0], 10);
       }
+      const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
       const promises = Object.values(skills).map(async (skillData) => {
-        await db.saveStudentSkills(skillData as StudentSkills);
+        const scopedSkill = {
+          ...skillData,
+          id: `${skillData.studentId}_${selectedClassId}_${dynamicTerm}_${currentAcademicYear}`,
+          term: dynamicTerm as 1 | 2 | 3,
+          academicYear: currentAcademicYear,
+        } as StudentSkills;
+        await db.saveStudentSkills(scopedSkill);
       });
 
       await Promise.all(promises);

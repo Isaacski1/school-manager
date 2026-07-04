@@ -1058,6 +1058,17 @@ service cloud.firestore {
       allow create: if schoolAdminScopedAccess(request.resource.data.schoolId);
       allow update, delete: if isSuperAdmin() ||
         schoolAdminScopedAccess(resource.data.schoolId);
+
+      match /chunks/{chunkId} {
+        allow read: if isSuperAdmin() ||
+          schoolAdminScopedAccess(
+            get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId
+          );
+        allow delete: if isSuperAdmin() ||
+          schoolAdminScopedAccess(
+            get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId
+          );
+      }
     }
 
     // SMS reminders sent by school admins
