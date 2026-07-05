@@ -1645,29 +1645,6 @@ class FirestoreService {
     );
     if (!classId || !startDate || !endDate) return [];
 
-    const readRecordsByDeterministicIds = async () => {
-      const cursor = new Date(`${startDate}T00:00:00`);
-      const end = new Date(`${endDate}T00:00:00`);
-      const reads = [];
-
-      while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
-        const date = `${cursor.getFullYear()}-${String(
-          cursor.getMonth() + 1,
-        ).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
-        reads.push(
-          getDoc(
-            doc(firestore, "attendance", `${scopedSchoolId}_${classId}_${date}`),
-          ),
-        );
-        cursor.setDate(cursor.getDate() + 1);
-      }
-
-      const snapshots = await Promise.all(reads);
-      return snapshots
-        .filter((recordSnap) => recordSnap.exists())
-        .map((recordSnap) => recordSnap.data() as AttendanceRecord);
-    };
-
     try {
       const rangedQuery = query(
         collection(firestore, "attendance"),
@@ -1677,24 +1654,24 @@ class FirestoreService {
         where("date", "<=", endDate),
       );
       const rangedSnap = await getDocs(rangedQuery);
-      const rangedRecords = rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
-      if (rangedRecords.length > 0) return rangedRecords;
-      return readRecordsByDeterministicIds();
+      // An empty range is expected at the start of a new term. Do not probe
+      // deterministic document IDs here: reads of nonexistent attendance
+      // documents cannot satisfy rules that check resource.data.schoolId.
+      return rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
     } catch (error) {
       // Fallback for environments missing composite indexes.
       try {
         const fallback = await this.getClassAttendance(scopedSchoolId, classId);
-        const filtered = fallback.filter(
+        return fallback.filter(
           (record) => record.date >= startDate && record.date <= endDate,
         );
-        if (filtered.length > 0) return filtered;
       } catch (fallbackError) {
         console.warn(
           "[mockDb] getClassAttendanceByDateRange class fallback failed",
           fallbackError,
         );
+        throw fallbackError;
       }
-      return readRecordsByDeterministicIds();
     }
   }
 
