@@ -187,6 +187,16 @@ service cloud.firestore {
 
       // Super admin can read/write all schools
       allow write: if isSuperAdmin();
+      allow update: if schoolAdminOwnsSchool(schoolId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "name",
+          "code",
+          "logoUrl",
+          "phone",
+          "address",
+          "studentsCount",
+          "notes"
+        ]);
 
       // School admin can read their own school (redundant but kept for clarity)
       allow read: if isSchoolAdmin() && userSchoolId() == schoolId;
@@ -197,6 +207,8 @@ service cloud.firestore {
 
     // Finance v2 subcollections (scoped by school)
     match /schools/{schoolId}/fees/{feeId} {
+      allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
         isActiveSchoolId(schoolId) &&
@@ -255,6 +267,8 @@ service cloud.firestore {
     }
 
     match /schools/{schoolId}/feeLedgers/{ledgerId} {
+      allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
         isActiveSchoolId(schoolId) &&
@@ -311,6 +325,8 @@ service cloud.firestore {
 
 
     match /schools/{schoolId}/payments/{paymentId} {
+      allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
+
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
         (isSchoolAdmin() && userSchoolId() == schoolId) ||
@@ -356,6 +372,8 @@ service cloud.firestore {
     }
 
     match /schools/{schoolId}/financeSettings/{docId} {
+      allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
         isActiveSchoolId(schoolId) &&
@@ -454,6 +472,10 @@ service cloud.firestore {
 
     // Students collection
     match /students/{studentId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         (maxStudentsForSchool(request.resource.data.schoolId) == null ||
          maxStudentsForSchool(request.resource.data.schoolId) <= 0 ||
@@ -475,6 +497,10 @@ service cloud.firestore {
 
     // Attendance collection
     match /attendance/{attendanceId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -504,6 +530,10 @@ service cloud.firestore {
 
     // Assessments collection
     match /assessments/{assessmentId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -545,6 +575,10 @@ service cloud.firestore {
 
     // Teacher attendance collection
     match /teacher_attendance/{recordId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -584,6 +618,10 @@ service cloud.firestore {
 
     // Notices collection
     match /notices/{noticeId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -637,6 +675,10 @@ service cloud.firestore {
 
     // Student remarks collection
     match /student_remarks/{remarkId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -674,6 +716,10 @@ service cloud.firestore {
 
     // Admin remarks collection
     match /admin_remarks/{remarkId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -711,6 +757,10 @@ service cloud.firestore {
 
     // Student skills collection
     match /student_skills/{skillId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -750,6 +800,10 @@ service cloud.firestore {
 
     // Admin remarks collection
     match /admin_remarks/{remarkId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
           (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
@@ -815,24 +869,40 @@ service cloud.firestore {
 
     // Legacy student ledgers
     match /student_ledgers/{ledgerId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow read: if isSuperAdmin() || 
                      (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
     }
 
     // Legacy payments
     match /payments/{paymentId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow read: if isSuperAdmin() || 
                      (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
     }
 
     // Legacy fee definitions
     match /fees/{feeId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow read: if isSuperAdmin() || 
                      (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
     }
 
     // System notifications collection
     match /admin_notifications/{notificationId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "id",
@@ -879,6 +949,10 @@ service cloud.firestore {
 
     // Timetables collection
     match /timetables/{timetableId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "schoolId",
@@ -902,6 +976,10 @@ service cloud.firestore {
 
     // Fees collection
     match /fees/{feeId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
         isActiveSchoolId(request.resource.data.schoolId) &&
@@ -960,6 +1038,10 @@ service cloud.firestore {
 
     // Student fee ledgers collection
     match /student_ledgers/{ledgerId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)) &&
         isActiveSchoolId(request.resource.data.schoolId) &&
@@ -1010,6 +1092,10 @@ service cloud.firestore {
 
     // Student fee payments collection
     match /payments/{paymentId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
         (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId) ||
@@ -1029,6 +1115,10 @@ service cloud.firestore {
 
     // Class subjects collection
     match /class_subjects/{subjectId} {
+      allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+      allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+      allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
+
       allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
         onlyAllowedFields([
           "schoolId",
@@ -1100,6 +1190,8 @@ service cloud.firestore {
 
     // School-scoped activity logs
     match /schools/{schoolId}/activityLogs/{logId} {
+      allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
+
       allow create: if isAuthenticated() &&
         (isSuperAdmin() || schoolScopedRead(schoolId));
       allow get: if isAuthenticated() &&

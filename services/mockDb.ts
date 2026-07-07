@@ -616,13 +616,6 @@ class FirestoreService {
       logoUrl: schoolProfile?.logoUrl || schoolSettings?.logoUrl,
       phone: schoolProfile?.phone || schoolSettings?.phone,
       address: schoolProfile?.address || schoolSettings?.address,
-      status: schoolProfile?.status,
-      plan: schoolProfile?.plan,
-      planEndsAt: schoolProfile?.planEndsAt,
-      featurePlan: schoolProfile?.featurePlan,
-      subscription: schoolProfile?.subscription,
-      billing: schoolProfile?.billing,
-      limits: schoolProfile?.limits,
       studentsCount: schoolProfile?.studentsCount,
       notes: schoolProfile?.notes,
     });
