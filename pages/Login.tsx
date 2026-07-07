@@ -11,6 +11,7 @@ import {
   PhoneAuthProvider,
   PhoneMultiFactorGenerator,
   RecaptchaVerifier,
+  TotpMultiFactorGenerator,
   signInWithEmailAndPassword,
   signInWithCustomToken,
   signOut,
@@ -18,7 +19,7 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
 } from "firebase/auth";
-import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff, Phone } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle, Eye, EyeOff, KeyRound, Phone } from "lucide-react";
 import schoolLogo from "../logo/apple-icon-180x180.png";
 import SplashScreen from "../components/SplashScreen";
 import { API_BASE_URL } from "../src/config";
@@ -76,6 +77,10 @@ const Login = () => {
   );
   const selectedMfaHintIsPhone =
     selectedMfaHint?.factorId === PhoneMultiFactorGenerator.FACTOR_ID;
+  const selectedMfaHintIsTotp =
+    selectedMfaHint?.factorId === TotpMultiFactorGenerator.FACTOR_ID;
+  const selectedMfaHintSupported =
+    selectedMfaHintIsPhone || selectedMfaHintIsTotp;
 
   const normalizeEmailInput = (value: string) =>
     String(value || "")
@@ -107,12 +112,25 @@ const Login = () => {
     }
 
     const isPhone = hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID;
+    const isTotp = hint.factorId === TotpMultiFactorGenerator.FACTOR_ID;
     return {
-      method: isPhone ? "SMS verification" : "Second factor",
-      name: hint.displayName || (isPhone ? "Admin phone" : `Factor ${index + 1}`),
+      method: isPhone
+        ? "SMS verification"
+        : isTotp
+          ? "Authenticator app"
+          : "Second factor",
+      name:
+        hint.displayName ||
+        (isPhone
+          ? "Admin phone"
+          : isTotp
+            ? "Authenticator app"
+            : `Factor ${index + 1}`),
       detail: isPhone
         ? maskPhoneNumber(hint.phoneInfo?.phoneNumber || hint.phoneNumber)
-        : "Verification required",
+        : isTotp
+          ? "Enter the 6-digit code"
+          : "Verification required",
     };
   };
 
@@ -291,6 +309,11 @@ const Login = () => {
     setMfaError("");
 
     try {
+      if (hint.factorId === TotpMultiFactorGenerator.FACTOR_ID) {
+        setMfaVerificationId("totp");
+        return;
+      }
+
       const verifier = getRecaptchaVerifier();
       let verificationId: string;
 
@@ -311,7 +334,13 @@ const Login = () => {
     } catch (err: any) {
       console.error("MFA code send failed", err);
       let msg = "Failed to send verification code. Please try again.";
-      if (err?.code === "auth/too-many-requests") {
+      if (err?.code === "auth/billing-not-enabled") {
+        msg =
+          "Firebase billing is not enabled for SMS verification. Enable billing on the Firebase project, or use your configured Firebase test code.";
+      } else if (err?.code === "auth/operation-not-allowed") {
+        msg =
+          "SMS multi-factor authentication is not enabled in Firebase Authentication.";
+      } else if (err?.code === "auth/too-many-requests") {
         msg = "Too many attempts. Please wait a few minutes, then try again.";
       } else if (err?.message) {
         msg = getFriendlyErrorMessage(err, msg);
@@ -337,11 +366,18 @@ const Login = () => {
     setMfaError("");
 
     try {
-      const credential = PhoneAuthProvider.credential(
-        mfaVerificationId,
-        mfaCode.trim(),
-      );
-      const assertion = PhoneMultiFactorGenerator.assertion(credential);
+      const assertion =
+        selectedMfaHint?.factorId === TotpMultiFactorGenerator.FACTOR_ID
+          ? TotpMultiFactorGenerator.assertionForSignIn(
+              selectedMfaHint.uid,
+              mfaCode.trim(),
+            )
+          : PhoneMultiFactorGenerator.assertion(
+              PhoneAuthProvider.credential(
+                mfaVerificationId,
+                mfaCode.trim(),
+              ),
+            );
       await mfaResolver.resolveSignIn(assertion);
 
       await safeLogSecurityLogin({
@@ -785,6 +821,8 @@ const Login = () => {
                   {mfaHints.map((hint: any, index: number) => {
                     const active = mfaSelectedHintIndex === index;
                     const details = getMfaHintDetails(hint, index);
+                    const isTotp =
+                      hint.factorId === TotpMultiFactorGenerator.FACTOR_ID;
                     return (
                       <button
                         key={`${hint.uid || index}`}
@@ -810,7 +848,7 @@ const Login = () => {
                               : "bg-slate-100 text-slate-600"
                           }`}
                         >
-                          <Phone size={20} />
+                          {isTotp ? <KeyRound size={20} /> : <Phone size={20} />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-semibold text-slate-900">
@@ -841,9 +879,9 @@ const Login = () => {
                 <button
                   type="button"
                   onClick={handleSendMfaCode}
-                  disabled={mfaLoading || !selectedMfaHintIsPhone}
+                  disabled={mfaLoading || !selectedMfaHintSupported}
                   className={`w-full py-3 px-4 bg-[#0B4A82] hover:bg-[#0B4A82]/90 text-white font-bold rounded-lg transition-colors shadow-md flex justify-center items-center ${
-                    mfaLoading || !selectedMfaHintIsPhone
+                    mfaLoading || !selectedMfaHintSupported
                       ? "opacity-70 cursor-not-allowed"
                       : ""
                   }`}
@@ -853,6 +891,8 @@ const Login = () => {
                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
                       Sending code...
                     </>
+                  ) : selectedMfaHintIsTotp ? (
+                    "Enter Authenticator Code"
                   ) : (
                     "Send Verification Code"
                   )}
@@ -871,7 +911,11 @@ const Login = () => {
                         setMfaCode(e.target.value.replace(/[^0-9]/g, ""))
                       }
                       className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
-                      placeholder="Enter code sent to your phone"
+                      placeholder={
+                        selectedMfaHintIsTotp
+                          ? "Enter authenticator code"
+                          : "Enter code sent to your phone"
+                      }
                       required
                     />
                   </div>
@@ -893,14 +937,16 @@ const Login = () => {
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleSendMfaCode}
-                    disabled={mfaLoading || !selectedMfaHintIsPhone}
-                    className="w-full text-center text-sm text-[#1160A8] hover:text-[#0B4A82] font-medium"
-                  >
-                    Resend code
-                  </button>
+                  {!selectedMfaHintIsTotp && (
+                    <button
+                      type="button"
+                      onClick={handleSendMfaCode}
+                      disabled={mfaLoading || !selectedMfaHintIsPhone}
+                      className="w-full text-center text-sm text-[#1160A8] hover:text-[#0B4A82] font-medium"
+                    >
+                      Resend code
+                    </button>
+                  )}
                 </form>
               )}
 

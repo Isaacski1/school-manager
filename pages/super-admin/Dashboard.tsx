@@ -3504,7 +3504,7 @@ const Dashboard: React.FC = () => {
         : "super_admin_dashboard_overview_v3",
     [user?.id],
   );
-  const DASHBOARD_CACHE_TTL_MS = 45_000;
+  const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDarkMode, setAiDarkMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -3780,14 +3780,14 @@ const Dashboard: React.FC = () => {
         // Load dashboard data with reasonable limits
         const payload = await resolveClientCache(
           DASHBOARD_CACHE_KEY,
-          2 * 60 * 1000,
+          DASHBOARD_CACHE_TTL_MS,
           () =>
             getSuperAdminDashboardOverview({
               forceRefresh: Boolean(forceRefresh),
-              schoolsLimit: 200,
+              schoolsLimit: 100,
               activityLimit: 30,
-              paymentsLimit: 60,
-              checklistLimit: 100,
+              paymentsLimit: 30,
+              checklistLimit: 50,
             }),
           { forceRefresh },
         );
@@ -3893,7 +3893,7 @@ const Dashboard: React.FC = () => {
         setLoading(false);
       }
     },
-    [DASHBOARD_CACHE_KEY],
+    [DASHBOARD_CACHE_KEY, DASHBOARD_CACHE_TTL_MS],
   );
 
   const loadFullDataset = useCallback(
@@ -4016,7 +4016,7 @@ const Dashboard: React.FC = () => {
   );
 
   useEffect(() => {
-    void loadData({ forceRefresh: true });
+    void loadData();
   }, [loadData]);
 
   // KPI calculations prefer backend aggregate counts when row queries are partial.

@@ -19,6 +19,10 @@ import {
 } from "../services/featureAccess";
 import { db } from "../services/mockDb";
 import { firestore } from "../services/firebase";
+import {
+  getAdminMfaPolicyStatus,
+  type AdminMfaPolicyStatus,
+} from "../services/backendApi";
 import { UserRole, SystemNotification } from "../types";
 import Toast from "./Toast";
 import UserAvatar from "./UserAvatar";
@@ -232,6 +236,13 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
   const isTeacher = user?.role === UserRole.TEACHER;
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const isParent = user?.role === UserRole.PARENT;
+  const [adminMfaPolicy, setAdminMfaPolicy] =
+    useState<AdminMfaPolicyStatus | null>(null);
+  const [mfaBannerDismissed, setMfaBannerDismissed] = useState(false);
+  const mfaReminderDismissKey = useMemo(
+    () => `admin_mfa_reminder_dismissed_until:${user?.id || "anonymous"}`,
+    [user?.id],
+  );
   const [dashboardDarkMode, setDashboardDarkMode] = useState(() => {
     if (typeof window === "undefined") return false;
     const savedTheme =
@@ -251,6 +262,65 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       // The selected theme still works for the current session.
     }
   }, [dashboardDarkMode, isAdmin, isParent, isSuperAdmin, isTeacher]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const isAdminRole = isAdmin || isSuperAdmin;
+    const isSetupRoute = location.pathname.startsWith("/account/mfa-setup");
+
+    if (!user?.id || !isAdminRole || isSetupRoute) {
+      setAdminMfaPolicy(null);
+      return;
+    }
+
+    try {
+      const dismissedUntil = Number(
+        window.localStorage.getItem(mfaReminderDismissKey) || 0,
+      );
+      setMfaBannerDismissed(dismissedUntil > Date.now());
+    } catch {
+      setMfaBannerDismissed(false);
+    }
+
+    getAdminMfaPolicyStatus()
+      .then((status) => {
+        if (!cancelled) setAdminMfaPolicy(status);
+      })
+      .catch((error) => {
+        console.warn("Failed to load admin MFA reminder status", error);
+        if (!cancelled) setAdminMfaPolicy(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isAdmin,
+    isSuperAdmin,
+    location.pathname,
+    mfaReminderDismissKey,
+    user?.id,
+  ]);
+
+  const shouldShowMfaReminder =
+    Boolean(
+      adminMfaPolicy?.appliesTo &&
+        adminMfaPolicy.enforcementMode !== "off" &&
+        Number(adminMfaPolicy.enrolledFactorsCount || 0) === 0,
+    ) && (!mfaBannerDismissed || Boolean(adminMfaPolicy?.required));
+
+  const dismissMfaReminder = () => {
+    setMfaBannerDismissed(true);
+    try {
+      window.localStorage.setItem(
+        mfaReminderDismissKey,
+        String(Date.now() + 24 * 60 * 60 * 1000),
+      );
+    } catch {
+      // The banner can still be hidden for this session.
+    }
+  };
+
   const isFreePlan = (school as any)?.plan === "free";
   const hasFeature = (feature: FeatureKey) =>
     canAccessFeature(user, school, feature);
@@ -1115,7 +1185,49 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               </section>
             </div>
           ) : (
-            children
+            <>
+              {shouldShowMfaReminder ? (
+                <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950 shadow-sm sm:mb-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 gap-3">
+                      <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                        <Shield size={20} />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold text-amber-950">
+                          Secure your admin account
+                        </h2>
+                        <p className="mt-1 text-sm leading-6 text-amber-900">
+                          Add an authenticator app to protect school data with
+                          two-factor authentication.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
+                      <Link
+                        to="/account/mfa-setup"
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#0B4A82] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#083a66]"
+                      >
+                        <Lock size={16} />
+                        Set up
+                      </Link>
+                      {!adminMfaPolicy?.required ? (
+                        <button
+                          type="button"
+                          onClick={dismissMfaReminder}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-amber-200 bg-white text-amber-800 transition-colors hover:bg-amber-100"
+                          aria-label="Remind me later"
+                          title="Remind me later"
+                        >
+                          <X size={16} />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+              {children}
+            </>
           )}
         </main>
       </div>

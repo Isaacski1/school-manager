@@ -12,6 +12,8 @@ const defaultSettings = (updatedBy: string): PlatformSecuritySettings => ({
   enabledForSuperAdmins: false,
   enabledForSchoolAdmins: false,
   enforcementMode: "optional",
+  superAdminEnforcementMode: "required",
+  schoolAdminEnforcementMode: "optional",
   updatedAt: Date.now(),
   updatedBy,
 });
@@ -73,13 +75,17 @@ const SecuritySettings: React.FC = () => {
   };
 
   const setEnforcementMode = async (
+    field:
+      | "superAdminEnforcementMode"
+      | "schoolAdminEnforcementMode",
     enforcementMode: PlatformSecuritySettings["enforcementMode"],
   ) => {
-    if (!settings || settings.enforcementMode === enforcementMode) return;
+    if (!settings || settings[field] === enforcementMode) return;
     await saveSettings(
       {
         ...settings,
-        enforcementMode,
+        [field]: enforcementMode,
+        enforcementMode: settings.enforcementMode || "optional",
         updatedAt: Date.now(),
         updatedBy: user?.id || "system",
       },
@@ -96,8 +102,8 @@ const SecuritySettings: React.FC = () => {
           </h1>
           <p className="mt-2 text-sm text-slate-600 sm:text-base">
             Store the platform policy for two-factor authentication on admin
-            accounts. Admins can now enroll a Firebase SMS second factor from
-            their own signed-in account.
+            accounts. Admins can enroll an authenticator app from their own
+            signed-in account.
           </p>
           <Link
             to="/account/mfa-setup"
@@ -143,7 +149,8 @@ const SecuritySettings: React.FC = () => {
                 Enable MFA for School Admins
               </h2>
               <p className="text-sm text-slate-500">
-                Use this before requiring MFA across school-level admins.
+                Optional mode shows school admins a dashboard reminder without
+                blocking their daily work.
               </p>
             </div>
             <button
@@ -168,39 +175,59 @@ const SecuritySettings: React.FC = () => {
           <div className="mt-6">
             <h2 className="font-semibold text-slate-800">Enforcement Mode</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Keep this on optional until enrollment and verification steps are
-              fully rolled out for admins.
+              Optional shows a dashboard setup banner. Required redirects
+              unenrolled admins to setup before they can continue.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2 sm:gap-3">
-              {(["off", "optional", "required"] as const).map((mode) => {
-                const active = settings?.enforcementMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setEnforcementMode(mode)}
-                    disabled={saving || !settings}
-                    className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                      active
-                        ? "border-[#0B4A82] bg-[#0B4A82] text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                    }`}
-                  >
-                    {mode === "off"
-                      ? "Off"
-                      : mode === "optional"
-                        ? "Optional"
-                        : "Required"}
-                  </button>
-                );
-              })}
-            </div>
+            {([
+              {
+                label: "Super Admins",
+                field: "superAdminEnforcementMode",
+              },
+              {
+                label: "School Admins",
+                field: "schoolAdminEnforcementMode",
+              },
+            ] as const).map(({ label, field }) => (
+              <div
+                key={field}
+                className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3"
+              >
+                <div className="text-sm font-semibold text-slate-700">
+                  {label}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 sm:gap-3">
+                  {(["off", "optional", "required"] as const).map((mode) => {
+                    const active =
+                      (settings?.[field] || settings?.enforcementMode) === mode;
+                    return (
+                      <button
+                        key={`${field}-${mode}`}
+                        type="button"
+                        onClick={() => setEnforcementMode(field, mode)}
+                        disabled={saving || !settings}
+                        className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                          active
+                            ? "border-[#0B4A82] bg-[#0B4A82] text-white"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                        }`}
+                      >
+                        {mode === "off"
+                          ? "Off"
+                          : mode === "optional"
+                            ? "Optional"
+                            : "Required"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Keep enforcement optional until each admin has enrolled a second
-            factor. Once enrolled, Firebase will request the SMS code during
-            sign-in.
+            factor. Once enrolled, Firebase will request the authenticator code
+            during sign-in.
           </div>
         </div>
       </div>

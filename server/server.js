@@ -431,6 +431,16 @@ const PLATFORM_HEALTH_CACHE_TTL_MS = Math.max(
   parsePositiveNumber(process.env.PLATFORM_HEALTH_CACHE_TTL_MS, 60 * 1000),
 );
 let platformHealthCache = null;
+const ADMIN_MFA_POLICY_CACHE_TTL_MS = Math.max(
+  5 * 1000,
+  parsePositiveNumber(process.env.ADMIN_MFA_POLICY_CACHE_TTL_MS, 15 * 1000),
+);
+const ADMIN_MFA_SETTINGS_CACHE_TTL_MS = Math.max(
+  5 * 1000,
+  parsePositiveNumber(process.env.ADMIN_MFA_SETTINGS_CACHE_TTL_MS, 30 * 1000),
+);
+const ADMIN_MFA_POLICY_CACHE = new Map();
+let adminMfaSettingsCache = null;
 const HAS_HRTIME_BIGINT = Boolean(
   process?.hrtime && typeof process.hrtime.bigint === "function",
 );
@@ -1535,6 +1545,57 @@ async function superAdminMiddleware(req, res, next) {
   }
 }
 
+const normalizeMfaEnforcementMode = (value, fallback = "optional") => {
+  const raw = trimToString(value || fallback, 24).toLowerCase();
+  return ["off", "optional", "required"].includes(raw) ? raw : fallback;
+};
+
+const getCachedAdminMfaPolicy = (uid) => {
+  const key = trimToString(uid, 120);
+  if (!key) return null;
+  const cached = ADMIN_MFA_POLICY_CACHE.get(key);
+  if (!cached) return null;
+  if (Number(cached.expiresAt || 0) <= Date.now()) {
+    ADMIN_MFA_POLICY_CACHE.delete(key);
+    return null;
+  }
+  return cached.payload || null;
+};
+
+const setCachedAdminMfaPolicy = (uid, payload) => {
+  const key = trimToString(uid, 120);
+  if (!key || !payload) return;
+  setMapCacheEntry(
+    ADMIN_MFA_POLICY_CACHE,
+    key,
+    {
+      payload,
+      expiresAt: Date.now() + ADMIN_MFA_POLICY_CACHE_TTL_MS,
+    },
+    1000,
+  );
+};
+
+const getAdminMfaSettings = async (db) => {
+  if (
+    adminMfaSettingsCache?.payload &&
+    Number(adminMfaSettingsCache.expiresAt || 0) > Date.now()
+  ) {
+    return adminMfaSettingsCache.payload;
+  }
+
+  const settingsDoc = await db
+    .collection("platformSecuritySettings")
+    .doc("2fa")
+    .get();
+  const settings = settingsDoc.exists ? settingsDoc.data() || {} : {};
+  adminMfaSettingsCache = {
+    payload: settings,
+    expiresAt: Date.now() + ADMIN_MFA_SETTINGS_CACHE_TTL_MS,
+  };
+  return settings;
+};
+
 /**
  * Resolve current user's admin MFA policy status.
  * GET /api/auth/admin-mfa-policy
@@ -1550,35 +1611,50 @@ app.get(
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+      const cached = getCachedAdminMfaPolicy(uid);
+      if (cached) {
+        return res.json({
+          success: true,
+          cached: true,
+          ...cached,
+        });
+      }
+
+      const db = admin.firestore();
+      const [callerDoc, settings] = await Promise.all([
+        db.collection("users").doc(uid).get(),
+        getAdminMfaSettings(db),
+      ]);
       const callerData = callerDoc.exists ? callerDoc.data() || {} : {};
       const role = trimToString(callerData.role, 40).toLowerCase() || null;
 
-      const settingsDoc = await admin
-        .firestore()
-        .collection("platformSecuritySettings")
-        .doc("2fa")
-        .get();
-      const settings = settingsDoc.exists ? settingsDoc.data() || {} : {};
-
-      const enforcementModeRaw = trimToString(
-        settings.enforcementMode || "optional",
-        24,
-      ).toLowerCase();
-      const enforcementMode = ["off", "optional", "required"].includes(
-        enforcementModeRaw,
-      )
-        ? enforcementModeRaw
-        : "optional";
+      const legacyEnforcementMode = normalizeMfaEnforcementMode(
+        settings.enforcementMode,
+        "optional",
+      );
+      const superAdminEnforcementMode = normalizeMfaEnforcementMode(
+        settings.superAdminEnforcementMode,
+        legacyEnforcementMode,
+      );
+      const schoolAdminEnforcementMode = normalizeMfaEnforcementMode(
+        settings.schoolAdminEnforcementMode,
+        legacyEnforcementMode,
+      );
 
       const enabledForSuperAdmins = Boolean(settings.enabledForSuperAdmins);
       const enabledForSchoolAdmins = Boolean(settings.enabledForSchoolAdmins);
       const appliesTo =
         (role === "super_admin" && enabledForSuperAdmins) ||
         (role === "school_admin" && enabledForSchoolAdmins);
+      const enforcementMode =
+        role === "super_admin"
+          ? superAdminEnforcementMode
+          : role === "school_admin"
+            ? schoolAdminEnforcementMode
+            : "off";
       const required = appliesTo && enforcementMode === "required";
 
-      const userRecord = await admin.auth().getUser(uid);
+      const userRecord = appliesTo ? await admin.auth().getUser(uid) : null;
       const enrolledFactors = Array.isArray(
         userRecord?.multiFactor?.enrolledFactors,
       )
@@ -1592,10 +1668,11 @@ app.get(
           ? "Admin MFA policy requires MFA enrollment for your role. Enroll at least one second factor before signing in."
           : "Admin MFA policy check passed.";
 
-      return res.json({
-        success: true,
+      const payload = {
         role,
         enforcementMode,
+        superAdminEnforcementMode,
+        schoolAdminEnforcementMode,
         enabledForSuperAdmins,
         enabledForSchoolAdmins,
         appliesTo,
@@ -1603,6 +1680,14 @@ app.get(
         enrolledFactorsCount,
         compliant,
         message,
+      };
+
+      setCachedAdminMfaPolicy(uid, payload);
+
+      return res.json({
+        success: true,
+        cached: false,
+        ...payload,
       });
     } catch (error) {
       console.error("Admin MFA policy status error:", error.message || error);
@@ -3940,6 +4025,9 @@ const buildSchoolTotals = async ({
       }
       if (normalized.plan === "free") acc.freeSchools += 1;
       if (normalized.plan === "trial") acc.trialSchools += 1;
+      if (normalized.plan === "monthly") acc.monthlySchools += 1;
+      if (normalized.plan === "termly") acc.termlySchools += 1;
+      if (normalized.plan === "yearly") acc.yearlySchools += 1;
       if (["monthly", "termly", "yearly"].includes(normalized.plan)) {
         acc.paidSchools += 1;
       }
@@ -3955,6 +4043,9 @@ const buildSchoolTotals = async ({
       inactiveSchools: 0,
       freeSchools: 0,
       trialSchools: 0,
+      monthlySchools: 0,
+      termlySchools: 0,
+      yearlySchools: 0,
       paidSchools: 0,
       newSchoolsLast30: 0,
       thirtyDaysAgo: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),

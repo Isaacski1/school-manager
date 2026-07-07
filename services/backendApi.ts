@@ -377,6 +377,8 @@ export type AdminMfaPolicyStatus = {
   success: boolean;
   role: string | null;
   enforcementMode: "off" | "optional" | "required";
+  superAdminEnforcementMode?: "off" | "optional" | "required";
+  schoolAdminEnforcementMode?: "off" | "optional" | "required";
   enabledForSuperAdmins: boolean;
   enabledForSchoolAdmins: boolean;
   appliesTo: boolean;

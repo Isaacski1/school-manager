@@ -4,6 +4,7 @@ type CacheEnvelope<T> = {
 };
 
 const memoryCache = new Map<string, CacheEnvelope<unknown>>();
+const pendingLoads = new Map<string, Promise<unknown>>();
 
 const isBrowser = typeof window !== "undefined";
 
@@ -65,6 +66,7 @@ export function setClientCache<T>(key: string, value: T, ttlMs: number): void {
 
 export function clearClientCache(key: string): void {
   memoryCache.delete(key);
+  pendingLoads.delete(key);
   const storage = getStorage();
   if (!storage) return;
   try {
@@ -83,8 +85,20 @@ export async function resolveClientCache<T>(
   if (!options?.forceRefresh) {
     const cached = getClientCache<T>(key);
     if (cached !== null) return cached;
+
+    const pending = pendingLoads.get(key) as Promise<T> | undefined;
+    if (pending) return pending;
   }
-  const loaded = await loader();
-  setClientCache(key, loaded, ttlMs);
-  return loaded;
+
+  const loadPromise = loader()
+    .then((loaded) => {
+      setClientCache(key, loaded, ttlMs);
+      return loaded;
+    })
+    .finally(() => {
+      pendingLoads.delete(key);
+    });
+
+  pendingLoads.set(key, loadPromise as Promise<unknown>);
+  return loadPromise;
 }

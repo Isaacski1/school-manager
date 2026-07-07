@@ -50,3 +50,10 @@ declare module "virtual:pwa-register" {
     options?: RegisterSWOptions,
   ): (reloadPage?: boolean) => void;
 }
+
+declare module "qrcode" {
+  const QRCode: {
+    toDataURL(text: string, options?: Record<string, unknown>): Promise<string>;
+  };
+  export default QRCode;
+}

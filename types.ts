@@ -323,6 +323,8 @@ export interface PlatformSecuritySettings {
   enabledForSuperAdmins: boolean;
   enabledForSchoolAdmins: boolean;
   enforcementMode: "off" | "optional" | "required";
+  superAdminEnforcementMode?: "off" | "optional" | "required";
+  schoolAdminEnforcementMode?: "off" | "optional" | "required";
   updatedAt: number;
   updatedBy: string;
 }

@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import QRCode from "qrcode";
 import {
   EmailAuthProvider,
+  getMultiFactorResolver,
   multiFactor,
   PhoneAuthProvider,
   PhoneMultiFactorGenerator,
   RecaptchaVerifier,
   reauthenticateWithCredential,
   sendEmailVerification,
+  TotpMultiFactorGenerator,
 } from "firebase/auth";
 import {
   AlertCircle,
@@ -15,6 +18,7 @@ import {
   Loader2,
   Phone,
   ShieldCheck,
+  Smartphone,
   Trash2,
 } from "lucide-react";
 import Layout from "../../components/Layout";
@@ -47,18 +51,29 @@ const MfaSetup: React.FC = () => {
 
   const [policyStatus, setPolicyStatus] =
     useState<AdminMfaPolicyStatus | null>(null);
+  const [setupMethod, setSetupMethod] = useState<"totp" | "sms">("totp");
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || "");
   const [displayName, setDisplayName] = useState("Admin phone");
   const [verificationId, setVerificationId] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
+  const [totpDisplayName, setTotpDisplayName] = useState("Authenticator app");
+  const [totpSecret, setTotpSecret] = useState<any | null>(null);
+  const [totpQrDataUrl, setTotpQrDataUrl] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [sendingCode, setSendingCode] = useState(false);
+  const [generatingTotp, setGeneratingTotp] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [sendingVerificationEmail, setSendingVerificationEmail] =
     useState(false);
   const [needsRecentLogin, setNeedsRecentLogin] = useState(false);
   const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthResolver, setReauthResolver] = useState<any | null>(null);
+  const [reauthHintIndex, setReauthHintIndex] = useState(0);
+  const [reauthVerificationId, setReauthVerificationId] = useState("");
+  const [reauthCode, setReauthCode] = useState("");
   const [reauthenticating, setReauthenticating] = useState(false);
+  const [reauthMfaLoading, setReauthMfaLoading] = useState(false);
   const [removingUid, setRemovingUid] = useState("");
   const [error, setError] = useState("");
   const [recaptchaContainerId, setRecaptchaContainerId] = useState(
@@ -73,6 +88,25 @@ const MfaSetup: React.FC = () => {
   const normalizedPhone = normalizeGhanaPhoneNumber(phoneNumber);
   const hasEnrolledFactor = enrolledFactors.length > 0;
   const emailVerified = Boolean(currentUser?.emailVerified);
+  const hasTotpSetup = Boolean(totpSecret && totpQrDataUrl);
+  const reauthHints = useMemo(
+    () => reauthResolver?.hints || [],
+    [reauthResolver],
+  );
+  const selectedReauthHint = reauthHints[reauthHintIndex] || null;
+
+  const getFactorLabel = (factor: any, index = 0) => {
+    if (!factor) return `Factor ${index + 1}`;
+    if (factor.factorId === TotpMultiFactorGenerator.FACTOR_ID) {
+      return factor.displayName || "Authenticator app";
+    }
+    if (factor.factorId === PhoneMultiFactorGenerator.FACTOR_ID) {
+      const phone = factor.phoneInfo?.phoneNumber || factor.phoneNumber || "";
+      const ending = phone.replace(/\D/g, "").slice(-4);
+      return `${factor.displayName || "SMS"}${ending ? ` ending in ${ending}` : ""}`;
+    }
+    return factor.displayName || `Factor ${index + 1}`;
+  };
 
   const refreshPolicyStatus = async () => {
     setLoadingStatus(true);
@@ -191,6 +225,59 @@ const MfaSetup: React.FC = () => {
     }
   };
 
+  const handleStartTotpEnrollment = async () => {
+    if (!currentUser) {
+      setError("You need to sign in again before setting up MFA.");
+      return;
+    }
+    if (!currentUser.emailVerified) {
+      setError("Verify your email address before setting up MFA.");
+      return;
+    }
+
+    setGeneratingTotp(true);
+    setError("");
+    setTotpSecret(null);
+    setTotpQrDataUrl("");
+    setTotpCode("");
+
+    try {
+      const session = await multiFactor(currentUser).getSession();
+      const secret = await TotpMultiFactorGenerator.generateSecret(session);
+      const qrCodeUrl = secret.generateQrCodeUrl(
+        currentUser.email || user?.email || "admin",
+        "School Manager GH",
+      );
+      const qrDataUrl = await QRCode.toDataURL(qrCodeUrl, {
+        margin: 1,
+        width: 220,
+      });
+      setTotpSecret(secret);
+      setTotpQrDataUrl(qrDataUrl);
+      showToast("Authenticator setup code generated.", { type: "success" });
+    } catch (err: any) {
+      console.error("TOTP enrollment setup failed", err);
+      const fallback =
+        err?.code === "auth/requires-recent-login"
+          ? "Confirm your password below, then start authenticator setup again."
+          : err?.code === "auth/unverified-email"
+            ? "Verify your email address before setting up MFA."
+            : err?.code === "auth/operation-not-allowed"
+              ? "Authenticator app MFA is not enabled for this Firebase project yet."
+              : "Failed to start authenticator app setup. Please try again.";
+      if (err?.code === "auth/requires-recent-login") {
+        setNeedsRecentLogin(true);
+      }
+      setError(
+        err?.code === "auth/requires-recent-login"
+          ? fallback
+          : getFriendlyErrorMessage(err, fallback),
+      );
+    } finally {
+      setGeneratingTotp(false);
+    }
+  };
+
   const handleReauthenticate = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!currentUser?.email) {
@@ -212,11 +299,22 @@ const MfaSetup: React.FC = () => {
       await reauthenticateWithCredential(currentUser, credential);
       setNeedsRecentLogin(false);
       setReauthPassword("");
+      setReauthResolver(null);
+      setReauthVerificationId("");
+      setReauthCode("");
       showToast("Login refreshed. You can send the MFA code now.", {
         type: "success",
       });
     } catch (err: any) {
       console.error("MFA setup reauthentication failed", err);
+      if (err?.code === "auth/multi-factor-auth-required") {
+        setReauthResolver(getMultiFactorResolver(auth, err));
+        setReauthHintIndex(0);
+        setReauthVerificationId("");
+        setReauthCode("");
+        setError("");
+        return;
+      }
       setError(
         getFriendlyErrorMessage(
           err,
@@ -225,6 +323,100 @@ const MfaSetup: React.FC = () => {
       );
     } finally {
       setReauthenticating(false);
+    }
+  };
+
+  const handleSendReauthMfaCode = async () => {
+    if (!reauthResolver || !selectedReauthHint) {
+      setError("No second factor is available for this password confirmation.");
+      return;
+    }
+
+    setReauthMfaLoading(true);
+    setError("");
+    setReauthVerificationId("");
+    setReauthCode("");
+
+    try {
+      if (selectedReauthHint.factorId === TotpMultiFactorGenerator.FACTOR_ID) {
+        setReauthVerificationId("totp");
+        return;
+      }
+
+      if (selectedReauthHint.factorId !== PhoneMultiFactorGenerator.FACTOR_ID) {
+        throw new Error("Unsupported second factor type.");
+      }
+
+      await rebuildRecaptchaContainer();
+      const phoneProvider = new PhoneAuthProvider(auth);
+      const id = await phoneProvider.verifyPhoneNumber(
+        {
+          multiFactorHint: selectedReauthHint,
+          session: reauthResolver.session,
+        },
+        getRecaptchaVerifier(),
+      );
+      setReauthVerificationId(id);
+      showToast("Verification code requested.", { type: "success" });
+    } catch (err: any) {
+      console.error("Reauthentication MFA code send failed", err);
+      const fallback =
+        err?.code === "auth/billing-not-enabled"
+          ? "Firebase billing is not enabled for SMS verification. Use your Firebase test code if this is a test number."
+          : "Failed to prepare second-factor verification. Please try again.";
+      setError(getFriendlyErrorMessage(err, fallback));
+      resetRecaptcha();
+    } finally {
+      setReauthMfaLoading(false);
+    }
+  };
+
+  const handleVerifyReauthMfa = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!reauthResolver || !selectedReauthHint || !reauthVerificationId) {
+      setError("Request or prepare the second-factor verification first.");
+      return;
+    }
+    if (!reauthCode.trim()) {
+      setError("Enter your second-factor code.");
+      return;
+    }
+
+    setReauthMfaLoading(true);
+    setError("");
+
+    try {
+      const assertion =
+        selectedReauthHint.factorId === TotpMultiFactorGenerator.FACTOR_ID
+          ? TotpMultiFactorGenerator.assertionForSignIn(
+              selectedReauthHint.uid,
+              reauthCode.trim(),
+            )
+          : PhoneMultiFactorGenerator.assertion(
+              PhoneAuthProvider.credential(
+                reauthVerificationId,
+                reauthCode.trim(),
+              ),
+            );
+      await reauthResolver.resolveSignIn(assertion);
+      setNeedsRecentLogin(false);
+      setReauthPassword("");
+      setReauthResolver(null);
+      setReauthVerificationId("");
+      setReauthCode("");
+      showToast("Login refreshed. You can continue MFA setup now.", {
+        type: "success",
+      });
+    } catch (err: any) {
+      console.error("Reauthentication MFA verification failed", err);
+      setError(
+        getFriendlyErrorMessage(
+          err,
+          "Second-factor verification failed. Check the code and try again.",
+        ),
+      );
+    } finally {
+      setReauthMfaLoading(false);
     }
   };
 
@@ -294,6 +486,49 @@ const MfaSetup: React.FC = () => {
     }
   };
 
+  const handleEnrollTotp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!currentUser || !totpSecret) {
+      setError("Start authenticator app setup first.");
+      return;
+    }
+    if (!totpCode.trim()) {
+      setError("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+
+    setEnrolling(true);
+    setError("");
+
+    try {
+      const assertion = TotpMultiFactorGenerator.assertionForEnrollment(
+        totpSecret,
+        totpCode.trim(),
+      );
+      await multiFactor(currentUser).enroll(
+        assertion,
+        totpDisplayName.trim() || "Authenticator app",
+      );
+      await currentUser.reload();
+      setTotpSecret(null);
+      setTotpQrDataUrl("");
+      setTotpCode("");
+      await refreshPolicyStatus();
+      showToast("Authenticator app MFA has been set up.", {
+        type: "success",
+      });
+    } catch (err: any) {
+      console.error("TOTP enrollment failed", err);
+      const fallback =
+        err?.code === "auth/invalid-verification-code"
+          ? "That authenticator code is not correct. Try the latest code from your app."
+          : "Failed to finish authenticator app setup. Please try again.";
+      setError(getFriendlyErrorMessage(err, fallback));
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
   const handleRemoveFactor = async (factor: any) => {
     if (!currentUser || !factor?.uid) return;
     const confirmed = window.confirm(
@@ -343,7 +578,7 @@ const MfaSetup: React.FC = () => {
                     Set Up Admin MFA
                   </h1>
                   <p className="text-sm text-slate-500">
-                    Add SMS verification to this signed-in admin account.
+                    Add authenticator app protection to this signed-in admin account.
                   </p>
                 </div>
               </div>
@@ -398,15 +633,15 @@ const MfaSetup: React.FC = () => {
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <h2 className="flex items-center gap-2 font-semibold text-slate-900">
-              <Phone size={18} />
-              Phone Verification
+              <ShieldCheck size={18} />
+              Verification Method
             </h2>
             {!emailVerified && (
               <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 <div className="font-semibold">Verify your email first</div>
                 <p className="mt-1">
                   Firebase requires a verified email address before this admin
-                  account can enroll an SMS second factor.
+                  account can enroll a second factor.
                 </p>
                 <button
                   type="button"
@@ -449,52 +684,272 @@ const MfaSetup: React.FC = () => {
                   )}
                   Confirm Password
                 </button>
+
+                {reauthResolver && (
+                  <div className="mt-4 rounded-xl border border-amber-300 bg-white p-4">
+                    <div className="font-semibold text-amber-950">
+                      Verify existing MFA
+                    </div>
+                    <p className="mt-1 text-amber-900">
+                      This account already has MFA, so Firebase also needs that
+                      code before allowing a new factor.
+                    </p>
+
+                    {reauthHints.length > 1 && (
+                      <div className="mt-3">
+                        <label className="block text-sm font-semibold text-amber-950">
+                          Existing factor
+                        </label>
+                        <select
+                          value={reauthHintIndex}
+                          onChange={(event) => {
+                            setReauthHintIndex(Number(event.target.value));
+                            setReauthVerificationId("");
+                            setReauthCode("");
+                          }}
+                          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                        >
+                          {reauthHints.map((factor: any, index: number) => (
+                            <option key={factor.uid || index} value={index}>
+                              {getFactorLabel(factor, index)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="mt-3 text-sm font-semibold text-amber-950">
+                      {getFactorLabel(selectedReauthHint)}
+                    </div>
+
+                    {!reauthVerificationId ? (
+                      <button
+                        type="button"
+                        onClick={handleSendReauthMfaCode}
+                        disabled={reauthMfaLoading}
+                        className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#0B4A82] px-4 py-2 font-semibold text-white hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {reauthMfaLoading && (
+                          <Loader2 size={16} className="animate-spin" />
+                        )}
+                        {selectedReauthHint?.factorId ===
+                        TotpMultiFactorGenerator.FACTOR_ID
+                          ? "Enter Authenticator Code"
+                          : "Send Existing MFA Code"}
+                      </button>
+                    ) : (
+                      <div className="mt-3">
+                        <label className="block text-sm font-semibold text-amber-950">
+                          Existing MFA code
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={reauthCode}
+                          onChange={(event) =>
+                            setReauthCode(
+                              event.target.value.replace(/[^0-9]/g, ""),
+                            )
+                          }
+                          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                          placeholder="Enter 6-digit code"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleVerifyReauthMfa}
+                          disabled={reauthMfaLoading}
+                          className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {reauthMfaLoading && (
+                            <Loader2 size={16} className="animate-spin" />
+                          )}
+                          Verify Existing MFA
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </form>
             )}
-            <form onSubmit={handleSendCode} className="mt-5 space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">
-                  Phone number
-                </label>
-                <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(event) => setPhoneNumber(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                  placeholder="+233241234567"
-                  autoComplete="tel"
-                />
-                {normalizedPhone && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Code will be sent to {normalizedPhone}.
-                  </p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setSetupMethod("totp")}
+                className={`rounded-xl border p-4 text-left transition ${
+                  setupMethod === "totp"
+                    ? "border-[#1160A8] bg-[#1160A8]/5 ring-2 ring-[#1160A8]/10"
+                    : "border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0B4A82] text-white">
+                    <Smartphone size={19} />
+                  </span>
+                  <span>
+                    <span className="block font-semibold text-slate-900">
+                      Authenticator app
+                    </span>
+                    <span className="text-sm text-slate-500">
+                      Recommended. No SMS billing.
+                    </span>
+                  </span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSetupMethod("sms")}
+                className={`rounded-xl border p-4 text-left transition ${
+                  setupMethod === "sms"
+                    ? "border-[#1160A8] bg-[#1160A8]/5 ring-2 ring-[#1160A8]/10"
+                    : "border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                    <Phone size={19} />
+                  </span>
+                  <span>
+                    <span className="block font-semibold text-slate-900">
+                      SMS code
+                    </span>
+                    <span className="text-sm text-slate-500">
+                      Requires Firebase SMS billing.
+                    </span>
+                  </span>
+                </div>
+              </button>
+            </div>
+
+            {setupMethod === "totp" ? (
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">
+                    Factor name
+                  </label>
+                  <input
+                    type="text"
+                    value={totpDisplayName}
+                    onChange={(event) => setTotpDisplayName(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                    placeholder="Authenticator app"
+                  />
+                </div>
+
+                {!hasTotpSetup ? (
+                  <button
+                    type="button"
+                    onClick={handleStartTotpEnrollment}
+                    disabled={generatingTotp || enrolling || !emailVerified}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                  >
+                    {generatingTotp && (
+                      <Loader2 size={18} className="animate-spin" />
+                    )}
+                    Start Authenticator Setup
+                  </button>
+                ) : (
+                  <form onSubmit={handleEnrollTotp} className="space-y-4">
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                      Scan this QR code in Google Authenticator, Microsoft
+                      Authenticator, Authy, or another authenticator app.
+                    </div>
+                    <div className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
+                      <img
+                        src={totpQrDataUrl}
+                        alt="Authenticator app QR code"
+                        className="h-44 w-44 rounded-lg border border-slate-200 bg-white p-2"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-slate-700">
+                          Manual setup key
+                        </div>
+                        <div className="mt-2 break-all rounded-lg bg-slate-50 p-3 font-mono text-sm text-slate-700">
+                          {totpSecret?.secretKey}
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700">
+                        Authenticator code
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={totpCode}
+                        onChange={(event) =>
+                          setTotpCode(event.target.value.replace(/[^0-9]/g, ""))
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                        placeholder="Enter 6-digit code"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={enrolling}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                    >
+                      {enrolling && (
+                        <Loader2 size={18} className="animate-spin" />
+                      )}
+                      Finish Authenticator Setup
+                    </button>
+                  </form>
                 )}
               </div>
+            ) : (
+              <div className="mt-5">
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  SMS MFA requires Firebase SMS billing. Use authenticator app
+                  MFA if you want to avoid SMS charges.
+                </div>
+                <form onSubmit={handleSendCode} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">
+                      Phone number
+                    </label>
+                    <input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={(event) => setPhoneNumber(event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                      placeholder="+233241234567"
+                      autoComplete="tel"
+                    />
+                    {normalizedPhone && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Code will be sent to {normalizedPhone}.
+                      </p>
+                    )}
+                  </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">
-                  Factor name
-                </label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                  placeholder="Admin phone"
-                />
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">
+                      Factor name
+                    </label>
+                    <input
+                      type="text"
+                      value={displayName}
+                      onChange={(event) => setDisplayName(event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                      placeholder="Admin phone"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={sendingCode || enrolling || !emailVerified}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                  >
+                    {sendingCode && (
+                      <Loader2 size={18} className="animate-spin" />
+                    )}
+                    {verificationId ? "Send New Code" : "Send Verification Code"}
+                  </button>
+                </form>
               </div>
+            )}
 
-              <button
-                type="submit"
-                disabled={sendingCode || enrolling || !emailVerified}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
-              >
-                {sendingCode && <Loader2 size={18} className="animate-spin" />}
-                {verificationId ? "Send New Code" : "Send Verification Code"}
-              </button>
-            </form>
-
-            {verificationId && (
+            {setupMethod === "sms" && verificationId && (
               <form onSubmit={handleEnroll} className="mt-5 space-y-4">
                 <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
                   If the SMS does not arrive within a minute, confirm the
@@ -554,10 +1009,13 @@ const MfaSetup: React.FC = () => {
                   >
                     <div className="min-w-0">
                       <div className="truncate font-semibold text-slate-800">
-                        {factor.displayName || "Phone second factor"}
+                        {factor.displayName || "Second factor"}
                       </div>
                       <div className="truncate text-sm text-slate-500">
-                        {factor.phoneNumber || factor.factorId}
+                        {factor.factorId ===
+                        TotpMultiFactorGenerator.FACTOR_ID
+                          ? "Authenticator app"
+                          : factor.phoneNumber || factor.factorId}
                       </div>
                     </div>
                     <button
