@@ -2895,6 +2895,20 @@ class FirestoreService {
         console.warn("Skipping activity log backup payload", activityLogError);
       }
 
+      const safeReadSchoolCollection = async <T,>(
+        collectionName: string,
+      ): Promise<T[]> => {
+        try {
+          return await this.getCollectionBySchoolId<T>(collectionName, schoolId);
+        } catch (collectionError) {
+          console.warn(
+            `Skipping ${collectionName} backup payload`,
+            collectionError,
+          );
+          return [];
+        }
+      };
+
       const [
         students,
         users,
@@ -2908,37 +2922,21 @@ class FirestoreService {
         notices,
         adminNotifications,
       ] = await Promise.all([
-        this.getCollectionBySchoolId<Student>("students", schoolId),
-        this.getCollectionBySchoolId<User>("users", schoolId),
-        this.getCollectionBySchoolId<AttendanceRecord>("attendance", schoolId),
-        this.getCollectionBySchoolId<TeacherAttendanceRecord>(
-          "teacher_attendance",
-          schoolId,
-        ),
-        this.getCollectionBySchoolId<Assessment>("assessments", schoolId),
-        this.getCollectionBySchoolId<StudentRemark>(
-          "student_remarks",
-          schoolId,
-        ),
-        this.getCollectionBySchoolId<AdminRemark>("admin_remarks", schoolId),
-        this.getCollectionBySchoolId<StudentSkills>("student_skills", schoolId),
-        this.getCollectionBySchoolId<ClassTimetable>("timetables", schoolId),
-        this.getCollectionBySchoolId<Notice>("notices", schoolId),
-        this.getCollectionBySchoolId<SystemNotification>(
-          "admin_notifications",
-          schoolId,
-        ),
+        safeReadSchoolCollection<Student>("students"),
+        safeReadSchoolCollection<User>("users"),
+        safeReadSchoolCollection<AttendanceRecord>("attendance"),
+        safeReadSchoolCollection<TeacherAttendanceRecord>("teacher_attendance"),
+        safeReadSchoolCollection<Assessment>("assessments"),
+        safeReadSchoolCollection<StudentRemark>("student_remarks"),
+        safeReadSchoolCollection<AdminRemark>("admin_remarks"),
+        safeReadSchoolCollection<StudentSkills>("student_skills"),
+        safeReadSchoolCollection<ClassTimetable>("timetables"),
+        safeReadSchoolCollection<Notice>("notices"),
+        safeReadSchoolCollection<SystemNotification>("admin_notifications"),
       ]);
 
-      const classSubjectsSnap = await getDocs(
-        query(
-          collection(firestore, "class_subjects"),
-          where("schoolId", "==", schoolId),
-        ),
-      );
-      const classSubjects: ClassSubjectConfig[] = classSubjectsSnap.docs.map(
-        (d) => d.data() as ClassSubjectConfig,
-      );
+      const classSubjects =
+        await safeReadSchoolCollection<ClassSubjectConfig>("class_subjects");
 
       const settingsSnap = await getDoc(doc(firestore, "settings", schoolId));
       const schoolSettings = settingsSnap.exists()
@@ -3249,17 +3247,45 @@ class FirestoreService {
     if (backup.schoolId !== scopedSchoolId) return undefined;
 
     if (backup.storageVersion === 2 && backup.dataCollectionRef) {
-      const chunksSnapshot = await getDocs(
-        collection(firestore, "backups", id, "chunks"),
+      const manifestChunkIds = (backup.chunks || []).flatMap((chunk) =>
+        Array.isArray(chunk.chunkIds) ? chunk.chunkIds : [],
       );
+      const chunkDocs: Array<{
+        key?: string;
+        index?: number;
+        rows?: any[];
+      }> = [];
+
+      if (manifestChunkIds.length > 0) {
+        for (const chunkId of manifestChunkIds) {
+          const chunkSnap = await getDoc(
+            doc(firestore, "backups", id, "chunks", chunkId),
+          );
+          if (chunkSnap.exists()) {
+            chunkDocs.push(chunkSnap.data() as {
+              key?: string;
+              index?: number;
+              rows?: any[];
+            });
+          }
+        }
+      } else {
+        const chunksSnapshot = await getDocs(
+          query(collection(firestore, "backups", id, "chunks"), limit(5)),
+        );
+        chunkDocs.push(
+          ...chunksSnapshot.docs.map((chunk) => chunk.data() as {
+            key?: string;
+            index?: number;
+            rows?: any[];
+          }),
+        );
+      }
+
       const hydratedData: Record<string, any> = { ...(backup.data || {}) };
-      const orderedChunks = chunksSnapshot.docs
-        .map((chunk) => chunk.data() as {
-          key?: string;
-          index?: number;
-          rows?: any[];
-        })
-        .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+      const orderedChunks = chunkDocs.sort(
+        (a, b) => Number(a.index || 0) - Number(b.index || 0),
+      );
       orderedChunks.forEach((chunk) => {
         if (!chunk.key || !Array.isArray(chunk.rows)) return;
         hydratedData[chunk.key] = [
@@ -3273,14 +3299,31 @@ class FirestoreService {
     return backup;
   }
 
-  private async deleteBackupDocument(id: string): Promise<void> {
+  private async deleteBackupDocument(
+    id: string,
+    backup?: Partial<Backup> | null,
+  ): Promise<void> {
     const chunksRef = collection(firestore, "backups", id, "chunks");
-    while (true) {
-      const chunksSnapshot = await getDocs(query(chunksRef, limit(400)));
-      if (chunksSnapshot.empty) break;
-      const batch = writeBatch(firestore);
-      chunksSnapshot.docs.forEach((chunk) => batch.delete(chunk.ref));
-      await batch.commit();
+    const manifestChunkIds = (backup?.chunks || []).flatMap((chunk) =>
+      Array.isArray(chunk.chunkIds) ? chunk.chunkIds : [],
+    );
+
+    if (manifestChunkIds.length > 0) {
+      for (let index = 0; index < manifestChunkIds.length; index += 5) {
+        const batch = writeBatch(firestore);
+        manifestChunkIds.slice(index, index + 5).forEach((chunkId) => {
+          batch.delete(doc(firestore, "backups", id, "chunks", chunkId));
+        });
+        await batch.commit();
+      }
+    } else {
+      while (true) {
+        const chunksSnapshot = await getDocs(query(chunksRef, limit(5)));
+        if (chunksSnapshot.empty) break;
+        const batch = writeBatch(firestore);
+        chunksSnapshot.docs.forEach((chunk) => batch.delete(chunk.ref));
+        await batch.commit();
+      }
     }
     await deleteDoc(doc(firestore, "backups", id));
   }
@@ -3615,7 +3658,7 @@ class FirestoreService {
     });
 
     if (snapshot.backupType === "recycle-bin") {
-      await deleteDoc(doc(firestore, "backups", id));
+      await this.deleteBackupDocument(id, snapshot);
     } else {
       await updateDoc(doc(firestore, "backups", id), {
         recoveryMeta: {
@@ -3633,7 +3676,7 @@ class FirestoreService {
     if (!id) return;
     const existing = await this.getBackupDetails(scopedSchoolId, id);
     if (!existing) return;
-    await this.deleteBackupDocument(id);
+    await this.deleteBackupDocument(id, existing);
   }
 
   async deleteAllBackups(schoolId?: string): Promise<void> {
@@ -3644,7 +3687,9 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
     );
     const snap = await getDocs(q);
-    const deletions = snap.docs.map((d) => this.deleteBackupDocument(d.id));
+    const deletions = snap.docs.map((d) =>
+      this.deleteBackupDocument(d.id, d.data() as Partial<Backup>),
+    );
     await Promise.all(deletions);
   }
 

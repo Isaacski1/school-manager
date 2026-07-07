@@ -213,6 +213,7 @@ const createVerifiedBackup = async ({
       chunkIds.push(chunkId);
       writeOperations.push((batch) =>
         batch.set(backupRef.collection("chunks").doc(chunkId), {
+          schoolId,
           key,
           index,
           count: rows.length,
