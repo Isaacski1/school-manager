@@ -91,15 +91,29 @@ const Login = () => {
     setMfaLoading(false);
   };
 
-  const getMfaHintLabel = (hint: any, index: number) => {
-    if (!hint) return `Factor ${index + 1}`;
-    const factorType =
-      hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID
-        ? "SMS"
-        : hint.factorId || "Second factor";
-    const displayName = hint.displayName ? ` (${hint.displayName})` : "";
-    const phone = hint.phoneNumber ? ` ${hint.phoneNumber}` : "";
-    return `${factorType}${displayName}${phone}`.trim();
+  const maskPhoneNumber = (phoneNumber?: string) => {
+    if (!phoneNumber) return "Phone number";
+    const visibleDigits = phoneNumber.replace(/\D/g, "").slice(-4);
+    return visibleDigits ? `ending in ${visibleDigits}` : "Phone number";
+  };
+
+  const getMfaHintDetails = (hint: any, index: number) => {
+    if (!hint) {
+      return {
+        method: "Second factor",
+        name: `Factor ${index + 1}`,
+        detail: "Verification required",
+      };
+    }
+
+    const isPhone = hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID;
+    return {
+      method: isPhone ? "SMS verification" : "Second factor",
+      name: hint.displayName || (isPhone ? "Admin phone" : `Factor ${index + 1}`),
+      detail: isPhone
+        ? maskPhoneNumber(hint.phoneInfo?.phoneNumber || hint.phoneNumber)
+        : "Verification required",
+    };
   };
 
   const getRecaptchaVerifier = () => {
@@ -764,26 +778,63 @@ const Login = () => {
           ) : isMfaFlow ? (
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">
-                  Select Second Factor
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Choose verification method
                 </label>
-                <select
-                  value={mfaSelectedHintIndex}
-                  onChange={(e) => {
-                    setMfaSelectedHintIndex(Number(e.target.value));
-                    setMfaVerificationId("");
-                    setMfaCode("");
-                    setMfaError("");
-                  }}
-                  disabled={mfaLoading}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900"
-                >
-                  {mfaHints.map((hint: any, index: number) => (
-                    <option key={`${hint.uid || index}`} value={index}>
-                      {getMfaHintLabel(hint, index)}
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-3">
+                  {mfaHints.map((hint: any, index: number) => {
+                    const active = mfaSelectedHintIndex === index;
+                    const details = getMfaHintDetails(hint, index);
+                    return (
+                      <button
+                        key={`${hint.uid || index}`}
+                        type="button"
+                        onClick={() => {
+                          setMfaSelectedHintIndex(index);
+                          setMfaVerificationId("");
+                          setMfaCode("");
+                          setMfaError("");
+                        }}
+                        disabled={mfaLoading}
+                        aria-pressed={active}
+                        className={`flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-all ${
+                          active
+                            ? "border-[#1160A8] bg-[#1160A8]/5 shadow-sm ring-2 ring-[#1160A8]/10"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        } ${mfaLoading ? "cursor-not-allowed opacity-70" : ""}`}
+                      >
+                        <span
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
+                            active
+                              ? "bg-[#0B4A82] text-white"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          <Phone size={20} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-slate-900">
+                            {details.method}
+                          </span>
+                          <span className="mt-0.5 block truncate text-sm text-slate-500">
+                            {details.name} · {details.detail}
+                          </span>
+                        </span>
+                        <span
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                            active
+                              ? "border-[#0B4A82] bg-[#0B4A82]"
+                              : "border-slate-300 bg-white"
+                          }`}
+                        >
+                          {active && (
+                            <span className="h-2 w-2 rounded-full bg-white" />
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {!mfaVerificationId ? (
