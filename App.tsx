@@ -53,6 +53,7 @@ const LoginHistory = lazy(() => import("./pages/super-admin/security/LoginHistor
 const SuspiciousEvents = lazy(() => import("./pages/super-admin/security/SuspiciousEvents"));
 const AuditLogs = lazy(() => import("./pages/super-admin/security/AuditLogs"));
 const SecuritySettings = lazy(() => import("./pages/super-admin/security/SecuritySettings"));
+const MfaSetup = lazy(() => import("./pages/account/MfaSetup"));
 
 import Layout from "./components/Layout";
 import SplashScreen from "./components/SplashScreen";
@@ -524,6 +525,16 @@ const AppRoutes = ({
             ]}
           >
             <OfflineAccess />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/account/mfa-setup"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]}
+          >
+            <MfaSetup />
           </ProtectedRoute>
         }
       />

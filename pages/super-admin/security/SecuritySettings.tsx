@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import Layout from "../../../components/Layout";
 import { firestore } from "../../../services/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { PlatformSecuritySettings } from "../../../types";
 import { useAuth } from "../../../context/AuthContext";
 import { showToast } from "../../../services/toast";
+import { ShieldCheck } from "lucide-react";
 
 const defaultSettings = (updatedBy: string): PlatformSecuritySettings => ({
   enabledForSuperAdmins: false,
@@ -94,9 +96,16 @@ const SecuritySettings: React.FC = () => {
           </h1>
           <p className="mt-2 text-sm text-slate-600 sm:text-base">
             Store the platform policy for two-factor authentication on admin
-            accounts. Firebase enrollment and challenge UI still needs to be
-            completed before strict enforcement is switched on.
+            accounts. Admins can now enroll a Firebase SMS second factor from
+            their own signed-in account.
           </p>
+          <Link
+            to="/account/mfa-setup"
+            className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#0B4A82] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083a66]"
+          >
+            <ShieldCheck size={16} />
+            Set Up My MFA
+          </Link>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
@@ -189,9 +198,9 @@ const SecuritySettings: React.FC = () => {
           </div>
 
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Enabling this policy records the intended admin MFA posture. It
-            does not yet replace Firebase's actual second-factor enrollment and
-            verification flow.
+            Keep enforcement optional until each admin has enrolled a second
+            factor. Once enrolled, Firebase will request the SMS code during
+            sign-in.
           </div>
         </div>
       </div>

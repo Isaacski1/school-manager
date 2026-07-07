@@ -4063,11 +4063,18 @@ const listCollectionPage = async ({
   direction = "desc",
   cursorDocId = "",
   limitCount = 50,
+  selectFields = [],
 }) => {
   const db = admin.firestore();
   const pageSize = toPositiveInt(limitCount, 50, 1, 250);
   const dir = String(direction).toLowerCase() === "asc" ? "asc" : "desc";
   const cursorId = String(cursorDocId || "").trim();
+  const projection =
+    Array.isArray(selectFields) && selectFields.length
+      ? selectFields
+          .map((field) => String(field || "").trim())
+          .filter((field) => field.length > 0)
+      : [];
 
   const buildPrimaryQuery = async () => {
     let ref = db.collection(collectionName).orderBy(orderField, dir);
@@ -4076,6 +4083,9 @@ const listCollectionPage = async ({
       if (cursorSnap.exists) {
         ref = ref.startAfter(cursorSnap);
       }
+    }
+    if (projection.length) {
+      ref = ref.select(...projection);
     }
     return ref.limit(pageSize).get();
   };
@@ -4086,6 +4096,9 @@ const listCollectionPage = async ({
       .orderBy(admin.firestore.FieldPath.documentId(), dir);
     if (cursorId) {
       ref = ref.startAfter(cursorId);
+    }
+    if (projection.length) {
+      ref = ref.select(...projection);
     }
     return ref.limit(pageSize).get();
   };
@@ -8034,11 +8047,27 @@ app.get(
         direction: "desc",
         cursorDocId,
         limitCount,
+        selectFields: [
+          "schoolId",
+          "term",
+          "academicYear",
+          "backupType",
+          "timestamp",
+          "createdAt",
+          "recoveryMeta",
+          "recordCounts",
+        ],
       });
 
       const computeBackupRecordCount = (entry = {}) => {
         const explicit = Number(entry?.recoveryMeta?.recordCount || 0);
         if (explicit > 0) return explicit;
+        if (entry?.recordCounts && typeof entry.recordCounts === "object") {
+          return Object.values(entry.recordCounts).reduce(
+            (sum, value) => sum + Math.max(0, Number(value) || 0),
+            0,
+          );
+        }
         const data = entry?.data || {};
         return [
           Array.isArray(data.students) ? data.students.length : 0,
@@ -8084,6 +8113,7 @@ app.get(
           collectionName: "schools",
           limitCount: 3000,
           orderField: "createdAt",
+          selectFields: ["name"],
         });
         schools = schoolRows.map((row) => ({
           id: row.id,

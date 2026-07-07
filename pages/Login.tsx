@@ -48,6 +48,7 @@ const Login = () => {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaError, setMfaError] = useState("");
   const [mfaLoading, setMfaLoading] = useState(false);
+  const [redirectingToMfaSetup, setRedirectingToMfaSetup] = useState(false);
   const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
 
   // Parent Login State
@@ -178,10 +179,10 @@ const Login = () => {
   };
 
   useEffect(() => {
-    if (isAuthenticated && !authLoading) {
+    if (isAuthenticated && !authLoading && !redirectingToMfaSetup) {
       navigate("/", { replace: true });
     }
-  }, [isAuthenticated, authLoading, navigate]);
+  }, [isAuthenticated, authLoading, navigate, redirectingToMfaSetup]);
 
   useEffect(() => {
     return () => {
@@ -214,8 +215,17 @@ const Login = () => {
       try {
         await evaluateAdminMfaPolicy();
       } catch (mfaError: any) {
-        await auth.signOut();
-        throw mfaError;
+        if (isMfaEnrollmentRequiredError(mfaError)) {
+          setRedirectingToMfaSetup(true);
+          await safeLogSecurityLogin({
+            status: "SUCCESS",
+            email: normalizeEmailInput(email),
+            userAgent: navigator.userAgent,
+          });
+          navigate("/account/mfa-setup?required=1", { replace: true });
+          return;
+        }
+        console.warn("Skipping admin MFA policy check due to backend error", mfaError);
       }
       
       await safeLogSecurityLogin({
@@ -225,6 +235,12 @@ const Login = () => {
       });
     } catch (err: any) {
       console.error("Login failed", err);
+
+      if (err?.code === "auth/multi-factor-auth-required") {
+        setMfaResolver(getMultiFactorResolver(auth, err));
+        setFormError("");
+        return;
+      }
       
       await safeLogSecurityLogin({
         status: "FAILED",
@@ -245,11 +261,6 @@ const Login = () => {
         msg = "Please enter a valid email address.";
       } else if (err?.message) {
         msg = getFriendlyErrorMessage(err, msg);
-      }
-
-      if (err?.code === "auth/multi-factor-auth-required") {
-        setMfaResolver(getMultiFactorResolver(auth, err));
-        return;
       }
 
       setFormError(msg);
@@ -273,7 +284,7 @@ const Login = () => {
         const phoneProvider = new PhoneAuthProvider(auth);
         verificationId = await phoneProvider.verifyPhoneNumber(
           {
-            phoneNumber: hint.phoneInfo?.phoneNumber || hint.phoneNumber,
+            multiFactorHint: hint,
             session: mfaResolver.session
           },
           verifier
@@ -312,12 +323,12 @@ const Login = () => {
     setMfaError("");
 
     try {
-      const phoneAuth = new PhoneAuthProvider(mfaResolver);
       const credential = PhoneAuthProvider.credential(
         mfaVerificationId,
         mfaCode.trim(),
       );
-      await mfaResolver.resolveSignIn(credential);
+      const assertion = PhoneMultiFactorGenerator.assertion(credential);
+      await mfaResolver.resolveSignIn(assertion);
 
       await safeLogSecurityLogin({
         status: "SUCCESS",

@@ -22,7 +22,7 @@ import {
 
 const BACKUPS_CACHE_KEY = "super_admin_backups_page_1_v1";
 const BACKUPS_CACHE_TTL_MS = 45_000;
-const BACKUPS_PAGE_SIZE = 80;
+const BACKUPS_PAGE_SIZE = 30;
 
 type SchoolOption = {
   id: string;
