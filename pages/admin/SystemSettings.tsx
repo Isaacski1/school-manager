@@ -44,6 +44,7 @@ import {
   School,
   ArrowUp,
   ArrowDown,
+  Lock,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -1338,6 +1339,32 @@ const SystemSettings = () => {
             </div>
           </div>
         </div>
+
+        <section className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#0B4A82]">
+                <Lock size={20} />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-slate-800">
+                  Account Security
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Set up an authenticator app to add two-factor protection to
+                  your admin login.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/account/mfa-setup"
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-[#0B4A82] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#083a66]"
+            >
+              <Shield size={16} />
+              Open MFA Setup
+            </Link>
+          </div>
+        </section>
 
         <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
           {/* Left Column */}

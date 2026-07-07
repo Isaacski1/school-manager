@@ -16,7 +16,6 @@ import {
   AlertCircle,
   CheckCircle,
   Loader2,
-  Phone,
   ShieldCheck,
   Smartphone,
   Trash2,
@@ -31,14 +30,6 @@ import {
 import { getFriendlyErrorMessage } from "../../services/errorMessages";
 import { showToast } from "../../services/toast";
 
-const normalizeGhanaPhoneNumber = (value: string) => {
-  const compact = value.trim().replace(/[^\d+]/g, "");
-  if (!compact) return "";
-  if (compact.startsWith("+")) return compact;
-  if (compact.startsWith("0")) return `+233${compact.slice(1)}`;
-  return `+233${compact}`;
-};
-
 const MfaSetup: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -51,17 +42,11 @@ const MfaSetup: React.FC = () => {
 
   const [policyStatus, setPolicyStatus] =
     useState<AdminMfaPolicyStatus | null>(null);
-  const [setupMethod, setSetupMethod] = useState<"totp" | "sms">("totp");
-  const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || "");
-  const [displayName, setDisplayName] = useState("Admin phone");
-  const [verificationId, setVerificationId] = useState("");
-  const [verificationCode, setVerificationCode] = useState("");
   const [totpDisplayName, setTotpDisplayName] = useState("Authenticator app");
   const [totpSecret, setTotpSecret] = useState<any | null>(null);
   const [totpQrDataUrl, setTotpQrDataUrl] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [loadingStatus, setLoadingStatus] = useState(true);
-  const [sendingCode, setSendingCode] = useState(false);
   const [generatingTotp, setGeneratingTotp] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [sendingVerificationEmail, setSendingVerificationEmail] =
@@ -83,9 +68,8 @@ const MfaSetup: React.FC = () => {
   const currentUser = auth.currentUser;
   const enrolledFactors = useMemo(
     () => (currentUser ? multiFactor(currentUser).enrolledFactors : []),
-    [currentUser, verificationId, enrolling, removingUid],
+    [currentUser, enrolling, removingUid],
   );
-  const normalizedPhone = normalizeGhanaPhoneNumber(phoneNumber);
   const hasEnrolledFactor = enrolledFactors.length > 0;
   const emailVerified = Boolean(currentUser?.emailVerified);
   const hasTotpSetup = Boolean(totpSecret && totpQrDataUrl);
@@ -164,65 +148,6 @@ const MfaSetup: React.FC = () => {
     );
     recaptchaRef.current = verifier;
     return verifier;
-  };
-
-  const handleSendCode = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!currentUser) {
-      setError("You need to sign in again before setting up MFA.");
-      return;
-    }
-    if (!currentUser.emailVerified) {
-      setError("Verify your email address before setting up MFA.");
-      return;
-    }
-    if (!normalizedPhone || !normalizedPhone.startsWith("+")) {
-      setError("Enter a phone number with a country code.");
-      return;
-    }
-
-    setSendingCode(true);
-    setError("");
-    setVerificationId("");
-    setVerificationCode("");
-
-    try {
-      await rebuildRecaptchaContainer();
-      const session = await multiFactor(currentUser).getSession();
-      const phoneProvider = new PhoneAuthProvider(auth);
-      const id = await phoneProvider.verifyPhoneNumber(
-        {
-          phoneNumber: normalizedPhone,
-          session,
-        },
-        getRecaptchaVerifier(),
-      );
-      setVerificationId(id);
-      showToast("Verification code requested.", { type: "success" });
-    } catch (err: any) {
-      console.error("MFA enrollment code send failed", err);
-      const fallback =
-        err?.code === "auth/requires-recent-login"
-          ? "Confirm your password below, then send the verification code again."
-          : err?.code === "auth/unverified-email"
-            ? "Verify your email address before setting up MFA."
-          : err?.code === "auth/operation-not-allowed"
-            ? "Firebase SMS multi-factor authentication is not enabled for this project yet. Enable SMS MFA in Firebase Authentication, then try again."
-            : String(err?.message || "").toLowerCase().includes("recaptcha")
-              ? "reCAPTCHA needs to be reset. Please click Send Verification Code again."
-            : "Failed to send verification code. Confirm Firebase phone MFA is enabled and try again.";
-      if (err?.code === "auth/requires-recent-login") {
-        setNeedsRecentLogin(true);
-      }
-      setError(
-        err?.code === "auth/requires-recent-login"
-          ? fallback
-          : getFriendlyErrorMessage(err, fallback),
-      );
-      resetRecaptcha();
-    } finally {
-      setSendingCode(false);
-    }
   };
 
   const handleStartTotpEnrollment = async () => {
@@ -441,48 +366,6 @@ const MfaSetup: React.FC = () => {
       );
     } finally {
       setSendingVerificationEmail(false);
-    }
-  };
-
-  const handleEnroll = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!currentUser || !verificationId) {
-      setError("Request a verification code first.");
-      return;
-    }
-    if (!verificationCode.trim()) {
-      setError("Enter the verification code sent to your phone.");
-      return;
-    }
-
-    setEnrolling(true);
-    setError("");
-
-    try {
-      const credential = PhoneAuthProvider.credential(
-        verificationId,
-        verificationCode.trim(),
-      );
-      const assertion = PhoneMultiFactorGenerator.assertion(credential);
-      await multiFactor(currentUser).enroll(
-        assertion,
-        displayName.trim() || "Admin phone",
-      );
-      await currentUser.reload();
-      setVerificationId("");
-      setVerificationCode("");
-      resetRecaptcha();
-      await refreshPolicyStatus();
-      showToast("MFA has been set up for this account.", { type: "success" });
-    } catch (err: any) {
-      console.error("MFA enrollment failed", err);
-      const fallback =
-        err?.code === "auth/invalid-verification-code"
-          ? "That verification code is not correct. Please try again."
-          : "Failed to finish MFA setup. Please try again.";
-      setError(getFriendlyErrorMessage(err, fallback));
-    } finally {
-      setEnrolling(false);
     }
   };
 
@@ -771,16 +654,8 @@ const MfaSetup: React.FC = () => {
                 )}
               </form>
             )}
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setSetupMethod("totp")}
-                className={`rounded-xl border p-4 text-left transition ${
-                  setupMethod === "totp"
-                    ? "border-[#1160A8] bg-[#1160A8]/5 ring-2 ring-[#1160A8]/10"
-                    : "border-slate-200 hover:border-slate-300"
-                }`}
-              >
+            <div className="mt-5">
+              <div className="rounded-xl border border-[#1160A8] bg-[#1160A8]/5 p-4 text-left ring-2 ring-[#1160A8]/10">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0B4A82] text-white">
                     <Smartphone size={19} />
@@ -790,200 +665,88 @@ const MfaSetup: React.FC = () => {
                       Authenticator app
                     </span>
                     <span className="text-sm text-slate-500">
-                      Recommended. No SMS billing.
+                      Recommended. No SMS billing required.
                     </span>
                   </span>
                 </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSetupMethod("sms")}
-                className={`rounded-xl border p-4 text-left transition ${
-                  setupMethod === "sms"
-                    ? "border-[#1160A8] bg-[#1160A8]/5 ring-2 ring-[#1160A8]/10"
-                    : "border-slate-200 hover:border-slate-300"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
-                    <Phone size={19} />
-                  </span>
-                  <span>
-                    <span className="block font-semibold text-slate-900">
-                      SMS code
-                    </span>
-                    <span className="text-sm text-slate-500">
-                      Requires Firebase SMS billing.
-                    </span>
-                  </span>
-                </div>
-              </button>
+              </div>
             </div>
 
-            {setupMethod === "totp" ? (
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">
-                    Factor name
-                  </label>
-                  <input
-                    type="text"
-                    value={totpDisplayName}
-                    onChange={(event) => setTotpDisplayName(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                    placeholder="Authenticator app"
-                  />
-                </div>
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700">
+                  Factor name
+                </label>
+                <input
+                  type="text"
+                  value={totpDisplayName}
+                  onChange={(event) => setTotpDisplayName(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                  placeholder="Authenticator app"
+                />
+              </div>
 
-                {!hasTotpSetup ? (
-                  <button
-                    type="button"
-                    onClick={handleStartTotpEnrollment}
-                    disabled={generatingTotp || enrolling || !emailVerified}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
-                  >
-                    {generatingTotp && (
-                      <Loader2 size={18} className="animate-spin" />
-                    )}
-                    Start Authenticator Setup
-                  </button>
-                ) : (
-                  <form onSubmit={handleEnrollTotp} className="space-y-4">
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                      Scan this QR code in Google Authenticator, Microsoft
-                      Authenticator, Authy, or another authenticator app.
-                    </div>
-                    <div className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
-                      <img
-                        src={totpQrDataUrl}
-                        alt="Authenticator app QR code"
-                        className="h-44 w-44 rounded-lg border border-slate-200 bg-white p-2"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-700">
-                          Manual setup key
-                        </div>
-                        <div className="mt-2 break-all rounded-lg bg-slate-50 p-3 font-mono text-sm text-slate-700">
-                          {totpSecret?.secretKey}
-                        </div>
+              {!hasTotpSetup ? (
+                <button
+                  type="button"
+                  onClick={handleStartTotpEnrollment}
+                  disabled={generatingTotp || enrolling || !emailVerified}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                >
+                  {generatingTotp && (
+                    <Loader2 size={18} className="animate-spin" />
+                  )}
+                  Start Authenticator Setup
+                </button>
+              ) : (
+                <form onSubmit={handleEnrollTotp} className="space-y-4">
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                    Scan this QR code in Google Authenticator, Microsoft
+                    Authenticator, Authy, or another authenticator app.
+                  </div>
+                  <div className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
+                    <img
+                      src={totpQrDataUrl}
+                      alt="Authenticator app QR code"
+                      className="h-44 w-44 rounded-lg border border-slate-200 bg-white p-2"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-slate-700">
+                        Manual setup key
+                      </div>
+                      <div className="mt-2 break-all rounded-lg bg-slate-50 p-3 font-mono text-sm text-slate-700">
+                        {totpSecret?.secretKey}
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700">
-                        Authenticator code
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={totpCode}
-                        onChange={(event) =>
-                          setTotpCode(event.target.value.replace(/[^0-9]/g, ""))
-                        }
-                        className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                        placeholder="Enter 6-digit code"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={enrolling}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
-                    >
-                      {enrolling && (
-                        <Loader2 size={18} className="animate-spin" />
-                      )}
-                      Finish Authenticator Setup
-                    </button>
-                  </form>
-                )}
-              </div>
-            ) : (
-              <div className="mt-5">
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  SMS MFA requires Firebase SMS billing. Use authenticator app
-                  MFA if you want to avoid SMS charges.
-                </div>
-                <form onSubmit={handleSendCode} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">
-                      Phone number
-                    </label>
-                    <input
-                      type="tel"
-                      value={phoneNumber}
-                      onChange={(event) => setPhoneNumber(event.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                      placeholder="+233241234567"
-                      autoComplete="tel"
-                    />
-                    {normalizedPhone && (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Code will be sent to {normalizedPhone}.
-                      </p>
-                    )}
                   </div>
-
                   <div>
                     <label className="block text-sm font-semibold text-slate-700">
-                      Factor name
+                      Authenticator code
                     </label>
                     <input
                       type="text"
-                      value={displayName}
-                      onChange={(event) => setDisplayName(event.target.value)}
+                      inputMode="numeric"
+                      value={totpCode}
+                      onChange={(event) =>
+                        setTotpCode(event.target.value.replace(/[^0-9]/g, ""))
+                      }
                       className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                      placeholder="Admin phone"
+                      placeholder="Enter 6-digit code"
                     />
                   </div>
-
                   <button
                     type="submit"
-                    disabled={sendingCode || enrolling || !emailVerified}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B4A82] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#083a66] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                    disabled={enrolling}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
                   >
-                    {sendingCode && (
+                    {enrolling && (
                       <Loader2 size={18} className="animate-spin" />
                     )}
-                    {verificationId ? "Send New Code" : "Send Verification Code"}
+                    Finish Authenticator Setup
                   </button>
                 </form>
-              </div>
-            )}
-
-            {setupMethod === "sms" && verificationId && (
-              <form onSubmit={handleEnroll} className="mt-5 space-y-4">
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                  If the SMS does not arrive within a minute, confirm the
-                  number is correct, Ghana SMS region is allowed in Firebase,
-                  and the Firebase SMS quota/billing status is healthy. You can
-                  also use a Firebase test phone number while testing.
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">
-                    Verification code
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={verificationCode}
-                    onChange={(event) =>
-                      setVerificationCode(
-                        event.target.value.replace(/[^0-9]/g, ""),
-                      )
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
-                    placeholder="Enter SMS code"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={enrolling}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
-                >
-                  {enrolling && <Loader2 size={18} className="animate-spin" />}
-                  Finish Setup
-                </button>
-              </form>
-            )}
+              )}
+            </div>
 
             {error && (
               <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
