@@ -3893,6 +3893,30 @@ class FirestoreService {
     await updateDoc(doc(firestore, "payments", paymentId), updates);
   }
 
+  async markStudentPaymentReviewed(
+    paymentId: string,
+    schoolId: string,
+    reviewedBy: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "admin_dashboard");
+    if (!paymentId) return;
+
+    const updates: Partial<StudentFeePayment> = {
+      adminReviewedAt: Date.now(),
+      adminReviewedBy: reviewedBy,
+    };
+
+    if (await this.useFinanceV2(schoolId)) {
+      const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+      const rootRef = doc(firestore, "payments", paymentId);
+      await setDoc(scopedRef, updates, { merge: true });
+      await setDoc(rootRef, { ...updates, schoolId }, { merge: true }).catch(() => {});
+      return;
+    }
+
+    await updateDoc(doc(firestore, "payments", paymentId), updates);
+  }
+
   async computeLedgerTotals(
     ledger: StudentFeeLedger,
     payments: StudentFeePayment[],

@@ -19,7 +19,9 @@ export type FeatureKey =
   | "timetable"
   | "whatsapp_broadcast"
   | "parent_portal"
-  | "online_payments";
+  | "online_payments"
+  | "school_ai"
+  | "staff_payroll";
 
 export type FeaturePlan = "starter" | "standard";
 
@@ -57,6 +59,8 @@ export const PLAN_FEATURES: Record<FeaturePlan, FeatureKey[]> = {
     "whatsapp_broadcast",
     "parent_portal",
     "online_payments",
+    "school_ai",
+    "staff_payroll",
   ],
 };
 

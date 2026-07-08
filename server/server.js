@@ -898,6 +898,12 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         .get(),
     ]);
     const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
+    if (String(schoolData.featurePlan || "starter").toLowerCase() !== "standard") {
+      return res.status(403).json({
+        code: "FEATURE_ACCESS_DENIED",
+        message: "School AI is available on the Standard Plan.",
+      });
+    }
     const schoolContext = {
       schoolName: String(schoolData.name || userData.schoolName || "Your school").slice(0, 160),
       totalStudents: Number(studentCountSnap.data().count || 0),
@@ -11717,6 +11723,17 @@ const resolveSchoolAdmin = async (req, res) => {
     res.status(403).json({ error: "Forbidden. Only school admins can manage payroll." });
     return null;
   }
+
+  const schoolSnap = await admin.firestore().collection("schools").doc(String(user.schoolId)).get();
+  const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
+  if (String(schoolData.featurePlan || "starter").toLowerCase() !== "standard") {
+    res.status(403).json({
+      code: "FEATURE_ACCESS_DENIED",
+      error: "Staff Payroll is available on the Standard Plan.",
+    });
+    return null;
+  }
+
   return { uid: req.user.uid, ...user };
 };
 

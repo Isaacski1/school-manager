@@ -49,6 +49,7 @@ const SuperAdminAnalytics = lazy(() => import("./pages/super-admin/Analytics"));
 const SuperAdminSystemHealth = lazy(() => import("./pages/super-admin/SystemHealth"));
 const SuperAdminBroadcasts = lazy(() => import("./pages/super-admin/Broadcasts"));
 const SuperAdminWhatsAppPairing = lazy(() => import("./pages/super-admin/WhatsAppPairing"));
+const OutreachTracker = lazy(() => import("./pages/super-admin/OutreachTracker"));
 const LoginHistory = lazy(() => import("./pages/super-admin/security/LoginHistory"));
 const SuspiciousEvents = lazy(() => import("./pages/super-admin/security/SuspiciousEvents"));
 const AuditLogs = lazy(() => import("./pages/super-admin/security/AuditLogs"));
@@ -698,7 +699,7 @@ const AppRoutes = ({
         element={
           <ProtectedRoute
             allowedRoles={[UserRole.SCHOOL_ADMIN]}
-            requiredFeature="teacher_management"
+            requiredFeature="staff_payroll"
           >
             <StaffPayroll />
           </ProtectedRoute>
@@ -832,6 +833,14 @@ const AppRoutes = ({
         element={
           <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
             <SuperAdminBroadcasts />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/super-admin/outreach"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN]}>
+            <OutreachTracker />
           </ProtectedRoute>
         }
       />

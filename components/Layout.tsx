@@ -54,6 +54,7 @@ import {
   Lock,
   BarChart3,
   Megaphone,
+  ClipboardList,
   History,
   Activity,
   BadgeDollarSign,
@@ -816,6 +817,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 label="Broadcasts"
               />
               <NavItem
+                href="/super-admin/outreach"
+                icon={<ClipboardList size={18} />}
+                label="Outreach Tracker"
+              />
+              <NavItem
                 href="/super-admin/security/login-history"
                 icon={<Lock size={18} />}
                 label="Login History"
@@ -935,7 +941,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/fees" icon={<CreditCard size={18} />} label="Fees & Payments" />
               )}
-              {hasFeature("teacher_management") && (
+              {hasFeature("staff_payroll") && (
                 <NavItem href="/admin/payroll" icon={<HandCoins size={18} />} label="Staff Payroll" />
               )}
               {hasFeature("fees_payments") && (
@@ -960,21 +966,23 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("backups") && (
                 <NavItem href="/admin/backups" icon={<History size={18} />} label="Backups" />
               )}
-              <button
-                type="button"
-                data-tour="school-assistant"
-                onClick={() => {
-                  setSchoolAssistantOpen(true);
-                  setSidebarOpen(false);
-                }}
-                title={isCollapsed ? "School Assistant" : ""}
-                className={`flex w-[calc(100%_-_1.5rem)] items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[17px] font-medium text-[#E6F0FA] transition-all hover:bg-[#0B4A82] hover:text-white ${
-                  isCollapsed ? "justify-center px-0 mx-2 w-[calc(100%_-_1rem)]" : ""
-                }`}
-              >
-                <MessageSquare size={18} />
-                {!isCollapsed && <span className="truncate">School Assistant</span>}
-              </button>
+              {hasFeature("school_ai") && (
+                <button
+                  type="button"
+                  data-tour="school-assistant"
+                  onClick={() => {
+                    setSchoolAssistantOpen(true);
+                    setSidebarOpen(false);
+                  }}
+                  title={isCollapsed ? "School Assistant" : ""}
+                  className={`flex w-[calc(100%_-_1.5rem)] items-center gap-3 px-4 py-3 mx-3 my-1 rounded-xl text-[17px] font-medium text-[#E6F0FA] transition-all hover:bg-[#0B4A82] hover:text-white ${
+                    isCollapsed ? "justify-center px-0 mx-2 w-[calc(100%_-_1rem)]" : ""
+                  }`}
+                >
+                  <MessageSquare size={18} />
+                  {!isCollapsed && <span className="truncate">School Assistant</span>}
+                </button>
+              )}
               {hasFeature("academic_year") && (
                 <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
               )}
@@ -1232,7 +1240,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         </main>
       </div>
 
-      {isAdmin && !subscriptionGate ? (
+      {isAdmin && hasFeature("school_ai") && !subscriptionGate ? (
         <>
           {!schoolAssistantOpen ? (
             <SchoolAssistantLauncher onClick={() => setSchoolAssistantOpen(true)} />

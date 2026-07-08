@@ -435,6 +435,8 @@ const AdminDashboard = () => {
   const [parentFeePayments, setParentFeePayments] = useState<
     ParentFeePaymentSignal[]
   >([]);
+  const [markingParentPaymentsReviewed, setMarkingParentPaymentsReviewed] =
+    useState(false);
   const [dashboardStatsCache, setDashboardStatsCache] = useState<
     typeof stats | null
   >(null);
@@ -745,6 +747,18 @@ const AdminDashboard = () => {
       return null;
     }
   }, [heavyCacheKey]);
+
+  const clearDashboardCaches = useCallback(() => {
+    if (summaryCacheKey) {
+      sessionStorage.removeItem(summaryCacheKey);
+      localStorage.removeItem(summaryCacheKey);
+    }
+    if (heavyCacheKey) {
+      sessionStorage.removeItem(heavyCacheKey);
+      localStorage.removeItem(heavyCacheKey);
+      delete adminDashboardMemoryCache[heavyCacheKey];
+    }
+  }, [heavyCacheKey, summaryCacheKey]);
 
   useEffect(() => {
     setStats((prev) => ({ ...prev, classes: availableClasses.length }));
@@ -1872,6 +1886,45 @@ const AdminDashboard = () => {
       });
     } finally {
       setIsApprovingAllTeacherAttendance(false);
+    }
+  };
+
+  const handleMarkParentPaymentsReviewed = async () => {
+    if (
+      !schoolId ||
+      !user?.id ||
+      parentFeePayments.length === 0 ||
+      markingParentPaymentsReviewed
+    ) {
+      return;
+    }
+
+    setMarkingParentPaymentsReviewed(true);
+    const paymentsToReview = [...parentFeePayments];
+
+    try {
+      await Promise.all(
+        paymentsToReview.map((payment) =>
+          db.markStudentPaymentReviewed(payment.id, schoolId, user.id),
+        ),
+      );
+
+      const reviewedIds = new Set(paymentsToReview.map((payment) => payment.id));
+      setParentFeePayments((current) =>
+        current.filter((payment) => !reviewedIds.has(payment.id)),
+      );
+      clearDashboardCaches();
+      showToast(
+        `${paymentsToReview.length} parent payment${paymentsToReview.length === 1 ? "" : "s"} marked as reviewed.`,
+        { type: "success" },
+      );
+    } catch (error) {
+      console.error("Failed to mark parent payments reviewed", error);
+      showToast("Failed to mark parent payments as reviewed.", {
+        type: "error",
+      });
+    } finally {
+      setMarkingParentPaymentsReviewed(false);
     }
   };
 
@@ -4379,6 +4432,16 @@ const AdminDashboard = () => {
                           <ArrowUpRight size={16} className="ml-2" />
                         </Link>
                       )}
+                      <button
+                        type="button"
+                        onClick={handleMarkParentPaymentsReviewed}
+                        disabled={markingParentPaymentsReviewed}
+                        className="inline-flex items-center justify-center rounded-full border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {markingParentPaymentsReviewed
+                          ? "Marking..."
+                          : "I've reviewed / taken action"}
+                      </button>
                     </div>
                   </div>
 

@@ -14,8 +14,11 @@ import {
 } from "firebase/auth";
 import {
   AlertCircle,
+  Download,
   CheckCircle,
   Loader2,
+  KeyRound,
+  QrCode,
   ShieldCheck,
   Smartphone,
   Trash2,
@@ -701,8 +704,9 @@ const MfaSetup: React.FC = () => {
               ) : (
                 <form onSubmit={handleEnrollTotp} className="space-y-4">
                   <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                    Scan this QR code in Google Authenticator, Microsoft
-                    Authenticator, Authy, or another authenticator app.
+                    Open your authenticator app, choose add account, then scan
+                    the QR code below. After scanning, enter the 6-digit code
+                    shown in the app to finish setup.
                   </div>
                   <div className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
                     <img
@@ -757,46 +761,111 @@ const MfaSetup: React.FC = () => {
             <div id={recaptchaContainerId} key={recaptchaContainerId} className="hidden" />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <h2 className="font-semibold text-slate-900">Enrolled Factors</h2>
-            <div className="mt-4 space-y-3">
-              {enrolledFactors.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-                  No second factor has been added to this account yet.
-                </div>
-              ) : (
-                enrolledFactors.map((factor: any) => (
-                  <div
-                    key={factor.uid}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold text-slate-800">
-                        {factor.displayName || "Second factor"}
-                      </div>
-                      <div className="truncate text-sm text-slate-500">
-                        {factor.factorId ===
-                        TotpMultiFactorGenerator.FACTOR_ID
-                          ? "Authenticator app"
-                          : factor.phoneNumber || factor.factorId}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveFactor(factor)}
-                      disabled={Boolean(removingUid)}
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      title="Remove second factor"
-                    >
-                      {removingUid === factor.uid ? (
-                        <Loader2 size={17} className="animate-spin" />
-                      ) : (
-                        <Trash2 size={17} />
-                      )}
-                    </button>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="font-semibold text-slate-900">
+                How to Set It Up
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                You only need a phone and an authenticator app. The app creates
+                a new 6-digit code every few seconds for secure admin login.
+              </p>
+
+              <div className="mt-5 space-y-4">
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#0B4A82]">
+                    <Download size={18} />
                   </div>
-                ))
-              )}
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      1. Install an authenticator app
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Use Google Authenticator, Microsoft Authenticator, Authy,
+                      or another trusted authenticator app on your phone.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#0B4A82]">
+                    <QrCode size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      2. Start setup and scan the QR code
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Tap add account in the app, choose scan QR code, and point
+                      the phone camera at the code shown on this page.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#0B4A82]">
+                    <KeyRound size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      3. Enter the 6-digit code
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Type the current code from the app into the Authenticator
+                      code box, then finish setup. Keep the app installed for
+                      future logins.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+                If the QR code will not scan, copy the manual setup key into
+                the authenticator app instead.
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="font-semibold text-slate-900">Enrolled Factors</h2>
+              <div className="mt-4 space-y-3">
+                {enrolledFactors.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                    No second factor has been added to this account yet.
+                  </div>
+                ) : (
+                  enrolledFactors.map((factor: any) => (
+                    <div
+                      key={factor.uid}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-slate-800">
+                          {factor.displayName || "Second factor"}
+                        </div>
+                        <div className="truncate text-sm text-slate-500">
+                          {factor.factorId ===
+                          TotpMultiFactorGenerator.FACTOR_ID
+                            ? "Authenticator app"
+                            : factor.phoneNumber || factor.factorId}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFactor(factor)}
+                        disabled={Boolean(removingUid)}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        title="Remove second factor"
+                      >
+                        {removingUid === factor.uid ? (
+                          <Loader2 size={17} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={17} />
+                        )}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>

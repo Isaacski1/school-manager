@@ -135,6 +135,11 @@ service cloud.firestore {
       allow create, update, delete: if isSuperAdmin();
     }
 
+    // School Manager GH owner outreach tracker - Super admin only
+    match /outreachSchools/{outreachSchoolId} {
+      allow read, create, update, delete: if isSuperAdmin();
+    }
+
     // Users collection - STRICT security
     match /users/{userId} {
       // Super admin can create/delete any user and change role/schoolId
