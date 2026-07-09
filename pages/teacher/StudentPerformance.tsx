@@ -44,6 +44,16 @@ type StudentPerformanceSnapshot = {
   grades?: Partial<Assessment>[];
 } | null;
 
+const isPermissionDeniedError = (error: unknown) => {
+  const message = String(
+    (error as any)?.code || (error as any)?.message || error || "",
+  );
+  return (
+    message.includes("permission-denied") ||
+    message.includes("Missing or insufficient permissions")
+  );
+};
+
 const parseAcademicYearStart = (value?: string) => {
   const match = String(value || "").match(/(\d{4})/);
   return match ? Number(match[1]) : 0;
@@ -187,12 +197,30 @@ const StudentPerformance = () => {
       setSelectedTermKey(null);
 
       try {
-        const [snapshot, assessments, remarks, skills] = await Promise.all([
-          db.getStudentPerformance(schoolId, student.id, student.classId),
-          db.getStudentAssessmentsByStudent(schoolId, student.id),
-          db.getStudentRemarksByStudent(schoolId, student.id),
-          db.getStudentSkillsByStudent(schoolId, student.id),
-        ]);
+        const [snapshotResult, assessmentsResult, remarksResult, skillsResult] =
+          await Promise.allSettled([
+            db.getStudentPerformance(schoolId, student.id, student.classId),
+            db.getStudentAssessmentsByStudent(schoolId, student.id),
+            db.getStudentRemarksByStudent(schoolId, student.id),
+            db.getStudentSkillsByStudent(schoolId, student.id),
+          ]);
+
+        const readResult = <T,>(result: PromiseSettledResult<T>, fallback: T) => {
+          if (result.status === "fulfilled") return result.value;
+          if (isPermissionDeniedError(result.reason)) {
+            console.debug("Student performance detail unavailable: permission denied");
+            return fallback;
+          }
+          throw result.reason;
+        };
+
+        const snapshot = readResult<StudentPerformanceSnapshot>(
+          snapshotResult,
+          null,
+        );
+        const assessments = readResult<Assessment[]>(assessmentsResult, []);
+        const remarks = readResult<StudentRemark[]>(remarksResult, []);
+        const skills = readResult<StudentSkills[]>(skillsResult, []);
 
         const nextTermRecords = buildTermRecords(assessments, remarks, skills);
         setPerformanceData(snapshot || null);

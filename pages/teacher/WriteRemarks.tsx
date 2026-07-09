@@ -8,6 +8,16 @@ import { Save, MessageSquare } from "lucide-react";
 import UserAvatar from "../../components/UserAvatar";
 import { logActivity } from "../../services/activityLog";
 
+const isPermissionDeniedError = (error: unknown) => {
+  const message = String(
+    (error as any)?.code || (error as any)?.message || error || "",
+  );
+  return (
+    message.includes("permission-denied") ||
+    message.includes("Missing or insufficient permissions")
+  );
+};
+
 const WriteRemarks = () => {
   const { user } = useAuth();
   const assignedClassIds = (user?.assignedClassIds || []).sort((a, b) => {
@@ -41,10 +51,19 @@ const WriteRemarks = () => {
         setStudents(studentsList);
 
         // Load existing remarks
-        const existingRemarks = await db.getStudentRemarks(
-          schoolId,
-          selectedClassId,
-        );
+        let existingRemarks: StudentRemark[] = [];
+        try {
+          existingRemarks = await db.getStudentRemarks(
+            schoolId,
+            selectedClassId,
+          );
+        } catch (remarksError) {
+          if (isPermissionDeniedError(remarksError)) {
+            console.debug("Student remarks unavailable: permission denied");
+          } else {
+            throw remarksError;
+          }
+        }
         const remarksMap: Record<string, string> = {};
 
         // Determine dynamic term
@@ -124,11 +143,15 @@ const WriteRemarks = () => {
       const className =
         CLASSES_LIST.find((c) => c.id === selectedClassId)?.name ||
         selectedClassId;
-      await db.addSystemNotification(
-        `${user?.fullName} updated remarks for ${className}.`,
-        "assessment",
-        schoolId,
-      );
+      try {
+        await db.addSystemNotification(
+          `${user?.fullName} updated remarks for ${className}.`,
+          "assessment",
+          schoolId,
+        );
+      } catch (notificationError) {
+        console.debug("Remarks notification skipped", notificationError);
+      }
 
       setMessage("Remarks saved successfully!");
       setTimeout(() => setMessage(""), 3000);

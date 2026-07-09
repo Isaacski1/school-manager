@@ -75,6 +75,16 @@ type SchoolScopedPage<T> = {
 class FirestoreService {
   private actorRoleCache: { uid: string; role: UserRole | null } | null = null;
 
+  private isPermissionDeniedError(error: unknown): boolean {
+    const message = String(
+      (error as any)?.code || (error as any)?.message || error || "",
+    );
+    return (
+      message.includes("permission-denied") ||
+      message.includes("Missing or insufficient permissions")
+    );
+  }
+
   // Helper to get array from collection
   private async getCollection<T>(collectionName: string): Promise<T[]> {
     const querySnapshot = await getDocs(collection(firestore, collectionName));
@@ -1399,30 +1409,41 @@ class FirestoreService {
     await this.requireFeature(schoolId, "class_subject_management");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getSubjects");
     if (!classId) return [];
+    const getDefaultSubjects = () => {
+      const selectedClass = CLASSES_LIST.find((cls) => cls.id === classId);
+      switch (selectedClass?.level) {
+        case "CRECHE":
+          return crecheSubjects;
+        case "NURSERY":
+          return nurserySubjects;
+        case "KG":
+          return kgSubjects;
+        case "PRIMARY":
+          return primarySubjects;
+        case "JHS":
+          return jhsSubjects;
+        default:
+          return [];
+      }
+    };
     const q = query(
       collection(firestore, "class_subjects"),
       where("schoolId", "==", scopedSchoolId),
       where("classId", "==", classId),
     );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return (snap.docs[0].data() as ClassSubjectConfig).subjects;
+    try {
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return (snap.docs[0].data() as ClassSubjectConfig).subjects;
+      }
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getSubjects unavailable: permission denied");
+        return getDefaultSubjects();
+      }
+      throw error;
     }
-    const selectedClass = CLASSES_LIST.find((cls) => cls.id === classId);
-    switch (selectedClass?.level) {
-      case "CRECHE":
-        return crecheSubjects;
-      case "NURSERY":
-        return nurserySubjects;
-      case "KG":
-        return kgSubjects;
-      case "PRIMARY":
-        return primarySubjects;
-      case "JHS":
-        return jhsSubjects;
-      default:
-        return [];
-    }
+    return getDefaultSubjects();
   }
 
   async addSubject(
@@ -1606,6 +1627,10 @@ class FirestoreService {
       const snap = await getDocs(q);
       return snap.docs.map((d) => d.data() as AttendanceRecord);
     } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getClassAttendance unavailable: permission denied");
+        return [];
+      }
       console.warn("[mockDb] getClassAttendance failed, trying school-wide fallback", error);
       // Fallback: Fetch all attendance for the school and filter by classId locally
       // This is less efficient but works without composite indexes
@@ -1619,6 +1644,10 @@ class FirestoreService {
           .map((d) => d.data() as AttendanceRecord)
           .filter((r) => r.classId === classId);
       } catch (innerError) {
+        if (this.isPermissionDeniedError(innerError)) {
+          console.debug("[mockDb] getClassAttendance fallback unavailable: permission denied");
+          return [];
+        }
         console.warn("[mockDb] getClassAttendance fallback failed, returning empty", innerError);
         return [];
       }
@@ -1652,6 +1681,10 @@ class FirestoreService {
       // documents cannot satisfy rules that check resource.data.schoolId.
       return rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
     } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getClassAttendanceByDateRange unavailable: permission denied");
+        return [];
+      }
       // Fallback for environments missing composite indexes.
       try {
         const fallback = await this.getClassAttendance(scopedSchoolId, classId);
@@ -1747,8 +1780,16 @@ class FirestoreService {
       where("classId", "==", classId),
       where("subject", "==", subject),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as Assessment);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Assessment);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getAssessments unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async getAssessmentsByClassAndTerm(
@@ -1841,8 +1882,16 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
       where("studentId", "==", studentId),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as Assessment);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Assessment);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentAssessmentsByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async saveAssessment(assessment: Assessment): Promise<void> {
@@ -1920,8 +1969,16 @@ class FirestoreService {
       collection(firestore, "notices"),
       where("schoolId", "==", scopedSchoolId),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as Notice);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Notice);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getNotices unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async addNotice(notice: Notice): Promise<void> {
@@ -1974,7 +2031,16 @@ class FirestoreService {
       collection(firestore, "platformBroadcasts"),
       orderBy("createdAt", "desc"),
     );
-    const snap = await getDocs(q);
+    let snap;
+    try {
+      snap = await getDocs(q);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getPlatformBroadcasts unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
     const now = Date.now();
     return snap.docs
       .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
@@ -2018,8 +2084,16 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
       where("classId", "==", classId),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as StudentRemark);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentRemark);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentRemarks unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async getStudentRemarksByStudent(
@@ -2037,8 +2111,16 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
       where("studentId", "==", studentId),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as StudentRemark);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentRemark);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentRemarksByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async getAdminRemarks(
@@ -2095,8 +2177,16 @@ class FirestoreService {
       where("schoolId", "==", scopedSchoolId),
       where("studentId", "==", studentId),
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as StudentSkills);
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentSkills);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentSkillsByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
   }
 
   async saveStudentSkills(skills: StudentSkills): Promise<void> {
@@ -2168,8 +2258,16 @@ class FirestoreService {
       where("classId", "==", classId),
       limit(1),
     );
-    const snap = await getDocs(q);
-    return snap.empty ? undefined : (snap.docs[0].data() as ClassTimetable);
+    try {
+      const snap = await getDocs(q);
+      return snap.empty ? undefined : (snap.docs[0].data() as ClassTimetable);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTimetable unavailable: permission denied");
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async saveTimetable(timetable: ClassTimetable): Promise<void> {
@@ -2250,10 +2348,19 @@ class FirestoreService {
       where("schoolId", "==", schoolId),
       where("studentId", "==", studentId),
     );
-    const snap = await getDocs(q);
-    const allAssessments = snap.docs
-      .map((d) => d.data() as Assessment)
-      .filter((a) => true);
+    let allAssessments: Assessment[] = [];
+    try {
+      const snap = await getDocs(q);
+      allAssessments = snap.docs
+        .map((d) => d.data() as Assessment)
+        .filter((a) => true);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentPerformance assessments unavailable: permission denied");
+      } else {
+        throw error;
+      }
+    }
 
     const subjects = await this.getSubjects(schoolId, classId);
 
@@ -2428,13 +2535,21 @@ class FirestoreService {
       where("teacherId", "==", teacherId),
       where("date", "==", date),
     );
-    const snap = await getDocs(q);
-    if (snap.empty) return undefined;
-    const records = snap.docs.map((docSnap) => {
-      const data = docSnap.data() as TeacherAttendanceRecord;
-      return { ...data, id: data.id || docSnap.id };
-    });
-    return this.selectPreferredTeacherAttendanceRecord(records);
+    try {
+      const snap = await getDocs(q);
+      if (snap.empty) return undefined;
+      const records = snap.docs.map((docSnap) => {
+        const data = docSnap.data() as TeacherAttendanceRecord;
+        return { ...data, id: data.id || docSnap.id };
+      });
+      return this.selectPreferredTeacherAttendanceRecord(records);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTeacherAttendance unavailable: permission denied");
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async getTeacherAttendanceByDateRange(
@@ -2466,6 +2581,10 @@ class FirestoreService {
         }),
       );
     } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTeacherAttendanceByDateRange unavailable: permission denied");
+        return [];
+      }
       // Fallback for environments missing composite indexes.
       const fallbackQuery = query(
         collection(firestore, "teacher_attendance"),

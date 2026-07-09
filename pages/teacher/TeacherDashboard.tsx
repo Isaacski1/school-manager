@@ -142,6 +142,68 @@ const createInitialSectionState = (): SectionStateMap => ({
   analytics: { loading: true, error: null },
 });
 
+const normalizePlanDate = (raw: any): Date | null => {
+  if (!raw) return null;
+  if (
+    typeof raw === "object" &&
+    typeof raw.seconds === "number" &&
+    typeof raw.toDate !== "function"
+  ) {
+    const date = new Date(
+      raw.seconds * 1000 + Math.floor(Number(raw.nanoseconds || 0) / 1_000_000),
+    );
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date =
+    raw instanceof Date
+      ? raw
+      : new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getPlanMonths = (plan?: string) => {
+  if (plan === "termly") return 4;
+  if (plan === "yearly") return 12;
+  return 1;
+};
+
+const addPlanMonths = (baseDate: Date | null, plan?: string) => {
+  if (!baseDate) return null;
+  const endDate = new Date(baseDate);
+  endDate.setMonth(endDate.getMonth() + getPlanMonths(plan));
+  return endDate;
+};
+
+const isSchoolAccessPaused = (school: any) => {
+  if (!school || school.plan === "free") return false;
+  const plan = school.plan || "monthly";
+  const explicitEndsAt = normalizePlanDate(school.planEndsAt);
+  const lastPaymentAt = normalizePlanDate(school.billing?.lastPaymentAt);
+  const createdAt = normalizePlanDate(
+    school.createdAt || school.billing?.createdAt,
+  );
+  const paymentBasedEndsAt = addPlanMonths(lastPaymentAt, plan);
+  const fallbackEndsAt = addPlanMonths(createdAt, plan);
+  const planEndsAt =
+    explicitEndsAt && lastPaymentAt && lastPaymentAt > explicitEndsAt
+      ? new Date(
+          Math.max(explicitEndsAt.getTime(), paymentBasedEndsAt?.getTime() || 0),
+        )
+      : explicitEndsAt || paymentBasedEndsAt || fallbackEndsAt;
+  if (!planEndsAt) return false;
+  return Date.now() >= planEndsAt.getTime() + 7 * 24 * 60 * 60 * 1000;
+};
+
+const isPermissionDeniedError = (error: unknown) => {
+  const message = String(
+    (error as any)?.code || (error as any)?.message || error || "",
+  );
+  return (
+    message.includes("permission-denied") ||
+    message.includes("Missing or insufficient permissions")
+  );
+};
+
 const toHolidayDateString = (
   value?: string | { date: string; reason?: string } | null,
 ) => {
@@ -153,7 +215,9 @@ const toHolidayDateString = (
 const TeacherDashboard = () => {
   const { user } = useAuth();
   const schoolId = user?.schoolId || null;
-  const { school } = useSchool();
+  const { school, schoolLoading } = useSchool();
+  const accessPaused = useMemo(() => isSchoolAccessPaused(school), [school]);
+  const shouldPauseDashboardReads = accessPaused || schoolLoading || !school;
   const hasFeature = (feature: any) => canAccessFeature(user, school, feature);
   const canUseExamReports = hasFeature("basic_exam_reports");
   const { getLocalDateString, getWeekDates, getWeekLabel } = useTeacherWeekUtils();
@@ -173,6 +237,16 @@ const TeacherDashboard = () => {
     createInitialSectionState,
   );
   const [refreshSeed, setRefreshSeed] = useState(0);
+
+  useEffect(() => {
+    if (!accessPaused && (schoolLoading || school)) return;
+    setSectionState({
+      attendance: { loading: false, error: null },
+      timetable: { loading: false, error: null },
+      notices: { loading: false, error: null },
+      analytics: { loading: false, error: null },
+    });
+  }, [accessPaused, school, schoolLoading]);
 
   useEffect(() => {
     if (!assignedClassIds.length) return;
@@ -397,7 +471,7 @@ const TeacherDashboard = () => {
   );
 
   const refreshTeacherAttendanceSnapshot = useCallback(async () => {
-    if (!schoolId || !user?.id) return;
+    if (!schoolId || !user?.id || shouldPauseDashboardReads) return;
     try {
       setSectionLoading("attendance", true);
       setSectionError("attendance", null);
@@ -417,6 +491,16 @@ const TeacherDashboard = () => {
       });
       setTeacherAttendance(todayAttendance || null);
     } catch (error) {
+      if (isPermissionDeniedError(error)) {
+        console.debug("Teacher attendance summary unavailable: permission denied");
+        await buildTeacherTrend(weekOffset, {
+          records: [],
+          forceEmpty: true,
+        });
+        setTeacherAttendance(null);
+        setSectionError("attendance", null);
+        return;
+      }
       console.error("Error refreshing teacher attendance:", error);
       setSectionError(
         "attendance",
@@ -434,10 +518,11 @@ const TeacherDashboard = () => {
     setSectionLoading,
     user?.id,
     weekOffset,
+    shouldPauseDashboardReads,
   ]);
 
   const refreshClassAttendanceSnapshot = useCallback(async () => {
-    if (!schoolId || !selectedClassId) return;
+    if (!schoolId || !selectedClassId || shouldPauseDashboardReads) return;
     try {
       setSectionLoading("attendance", true);
       setSectionError("attendance", null);
@@ -460,6 +545,12 @@ const TeacherDashboard = () => {
       applyClassAttendanceMetrics(attendanceRecords, students);
       setClassStudents(students);
     } catch (error) {
+      if (isPermissionDeniedError(error)) {
+        console.debug("Class attendance summary unavailable: permission denied");
+        applyClassAttendanceMetrics([], classStudents);
+        setSectionError("attendance", null);
+        return;
+      }
       console.error("Error refreshing class attendance:", error);
       setSectionError("attendance", "Could not refresh class attendance.");
     } finally {
@@ -474,6 +565,7 @@ const TeacherDashboard = () => {
     setSectionError,
     setSectionLoading,
     weekOffset,
+    shouldPauseDashboardReads,
   ]);
 
   // Re-check for missed attendance with batched range reads.
@@ -482,7 +574,7 @@ const TeacherDashboard = () => {
 
     const checkAttendance = async () => {
       try {
-        if (!schoolId || !user?.id) return;
+        if (!schoolId || !user?.id || shouldPauseDashboardReads) return;
         const config = await db.getSchoolConfig(schoolId);
         if (!isMounted) return;
 
@@ -603,49 +695,69 @@ const TeacherDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [schoolId, user?.id, selectedClassId, getLocalDateString, refreshSeed]);
+  }, [schoolId, user?.id, selectedClassId, getLocalDateString, refreshSeed, shouldPauseDashboardReads]);
 
   useEffect(() => {
     refreshTeacherAttendanceSnapshot();
   }, [refreshTeacherAttendanceSnapshot]);
 
   useEffect(() => {
-    if (!schoolId || !user?.id) return;
+    if (!schoolId || !user?.id || shouldPauseDashboardReads) return;
     const attendanceRef = query(
       collection(firestore, "teacher_attendance"),
       where("schoolId", "==", schoolId),
       where("teacherId", "==", user.id),
     );
-    const unsubscribe = onSnapshot(attendanceRef, async () => {
-      await refreshTeacherAttendanceSnapshot();
-    });
+    const unsubscribe = onSnapshot(
+      attendanceRef,
+      async () => {
+        await refreshTeacherAttendanceSnapshot();
+      },
+      (error) => {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Teacher attendance listener unavailable: permission denied");
+          return;
+        }
+        console.warn("Teacher attendance listener unavailable", error);
+      },
+    );
 
     return () => unsubscribe();
-  }, [refreshTeacherAttendanceSnapshot, schoolId, user?.id]);
+  }, [refreshTeacherAttendanceSnapshot, schoolId, user?.id, shouldPauseDashboardReads]);
 
   useEffect(() => {
     refreshClassAttendanceSnapshot();
   }, [refreshClassAttendanceSnapshot]);
 
   useEffect(() => {
-    if (!schoolId || !selectedClassId) return;
+    if (!schoolId || !selectedClassId || shouldPauseDashboardReads) return;
     const attendanceRef = query(
       collection(firestore, "attendance"),
       where("schoolId", "==", schoolId),
       where("classId", "==", selectedClassId),
     );
-    const unsubscribe = onSnapshot(attendanceRef, async () => {
-      await refreshClassAttendanceSnapshot();
-    });
+    const unsubscribe = onSnapshot(
+      attendanceRef,
+      async () => {
+        await refreshClassAttendanceSnapshot();
+      },
+      (error) => {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Class attendance listener unavailable: permission denied");
+          return;
+        }
+        console.warn("Class attendance listener unavailable", error);
+      },
+    );
 
     return () => unsubscribe();
-  }, [refreshClassAttendanceSnapshot, schoolId, selectedClassId]);
+  }, [refreshClassAttendanceSnapshot, schoolId, selectedClassId, shouldPauseDashboardReads]);
 
   useEffect(() => {
     let isMounted = true;
 
     const fetchData = async () => {
-      if (!selectedClassId || !schoolId || !user?.id) return;
+      if (!selectedClassId || !schoolId || !user?.id || shouldPauseDashboardReads) return;
 
       setSectionLoading("notices", true);
       setSectionLoading("timetable", true);
@@ -761,6 +873,13 @@ const TeacherDashboard = () => {
         if (!isMounted) return;
         setSubjects(currentSubjects);
       } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Subjects unavailable: permission denied");
+          if (!isMounted) return;
+          currentSubjects = [];
+          setSubjects([]);
+          setSectionError("analytics", null);
+        }
         console.error("Error fetching subjects:", error);
         setSectionError("analytics", "Could not load class subjects.");
       }
@@ -774,6 +893,14 @@ const TeacherDashboard = () => {
         setNotices(noticeData);
         setBroadcasts(broadcastData);
       } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Notices unavailable: permission denied");
+          if (!isMounted) return;
+          setNotices([]);
+          setBroadcasts([]);
+          setSectionError("notices", null);
+          return;
+        }
         console.error("Error loading notices:", error);
         setSectionError("notices", "Could not load notices and broadcasts.");
       } finally {
@@ -786,6 +913,14 @@ const TeacherDashboard = () => {
         setTimetable(t || null);
         setSelectedDay(getCurrentDay());
       } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Timetable summary unavailable: permission denied");
+          if (!isMounted) return;
+          setTimetable(null);
+          setSelectedDay(getCurrentDay());
+          setSectionError("timetable", null);
+          return;
+        }
         console.error("Error loading timetable:", error);
         setSectionError("timetable", "Could not load class schedule.");
       } finally {
@@ -888,6 +1023,17 @@ const TeacherDashboard = () => {
         standings.sort((a, b) => b.average - a.average);
         setSubjectStandings(standings);
       } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Class analytics unavailable: permission denied");
+          if (!isMounted) return;
+          setTermAssessments([]);
+          setTermRemarks([]);
+          setClassAverage(0);
+          setBehaviorAverage("0.0");
+          setSubjectStandings([]);
+          setSectionError("analytics", null);
+          return;
+        }
         console.error("Error loading class analytics:", error);
         setSectionError(
           "analytics",
@@ -915,6 +1061,7 @@ const TeacherDashboard = () => {
     triggerRefresh,
     user?.id,
     weekOffset,
+    shouldPauseDashboardReads,
   ]);
 
   // Update displayed schedule when day or data changes

@@ -83,7 +83,15 @@ export const logActivity = async (event: ActivityEvent) => {
     );
     return docRef.id;
   } catch (err) {
-    console.warn("Failed to log activity", err);
+    const message = String((err as any)?.message || (err as any)?.code || err);
+    if (
+      message.includes("permission-denied") ||
+      message.includes("Missing or insufficient permissions")
+    ) {
+      console.debug("Skipping activity log: permission denied");
+    } else {
+      console.warn("Failed to log activity", err);
+    }
     // Do not rethrow — logging failures due to security rules or network
     // should not break the caller's flow in the client app.
     return null as any;

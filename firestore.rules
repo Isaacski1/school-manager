@@ -467,6 +467,17 @@ service cloud.firestore {
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId));
     }
 
+    function teacherOwnsClass(schoolId, classId) {
+      return isAuthenticated() &&
+        isActiveUser() &&
+        isTeacher() &&
+        userSchoolId() == schoolId &&
+        classId != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['assignedClassIds']) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedClassIds.hasAny([classId]);
+    }
+
     function schoolScopedUpdate(schoolId) {
       return isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
@@ -489,6 +500,7 @@ service cloud.firestore {
 
       allow read: if isSuperAdmin() || 
                      schoolScopedRead(resource.data.schoolId) || 
+                     teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
                      isParentOf(resource.data.guardianPhone);
 
       allow update: if isAuthenticated() && isActiveUser() &&
@@ -506,7 +518,8 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
-      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+      allow create: if (schoolScopedCreate(request.resource.data.schoolId) ||
+        teacherOwnsClass(request.resource.data.schoolId, request.resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -517,9 +530,12 @@ service cloud.firestore {
           "holidayReason"
         ]);
 
-      allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
+      allow read: if isSuperAdmin() ||
+        schoolScopedRead(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId);
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+      allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -539,7 +555,8 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
-      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+      allow create: if (schoolScopedCreate(request.resource.data.schoolId) ||
+        teacherOwnsClass(request.resource.data.schoolId, request.resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -555,11 +572,13 @@ service cloud.firestore {
           "total"
         ]);
 
-      allow read: if isSuperAdmin() || 
-                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+      allow read: if isSuperAdmin() ||
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) ||
+                     teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
                      isParent();
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+      allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -584,7 +603,8 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
-      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+      allow create: if (schoolScopedCreate(request.resource.data.schoolId) ||
+        teacherOwnsClass(request.resource.data.schoolId, request.resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -627,7 +647,8 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
-      allow create: if schoolScopedCreate(request.resource.data.schoolId) &&
+      allow create: if (schoolScopedCreate(request.resource.data.schoolId) ||
+        teacherOwnsClass(request.resource.data.schoolId, request.resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -698,11 +719,13 @@ service cloud.firestore {
           "dateCreated"
         ]);
 
-      allow read: if isSuperAdmin() || 
-                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
+      allow read: if isSuperAdmin() ||
+                     (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) ||
+                     teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
                      isParent();
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+      allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",
@@ -782,9 +805,12 @@ service cloud.firestore {
           "homeworkCompletion"
         ]);
 
-      allow read: if schoolScopedRead(resource.data.schoolId) || isParentsStudent(resource.data.studentId);
+      allow read: if schoolScopedRead(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
+        isParentsStudent(resource.data.studentId);
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
+      allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
+        teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
         onlyAllowedFields([
           "id",
           "schoolId",

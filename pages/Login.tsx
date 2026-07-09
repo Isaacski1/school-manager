@@ -875,6 +875,13 @@ const Login = () => {
                 </div>
               </div>
 
+              {mfaError && (
+                <div id="mfa-code-error" className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start" role="alert">
+                  <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0 text-red-500" />
+                  <span>{mfaError}</span>
+                </div>
+              )}
+
               {!mfaVerificationId ? (
                 <button
                   type="button"
@@ -907,10 +914,17 @@ const Login = () => {
                       type="text"
                       inputMode="numeric"
                       value={mfaCode}
-                      onChange={(e) =>
-                        setMfaCode(e.target.value.replace(/[^0-9]/g, ""))
-                      }
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#1160A8] focus:border-[#1160A8] outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400"
+                      onChange={(e) => {
+                        setMfaCode(e.target.value.replace(/[^0-9]/g, ""));
+                        if (mfaError) setMfaError("");
+                      }}
+                      aria-invalid={Boolean(mfaError)}
+                      aria-describedby={mfaError ? "mfa-code-error" : undefined}
+                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 outline-none transition-all bg-white text-slate-900 placeholder:text-slate-400 ${
+                        mfaError
+                          ? "border-red-300 focus:ring-red-200 focus:border-red-500"
+                          : "border-slate-300 focus:ring-[#1160A8] focus:border-[#1160A8]"
+                      }`}
                       placeholder={
                         selectedMfaHintIsTotp
                           ? "Enter authenticator code"

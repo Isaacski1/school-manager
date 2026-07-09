@@ -62,6 +62,16 @@ const jhsSubjects = [
   "Computing / Coding",
 ];
 
+const isPermissionDeniedError = (error: unknown) => {
+  const message = String(
+    (error as any)?.code || (error as any)?.message || error || "",
+  );
+  return (
+    message.includes("permission-denied") ||
+    message.includes("Missing or insufficient permissions")
+  );
+};
+
 const AssessmentPage = () => {
   const { user } = useAuth();
   const { school } = useSchool();
@@ -134,7 +144,16 @@ const AssessmentPage = () => {
       }
 
       // Get subjects from DB, with fallback to hardcoded based on class level
-      const currentSubjects = await db.getSubjects(schoolId, selectedClassId);
+      let currentSubjects: string[] = [];
+      try {
+        currentSubjects = await db.getSubjects(schoolId, selectedClassId);
+      } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Assessment subjects unavailable: permission denied");
+        } else {
+          console.error("Failed to load assessment subjects", error);
+        }
+      }
 
       setSubjects(currentSubjects);
       if (currentSubjects.length > 0) {
@@ -151,8 +170,17 @@ const AssessmentPage = () => {
     if (!selectedClassId || !schoolId) return;
 
     const loadStudents = async () => {
-      const studentsList = await db.getStudents(schoolId, selectedClassId);
-      setStudents(studentsList);
+      try {
+        const studentsList = await db.getStudents(schoolId, selectedClassId);
+        setStudents(studentsList);
+      } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Assessment students unavailable: permission denied");
+          setStudents([]);
+          return;
+        }
+        console.error("Failed to load assessment students", error);
+      }
     };
 
     loadStudents();
@@ -168,11 +196,20 @@ const AssessmentPage = () => {
       setLoading(true);
 
       // Get existing assessments
-      const existing = await db.getAssessments(
-        schoolId,
-        selectedClassId,
-        selectedSubject,
-      );
+      let existing: Assessment[] = [];
+      try {
+        existing = await db.getAssessments(
+          schoolId,
+          selectedClassId,
+          selectedSubject,
+        );
+      } catch (error) {
+        if (isPermissionDeniedError(error)) {
+          console.debug("Assessments unavailable: permission denied");
+        } else {
+          console.error("Failed to load assessments", error);
+        }
+      }
 
       // Determine dynamic term number from schoolConfig (e.g. "Term 2" -> 2)
       let dynamicTerm = CURRENT_TERM;
@@ -282,11 +319,15 @@ const AssessmentPage = () => {
       const className =
         CLASSES_LIST.find((c) => c.id === selectedClassId)?.name ||
         selectedClassId;
-      await db.addSystemNotification(
-        `${user?.fullName || "Teacher"} updated assessments for ${className} in ${selectedSubject}.`,
-        "assessment",
-        schoolId,
-      );
+      try {
+        await db.addSystemNotification(
+          `${user?.fullName || "Teacher"} updated assessments for ${className} in ${selectedSubject}.`,
+          "assessment",
+          schoolId,
+        );
+      } catch (notificationError) {
+        console.debug("Assessment notification skipped", notificationError);
+      }
 
       showToast("Saved Successfully", { type: "success" });
       await logActivity({
