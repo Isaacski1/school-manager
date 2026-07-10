@@ -8,6 +8,7 @@ import {
 } from "../../services/schoolCalendar";
 import { TeacherAttendanceRecord } from "../../types";
 import { logActivity } from "../../services/activityLog";
+import { getFriendlyErrorMessage } from "../../services/errorMessages";
 import {
   Calendar,
   CheckCircle,
@@ -285,32 +286,51 @@ const TeacherAttendance = () => {
       holidayReason: "",
     };
 
-    await db.saveTeacherAttendance(record);
-    setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
-    setMissedAttendanceAlert(null);
+    try {
+      await db.saveTeacherAttendance(record);
+      setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
+      setMissedAttendanceAlert(null);
 
-    await db.addSystemNotification(
-      `${user?.fullName || "Teacher"} submitted ${status} attendance for ${date} (pending approval)`,
-      "attendance",
-      schoolId,
-    );
+      await db.addSystemNotification(
+        `${user?.fullName || "Teacher"} submitted ${status} attendance for ${date} (pending approval)`,
+        "attendance",
+        schoolId,
+      );
 
-    await logActivity({
-      schoolId,
-      actorUid: user?.id || null,
-      actorRole: user?.role || null,
-      eventType: "teacher_attendance_submitted",
-      entityId: record.id,
-      meta: {
-        status: "success",
-        module: "Teacher Attendance",
-        date,
-        attendanceStatus: status,
-        actorName: user?.fullName || "",
-      },
-    });
-
-    setSaving((s) => ({ ...s, [date]: false }));
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "teacher_attendance_submitted",
+        entityId: record.id,
+        meta: {
+          status: "success",
+          module: "Teacher Attendance",
+          date,
+          attendanceStatus: status,
+          actorName: user?.fullName || "",
+        },
+      });
+    } catch (error) {
+      const message = getFriendlyErrorMessage(
+        error,
+        "Could not mark attendance. Please try again.",
+      );
+      const isPermissionError = message.includes("permission");
+      if (isPermissionError) {
+        console.info("Teacher attendance save blocked by school access rules.");
+      } else {
+        console.error("Error marking teacher attendance:", error);
+      }
+      setActionMessage(
+        isPermissionError
+          ? "Attendance cannot be saved because this school subscription is inactive. Please contact the school administrator."
+          : message,
+      );
+      setTimeout(() => setActionMessage(""), 4000);
+    } finally {
+      setSaving((s) => ({ ...s, [date]: false }));
+    }
   };
 
   const handleMarkHoliday = async (date: string) => {

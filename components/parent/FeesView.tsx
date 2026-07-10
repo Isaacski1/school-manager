@@ -16,6 +16,10 @@ import html2pdf from "html2pdf.js";
 import { API_BASE_URL } from "../../src/config";
 import { useAuth } from "../../context/AuthContext";
 import { logActivity } from "../../services/activityLog";
+import {
+  getParentFeeTotals,
+  normalizeParentFeeTerm,
+} from "../../services/parentFees";
 
 interface FeesViewProps {
   student: Student;
@@ -110,15 +114,6 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     const fee = fees.find(f => f.feeName === feeName);
     return fee && fee.appliesTo === "new_students_only" && fee.feeFrequency === "one_time";
   };
-
-  const isAdmissionFee = (feeName?: string) =>
-    String(feeName || "").trim().toLowerCase().includes("admission");
-
-  const shouldHidePaidAdmissionFee = (fee: {
-    feeName: string;
-    actualBalance?: number;
-    actualStatus?: string;
-  }) => isAdmissionFee(fee.feeName) && (fee.actualBalance || 0) <= 0;
 
   const isFeeApplicableToStudent = (fee: FeeDefinition, currentYear: string, schoolReopenDate?: string) => {
     if (fee.academicYear !== currentYear) return false;
@@ -302,95 +297,41 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     setSelectedTerm(term);
   };
 
-  const enrichedLedgers = useMemo(() => {
-    const termLedgers = selectedTerm === "all" ? ledgers : ledgers.filter(l => l.term === selectedTerm);
-    
-    return termLedgers.map(ledger => {
-      let ledgerTotalDue = 0;
-      let ledgerTotalPaid = 0;
-      
-      const enrichedFees = ledger.fees.map(fee => {
-        // Find payments for this specific fee
-        const feePayments = payments.filter(p => p.feeId === fee.feeId);
-        
-        const paidSinceOnboarding = feePayments.reduce((sum, p) => sum + p.amountPaid, 0);
-        const totalPaidForFee = (fee.openingPaidAmount || 0) + paidSinceOnboarding;
-        const balanceForFee = Math.max(0, fee.amount - totalPaidForFee);
-        
-        let statusForFee = fee.openingStatus || "Unpaid";
-        if (totalPaidForFee > 0) {
-           statusForFee = balanceForFee <= 0 ? "Paid" : "Part-paid";
-        }
-
-        return {
-          ...fee,
-          actualPaid: totalPaidForFee,
-          actualBalance: balanceForFee,
-          actualStatus: statusForFee
-        };
-      });
-
-      const visibleFees = enrichedFees.filter(
-        (fee) => !shouldHidePaidAdmissionFee(fee),
-      );
-
-      visibleFees.forEach((fee) => {
-        ledgerTotalDue += fee.amount;
-        ledgerTotalPaid += fee.actualPaid || 0;
-      });
-
-      const ledgerBalance = Math.max(0, ledgerTotalDue - ledgerTotalPaid);
-      let ledgerStatus = ledger.openingStatus || "Unpaid";
-      if (ledgerTotalPaid > 0) {
-         ledgerStatus = ledgerBalance <= 0 ? "Paid" : "Part-paid";
-      }
-
-      return {
-        ...ledger,
-        fees: visibleFees,
-        actualTotalDue: ledgerTotalDue,
-        actualTotalPaid: ledgerTotalPaid,
-        actualBalance: ledgerBalance,
-        actualStatus: ledgerStatus
-      };
-    });
-  }, [ledgers, selectedTerm, payments]);
-
-  const billLedgers = useMemo(
-    () => enrichedLedgers.filter((ledger) => ledger.fees.length > 0),
-    [enrichedLedgers],
+  const feeSummary = useMemo(
+    () => getParentFeeTotals(ledgers, payments, selectedTerm, academicYear),
+    [ledgers, payments, selectedTerm, academicYear],
   );
-
-  const totalStats = useMemo(() => {
-    let totalFees = 0;
-    let totalPaidInLedgers = 0;
-    let totalBalance = 0;
-
-    billLedgers.forEach(ledger => {
-      totalFees += ledger.actualTotalDue;
-      totalPaidInLedgers += ledger.actualTotalPaid;
-      totalBalance += ledger.actualBalance;
-    });
-
-    // Also account for payments not yet allocated to a specific fee (like "online_payment")
-    const unallocatedPayments = payments
-      .filter(p => p.feeId === "online_payment" && p.academicYear === academicYear)
-      .reduce((sum, p) => sum + p.amountPaid, 0);
-
-    const finalPaid = totalPaidInLedgers + unallocatedPayments;
-    const finalBalance = Math.max(0, totalFees - finalPaid);
-
-    return { totalFees, totalPaid: finalPaid, totalBalance: finalBalance };
-  }, [billLedgers, payments, academicYear]);
+  const enrichedLedgers = feeSummary.enrichedLedgers;
+  const billLedgers = feeSummary.billLedgers;
+  const totalStats = feeSummary.totals;
 
   const visiblePayments = useMemo(() => {
-    let filtered = payments.filter(p => p.academicYear === academicYear);
+    const visibleFeeIds = new Set(
+      billLedgers
+        .flatMap((ledger) => ledger.fees)
+        .map((fee) => fee.feeId),
+    );
+    let filtered = payments.filter((p) => p.academicYear === academicYear);
     if (selectedTerm !== "all") {
-      filtered = filtered.filter(p => p.term === selectedTerm);
+      filtered = filtered.filter(
+        (p) => normalizeParentFeeTerm(p.term) === selectedTerm,
+      );
     }
-    // Sort payments descending by createdAt
-    return filtered.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
-  }, [payments, academicYear, selectedTerm]);
+    filtered = filtered.filter(
+      (p) => p.feeId === "online_payment" || visibleFeeIds.has(p.feeId),
+    );
+    return [...filtered].sort((a, b) => {
+      const aTime =
+        a.createdAt instanceof Date
+          ? a.createdAt.getTime()
+          : Number(a.createdAt || 0);
+      const bTime =
+        b.createdAt instanceof Date
+          ? b.createdAt.getTime()
+          : Number(b.createdAt || 0);
+      return bTime - aTime;
+    });
+  }, [payments, academicYear, selectedTerm, billLedgers]);
 
   const getStatusColor = (status?: string) => {
     switch (status) {
@@ -953,17 +894,24 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
               {/* Payment History */}
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="bg-slate-50 px-3 sm:px-5 py-3 border-b border-slate-200">
-                  <h3 className="font-semibold text-slate-800 text-sm sm:text-base">Payment History</h3>
+                  <h3 className="font-semibold text-slate-800 text-sm sm:text-base">
+                    Payment History ({selectedTerm === "all" ? "All Terms" : selectedTerm})
+                  </h3>
                 </div>
                 <div className="p-3 sm:p-5">
                   {visiblePayments.length === 0 ? (
-                    <p className="text-slate-500 text-center py-4 text-sm">No payment records found.</p>
+                    <p className="text-slate-500 text-center py-4 text-sm">
+                      No payment records found for {selectedTerm === "all" ? "this academic year" : selectedTerm}.
+                    </p>
                   ) : (
                     <div className="space-y-2 sm:space-y-3">
                       {visiblePayments.map(payment => (
                         <div key={payment.id} className="flex items-center justify-between py-2 sm:py-3 border-b border-slate-100 last:border-0 gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-slate-800 text-sm truncate">{payment.feeName}</p>
+                            <p className="text-[11px] font-semibold text-slate-400">
+                              {normalizeParentFeeTerm(payment.term)}
+                            </p>
                             <p className="text-xs text-slate-500">
                               {payment.paymentMethod} • {new Date(payment.createdAt as number).toLocaleDateString()}
                             </p>

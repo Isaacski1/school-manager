@@ -233,6 +233,50 @@ test("verified backup is created before operational records reset", async () => 
       term: 3,
       academicYear: "2025-2026",
     },
+    "fees/tuition-root": {
+      schoolId,
+      feeName: "Tuition",
+      amount: 100,
+      term: "Term 3",
+      academicYear: "2025-2026",
+      feeFrequency: "per_term",
+    },
+    [`schools/${schoolId}/fees/tuition-v2`]: {
+      schoolId,
+      feeName: "Tuition",
+      amount: 100,
+      term: "Term 3",
+      academicYear: "2025-2026",
+      feeFrequency: "per_term",
+    },
+    "payments/payment-1": {
+      schoolId,
+      studentId: "student-1",
+      amountPaid: 50,
+      term: "Term 3",
+      academicYear: "2025-2026",
+    },
+    [`schools/${schoolId}/payments/payment-v2`]: {
+      schoolId,
+      studentId: "student-1",
+      amountPaid: 50,
+      term: "Term 3",
+      academicYear: "2025-2026",
+    },
+    "student_ledgers/ledger-1": {
+      schoolId,
+      studentId: "student-1",
+      term: "Term 3",
+      academicYear: "2025-2026",
+      fees: [],
+    },
+    [`schools/${schoolId}/feeLedgers/ledger-v2`]: {
+      schoolId,
+      studentId: "student-1",
+      term: "Term 3",
+      academicYear: "2025-2026",
+      fees: [],
+    },
   });
   const service = createTermRolloverService({
     db,
@@ -249,6 +293,12 @@ test("verified backup is created before operational records reset", async () => 
   assert.equal(result.changed, true);
   assert.equal(db.records.has("attendance/attendance-1"), false);
   assert.equal(db.records.has("teacher_attendance/teacher-attendance-1"), false);
+  assert.equal(db.records.has("payments/payment-1"), false);
+  assert.equal(db.records.has(`schools/${schoolId}/payments/payment-v2`), false);
+  assert.equal(db.records.has("student_ledgers/ledger-1"), false);
+  assert.equal(db.records.has(`schools/${schoolId}/feeLedgers/ledger-v2`), false);
+  assert.equal(db.records.has("fees/tuition-root"), true);
+  assert.equal(db.records.has(`schools/${schoolId}/fees/tuition-v2`), true);
   assert.equal(db.records.has("assessments/assessment-1"), true);
   assert.equal(db.records.has("student_remarks/remark-1"), true);
 
@@ -262,6 +312,9 @@ test("verified backup is created before operational records reset", async () => 
   assert.equal(backup.status, "verified");
   assert.equal(backup.recordCounts.attendanceRecords, 1);
   assert.equal(backup.recordCounts.assessments, 1);
+  assert.equal(backup.recordCounts.fees, 2);
+  assert.equal(backup.recordCounts.payments, 2);
+  assert.equal(backup.recordCounts.studentLedgers, 2);
 
   const secondRun = await service.rolloverSchool(schoolId, {
     now: new Date("2026-09-10T12:05:00"),

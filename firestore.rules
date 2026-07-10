@@ -478,6 +478,28 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedClassIds.hasAny([classId]);
     }
 
+    function teacherOwnsAttendanceRecord(schoolId, teacherId) {
+      return isAuthenticated() &&
+        isActiveUser() &&
+        isTeacher() &&
+        userSchoolId() == schoolId &&
+        teacherId == request.auth.uid &&
+        isActiveSchoolId(schoolId);
+    }
+
+    function teacherAttendanceSubmissionFields() {
+      return onlyAllowedFields([
+        "id",
+        "schoolId",
+        "date",
+        "teacherId",
+        "status",
+        "approvalStatus",
+        "isHoliday",
+        "holidayReason"
+      ]);
+    }
+
     function schoolScopedUpdate(schoolId) {
       return isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() ||
@@ -603,40 +625,24 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
-      allow create: if (schoolScopedCreate(request.resource.data.schoolId) ||
-        teacherOwnsClass(request.resource.data.schoolId, request.resource.data.classId)) &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "date",
-          "teacherId",
-          "status",
-          "approvalStatus",
-          "approvedBy",
-          "approvedAt",
-          "rejectedBy",
-          "rejectedAt",
-          "isHoliday",
-          "holidayReason"
-        ]);
+      allow create: if teacherOwnsAttendanceRecord(
+        request.resource.data.schoolId,
+        request.resource.data.teacherId
+      ) &&
+        teacherAttendanceSubmissionFields() &&
+        request.resource.data.approvalStatus == "pending";
 
       allow read: if isSuperAdmin() || schoolScopedRead(resource.data.schoolId);
 
-      allow update: if schoolScopedUpdate(resource.data.schoolId) &&
-        onlyAllowedFields([
-          "id",
-          "schoolId",
-          "date",
-          "teacherId",
-          "status",
-          "approvalStatus",
-          "approvedBy",
-          "approvedAt",
-          "rejectedBy",
-          "rejectedAt",
-          "isHoliday",
-          "holidayReason"
-        ]);
+      allow update: if teacherOwnsAttendanceRecord(
+        resource.data.schoolId,
+        resource.data.teacherId
+      ) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        request.resource.data.teacherId == resource.data.teacherId &&
+        request.resource.data.date == resource.data.date &&
+        teacherAttendanceSubmissionFields() &&
+        request.resource.data.approvalStatus == "pending";
 
       allow delete: if schoolScopedDelete(resource.data.schoolId);
     }

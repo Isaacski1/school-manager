@@ -608,6 +608,14 @@ const FeesPayments: React.FC = () => {
   const [onboardingMode, setOnboardingMode] =
     useState<OnboardingMode>("fresh_start");
   const [onboardingDate, setOnboardingDate] = useState("");
+  const onboardingModeHelpText =
+    onboardingMode === "fresh_start"
+      ? "Fresh Start is best when you only want to enter what was already paid and owed before the start date."
+      : "Full History Import is best when you want to bring in all past fee rules, assignments, and payments before the start date.";
+  const onboardingDateHelpText =
+    onboardingMode === "fresh_start"
+      ? "Payments before this date should be entered as opening paid or opening balance in Step 4."
+      : "Use the first date you want imported history to begin from, then add the past fee records in the next steps.";
   const [paymentsLimit, setPaymentsLimit] = useState(15);
   const [ledgersLimit, setLedgersLimit] = useState(25);
   const financeRequestIdRef = useRef(0);
@@ -621,6 +629,11 @@ const FeesPayments: React.FC = () => {
     ref: React.RefObject<HTMLDivElement | null>,
   ) => {
     ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const closeWizardAndScrollToFeeSetup = () => {
+    setShowOnboardingWizard(false);
+    window.setTimeout(() => scrollToSection(feeSetupRef), 0);
   };
 
   const applyPrimarySnapshot = useCallback((snapshot: FinancePrimarySnapshot) => {
@@ -1008,6 +1021,14 @@ const FeesPayments: React.FC = () => {
   ]);
 
   useEffect(() => {
+    if (!showOnboardingWizard || !schoolId || !scopeInitialized) return;
+    void fetchData({
+      background: true,
+      includeAuxiliary: false,
+    });
+  }, [showOnboardingWizard, schoolId, scopeInitialized, fetchData]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     window.sessionStorage.setItem(
       financeFiltersStorageKey,
@@ -1074,14 +1095,17 @@ const FeesPayments: React.FC = () => {
   ) => {
     const includeScope = options?.includeScope ?? true;
     if (includeScope) {
-      if (fee.academicYear !== academicYear && fee.term !== term) {
-        return `Fee is set for ${fee.academicYear}, ${fee.term}.`;
-      }
-      if (fee.academicYear !== academicYear) {
-        return `Fee is set for academic year ${fee.academicYear}.`;
-      }
-      if (fee.term !== term) {
-        return `Fee is set for ${fee.term}.`;
+      const frequency = fee.feeFrequency || "per_term";
+      if (frequency === "one_time") {
+        if (fee.academicYear !== academicYear && fee.term !== term) {
+          return `Fee is set for ${fee.academicYear}, ${fee.term}.`;
+        }
+        if (fee.academicYear !== academicYear) {
+          return `Fee is set for academic year ${fee.academicYear}.`;
+        }
+        if (fee.term !== term) {
+          return `Fee is set for ${fee.term}.`;
+        }
       }
     }
 
@@ -1095,6 +1119,7 @@ const FeesPayments: React.FC = () => {
     if (fee.feeFrequency === "per_year") {
       if (
         fee.applyToAcademicYear &&
+        fee.applyToAcademicYear !== fee.academicYear &&
         fee.applyToAcademicYear !== academicYear
       ) {
         return `Fee is limited to academic year ${fee.applyToAcademicYear}.`;
@@ -1116,7 +1141,11 @@ const FeesPayments: React.FC = () => {
     }
 
     if (fee.feeFrequency === "per_term") {
-      if (fee.applyToTerm && fee.applyToTerm !== term) {
+      if (
+        fee.applyToTerm &&
+        fee.applyToTerm !== fee.term &&
+        fee.applyToTerm !== term
+      ) {
         return `Fee is limited to ${fee.applyToTerm}.`;
       }
     }
@@ -1370,11 +1399,11 @@ const FeesPayments: React.FC = () => {
             : [],
         applyToAcademicYear:
           feeForm.feeFrequency === "per_year"
-            ? feeForm.applyToAcademicYear || academicYear
+            ? feeForm.applyToAcademicYear || null
             : null,
         applyToTerm:
           feeForm.feeFrequency === "per_term"
-            ? feeForm.applyToTerm || term
+            ? feeForm.applyToTerm || null
             : null,
       };
       await db.saveFee(payload);
@@ -1501,11 +1530,11 @@ const FeesPayments: React.FC = () => {
             : [],
         applyToAcademicYear:
           feeForm.feeFrequency === "per_year"
-            ? feeForm.applyToAcademicYear || academicYear
+            ? feeForm.applyToAcademicYear || null
             : null,
         applyToTerm:
           feeForm.feeFrequency === "per_term"
-            ? feeForm.applyToTerm || term
+            ? feeForm.applyToTerm || null
             : null,
         updatedAt: Date.now(),
       } as FeeDefinition & { updatedAt?: number };
@@ -1625,7 +1654,7 @@ const FeesPayments: React.FC = () => {
       await db.recordStudentPayment(payload);
 
       const updatedLedger = await ensureLedger(student, fees);
-      const ledgerPayments = payments.filter(
+      const ledgerPayments = currentTermPayments.filter(
         (p) =>
           p.studentId === student.id &&
           p.academicYear === academicYear &&
@@ -1836,14 +1865,71 @@ const FeesPayments: React.FC = () => {
     [ledgers, studentsMap],
   );
 
+  const selectedScopeIsActiveTerm = useMemo(() => {
+    return (
+      academicYear === schoolConfig?.academicYear &&
+      term === normalizeTerm(schoolConfig?.currentTerm)
+    );
+  }, [academicYear, schoolConfig?.academicYear, schoolConfig?.currentTerm, term]);
+
+  const currentTermStartMs = useMemo(() => {
+    const startDate =
+      selectedScopeIsActiveTerm && schoolConfig?.schoolReopenDate
+        ? schoolConfig.schoolReopenDate
+        : "";
+    if (!startDate) return null;
+    const parsed = new Date(`${startDate}T00:00:00`).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [schoolConfig?.schoolReopenDate, selectedScopeIsActiveTerm]);
+
+  const getPaymentCreatedAtMs = useCallback((payment: StudentFeePayment) => {
+    const value = payment.createdAt as any;
+    if (typeof value?.toMillis === "function") return value.toMillis();
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }, []);
+
+  const currentTermPayments = useMemo(
+    () =>
+      payments.filter((payment) => {
+        if (payment.academicYear !== academicYear || payment.term !== term) {
+          return false;
+        }
+        if (currentTermStartMs === null) return true;
+        return getPaymentCreatedAtMs(payment) >= currentTermStartMs;
+      }),
+    [payments, academicYear, term, currentTermStartMs, getPaymentCreatedAtMs],
+  );
+
   const paymentsByStudentMap = useMemo(() => {
     const map = new Map<string, StudentFeePayment[]>();
-    payments.forEach((p) => {
+    currentTermPayments.forEach((p) => {
       if (!map.has(p.studentId)) map.set(p.studentId, []);
       map.get(p.studentId)!.push(p);
     });
     return map;
-  }, [payments]);
+  }, [currentTermPayments]);
+
+  const onboardingPaymentTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    payments.forEach((payment) => {
+      if (payment.academicYear !== academicYear || payment.term !== term) {
+        return;
+      }
+      const ledgerId = buildLedgerId(
+        schoolId,
+        payment.studentId,
+        academicYear,
+        term,
+      );
+      const feeKey = `${ledgerId}::${payment.feeId}`;
+      totals.set(ledgerId, (totals.get(ledgerId) || 0) + payment.amountPaid);
+      totals.set(feeKey, (totals.get(feeKey) || 0) + payment.amountPaid);
+    });
+    return totals;
+  }, [payments, schoolId, academicYear, term]);
 
   const ledgerRows = useMemo(() => {
     return visibleLedgers.map((ledger) => {
@@ -1947,14 +2033,14 @@ const FeesPayments: React.FC = () => {
   const reconciliationStats = useMemo(() => {
     const today = new Date();
     const todayKey = today.toDateString();
-    const todayCount = payments.filter(
+    const todayCount = currentTermPayments.filter(
       (payment) => new Date(payment.createdAt).toDateString() === todayKey,
     ).length;
-    const pendingVerification = payments.filter(
+    const pendingVerification = currentTermPayments.filter(
       (payment) => !payment.receiptNumber,
     ).length;
     return { todayCount, pendingVerification };
-  }, [payments]);
+  }, [currentTermPayments]);
 
   const feeImpactPreview = useMemo(() => {
     const amount = Number(feeForm.amount);
@@ -1983,11 +2069,11 @@ const FeesPayments: React.FC = () => {
           : [],
       applyToAcademicYear:
         feeForm.feeFrequency === "per_year"
-          ? feeForm.applyToAcademicYear || academicYear
+          ? feeForm.applyToAcademicYear || null
           : null,
       applyToTerm:
         feeForm.feeFrequency === "per_term"
-          ? feeForm.applyToTerm || term
+          ? feeForm.applyToTerm || null
           : null,
     };
     const eligibleStudents = students.filter(
@@ -2068,10 +2154,10 @@ const FeesPayments: React.FC = () => {
   ]);
 
   const recentPayments = useMemo(() => {
-    return [...payments]
-      .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
+    return [...currentTermPayments]
+      .sort((a, b) => getPaymentCreatedAtMs(b) - getPaymentCreatedAtMs(a))
       .slice(0, 6);
-  }, [payments]);
+  }, [currentTermPayments, getPaymentCreatedAtMs]);
 
   const defaulters = useMemo(() => {
     return filteredLedgerRows.filter(
@@ -2132,7 +2218,6 @@ const FeesPayments: React.FC = () => {
       setFinanceSettings(payload);
       if (options?.persistOpeningBalances) {
         await saveBulkOpeningBalances();
-        await fetchData();
       }
       showToast("Onboarding settings saved.", { type: "success" });
       if (options?.closeOnSuccess) {
@@ -2156,7 +2241,7 @@ const FeesPayments: React.FC = () => {
       formMap.has(ledger.id) ||
       ledger.fees.some((fee) => formMap.has(`${ledger.id}::${fee.feeId}`)),
     );
-    for (const ledger of ledgersToUpdate) {
+    const updatedLedgers = ledgersToUpdate.map((ledger) => {
       const ledgerForm = formMap.get(ledger.id);
       const updatedFees = ledger.fees.map((fee) => {
         const key = `${ledger.id}::${fee.feeId}`;
@@ -2212,8 +2297,17 @@ const FeesPayments: React.FC = () => {
         openingDate: onboardingDate || ledger.openingDate || null,
         updatedAt: Date.now(),
       };
-      await db.upsertStudentLedger(updatedLedger);
-    }
+      return updatedLedger;
+    });
+    await Promise.all(
+      updatedLedgers.map((ledger) => db.upsertStudentLedger(ledger)),
+    );
+    const updatedById = new Map(
+      updatedLedgers.map((ledger) => [ledger.id, ledger]),
+    );
+    setLedgers((prev) =>
+      prev.map((ledger) => updatedById.get(ledger.id) || ledger),
+    );
   };
 
   const saveOpeningStatusForLedger = async (
@@ -2283,16 +2377,22 @@ const FeesPayments: React.FC = () => {
     };
     try {
       await db.upsertStudentLedger(updatedLedger);
+      setLedgers((prev) =>
+        prev.map((item) => (item.id === updatedLedger.id ? updatedLedger : item)),
+      );
       setOpeningLedgerForm((prev) => ({
         ...prev,
         [formKey]: {
-          openingStatus: openingStatusDerived,
-          openingPaidAmount: String(updatedLedger.openingPaidAmount || 0),
-          openingBalance: String(updatedLedger.openingBalance || 0),
+          openingStatus: feeId ? form.openingStatus : openingStatusDerived,
+          openingPaidAmount: feeId
+            ? String(openingPaidAmount || 0)
+            : String(updatedLedger.openingPaidAmount || 0),
+          openingBalance: feeId
+            ? String(openingBalance || 0)
+            : String(updatedLedger.openingBalance || 0),
         },
       }));
       showToast("Opening status saved.", { type: "success" });
-      await fetchData();
     } catch (error) {
       console.error("Failed to save opening status", error);
       showToast("Failed to save opening status.", { type: "error" });
@@ -2303,19 +2403,7 @@ const FeesPayments: React.FC = () => {
 
   const collectionTrend = useMemo(() => {
     const now = new Date();
-    const termStartDate =
-      schoolConfig?.schoolReopenDate || onboardingDate || "";
-    const reopenDate = termStartDate
-      ? new Date(`${termStartDate}T00:00:00`)
-      : null;
     const msInWeek = 7 * 24 * 60 * 60 * 1000;
-    const weekIndex = reopenDate
-      ? Math.max(
-          1,
-          Math.floor((now.getTime() - reopenDate.getTime()) / msInWeek) + 1,
-        )
-      : 1;
-    const totalWeeks = weekIndex;
     const startOfWeek = (date: Date) => {
       const d = new Date(date);
       const day = d.getDay();
@@ -2324,19 +2412,38 @@ const FeesPayments: React.FC = () => {
       d.setHours(0, 0, 0, 0);
       return d;
     };
+    const paymentDates = currentTermPayments
+      .map((payment) => getPaymentCreatedAtMs(payment))
+      .filter((value) => value > 0);
+    const activeTermStart =
+      currentTermStartMs !== null ? new Date(currentTermStartMs) : null;
+    const rangeStart = selectedScopeIsActiveTerm
+      ? activeTermStart || (paymentDates.length ? new Date(Math.min(...paymentDates)) : now)
+      : paymentDates.length
+        ? new Date(Math.min(...paymentDates))
+        : now;
+    const rangeEnd = selectedScopeIsActiveTerm
+      ? now
+      : paymentDates.length
+        ? new Date(Math.max(...paymentDates))
+        : now;
+    const start = startOfWeek(rangeStart);
+    const end = startOfWeek(rangeEnd);
+    const totalWeeks = Math.max(
+      1,
+      Math.floor((end.getTime() - start.getTime()) / msInWeek) + 1,
+    );
 
     const weeks = Array.from({ length: totalWeeks }, (_, index) => {
-      const anchor = new Date(now);
-      anchor.setDate(anchor.getDate() - 7 * (totalWeeks - 1 - index));
-      const start = startOfWeek(anchor);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 7);
-      const labelIndex = totalWeeks - (totalWeeks - 1 - index);
-      return { start, end, total: 0, label: `W${labelIndex}` };
+      const weekStart = new Date(start);
+      weekStart.setDate(weekStart.getDate() + 7 * index);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      return { start: weekStart, end: weekEnd, total: 0, label: `W${index + 1}` };
     });
 
-    payments.forEach((payment) => {
-      const paymentDate = new Date(payment.createdAt);
+    currentTermPayments.forEach((payment) => {
+      const paymentDate = new Date(getPaymentCreatedAtMs(payment));
       weeks.forEach((week) => {
         if (paymentDate >= week.start && paymentDate < week.end) {
           week.total += payment.amountPaid;
@@ -2350,7 +2457,12 @@ const FeesPayments: React.FC = () => {
       value: week.total,
       height: Math.round((week.total / maxTotal) * 100),
     }));
-  }, [payments, schoolConfig?.schoolReopenDate, onboardingDate]);
+  }, [
+    currentTermPayments,
+    currentTermStartMs,
+    selectedScopeIsActiveTerm,
+    getPaymentCreatedAtMs,
+  ]);
 
   const [hoveredWeekIndex, setHoveredWeekIndex] = useState<number | null>(null);
   const weeklyTotal = useMemo(
@@ -2423,10 +2535,10 @@ const FeesPayments: React.FC = () => {
   );
 
   const paymentsSorted = useMemo(() => {
-    return [...payments].sort(
-      (a, b) => Number(b.createdAt) - Number(a.createdAt),
+    return [...currentTermPayments].sort(
+      (a, b) => getPaymentCreatedAtMs(b) - getPaymentCreatedAtMs(a),
     );
-  }, [payments]);
+  }, [currentTermPayments, getPaymentCreatedAtMs]);
 
   const ledgerPayments = useMemo(() => {
     if (!ledgerPaymentModal) return [] as StudentFeePayment[];
@@ -2535,7 +2647,7 @@ const FeesPayments: React.FC = () => {
       (fee) => fee.feeId === paymentForm.feeId,
     );
     const fee = fees.find((item) => item.id === paymentForm.feeId);
-    const paidSince = payments
+    const paidSince = currentTermPayments
       .filter(
         (payment) =>
           payment.studentId === paymentForm.studentId &&
@@ -2564,7 +2676,7 @@ const FeesPayments: React.FC = () => {
     paymentForm.feeId,
     ledgers,
     fees,
-    payments,
+    currentTermPayments,
     academicYear,
     term,
   ]);
@@ -2589,7 +2701,7 @@ const FeesPayments: React.FC = () => {
 
   const classCollection = useMemo(() => {
     const summary = availableClasses.map((cls) => {
-      const classPayments = payments.filter((p) => p.classId === cls.id);
+      const classPayments = currentTermPayments.filter((p) => p.classId === cls.id);
       const totalPaid = classPayments.reduce((sum, p) => sum + p.amountPaid, 0);
       return { label: cls.name, value: totalPaid };
     });
@@ -2597,7 +2709,7 @@ const FeesPayments: React.FC = () => {
       .filter((item) => item.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-  }, [payments]);
+  }, [availableClasses, currentTermPayments]);
 
   const strongestWeek =
     weeklySegments.length > 0
@@ -5263,8 +5375,7 @@ const FeesPayments: React.FC = () => {
                           </option>
                         </select>
                         <p className="mt-1 text-[11px] text-slate-400">
-                          Fresh Start is best when you only want to enter what
-                          was already paid and owed before the start date.
+                          {onboardingModeHelpText}
                         </p>
                       </div>
                       <div>
@@ -5278,8 +5389,7 @@ const FeesPayments: React.FC = () => {
                           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                         />
                         <p className="mt-1 text-[11px] text-slate-400">
-                          Payments before this date should be entered as opening
-                          paid or opening balance in Step 4.
+                          {onboardingDateHelpText}
                         </p>
                       </div>
                       <div className="sm:col-span-2">
@@ -5346,7 +5456,7 @@ const FeesPayments: React.FC = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => scrollToSection(feeSetupRef)}
+                        onClick={closeWizardAndScrollToFeeSetup}
                         className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
                       >
                         Go to Fee Setup
@@ -5381,7 +5491,7 @@ const FeesPayments: React.FC = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => scrollToSection(feeSetupRef)}
+                        onClick={closeWizardAndScrollToFeeSetup}
                         className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
                       >
                         Review Fee Assignments
@@ -5496,6 +5606,23 @@ const FeesPayments: React.FC = () => {
                               ledger.id,
                               feeMatch?.feeId,
                             );
+                            const totalDueForSelection = feeMatch
+                              ? feeMatch.amount
+                              : ledger.fees.reduce(
+                                  (sum, fee) => sum + fee.amount,
+                                  0,
+                                );
+                            const openingPaidForSelection = Number(
+                              form.openingPaidAmount || 0,
+                            );
+                            const recordedPaidForSelection =
+                              onboardingPaymentTotals.get(formKey) || 0;
+                            const balanceAfterRecordedPayments = Math.max(
+                              0,
+                              totalDueForSelection -
+                                openingPaidForSelection -
+                                recordedPaidForSelection,
+                            );
                             const isSavingThisOpeningRow =
                               savingOpeningRowKey === formKey;
                             return (
@@ -5511,6 +5638,14 @@ const FeesPayments: React.FC = () => {
                                     {availableClasses.find(
                                       (cls) => cls.id === ledger.classId,
                                     )?.name || ""}
+                                  </p>
+                                  <p className="mt-1 text-[11px] font-medium text-emerald-700">
+                                    Recorded paid:{" "}
+                                    {formatMoney(recordedPaidForSelection)}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400">
+                                    Balance after recorded payments:{" "}
+                                    {formatMoney(balanceAfterRecordedPayments)}
                                   </p>
                                 </div>
                                 <div className="min-w-0">

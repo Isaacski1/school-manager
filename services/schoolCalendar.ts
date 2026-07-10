@@ -73,10 +73,10 @@ const isWithinVacationWindow = (
 
   const nextTermStart = parseSchoolDate(nextTermBegins);
   if (!nextTermStart) {
-    return date >= vacationStart;
+    return date > vacationStart;
   }
 
-  return date >= vacationStart && date < nextTermStart;
+  return date > vacationStart && date < nextTermStart;
 };
 
 export const getExpectedSchoolDayKeys = (params: {

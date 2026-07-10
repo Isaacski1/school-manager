@@ -1914,6 +1914,7 @@ const AdminDashboard = () => {
         current.filter((payment) => !reviewedIds.has(payment.id)),
       );
       clearDashboardCaches();
+      await fetchHeavyData({ background: true, force: true });
       showToast(
         `${paymentsToReview.length} parent payment${paymentsToReview.length === 1 ? "" : "s"} marked as reviewed.`,
         { type: "success" },

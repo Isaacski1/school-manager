@@ -55,6 +55,7 @@ import {
   setDoc,
   writeBatch,
   query,
+  where,
   limit,
   getDocsFromServer,
 } from "firebase/firestore";
@@ -1066,6 +1067,43 @@ const SystemSettings = () => {
     const batchSize = 200;
 
     while (true) {
+      const snapshot = await getDocs(
+        query(
+          collectionRef,
+          where("schoolId", "==", schoolId),
+          limit(batchSize),
+        ),
+      );
+      if (snapshot.empty) break;
+
+      const batch = writeBatch(firestore);
+      snapshot.docs.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw new Error(
+          `Could not delete ${collectionName}: ${
+            error instanceof Error ? error.message : "Permission denied"
+          }`,
+        );
+      }
+
+      if (snapshot.size < batchSize) break;
+    }
+  };
+
+  const deleteSchoolSubcollectionInBatches = async (collectionName: string) => {
+    const collectionRef = collection(
+      firestore,
+      "schools",
+      schoolId,
+      collectionName,
+    );
+    const batchSize = 200;
+
+    while (true) {
       const snapshot = await getDocs(query(collectionRef, limit(batchSize)));
       if (snapshot.empty) break;
 
@@ -1073,7 +1111,15 @@ const SystemSettings = () => {
       snapshot.docs.forEach((docSnap) => {
         batch.delete(docSnap.ref);
       });
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw new Error(
+          `Could not delete schools/${collectionName}: ${
+            error instanceof Error ? error.message : "Permission denied"
+          }`,
+        );
+      }
 
       if (snapshot.size < batchSize) break;
     }
@@ -1100,12 +1146,25 @@ const SystemSettings = () => {
         "admin_remarks",
         "student_skills",
         "admin_notifications",
+        "payments",
+        "student_ledgers",
+      ];
+
+      const schoolSubcollectionsToDelete = [
+        "payments",
+        "feeLedgers",
       ];
 
       await Promise.all(
         collectionsToDelete.map(async (colName) => {
           console.log(`Deleting collection: ${colName}`);
           await deleteCollectionInBatches(colName);
+        }),
+      );
+      await Promise.all(
+        schoolSubcollectionsToDelete.map(async (colName) => {
+          console.log(`Deleting school subcollection: ${colName}`);
+          await deleteSchoolSubcollectionInBatches(colName);
         }),
       );
 

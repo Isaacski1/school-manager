@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Student, AttendanceRecord, Assessment, StudentFeeLedger, StudentRemark, FeeDefinition } from "../../types";
+import { Student, Assessment, StudentRemark, FeeDefinition, FeeTerm, StudentFeeLedger } from "../../types";
 import { db } from "../../services/mockDb";
 import { CreditCard, Activity, BookOpen, MessageSquare, FileText } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { getParentFeeTotals } from "../../services/parentFees";
 
 interface DashboardOverviewProps {
   student: Student;
@@ -36,7 +37,10 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         
         const currentYear = config.academicYear || "2023-2024";
         const currentTermLabel = config.currentTerm || "Term 1";
-        const currentTermNum = parseInt(currentTermLabel.split(" ")[1]) || 1;
+        const selectedFeeTerm: FeeTerm =
+          currentTermLabel === "Term 2" || currentTermLabel === "Term 3"
+            ? currentTermLabel
+            : "Term 1";
         const getStudentCreatedAtMs = () => {
           if (!student.createdAt) return null;
           const value =
@@ -88,7 +92,6 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           // 1. Fees data
           db.getStudentLedgers({
             schoolId: effectiveSchoolId,
-            classId: student.classId || "",
             academicYear: currentYear,
             studentId: student.id
           }).catch(e => { 
@@ -127,7 +130,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         // via the parent portal (feeId = "online_payment") that are not tied to a specific
         
         // 1. Process Fees
-        let finalLedgerData = [...ledgerData];
+        let finalLedgerData: StudentFeeLedger[] = [...ledgerData];
         
         if (finalLedgerData.length === 0) {
           console.log("[DashboardOverview] No personal ledger found, fetching class-wide fees as fallback...");
@@ -141,18 +144,19 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             if (classFees.length > 0) {
               console.log("[DashboardOverview] Projected class fees found:", classFees);
               // Create a virtual ledger for the UI
-              const virtualLedger: any = {
+              const virtualLedger: StudentFeeLedger = {
                 id: "virtual_ledger_" + student.id,
+                schoolId: effectiveSchoolId,
                 studentId: student.id,
-                classId: student.classId,
+                classId: student.classId || "",
                 academicYear: currentYear,
-                term: currentTermLabel,
+                term: selectedFeeTerm,
                 fees: classFees.map(f => ({
                   feeId: f.id,
                   feeName: f.feeName,
                   amount: f.amount
                 })),
-                isVirtual: true
+                createdAt: Date.now(),
               };
               finalLedgerData = [virtualLedger];
             }
@@ -162,19 +166,20 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         }
 
         const currentTermLedgers = finalLedgerData.filter(
-          (l) => l.academicYear === currentYear && l.term === currentTermLabel
+          (ledger) =>
+            ledger.academicYear === currentYear &&
+            ledger.term === selectedFeeTerm,
         );
         
         const hasLedgers = finalLedgerData.length > 0;
-        const currentBalance = currentTermLedgers.reduce((acc, ledger) => {
-          const totalDue = ledger.fees.reduce((sum: number, f: any) => sum + f.amount, 0);
-          const totalPaid = paymentData
-            .filter((p) => p.studentId === student.id && p.academicYear === currentYear && p.term === currentTermLabel)
-            .reduce((sum, p) => sum + p.amountPaid, 0);
-          return acc + (totalDue - totalPaid);
-        }, 0);
+        const { totals } = getParentFeeTotals(
+          currentTermLedgers,
+          paymentData,
+          selectedFeeTerm,
+          currentYear,
+        );
 
-        setDueFees(currentBalance);
+        setDueFees(totals.totalBalance);
         setHasLedgers(hasLedgers);
         
         // 2. Process Attendance (Term-wide, aligned with admin student view)

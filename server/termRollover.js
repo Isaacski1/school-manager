@@ -28,6 +28,13 @@ const RESET_COLLECTIONS = Object.freeze([
   "teacher_attendance",
   "notices",
   "admin_notifications",
+  "payments",
+  "student_ledgers",
+]);
+
+const RESET_SCHOOL_SUBCOLLECTIONS = Object.freeze([
+  "payments",
+  "feeLedgers",
 ]);
 
 const toDateKey = (value = new Date()) => {
@@ -280,6 +287,19 @@ const deleteSchoolScopedCollection = async (db, collectionName, schoolId) => {
   return snapshot.size;
 };
 
+const deleteSchoolSubcollection = async (db, schoolId, collectionName) => {
+  const snapshot = await db
+    .collection("schools")
+    .doc(schoolId)
+    .collection(collectionName)
+    .get();
+  await commitInBatches(
+    db,
+    snapshot.docs.map((doc) => (batch) => batch.delete(doc.ref)),
+  );
+  return snapshot.size;
+};
+
 export const createTermRolloverService = ({
   db,
   FieldValue,
@@ -347,6 +367,10 @@ export const createTermRolloverService = ({
           collectionName,
           schoolId,
         );
+      }
+      for (const collectionName of RESET_SCHOOL_SUBCOLLECTIONS) {
+        resetCounts[`schools/${collectionName}`] =
+          await deleteSchoolSubcollection(db, schoolId, collectionName);
       }
 
       const nextPeriod = getNextAcademicPeriod(

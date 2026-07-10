@@ -1310,7 +1310,7 @@ const Reminders: React.FC = () => {
                 {/* Info Note */}
                 <div className="flex gap-2.5 bg-indigo-50/60 rounded-2xl p-3 border border-indigo-100 text-xs text-indigo-700 leading-relaxed font-semibold">
                   <ShieldAlert size={16} className="text-indigo-600 shrink-0 mt-0.5" />
-                  <p>Funds go directly to Super Admin wallet. Your school wallet receives the paid amount, and each SMS is charged at the current retail rate.</p>
+                  <p>Your payment securely adds SMS credits to your school's SMS wallet. Credits are used automatically when SMS reminders are sent at the current rate.</p>
                 </div>
 
                 {/* Submit button */}

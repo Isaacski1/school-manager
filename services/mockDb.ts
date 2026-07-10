@@ -3815,9 +3815,6 @@ class FirestoreService {
     await this.requireFeature(filters.schoolId, "fees_payments");
     const scopedSchoolId = this.requireSchoolId(filters.schoolId, "getFees");
     const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
-    if (filters.academicYear)
-      conditions.push(where("academicYear", "==", filters.academicYear));
-    if (filters.term) conditions.push(where("term", "==", filters.term));
     if (filters.classId)
       conditions.push(where("classId", "==", filters.classId));
     const useV2 = await this.useFinanceV2(scopedSchoolId);
@@ -3830,10 +3827,40 @@ class FirestoreService {
     const readFeesFrom = async (targetCollection: ReturnType<typeof collection>) => {
       const q = query(targetCollection, ...conditions);
       const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
+      const rows = snap.docs.map((d) => ({
         ...(d.data() as Omit<FeeDefinition, "id">),
         id: d.id,
       }));
+      if (!filters.academicYear && !filters.term) return rows;
+      return rows.filter((fee) => {
+        const frequency = fee.feeFrequency || "per_term";
+        if (frequency === "one_time") {
+          if (filters.academicYear && fee.academicYear !== filters.academicYear)
+            return false;
+          if (filters.term && fee.term !== filters.term) return false;
+          return true;
+        }
+        if (frequency === "per_year") {
+          if (
+            filters.academicYear &&
+            fee.applyToAcademicYear &&
+            fee.applyToAcademicYear !== fee.academicYear &&
+            fee.applyToAcademicYear !== filters.academicYear
+          ) {
+            return false;
+          }
+          return true;
+        }
+        if (
+          filters.term &&
+          fee.applyToTerm &&
+          fee.applyToTerm !== fee.term &&
+          fee.applyToTerm !== filters.term
+        ) {
+          return false;
+        }
+        return true;
+      });
     };
     try {
       const primary = await readFeesFrom(feesCollection);
@@ -3860,9 +3887,41 @@ class FirestoreService {
 
   async deleteFee(feeId: string, schoolId?: string): Promise<void> {
     await this.requireFeature(schoolId, "fees_payments");
-    await deleteDoc(doc(firestore, "fees", feeId));
-    if (schoolId && (await this.useFinanceV2(schoolId))) {
-      await deleteDoc(doc(firestore, "schools", schoolId, "fees", feeId));
+    if (!feeId) return;
+    const scopedSchoolId = this.requireSchoolId(schoolId, "deleteFee");
+    const scopedRef = doc(firestore, "schools", scopedSchoolId, "fees", feeId);
+    const rootRef = doc(firestore, "fees", feeId);
+    const [scopedSnap, rootSnapResult] = await Promise.all([
+      getDoc(scopedRef).catch(() => null),
+      getDoc(rootRef)
+        .then((snap) => ({ snap, denied: false }))
+        .catch((error) => {
+          if (this.isPermissionDeniedError(error)) {
+            return { snap: null, denied: true };
+          }
+          throw error;
+        }),
+    ]);
+    const rootSnap = rootSnapResult.snap;
+    const shouldDeleteScoped = Boolean(scopedSnap?.exists());
+    const shouldDeleteRoot =
+      Boolean(rootSnap?.exists()) &&
+      (rootSnap?.data() as Partial<FeeDefinition> | undefined)?.schoolId ===
+        scopedSchoolId;
+
+    if (!shouldDeleteScoped && !shouldDeleteRoot) return;
+
+    const batch = writeBatch(firestore);
+    if (shouldDeleteScoped) batch.delete(scopedRef);
+    if (shouldDeleteRoot) batch.delete(rootRef);
+    await batch.commit();
+    if (
+      rootSnap?.exists() &&
+      (rootSnap.data() as Partial<FeeDefinition>).schoolId !== scopedSchoolId
+    ) {
+      console.warn("[mockDb] Refused to delete fee from another school", feeId);
+    } else if (rootSnapResult.denied) {
+      console.debug("[mockDb] Skipped legacy fee delete: permission denied", feeId);
     }
   }
 
@@ -4025,15 +4084,31 @@ class FirestoreService {
       adminReviewedBy: reviewedBy,
     };
 
-    if (await this.useFinanceV2(schoolId)) {
-      const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
-      const rootRef = doc(firestore, "payments", paymentId);
-      await setDoc(scopedRef, updates, { merge: true });
-      await setDoc(rootRef, { ...updates, schoolId }, { merge: true }).catch(() => {});
+    const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+    const rootRef = doc(firestore, "payments", paymentId);
+    const [scopedSnap, rootSnap] = await Promise.all([
+      getDoc(scopedRef).catch(() => null),
+      getDoc(rootRef).catch(() => null),
+    ]);
+    const hasScopedPayment = Boolean(scopedSnap?.exists());
+    const hasRootPayment = Boolean(rootSnap?.exists());
+
+    if (hasScopedPayment || hasRootPayment) {
+      const batch = writeBatch(firestore);
+      if (hasScopedPayment) batch.set(scopedRef, updates, { merge: true });
+      if (hasRootPayment) {
+        batch.set(rootRef, { ...updates, schoolId }, { merge: true });
+      }
+      await batch.commit();
       return;
     }
 
-    await updateDoc(doc(firestore, "payments", paymentId), updates);
+    if (await this.useFinanceV2(schoolId)) {
+      await setDoc(scopedRef, { ...updates, schoolId }, { merge: true });
+      return;
+    }
+
+    await updateDoc(rootRef, updates);
   }
 
   async computeLedgerTotals(
