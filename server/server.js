@@ -3515,6 +3515,33 @@ const roundMetric = (value, digits = 2) => {
   return Number(numeric.toFixed(digits));
 };
 
+const fetchPaymentRows = async ({ limitCount = 100, selectFields = [] } = {}) => {
+  const perQueryLimit = Math.max(1, Number(limitCount) || 1);
+  const resultSets = await Promise.all(
+    ["createdAt", "paidAt", "verifiedAt"].map((orderField) =>
+      fetchCollectionRows({
+        collectionName: "payments",
+        limitCount: perQueryLimit,
+        orderField,
+        selectFields,
+      }),
+    ),
+  );
+  const uniqueRows = new Map();
+  resultSets.flat().forEach((row) => uniqueRows.set(row.id, row));
+  return Array.from(uniqueRows.values())
+    .sort((left, right) => {
+      const leftDate = parseFlexibleDate(
+        left.createdAt ?? left.paidAt ?? left.verifiedAt,
+      );
+      const rightDate = parseFlexibleDate(
+        right.createdAt ?? right.paidAt ?? right.verifiedAt,
+      );
+      return (rightDate?.getTime() || 0) - (leftDate?.getTime() || 0);
+    })
+    .slice(0, perQueryLimit);
+};
+
 const getPacificDayStartMs = (now = new Date()) => {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
@@ -6946,10 +6973,8 @@ app.get(
           }),
         ),
         safeGetRows(() =>
-          fetchCollectionRows({
-            collectionName: "payments",
+          fetchPaymentRows({
             limitCount: paymentsLimit,
-            orderField: "createdAt",
             selectFields: [
               "schoolId",
               "schoolName",

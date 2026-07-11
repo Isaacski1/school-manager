@@ -374,11 +374,20 @@ const isPaystackBillingPayment = (payment: PaymentRecord) => {
   const moduleValue = String((payment as any).module || "").toLowerCase();
   const typeValue = String((payment as any).type || "").toLowerCase();
   const categoryValue = String((payment as any).category || "").toLowerCase();
+  const descriptor = [
+    moduleValue,
+    typeValue,
+    categoryValue,
+    String((payment as any).paymentType || "").toLowerCase(),
+    String((payment as any).billingCycle || "").toLowerCase(),
+  ].join(" ");
+  const isSchoolBillingReference = /^(sch_|sms_)/i.test(reference);
+  if (!isSchoolBillingReference && /(student[ _-]?fee|fee[ _-]?payment|payroll)/i.test(descriptor)) {
+    return false;
+  }
   return (
-    /^(sch_|sms_)/i.test(reference) ||
-    moduleValue === "billing" ||
-    ["subscription", "sms_topup"].includes(typeValue) ||
-    ["subscription", "sms_topup"].includes(categoryValue)
+    isSchoolBillingReference ||
+    /(billing|subscription|sms[ _-]?top[ _-]?up|add[ _-]?on)/i.test(descriptor)
   );
 };
 
@@ -626,8 +635,8 @@ const REVENUE_RANGE_OPTIONS = [
 ] as const;
 type RevenueRangeValue = (typeof REVENUE_RANGE_OPTIONS)[number]["value"];
 
-const buildRollingMonths = (count: number) => {
-  const now = new Date();
+const buildRollingMonths = (count: number, anchorDate = new Date()) => {
+  const now = anchorDate;
   return Array.from({ length: count }, (_, index) => {
     const offset = count - 1 - index;
     const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
@@ -1076,7 +1085,26 @@ const EarningsOverview: React.FC<{
   }, [normalizedBillingPayments]);
 
   const revenueTrend = useMemo(() => {
-    const buckets = buildRollingMonths(12);
+    const datedSuccessfulPayments = normalizedBillingPayments.filter(
+      (payment) =>
+        payment.normalizedStatus === "success" && Boolean(payment.createdAt),
+    );
+    const latestPaymentDate = datedSuccessfulPayments.reduce<Date | null>(
+      (latest, payment) =>
+        !latest || (payment.createdAt as Date) > latest
+          ? (payment.createdAt as Date)
+          : latest,
+      null,
+    );
+    const currentBuckets = buildRollingMonths(12);
+    const currentKeys = new Set(currentBuckets.map((bucket) => bucket.key));
+    const hasPaymentInCurrentWindow = datedSuccessfulPayments.some((payment) =>
+      currentKeys.has(getMonthKey(payment.createdAt as Date)),
+    );
+    const buckets =
+      !hasPaymentInCurrentWindow && latestPaymentDate
+        ? buildRollingMonths(12, latestPaymentDate)
+        : currentBuckets;
     const totals = buildRecord(
       buckets.map((b) => b.key),
       () => ({
@@ -3786,7 +3814,10 @@ const Dashboard: React.FC = () => {
               forceRefresh: Boolean(forceRefresh),
               schoolsLimit: 100,
               activityLimit: 30,
-              paymentsLimit: 30,
+              // The finance chart covers a rolling 12-month period. A small
+              // recent-payment slice can contain only pending/failed records
+              // and incorrectly render the whole period as empty.
+              paymentsLimit: 1200,
               checklistLimit: 50,
             }),
           { forceRefresh },
@@ -3906,7 +3937,7 @@ const Dashboard: React.FC = () => {
           forceRefresh,
           schoolsLimit: 1000, // Reasonable limit
           activityLimit: 100,
-          paymentsLimit: 200,
+          paymentsLimit: 1200,
           checklistLimit: 500,
         });
 
@@ -4094,42 +4125,7 @@ const Dashboard: React.FC = () => {
   }, [activity, activityFilter]);
 
   const billingPayments = useMemo(() => {
-    return payments.filter((payment) => {
-      // Check multiple field names for billing/subscription indicator
-      const moduleValue = String((payment as any).module || "").toLowerCase();
-      const typeValue = String((payment as any).type || "").toLowerCase();
-      const categoryValue = String(
-        (payment as any).category || "",
-      ).toLowerCase();
-      const paymentTypeValue = String(
-        (payment as any).paymentType || "",
-      ).toLowerCase();
-
-      // Identify billing/subscription payments by checking various fields
-      const isBillingModule =
-        moduleValue === "billing" || moduleValue.includes("billing");
-      const isBillingType =
-        typeValue === "subscription" ||
-        typeValue === "billing" ||
-        typeValue === "school_billing";
-      const isBillingCategory =
-        categoryValue === "subscription" || categoryValue === "billing";
-      const isBillingPaymentType =
-        paymentTypeValue.includes("billing") ||
-        paymentTypeValue.includes("subscription");
-
-      const isSchoolSubscription = /^sch_/i.test(
-        String((payment as any).reference || ""),
-      );
-
-      return (
-        isBillingModule ||
-        isBillingType ||
-        isBillingCategory ||
-        isBillingPaymentType ||
-        isSchoolSubscription
-      );
-    });
+    return payments.filter(isPaystackBillingPayment);
   }, [payments]);
 
   const paymentMetrics = useMemo(() => {
