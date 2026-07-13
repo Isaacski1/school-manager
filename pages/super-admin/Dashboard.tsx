@@ -24,6 +24,7 @@ import {
   submitSuperAdminAiFeedback,
   getSuperAdminAiMetrics,
   getSuperAdminDashboardOverview,
+  getSuperAdminPaymentsPage,
   getSuperAdminSchoolsPage,
 } from "../../services/backendApi";
 import showToast from "../../services/toast";
@@ -1085,11 +1086,13 @@ const EarningsOverview: React.FC<{
   }, [normalizedBillingPayments]);
 
   const revenueTrend = useMemo(() => {
-    const datedSuccessfulPayments = normalizedBillingPayments.filter(
+    const datedSuccessfulRevenuePayments = normalizedBillingPayments.filter(
       (payment) =>
-        payment.normalizedStatus === "success" && Boolean(payment.createdAt),
+        payment.normalizedStatus === "success" &&
+        payment.normalizedAmount > 0 &&
+        Boolean(payment.createdAt),
     );
-    const latestPaymentDate = datedSuccessfulPayments.reduce<Date | null>(
+    const latestPaymentDate = datedSuccessfulRevenuePayments.reduce<Date | null>(
       (latest, payment) =>
         !latest || (payment.createdAt as Date) > latest
           ? (payment.createdAt as Date)
@@ -1098,7 +1101,7 @@ const EarningsOverview: React.FC<{
     );
     const currentBuckets = buildRollingMonths(12);
     const currentKeys = new Set(currentBuckets.map((bucket) => bucket.key));
-    const hasPaymentInCurrentWindow = datedSuccessfulPayments.some((payment) =>
+    const hasPaymentInCurrentWindow = datedSuccessfulRevenuePayments.some((payment) =>
       currentKeys.has(getMonthKey(payment.createdAt as Date)),
     );
     const buckets =
@@ -3817,7 +3820,7 @@ const Dashboard: React.FC = () => {
               // The finance chart covers a rolling 12-month period. A small
               // recent-payment slice can contain only pending/failed records
               // and incorrectly render the whole period as empty.
-              paymentsLimit: 1200,
+              paymentsLimit: 300,
               checklistLimit: 50,
             }),
           { forceRefresh },
@@ -3842,7 +3845,7 @@ const Dashboard: React.FC = () => {
             eventType: row?.eventType || "activity",
           }),
         );
-        const normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
+        let normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
           (row: any) => ({
             id: String(row?.id || ""),
             ...row,
@@ -3858,6 +3861,26 @@ const Dashboard: React.FC = () => {
             category: row?.category ?? "subscription",
           }),
         );
+        if (normalizedPayments.length === 0) {
+          const paymentsPage = await getSuperAdminPaymentsPage({
+            limit: 300,
+            forceRefresh,
+          });
+          normalizedPayments = (paymentsPage.items || []).map((row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            amount: row?.amount ?? row?.amountPaid ?? 0,
+            createdAt: row?.createdAt ?? row?.paidAt ?? row?.verifiedAt ?? null,
+            paymentMethod: row?.paymentMethod ?? row?.method ?? row?.channel,
+            method: row?.method ?? row?.paymentMethod,
+            channel: row?.channel ?? row?.paymentMethod ?? row?.method,
+            provider: row?.provider ?? row?.gateway ?? row?.processor,
+            paymentType: row?.paymentType ?? row?.payment_method ?? row?.type,
+            module: row?.module ?? "billing",
+            type: row?.type ?? "subscription",
+            category: row?.category ?? "subscription",
+          }));
+        }
         const resolvedTotals = await resolveDashboardTotals(
           payload?.totals,
           normalizedSchools,
@@ -3937,7 +3960,7 @@ const Dashboard: React.FC = () => {
           forceRefresh,
           schoolsLimit: 1000, // Reasonable limit
           activityLimit: 100,
-          paymentsLimit: 1200,
+          paymentsLimit: 300,
           checklistLimit: 500,
         });
 
@@ -3960,7 +3983,7 @@ const Dashboard: React.FC = () => {
             eventType: row?.eventType || "activity",
           }),
         );
-        const normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
+        let normalizedPayments: PaymentRecord[] = (payload?.payments || []).map(
           (row: any) => ({
             id: String(row?.id || ""),
             ...row,
@@ -3976,6 +3999,26 @@ const Dashboard: React.FC = () => {
             category: row?.category ?? "subscription",
           }),
         );
+        if (normalizedPayments.length === 0) {
+          const paymentsPage = await getSuperAdminPaymentsPage({
+            limit: 300,
+            forceRefresh,
+          });
+          normalizedPayments = (paymentsPage.items || []).map((row: any) => ({
+            id: String(row?.id || ""),
+            ...row,
+            amount: row?.amount ?? row?.amountPaid ?? 0,
+            createdAt: row?.createdAt ?? row?.paidAt ?? row?.verifiedAt ?? null,
+            paymentMethod: row?.paymentMethod ?? row?.method ?? row?.channel,
+            method: row?.method ?? row?.paymentMethod,
+            channel: row?.channel ?? row?.paymentMethod ?? row?.method,
+            provider: row?.provider ?? row?.gateway ?? row?.processor,
+            paymentType: row?.paymentType ?? row?.payment_method ?? row?.type,
+            module: row?.module ?? "billing",
+            type: row?.type ?? "subscription",
+            category: row?.category ?? "subscription",
+          }));
+        }
         const resolvedTotals = await resolveDashboardTotals(
           payload?.totals,
           normalizedSchools,

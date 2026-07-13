@@ -12,6 +12,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { requireRole } from "./services/authProfile";
 import { canAccessFeature, FeatureKey } from "./services/featureAccess";
 import { UserRole } from "./types";
+import { trackPageView } from "./services/googleAnalytics";
 
 // Pages
 const Login = lazy(() => import("./pages/Login"));
@@ -187,6 +188,10 @@ const AppContent = () => {
   };
 
   const location = useLocation();
+
+  React.useEffect(() => {
+    trackPageView(location.pathname);
+  }, [location.pathname]);
 
   React.useEffect(() => {
     const redirectUrl = getEmailVerificationRedirect();

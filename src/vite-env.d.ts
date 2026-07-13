@@ -14,6 +14,7 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_CHECK_SITE_KEY?: string;
   readonly VITE_FIREBASE_APP_CHECK_DEBUG_TOKEN?: string;
   readonly VITE_PAYSTACK_PUBLIC_KEY?: string;
+  readonly VITE_GA_MEASUREMENT_ID?: string;
 }
 
 interface ImportMeta {
