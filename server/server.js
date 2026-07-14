@@ -1920,12 +1920,17 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     }
 
     const subaccountCode = paystackData.data.subaccount_code;
+    const isVerified = paystackData.data.is_verified === true;
 
     // 3. Store subaccount details in Firestore
     const resolvedMethod = method || (momoNumber || momoNetwork || momoName ? "MoMo" : "Bank");
     const paymentSettings = {
       method: resolvedMethod,
-      status: "active",
+      status: isVerified ? "active" : "pending_verification",
+      verificationStatus: isVerified ? "verified" : "pending",
+      isVerified,
+      paystackAccountName: paystackData.data.account_name || null,
+      lastVerificationCheckAt: admin.firestore.FieldValue.serverTimestamp(),
       subaccountCode,
       platformFeePercentage: PLATFORM_FEE_PERCENTAGE,
       schoolSettlementPercentage: SCHOOL_SETTLEMENT_PERCENTAGE,
@@ -1946,6 +1951,7 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
     return res.json({
       success: true,
       subaccountCode,
+      isVerified,
       paymentSettings
     });
 
@@ -14020,7 +14026,7 @@ setInterval(() => {
  * POST /api/schools/setup-payment
  * Configures Paystack subaccount for a school.
  */
-app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
+false && app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   const { schoolId, method, bankName, accountNumber, accountName, momoNetwork, momoNumber, momoName } = req.body;
 
   if (!schoolId) return res.status(400).json({ error: "School ID is required." });
@@ -14747,8 +14753,13 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
 
     const paymentSettings = schoolData.paymentSettings || {};
     const subaccountCode = String(paymentSettings.subaccountCode || "").trim();
-    if (paymentSettings.status !== "active" || !subaccountCode) {
-      return res.status(400).json({ error: "The school has not activated an online payout account yet." });
+    if (!subaccountCode) {
+      return res.status(400).json({ error: "The school has not configured an online payout account yet." });
+    }
+    if (paymentSettings.status !== "active" || paymentSettings.isVerified !== true) {
+      return res.status(400).json({
+        error: "The school's payout account is awaiting Paystack verification. Online payments will be available after verification.",
+      });
     }
 
     const reference = `FEES-${String(studentId).slice(0, 5)}-${Date.now()}`;
@@ -15924,7 +15935,7 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
  * Setup Paystack Subaccount for Schools
  * POST /api/schools/setup-payment
  */
-app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
+false && app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   try {
     const { role } = req.user;
     if (role !== "school_admin" && role !== "super_admin") {
@@ -15992,6 +16003,76 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("[Setup Payment Error]:", err.message);
     return res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+/**
+ * Refresh the real verification state of a school's Paystack subaccount.
+ * GET /api/schools/:schoolId/payment-verification
+ */
+app.get("/api/schools/:schoolId/payment-verification", authMiddleware, async (req, res) => {
+  try {
+    const schoolId = String(req.params.schoolId || "").trim();
+    const userDoc = await admin.firestore().collection("users").doc(req.user.uid).get();
+    const userData = userDoc.data() || {};
+    const isSchoolAdmin = userData.role === "school_admin" && String(userData.schoolId || "") === schoolId;
+    const isSuperAdmin = userData.role === "super_admin";
+    if (!schoolId || (!isSchoolAdmin && !isSuperAdmin)) {
+      return res.status(403).json({ error: "Unauthorized to check this payment account." });
+    }
+
+    const schoolRef = admin.firestore().collection("schools").doc(schoolId);
+    const schoolDoc = await schoolRef.get();
+    if (!schoolDoc.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
+
+    const subaccountCode = String(schoolDoc.data()?.paymentSettings?.subaccountCode || "").trim();
+    if (!subaccountCode) {
+      return res.status(400).json({ error: "No Paystack subaccount has been configured." });
+    }
+    if (!PAYSTACK_SECRET_KEY || !isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Live Paystack verification is not configured." });
+    }
+
+    const paystackResponse = await fetch(
+      `https://api.paystack.co/subaccount/${encodeURIComponent(subaccountCode)}`,
+      { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } },
+    );
+    const paystackData = await paystackResponse.json();
+    if (!paystackResponse.ok || !paystackData.status) {
+      return res.status(400).json({
+        error: paystackData.message || "Could not retrieve Paystack verification status.",
+      });
+    }
+
+    const isVerified = paystackData.data?.is_verified === true;
+    const isActive = paystackData.data?.active !== false;
+    const status = !isActive ? "error" : isVerified ? "active" : "pending_verification";
+    const verificationStatus = !isActive ? "inactive" : isVerified ? "verified" : "pending";
+    const updates = {
+      "paymentSettings.status": status,
+      "paymentSettings.verificationStatus": verificationStatus,
+      "paymentSettings.isVerified": isVerified,
+      "paymentSettings.paystackAccountName": paystackData.data?.account_name || null,
+      "paymentSettings.lastVerificationCheckAt": admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (isVerified) {
+      updates["paymentSettings.verifiedAt"] = admin.firestore.FieldValue.serverTimestamp();
+    }
+    await schoolRef.update(updates);
+
+    return res.json({
+      success: true,
+      subaccountCode,
+      status,
+      verificationStatus,
+      isVerified,
+      paystackAccountName: paystackData.data?.account_name || null,
+    });
+  } catch (error) {
+    console.error("[Payment Verification] Error:", error?.message || error);
+    return res.status(500).json({ error: "Could not refresh payment verification status." });
   }
 });
 

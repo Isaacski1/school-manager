@@ -73,7 +73,10 @@ export interface School {
   };
   paymentSettings?: {
     method?: "Bank" | "MoMo";
-    status?: "pending" | "active" | "error";
+    status?: "pending" | "pending_verification" | "active" | "error";
+    verificationStatus?: "pending" | "verified" | "inactive";
+    isVerified?: boolean;
+    paystackAccountName?: string;
     subaccountCode?: string;
     bankName?: string;
     accountNumber?: string;

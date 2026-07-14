@@ -49,7 +49,8 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const [selectedFeeToPay, setSelectedFeeToPay] = useState<{ id: string, name: string } | null>(null);
   const [lastPaymentInfo, setLastPaymentInfo] = useState<{ reference: string; amount: number; date: number } | null>(null);
   const activeSubaccountCode =
-    school?.paymentSettings?.status === "active"
+    school?.paymentSettings?.status === "active" &&
+    school?.paymentSettings?.isVerified === true
       ? school.paymentSettings.subaccountCode
       : undefined;
 

@@ -79,7 +79,10 @@ interface PaymentConfig {
   subaccountCode?: string;
   platformFeePercentage?: number;
   schoolSettlementPercentage?: number;
-  status: "pending" | "active" | "error";
+  status: "pending" | "pending_verification" | "active" | "error";
+  verificationStatus?: "pending" | "verified" | "inactive";
+  isVerified?: boolean;
+  paystackAccountName?: string;
 }
 
 const DEFAULT_PLATFORM_FEE_PERCENTAGE = 2.5;
@@ -93,6 +96,7 @@ const PaymentSettings: React.FC = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [checkingVerification, setCheckingVerification] = useState(false);
   const [config, setConfig] = useState<PaymentConfig>({
     method: "Bank",
     status: "pending"
@@ -101,6 +105,38 @@ const PaymentSettings: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const platformFeePercentage = CURRENT_PLATFORM_FEE_PERCENTAGE;
   const schoolSettlementPercentage = CURRENT_SCHOOL_SETTLEMENT_PERCENTAGE;
+
+  const refreshVerification = async (current: PaymentConfig, showResult = false) => {
+    if (!school?.id || !current.subaccountCode) return current;
+    setCheckingVerification(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch(
+        `${API_BASE_URL}/api/schools/${encodeURIComponent(school.id)}/payment-verification`,
+        { headers: { Authorization: `Bearer ${idToken}` } },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not check Paystack verification.");
+      const refreshed = { ...current, ...result } as PaymentConfig;
+      setConfig(refreshed);
+      setActiveConfig(refreshed);
+      if (showResult) {
+        showToast(
+          result.isVerified
+            ? "Paystack has verified this payout account."
+            : "Paystack verification is still pending.",
+          { type: result.isVerified ? "success" : "info" },
+        );
+      }
+      return refreshed;
+    } catch (error: any) {
+      console.error("Error checking payment verification:", error);
+      if (showResult) showToast(error.message, { type: "error" });
+      return current;
+    } finally {
+      setCheckingVerification(false);
+    }
+  };
 
   useEffect(() => {
     async function fetchPaymentSettings() {
@@ -117,6 +153,9 @@ const PaymentSettings: React.FC = () => {
             };
             setConfig(normalizedPaymentSettings);
             setActiveConfig(normalizedPaymentSettings);
+            if (normalizedPaymentSettings.subaccountCode) {
+              await refreshVerification(normalizedPaymentSettings);
+            }
           }
         }
       } catch (error) {
@@ -180,17 +219,24 @@ const PaymentSettings: React.FC = () => {
         subaccountCode: result.subaccountCode || result.paymentSettings?.subaccountCode,
         platformFeePercentage: result.paymentSettings?.platformFeePercentage ?? DEFAULT_PLATFORM_FEE_PERCENTAGE,
         schoolSettlementPercentage: result.paymentSettings?.schoolSettlementPercentage ?? DEFAULT_SCHOOL_SETTLEMENT_PERCENTAGE,
-        status: "active"
+        status: result.paymentSettings?.status || (result.isVerified ? "active" : "pending_verification"),
+        isVerified: result.isVerified === true,
       };
 
       setConfig(prev => ({
         ...prev,
         ...activatedConfig,
-        status: "active"
+        status: activatedConfig.status,
+        isVerified: activatedConfig.isVerified,
       }));
       setActiveConfig(activatedConfig);
 
-      showToast("Payment settings activated successfully!", { type: "success" });
+      showToast(
+        activatedConfig.isVerified
+          ? "Payment settings activated successfully!"
+          : "Payout account created. Complete verification in Paystack before accepting payments.",
+        { type: activatedConfig.isVerified ? "success" : "info" },
+      );
       setShowForm(false);
     } catch (error: any) {
       console.error("Error saving payment settings:", error);
@@ -222,11 +268,11 @@ const PaymentSettings: React.FC = () => {
               <p className="text-xs sm:text-sm text-slate-500">Configure how you receive fee payments from parents</p>
             </div>
           </div>
-                  {activeConfig?.status === "active" ? (
+          {activeConfig?.subaccountCode ? (
             <div className="space-y-4">
-              <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-lg border border-green-100 text-xs sm:text-sm font-medium w-fit">
-                <CheckCircle2 size={14} />
-                Online Payments Active
+              <div className={`mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-medium w-fit ${activeConfig.isVerified ? "bg-green-50 text-green-700 border-green-100" : "bg-amber-50 text-amber-800 border-amber-200"}`}>
+                {activeConfig.isVerified ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                {activeConfig.isVerified ? "Online Payments Active" : "Paystack Verification Pending"}
               </div>
 
               {/* Current Account Summary */}
@@ -298,8 +344,8 @@ const PaymentSettings: React.FC = () => {
                     <div className="text-[9px] sm:text-[10px] text-slate-500 font-mono uppercase truncate">
                       ID: {activeConfig.subaccountCode}
                     </div>
-                    <div className="text-[9px] sm:text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded border border-green-500/30 whitespace-nowrap">
-                      VERIFIED
+                    <div className={`text-[9px] sm:text-[10px] px-2 py-0.5 rounded border whitespace-nowrap ${activeConfig.isVerified ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"}`}>
+                      {activeConfig.isVerified ? "VERIFIED" : "PENDING VERIFICATION"}
                     </div>
                   </div>
                 </div>
@@ -313,6 +359,22 @@ const PaymentSettings: React.FC = () => {
                   <Settings size={18} />
                 </button>
               </div>
+
+              {!activeConfig.isVerified && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <p className="font-bold">Verification must be completed in Paystack</p>
+                  <p className="mt-1 text-xs leading-5">Open this subaccount in your Paystack Dashboard and complete its verification. Online checkout remains unavailable until Paystack confirms the account.</p>
+                  <button
+                    type="button"
+                    onClick={() => refreshVerification(activeConfig, true)}
+                    disabled={checkingVerification}
+                    className="mt-3 inline-flex items-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={checkingVerification ? "animate-spin" : ""} />
+                    Check Paystack Status
+                  </button>
+                </div>
+              )}
 
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900">
                 <div className="flex gap-3">
@@ -329,7 +391,7 @@ const PaymentSettings: React.FC = () => {
                 </div>
               </div>
 
-              {activeConfig?.status === "active" && !showForm && (
+              {activeConfig?.subaccountCode && !showForm && (
                 <button
                   onClick={() => setShowForm(true)}
                   className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-500 font-medium hover:border-[#1160A8] hover:text-[#1160A8] transition-all flex items-center justify-center gap-2"
@@ -361,7 +423,7 @@ const PaymentSettings: React.FC = () => {
           )}
         </div>
 
-        <div className={`p-6 space-y-8 ${(activeConfig?.status === "active" && !showForm) ? "hidden" : "block"}`}>
+        <div className={`p-6 space-y-8 ${(activeConfig?.subaccountCode && !showForm) ? "hidden" : "block"}`}>
           {/* Info Card */}
           <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100">
             <div className="flex gap-3">
