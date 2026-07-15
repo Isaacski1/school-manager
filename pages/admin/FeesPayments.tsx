@@ -46,7 +46,6 @@ import {
   MessageSquare,
   X,
 } from "lucide-react";
-import PayoutStatus from "../../components/dashboard/PayoutStatus";
 import { API_BASE_URL } from "../../src/config";
 
 
@@ -2968,9 +2967,6 @@ const FeesPayments: React.FC = () => {
                   </div>
                 );
               })}
-              <div className="sm:col-span-2">
-                <PayoutStatus schoolId={schoolId} scopeLabel="All terms" />
-              </div>
             </div>
           </div>
 

@@ -1839,6 +1839,42 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
  * Setup School Payment (Paystack Subaccount)
  * POST /api/schools/setup-payment
  */
+app.get("/api/payments/banks", authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const role = userDoc.data()?.role || req.user?.role || "";
+    if (!userDoc.exists || !["school_admin", "super_admin"].includes(role)) {
+      return res.status(403).json({ error: "Only administrators can load payout banks." });
+    }
+
+    if (!PAYSTACK_SECRET_KEY || !isLivePaystackSecret()) {
+      return res.status(500).json({ error: "Live Paystack banking is not configured." });
+    }
+
+    const paystackResponse = await fetch(
+      "https://api.paystack.co/bank?currency=GHS&type=ghipss",
+      { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } },
+    );
+    const paystackData = await paystackResponse.json().catch(() => ({}));
+    if (!paystackResponse.ok || !paystackData.status) {
+      throw new Error(paystackData.message || "Could not load Ghana banks from Paystack.");
+    }
+
+    const banks = Array.isArray(paystackData.data)
+      ? paystackData.data
+          .filter((bank) => bank?.name && bank?.code)
+          .map((bank) => ({ name: bank.name, code: String(bank.code) }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
+
+    return res.json({ success: true, banks });
+  } catch (error) {
+    console.error("[Payment Banks Error]:", error);
+    return res.status(500).json({ error: error.message || "Could not load payout banks." });
+  }
+});
+
 app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
   try {
     const {

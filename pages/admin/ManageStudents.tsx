@@ -744,7 +744,7 @@ const ManageStudents = () => {
           return (
             <div
               key={key}
-              className="relative overflow-hidden border border-slate-200 rounded-2xl p-4 bg-white shadow-sm"
+              className="relative w-full min-w-0 overflow-hidden border border-slate-200 rounded-2xl p-2 sm:p-4 bg-white shadow-sm"
             >
               <div className="absolute -top-10 -right-10 h-24 w-24 rounded-full bg-indigo-100/60 blur-2xl" />
               <div className="absolute -bottom-12 -left-10 h-28 w-28 rounded-full bg-emerald-100/60 blur-2xl" />
@@ -1040,7 +1040,7 @@ const ManageStudents = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-blue-50 sticky top-0 z-10">
+            <div className="p-4 sm:p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-blue-50 sm:sticky sm:top-0 sm:z-10">
               <div className="flex items-center gap-4">
                 <UserAvatar user={viewAdmissionStudent} size="lg" className="shadow-sm !rounded-xl" />
                 <div>
@@ -1988,7 +1988,7 @@ const ManageStudents = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex flex-col gap-4 bg-gradient-to-r from-slate-50 via-white to-emerald-50 sticky top-0 z-10">
+            <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col gap-4 bg-gradient-to-r from-slate-50 via-white to-emerald-50 sm:sticky sm:top-0 sm:z-10">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <UserAvatar user={viewStudent} size="xl" className="shadow-sm !rounded-2xl" />
@@ -2050,9 +2050,9 @@ const ManageStudents = () => {
             </div>
 
             {/* Body */}
-            <div className="p-6 space-y-8">
+            <div className="p-3 sm:p-6 space-y-8">
               {/* Detailed Attendance Stats */}
-              <div className="rounded-2xl border border-slate-100 bg-white/80 p-5 shadow-sm">
+              <div className="rounded-2xl border border-slate-100 bg-white/80 p-3 sm:p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600">
@@ -2102,7 +2102,7 @@ const ManageStudents = () => {
                 </div>
 
                 {/* Calendar View */}
-                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="rounded-2xl border border-slate-100 bg-white p-2 sm:p-4 shadow-sm">
                   {renderCalendar()}
                 </div>
               </div>
@@ -2118,8 +2118,8 @@ const ManageStudents = () => {
                     Subjects: {subjectCount}
                   </span>
                 </div>
-                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  <table className="w-full text-sm text-left">
+                <div className="border border-slate-200 rounded-2xl overflow-x-auto bg-white">
+                  <table className="w-full min-w-[560px] text-sm text-left">
                     <thead className="bg-slate-50 text-slate-600 font-semibold">
                       <tr>
                         <th className="px-4 py-3">Subject</th>

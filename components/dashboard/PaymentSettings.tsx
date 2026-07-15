@@ -47,6 +47,11 @@ const BANK_CODES: Record<string, string> = {
 
 const GHANA_BANKS = Object.keys(BANK_CODES).sort();
 
+type PaystackBank = {
+  name: string;
+  code: string;
+};
+
 const MOMO_NETWORKS = [
   { 
     id: "MTN", // Paystack code for MTN Ghana
@@ -96,6 +101,9 @@ const PaymentSettings: React.FC = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [banksLoading, setBanksLoading] = useState(true);
+  const [availableBanks, setAvailableBanks] = useState<PaystackBank[]>([]);
+  const [banksError, setBanksError] = useState("");
   const [checkingVerification, setCheckingVerification] = useState(false);
   const [config, setConfig] = useState<PaymentConfig>({
     method: "Bank",
@@ -167,6 +175,30 @@ const PaymentSettings: React.FC = () => {
     fetchPaymentSettings();
   }, [school?.id]);
 
+  useEffect(() => {
+    async function fetchPayoutBanks() {
+      if (!school?.id) return;
+      setBanksLoading(true);
+      setBanksError("");
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        const response = await fetch(`${API_BASE_URL}/api/payments/banks`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not load payout banks.");
+        setAvailableBanks(Array.isArray(result.banks) ? result.banks : []);
+      } catch (error: any) {
+        console.error("Error loading Paystack banks:", error);
+        setBanksError(error.message || "Could not load the current Paystack bank list.");
+      } finally {
+        setBanksLoading(false);
+      }
+    }
+
+    void fetchPayoutBanks();
+  }, [school?.id]);
+
   const handleSave = async () => {
     if (!school?.id) return;
 
@@ -186,8 +218,15 @@ const PaymentSettings: React.FC = () => {
     setLoading(true);
     try {
       const businessName = config.method === "Bank" ? config.accountName : config.momoName;
-      const bankCode = config.method === "Bank" ? BANK_CODES[config.bankName || ""] : config.momoNetwork;
+      const selectedBank = availableBanks.find((bank) => bank.name === config.bankName);
+      const bankCode = config.method === "Bank" ? selectedBank?.code : config.momoNetwork;
       const accountNumber = config.method === "Bank" ? config.accountNumber : config.momoNumber;
+
+      if (config.method === "Bank" && !bankCode) {
+        throw new Error(
+          banksError || "Select a bank from Paystack's current bank list before activating payments.",
+        );
+      }
 
       const idToken = await auth.currentUser?.getIdToken();
 
@@ -489,13 +528,19 @@ const PaymentSettings: React.FC = () => {
                   <select
                     value={config.bankName || ""}
                     onChange={(e) => setConfig({ ...config, bankName: e.target.value })}
+                    disabled={banksLoading || Boolean(banksError)}
                     className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-[#1160A8] focus:ring-1 focus:ring-[#1160A8] outline-none transition-all"
                   >
-                    <option value="">Select a bank</option>
-                    {GHANA_BANKS.map(bank => (
-                      <option key={bank} value={bank}>{bank}</option>
+                    <option value="">
+                      {banksLoading ? "Loading Paystack banks..." : "Select a bank"}
+                    </option>
+                    {availableBanks.map(bank => (
+                      <option key={bank.code} value={bank.name}>{bank.name}</option>
                     ))}
                   </select>
+                  {banksError && (
+                    <p className="mt-2 text-xs font-medium text-rose-600">{banksError} Refresh the page to retry.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Account Number</label>
