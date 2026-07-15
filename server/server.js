@@ -1930,33 +1930,68 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
     }
 
-    // 2. Call Paystack to create subaccount
-    const paystackResponse = await fetch("https://api.paystack.co/subaccount", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        business_name: resolvedBusinessName,
-        settlement_bank: resolvedBankCode,
-        account_number: resolvedAccountNumber,
-        percentage_charge: PLATFORM_FEE_PERCENTAGE,
-        primary_contact_phone: contactPhone || userData.phone || ""
-      }),
-    });
+    const schoolRef = admin.firestore().collection("schools").doc(schoolId);
+    const schoolDoc = await schoolRef.get();
+    if (!schoolDoc.exists) {
+      return res.status(404).json({ error: "School not found." });
+    }
 
-    const paystackData = await paystackResponse.json();
+    const existingPaymentSettings = schoolDoc.data()?.paymentSettings || {};
+    const existingSubaccountCode = String(existingPaymentSettings.subaccountCode || "").trim();
+    const paystackPayload = {
+      business_name: resolvedBusinessName,
+      settlement_bank: resolvedBankCode,
+      bank_code: resolvedBankCode,
+      account_number: resolvedAccountNumber,
+      percentage_charge: PLATFORM_FEE_PERCENTAGE,
+      primary_contact_phone: contactPhone || userData.phone || "",
+    };
+
+    const sendSubaccountRequest = async (subaccountCode = "") => {
+      const isUpdate = Boolean(subaccountCode);
+      const response = await fetch(
+        isUpdate
+          ? `https://api.paystack.co/subaccount/${encodeURIComponent(subaccountCode)}`
+          : "https://api.paystack.co/subaccount",
+        {
+          method: isUpdate ? "PUT" : "POST",
+          headers: {
+            Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(paystackPayload),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      return { response, data };
+    };
+
+    let subaccountAction = existingSubaccountCode ? "updated" : "created";
+    let { response: paystackResponse, data: paystackData } =
+      await sendSubaccountRequest(existingSubaccountCode);
+
+    if (existingSubaccountCode && (!paystackResponse.ok || !paystackData.status)) {
+      const message = String(paystackData.message || "");
+      const previousSubaccountMissing =
+        paystackResponse.status === 404 || /subaccount.*(not found|does not exist)|invalid subaccount/i.test(message);
+      if (previousSubaccountMissing) {
+        ({ response: paystackResponse, data: paystackData } = await sendSubaccountRequest());
+        subaccountAction = "recreated";
+      }
+    }
 
     if (!paystackResponse.ok || !paystackData.status) {
       console.error("Paystack Subaccount Error:", paystackData);
-      return res.status(400).json({ 
-        error: paystackData.message || "Failed to create Paystack subaccount." 
+      return res.status(400).json({
+        error:
+          paystackData.message ||
+          `Failed to ${existingSubaccountCode ? "update" : "create"} Paystack subaccount.`,
       });
     }
 
-    const subaccountCode = paystackData.data.subaccount_code;
-    const isVerified = paystackData.data.is_verified === true;
+    const subaccountCode = paystackData.data.subaccount_code || existingSubaccountCode;
+    // Any payout destination change must be reviewed again before checkout is enabled.
+    const isVerified = subaccountAction === "created" && paystackData.data.is_verified === true;
 
     // 3. Store subaccount details in Firestore
     const resolvedMethod = method || (momoNumber || momoNetwork || momoName ? "MoMo" : "Bank");
@@ -1971,7 +2006,8 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       platformFeePercentage: PLATFORM_FEE_PERCENTAGE,
       schoolSettlementPercentage: SCHOOL_SETTLEMENT_PERCENTAGE,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      setupAt: admin.firestore.FieldValue.serverTimestamp(),
+      setupAt: existingPaymentSettings.setupAt || admin.firestore.FieldValue.serverTimestamp(),
+      payoutDetailsChangedAt: admin.firestore.FieldValue.serverTimestamp(),
       bankName: resolvedMethod === "Bank" ? (bankName || resolvedBankCode) : null,
       accountNumber: resolvedMethod === "Bank" ? resolvedAccountNumber : null,
       accountName: resolvedMethod === "Bank" ? resolvedBusinessName : null,
@@ -1980,12 +2016,13 @@ app.post("/api/schools/setup-payment", authMiddleware, async (req, res) => {
       momoName: resolvedMethod === "MoMo" ? resolvedBusinessName : null,
     };
 
-    await admin.firestore().collection("schools").doc(schoolId).update({
+    await schoolRef.update({
       paymentSettings
     });
 
     return res.json({
       success: true,
+      action: subaccountAction,
       subaccountCode,
       isVerified,
       paymentSettings

@@ -1508,8 +1508,8 @@ const SystemSettings = () => {
                     </span>
                     Notification Settings
                   </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Payment alerts and receipts are sent by SMS.
+                  <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">
+                    To receive SMS notifications, enter an active phone number below and enable SMS Notifications. When Payment Alerts are enabled, this number will be notified whenever a parent completes a fee payment. You can also enable invoice notifications and other SMS updates as needed.
                   </p>
                 </div>
                 <button

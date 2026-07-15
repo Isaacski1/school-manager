@@ -132,7 +132,7 @@ const PaymentSettings: React.FC = () => {
         showToast(
           result.isVerified
             ? "Paystack has verified this payout account."
-            : "Paystack verification is still pending.",
+            : "School Manager GH verification is still being processed.",
           { type: result.isVerified ? "success" : "info" },
         );
       }
@@ -273,7 +273,9 @@ const PaymentSettings: React.FC = () => {
       showToast(
         activatedConfig.isVerified
           ? "Payment settings activated successfully!"
-          : "Payout account created. Complete verification in Paystack before accepting payments.",
+          : result.action === "updated"
+            ? "Payout account updated. School Manager GH will process verification within 24 hours."
+            : "Payout account submitted. School Manager GH will process verification within 24 hours.",
         { type: activatedConfig.isVerified ? "success" : "info" },
       );
       setShowForm(false);
@@ -401,8 +403,10 @@ const PaymentSettings: React.FC = () => {
 
               {!activeConfig.isVerified && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  <p className="font-bold">Verification must be completed in Paystack</p>
-                  <p className="mt-1 text-xs leading-5">Open this subaccount in your Paystack Dashboard and complete its verification. Online checkout remains unavailable until Paystack confirms the account.</p>
+                  <p className="font-bold">Account verification is in progress</p>
+                  <p className="mt-1 text-xs leading-5">
+                    School Manager GH will process the verification of your payout account. Verification is normally completed within 24 hours, and online payments will become available after approval.
+                  </p>
                   <button
                     type="button"
                     onClick={() => refreshVerification(activeConfig, true)}
@@ -410,7 +414,7 @@ const PaymentSettings: React.FC = () => {
                     className="mt-3 inline-flex items-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <RefreshCw size={14} className={checkingVerification ? "animate-spin" : ""} />
-                    Check Paystack Status
+                    Check Verification Status
                   </button>
                 </div>
               )}
