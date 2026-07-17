@@ -43,6 +43,8 @@ import {
   StudentFeePayment,
   PaymentMethod,
   FinanceSettings,
+  DailyFeeDefinition,
+  DailyCollectionRecord,
   School,
   BackupType,
   RecoveryCollectionName,
@@ -3922,6 +3924,70 @@ class FirestoreService {
       console.warn("[mockDb] Refused to delete fee from another school", feeId);
     } else if (rootSnapResult.denied) {
       console.debug("[mockDb] Skipped legacy fee delete: permission denied", feeId);
+    }
+  }
+
+  async getDailyFees(schoolId?: string): Promise<DailyFeeDefinition[]> {
+    await this.requireFeature(schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getDailyFees");
+    const snap = await getDocs(
+      query(
+        collection(firestore, "schools", scopedSchoolId, "dailyFees"),
+        where("schoolId", "==", scopedSchoolId),
+      ),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyFeeDefinition, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyFee(fee: DailyFeeDefinition): Promise<void> {
+    await this.requireFeature(fee.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(fee.schoolId, "saveDailyFee");
+    await setDoc(
+      doc(firestore, "schools", schoolId, "dailyFees", fee.id),
+      this.stripUndefinedDeep(fee),
+      { merge: true },
+    );
+  }
+
+  async getDailyCollections(filters: {
+    schoolId?: string;
+    date?: string;
+    classId?: string;
+  }): Promise<DailyCollectionRecord[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(filters.schoolId, "getDailyCollections");
+    const constraints: QueryConstraint[] = [where("schoolId", "==", schoolId)];
+    if (filters.date) constraints.push(where("date", "==", filters.date));
+    if (filters.classId) constraints.push(where("classId", "==", filters.classId));
+    const snap = await getDocs(
+      query(collection(firestore, "schools", schoolId, "dailyCollections"), ...constraints),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyCollectionRecord, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyCollections(records: DailyCollectionRecord[]): Promise<void> {
+    if (!records.length) return;
+    const schoolId = this.requireSchoolId(records[0].schoolId, "saveDailyCollections");
+    await this.requireFeature(schoolId, "fees_payments");
+    if (records.some((record) => record.schoolId !== schoolId)) {
+      throw new Error("Daily collection batch cannot contain multiple schools.");
+    }
+    for (let offset = 0; offset < records.length; offset += 450) {
+      const batch = writeBatch(firestore);
+      records.slice(offset, offset + 450).forEach((record) => {
+        batch.set(
+          doc(firestore, "schools", schoolId, "dailyCollections", record.id),
+          this.stripUndefinedDeep(record),
+          { merge: true },
+        );
+      });
+      await batch.commit();
     }
   }
 

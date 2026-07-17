@@ -332,6 +332,46 @@ export interface PlatformSecuritySettings {
   updatedBy: string;
 }
 
+export type DailyCollectionStatus =
+  | "paid"
+  | "partial"
+  | "unpaid"
+  | "absent"
+  | "exempt";
+
+export type DailyBillingMode = "pay_as_you_go" | "daily_debt";
+
+export interface DailyFeeDefinition {
+  id: string;
+  schoolId: string;
+  name: string;
+  amount: number;
+  classId?: string | null;
+  billingMode: DailyBillingMode;
+  active: boolean;
+  createdAt: Date | number;
+  createdBy: string;
+}
+
+export interface DailyCollectionRecord {
+  id: string;
+  schoolId: string;
+  date: string;
+  classId: string;
+  studentId: string;
+  feeId: string;
+  feeName: string;
+  expectedAmount: number;
+  amountPaid: number;
+  status: DailyCollectionStatus;
+  paymentMethod: PaymentMethod;
+  billingMode: DailyBillingMode;
+  note?: string | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number;
+  recordedBy: string;
+}
+
 export interface SchoolConfig {
   schoolId: string;
   schoolName: string;

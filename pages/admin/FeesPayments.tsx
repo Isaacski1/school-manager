@@ -47,6 +47,7 @@ import {
   X,
 } from "lucide-react";
 import { API_BASE_URL } from "../../src/config";
+import DailyCollections from "../../components/finance/DailyCollections";
 
 
 const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
@@ -2821,6 +2822,21 @@ const FeesPayments: React.FC = () => {
                     </button>
 
                     <button
+                      onClick={() => document.getElementById("daily-collections")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-emerald-200/60 hover:bg-white/[0.16]"
+                    >
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-200/20 transition-colors duration-100 group-hover:bg-emerald-500 group-hover:text-white">
+                        <CalendarRange size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block">Daily collections</span>
+                        <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
+                          Feeding, bus and daily fees
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
                       onClick={() => setShowOnboardingWizard(true)}
                       className="group inline-flex min-h-[86px] items-center gap-3 rounded-3xl border border-white/15 bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white/95 transition-colors duration-100 hover:border-violet-200/60 hover:bg-white/[0.16]"
                     >
@@ -3939,6 +3955,8 @@ const FeesPayments: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <DailyCollections />
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div

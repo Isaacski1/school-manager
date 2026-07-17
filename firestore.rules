@@ -462,6 +462,19 @@ service cloud.firestore {
         isActiveSchoolId(schoolId);
     }
 
+    match /schools/{schoolId}/dailyFees/{feeId} {
+      allow read: if schoolScopedRead(schoolId);
+      allow create, update, delete: if schoolAdminOwnsSchool(schoolId) &&
+        request.resource.data.schoolId == schoolId;
+    }
+
+    match /schools/{schoolId}/dailyCollections/{collectionId} {
+      allow read: if schoolScopedRead(schoolId);
+      allow create, update: if schoolAdminOwnsSchool(schoolId) &&
+        request.resource.data.schoolId == schoolId;
+      allow delete: if isSuperAdmin() || schoolAdminOwnsSchool(schoolId);
+    }
+
     function schoolAdminOwnsSchool(schoolId) {
       return isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId));
