@@ -61,6 +61,7 @@ const DailyCollections: React.FC = () => {
   const [drafts, setDrafts] = useState<Record<string, DraftRow>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingFee, setSavingFee] = useState(false);
   const [showFeeForm, setShowFeeForm] = useState(false);
   const [feeForm, setFeeForm] = useState({
     name: "Feeding",
@@ -212,6 +213,7 @@ const DailyCollections: React.FC = () => {
       createdAt: Date.now(),
       createdBy: user.id,
     };
+    setSavingFee(true);
     try {
       await db.saveDailyFee(fee);
       await loadFees();
@@ -222,6 +224,8 @@ const DailyCollections: React.FC = () => {
     } catch (error) {
       console.error("Failed to save daily fee", error);
       showToast("Could not create the daily fee type.", { type: "error" });
+    } finally {
+      setSavingFee(false);
     }
   };
 
@@ -264,7 +268,24 @@ const DailyCollections: React.FC = () => {
           <select value={feeForm.billingMode} onChange={(e) => setFeeForm({ ...feeForm, billingMode: e.target.value as DailyBillingMode })} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
             <option value="pay_as_you_go">No debt on missed day</option><option value="daily_debt">Unpaid becomes debt</option>
           </select>
-          <button onClick={saveFee} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Save fee type</button>
+          <button
+            onClick={saveFee}
+            disabled={savingFee}
+            aria-busy={savingFee}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-70"
+          >
+            {savingFee ? (
+              <>
+                <RefreshCw size={16} className="animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                Save fee type
+              </>
+            )}
+          </button>
         </div>
       )}
 

@@ -2921,7 +2921,7 @@ const FeesPayments: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
+            <div className="grid auto-rows-max content-start gap-4 self-start sm:grid-cols-2 xl:grid-cols-2">
               {[
                 {
                   label: "Collection Rate",
@@ -2960,7 +2960,7 @@ const FeesPayments: React.FC = () => {
                 return (
                   <div
                     key={item.label}
-                    className={`rounded-[28px] border border-white/60 bg-gradient-to-br ${item.tone} p-5 shadow-[0_24px_70px_-50px_rgba(15,23,42,0.5)] backdrop-blur`}
+                    className={`rounded-[24px] border border-white/60 bg-gradient-to-br ${item.tone} p-4 sm:p-5 shadow-[0_24px_70px_-50px_rgba(15,23,42,0.5)] backdrop-blur`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
