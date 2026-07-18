@@ -38,6 +38,7 @@ const Assessment = lazy(() => import("./pages/teacher/Assessment"));
 const WriteRemarks = lazy(() => import("./pages/teacher/WriteRemarks"));
 const EditSkills = lazy(() => import("./pages/teacher/EditSkills"));
 const StudentPerformance = lazy(() => import("./pages/teacher/StudentPerformance"));
+const TeacherDailyCollections = lazy(() => import("./pages/teacher/DailyCollections"));
 const ParentDashboard = lazy(() => import("./pages/parent/ParentDashboard"));
 const Schools = lazy(() => import("./pages/super-admin/Schools"));
 const SchoolDetails = lazy(() => import("./pages/super-admin/SchoolDetails"));
@@ -910,6 +911,17 @@ const AppRoutes = ({
             requiredFeature="attendance"
           >
             <Attendance />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/teacher/daily-collections"
+        element={
+          <ProtectedRoute
+            allowedRoles={[UserRole.TEACHER]}
+            requiredFeature="fees_payments"
+          >
+            <TeacherDailyCollections />
           </ProtectedRoute>
         }
       />

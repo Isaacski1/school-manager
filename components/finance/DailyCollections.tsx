@@ -18,6 +18,7 @@ import {
   DailyBillingMode,
   DailyCollectionRecord,
   DailyCollectionStatus,
+  DailyCollectionBatch,
   DailyFeeDefinition,
   PaymentMethod,
   Student,
@@ -47,10 +48,16 @@ const statusOptions: { value: DailyCollectionStatus; label: string }[] = [
   { value: "exempt", label: "Exempt" },
 ];
 
-const DailyCollections: React.FC = () => {
+const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = false }) => {
   const { school } = useSchool();
   const { user } = useAuth();
-  const { classes, getClassName } = useSchoolClasses();
+  const { classes: schoolClasses, getClassName } = useSchoolClasses();
+  const classes = useMemo(
+    () => teacherMode
+      ? schoolClasses.filter((item) => (user?.assignedClassIds || []).includes(item.id))
+      : schoolClasses,
+    [schoolClasses, teacherMode, user?.assignedClassIds],
+  );
   const schoolId = school?.id || user?.schoolId || "";
   const [date, setDate] = useState(todayKey);
   const [classId, setClassId] = useState("");
@@ -58,6 +65,7 @@ const DailyCollections: React.FC = () => {
   const [fees, setFees] = useState<DailyFeeDefinition[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [saved, setSaved] = useState<DailyCollectionRecord[]>([]);
+  const [batch, setBatch] = useState<DailyCollectionBatch | null>(null);
   const [drafts, setDrafts] = useState<Record<string, DraftRow>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -75,6 +83,10 @@ const DailyCollections: React.FC = () => {
     [fees, classId],
   );
   const selectedFee = applicableFees.find((fee) => fee.id === feeId);
+  const registerLocked = Boolean(batch && ["submitted", "confirmed", "confirmed_with_difference", "rejected"].includes(batch.status));
+  const batchId = selectedFee && classId
+    ? `${date}_${classId}_${selectedFee.id}_${user?.id || "collector"}`.replace(/[^a-zA-Z0-9_-]/g, "_")
+    : "";
 
   const loadFees = useCallback(async () => {
     if (!schoolId) return;
@@ -101,9 +113,10 @@ const DailyCollections: React.FC = () => {
     }
     setLoading(true);
     try {
-      const [studentRows, collectionRows] = await Promise.all([
+      const [studentRows, collectionRows, batchRows] = await Promise.all([
         db.getStudents(schoolId, classId),
         db.getDailyCollections({ schoolId, date, classId }),
+        db.getDailyCollectionBatches({ schoolId, date, classId, ...(teacherMode && user?.id ? { teacherId: user.id } : {}) }),
       ]);
       const feeRows = collectionRows.filter((row) => row.feeId === feeId);
       const byStudent = new Map(feeRows.map((row) => [row.studentId, row]));
@@ -119,6 +132,7 @@ const DailyCollections: React.FC = () => {
       });
       setStudents([...studentRows].sort((a, b) => a.name.localeCompare(b.name)));
       setSaved(feeRows);
+      setBatch(batchRows.find((item) => item.feeId === feeId && (!teacherMode || item.teacherId === user?.id)) || null);
       setDrafts(nextDrafts);
     } catch (error) {
       console.error("Failed to load daily collection register", error);
@@ -126,7 +140,7 @@ const DailyCollections: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [schoolId, classId, feeId, date]);
+  }, [schoolId, classId, feeId, date, teacherMode, user?.id]);
 
   useEffect(() => {
     loadRegister();
@@ -154,8 +168,12 @@ const DailyCollections: React.FC = () => {
     }])));
   };
 
-  const saveRegister = async () => {
+  const saveRegister = async (submit = false) => {
     if (!selectedFee || !user?.id || !schoolId) return;
+    if (registerLocked) {
+      showToast("This register is locked while awaiting management review.", { type: "error" });
+      return;
+    }
     const now = Date.now();
     const records: DailyCollectionRecord[] = students.map((student) => {
       const draft = drafts[student.id];
@@ -181,12 +199,38 @@ const DailyCollections: React.FC = () => {
         createdAt: saved.find((row) => row.studentId === student.id)?.createdAt || now,
         updatedAt: now,
         recordedBy: user.id,
+        batchId,
       };
     });
     setSaving(true);
     try {
       await db.saveDailyCollections(records);
-      showToast(`Daily register saved for ${students.length} students.`, { type: "success" });
+      const reportedCash = records.filter((row) => row.paymentMethod === "Cash").reduce((sum, row) => sum + row.amountPaid, 0);
+      const reportedMomo = records.filter((row) => row.paymentMethod === "MoMo").reduce((sum, row) => sum + row.amountPaid, 0);
+      const reportedBank = records.filter((row) => row.paymentMethod === "Bank").reduce((sum, row) => sum + row.amountPaid, 0);
+      const nextBatch: DailyCollectionBatch = {
+        id: batchId,
+        schoolId,
+        date,
+        classId,
+        feeId: selectedFee.id,
+        feeName: selectedFee.name,
+        teacherId: user.id,
+        teacherName: user.fullName || user.email || "Collector",
+        expectedAmount: records.filter((row) => !["absent", "exempt"].includes(row.status)).reduce((sum, row) => sum + row.expectedAmount, 0),
+        reportedAmount: records.reduce((sum, row) => sum + row.amountPaid, 0),
+        reportedCash,
+        reportedMomo,
+        reportedBank,
+        studentCount: records.length,
+        paidCount: records.filter((row) => row.status === "paid").length,
+        status: submit ? "submitted" : batch?.status === "returned" ? "returned" : "draft",
+        submittedAt: submit ? now : batch?.submittedAt || null,
+        createdAt: batch?.createdAt || now,
+        updatedAt: now,
+      };
+      await db.saveDailyCollectionBatch(nextBatch);
+      showToast(submit ? "Register submitted to the head teacher." : `Daily register saved for ${students.length} students.`, { type: "success" });
       await loadRegister();
     } catch (error) {
       console.error("Failed to save daily collections", error);
@@ -253,9 +297,9 @@ const DailyCollections: React.FC = () => {
           <h2 className="mt-1 text-2xl font-semibold text-slate-900">Daily Collections</h2>
           <p className="mt-1 text-sm text-slate-500">Collect feeding, bus and other daily fees class by class.</p>
         </div>
-        <button onClick={() => setShowFeeForm((value) => !value)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
+        {!teacherMode && <button onClick={() => setShowFeeForm((value) => !value)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
           <Plus size={17} /> Add daily fee
-        </button>
+        </button>}
       </div>
 
       {showFeeForm && (
@@ -311,7 +355,8 @@ const DailyCollections: React.FC = () => {
               <tbody className="divide-y divide-slate-100">{loading ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">Loading register…</td></tr> : students.map((student) => { const row = drafts[student.id]; return <tr key={student.id}><td className="px-4 py-3 font-semibold text-slate-800">{student.name}</td><td className="px-3 py-2"><select value={row?.status || 'unpaid'} onChange={(e) => applyStatus(student.id, e.target.value as DailyCollectionStatus)} className="rounded-lg border border-slate-200 px-2 py-2">{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td className="px-3 py-2"><input type="number" min="0" step="0.01" value={row?.amountPaid || ''} disabled={['absent','exempt'].includes(row?.status)} onChange={(e) => updateDraft(student.id, { amountPaid: e.target.value, status: Number(e.target.value) >= selectedFee.amount ? 'paid' : Number(e.target.value) > 0 ? 'partial' : 'unpaid' })} className="w-28 rounded-lg border border-slate-200 px-3 py-2 disabled:bg-slate-100" placeholder="0.00" /></td><td className="px-3 py-2"><select value={row?.paymentMethod || 'Cash'} onChange={(e) => updateDraft(student.id, { paymentMethod: e.target.value as PaymentMethod })} className="rounded-lg border border-slate-200 px-2 py-2"><option>Cash</option><option>MoMo</option><option>Bank</option></select></td><td className="px-3 py-2"><input value={row?.note || ''} onChange={(e) => updateDraft(student.id, { note: e.target.value })} placeholder="Optional note" className="w-full rounded-lg border border-slate-200 px-3 py-2" /></td></tr>; })}</tbody>
             </table>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-900 p-4 text-white"><div className="flex items-center gap-3">{selectedFee.name.toLowerCase().includes('bus') ? <Bus /> : selectedFee.name.toLowerCase().includes('feed') ? <Utensils /> : <Banknote />}<div><p className="font-semibold">{selectedFee.name} register</p><p className="text-xs text-slate-300">{selectedFee.billingMode === 'daily_debt' ? 'Unpaid pupils will remain outstanding.' : 'Missed payments do not automatically become debt.'}</p></div></div><button disabled={saving || !students.length} onClick={saveRegister} className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-white disabled:opacity-50">{saving ? <RefreshCw size={17} className="animate-spin" /> : <Save size={17} />} Save daily register</button></div>
+          {batch && <div className={`mt-4 rounded-xl px-4 py-3 text-sm font-semibold ${batch.status === 'returned' ? 'bg-amber-50 text-amber-700' : registerLocked ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-600'}`}>Status: {batch.status.replaceAll('_', ' ')}{batch.returnReason ? ` — ${batch.returnReason}` : ''}</div>}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-900 p-4 text-white"><div className="flex items-center gap-3">{selectedFee.name.toLowerCase().includes('bus') ? <Bus /> : selectedFee.name.toLowerCase().includes('feed') ? <Utensils /> : <Banknote />}<div><p className="font-semibold">{selectedFee.name} register</p><p className="text-xs text-slate-300">{registerLocked ? 'Locked while management reviews this handover.' : selectedFee.billingMode === 'daily_debt' ? 'Unpaid pupils will remain outstanding.' : 'Missed payments do not automatically become debt.'}</p></div></div><div className="flex gap-2"><button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(false)} className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 font-semibold text-white disabled:opacity-50">{saving ? <RefreshCw size={17} className="animate-spin" /> : <Save size={17} />} Save draft</button>{teacherMode && <button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(true)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-white disabled:opacity-50">Submit to head teacher</button>}</div></div>
         </>
       )}
       {!fees.length && !showFeeForm && <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Create the school’s first daily fee type to begin collecting.</div>}

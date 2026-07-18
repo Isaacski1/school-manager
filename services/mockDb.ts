@@ -45,6 +45,7 @@ import {
   FinanceSettings,
   DailyFeeDefinition,
   DailyCollectionRecord,
+  DailyCollectionBatch,
   School,
   BackupType,
   RecoveryCollectionName,
@@ -3989,6 +3990,37 @@ class FirestoreService {
       });
       await batch.commit();
     }
+  }
+
+  async getDailyCollectionBatches(filters: {
+    schoolId?: string;
+    teacherId?: string;
+    classId?: string;
+    date?: string;
+  }): Promise<DailyCollectionBatch[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(filters.schoolId, "getDailyCollectionBatches");
+    const constraints: QueryConstraint[] = [where("schoolId", "==", schoolId)];
+    if (filters.teacherId) constraints.push(where("teacherId", "==", filters.teacherId));
+    if (filters.classId) constraints.push(where("classId", "==", filters.classId));
+    if (filters.date) constraints.push(where("date", "==", filters.date));
+    const snap = await getDocs(
+      query(collection(firestore, "schools", schoolId, "dailyCollectionBatches"), ...constraints),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyCollectionBatch, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyCollectionBatch(batch: DailyCollectionBatch): Promise<void> {
+    await this.requireFeature(batch.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(batch.schoolId, "saveDailyCollectionBatch");
+    await setDoc(
+      doc(firestore, "schools", schoolId, "dailyCollectionBatches", batch.id),
+      this.stripUndefinedDeep(batch),
+      { merge: true },
+    );
   }
 
   async getStudentLedgers(filters: {

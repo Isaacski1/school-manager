@@ -370,6 +370,49 @@ export interface DailyCollectionRecord {
   createdAt: Date | number;
   updatedAt?: Date | number;
   recordedBy: string;
+  batchId?: string | null;
+}
+
+export type DailyCollectionBatchStatus =
+  | "draft"
+  | "submitted"
+  | "returned"
+  | "confirmed"
+  | "confirmed_with_difference"
+  | "rejected";
+
+export interface DailyCollectionBatch {
+  id: string;
+  schoolId: string;
+  date: string;
+  classId: string;
+  feeId: string;
+  feeName: string;
+  teacherId: string;
+  teacherName: string;
+  expectedAmount: number;
+  reportedAmount: number;
+  reportedCash: number;
+  reportedMomo: number;
+  reportedBank: number;
+  studentCount: number;
+  paidCount: number;
+  status: DailyCollectionBatchStatus;
+  submittedAt?: Date | number | null;
+  receivedAmount?: number | null;
+  receivedCash?: number | null;
+  verifiedMomo?: number | null;
+  verifiedBank?: number | null;
+  difference?: number | null;
+  handoverReference?: string | null;
+  reviewNote?: string | null;
+  reviewedAt?: Date | number | null;
+  reviewedBy?: string | null;
+  reviewedByName?: string | null;
+  returnedAt?: Date | number | null;
+  returnReason?: string | null;
+  createdAt: Date | number;
+  updatedAt: Date | number;
 }
 
 export interface SchoolConfig {

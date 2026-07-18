@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { API_BASE_URL } from "../../src/config";
 import DailyCollections from "../../components/finance/DailyCollections";
+import DailyCollectionHandover from "../../components/finance/DailyCollectionHandover";
 
 
 const termOptions: FeeTerm[] = ["Term 1", "Term 2", "Term 3"];
@@ -3957,6 +3958,8 @@ const FeesPayments: React.FC = () => {
           </div>
 
           <DailyCollections />
+
+          <DailyCollectionHandover />
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div

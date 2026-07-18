@@ -470,9 +470,37 @@ service cloud.firestore {
 
     match /schools/{schoolId}/dailyCollections/{collectionId} {
       allow read: if schoolScopedRead(schoolId);
-      allow create, update: if schoolAdminOwnsSchool(schoolId) &&
+      allow create: if (schoolAdminOwnsSchool(schoolId) ||
+        (isTeacher() && userSchoolId() == schoolId &&
+          request.resource.data.recordedBy == request.auth.uid)) &&
+        request.resource.data.schoolId == schoolId;
+      allow update: if (schoolAdminOwnsSchool(schoolId) ||
+        (isTeacher() && userSchoolId() == schoolId &&
+          resource.data.recordedBy == request.auth.uid &&
+          request.resource.data.recordedBy == request.auth.uid)) &&
         request.resource.data.schoolId == schoolId;
       allow delete: if isSuperAdmin() || schoolAdminOwnsSchool(schoolId);
+    }
+
+    match /schools/{schoolId}/dailyCollectionBatches/{batchId} {
+      allow read: if schoolScopedRead(schoolId);
+      allow create: if (schoolAdminOwnsSchool(schoolId) ||
+        (isTeacher() && userSchoolId() == schoolId &&
+          request.resource.data.teacherId == request.auth.uid &&
+          request.resource.data.status in ["draft", "submitted"])) &&
+        request.resource.data.schoolId == schoolId;
+      allow update: if schoolAdminOwnsSchool(schoolId) ||
+        (isTeacher() && userSchoolId() == schoolId &&
+          resource.data.teacherId == request.auth.uid &&
+          request.resource.data.teacherId == request.auth.uid &&
+          request.resource.data.schoolId == schoolId &&
+          request.resource.data.status in ["draft", "submitted", "returned"] &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "expectedAmount", "reportedAmount", "reportedCash", "reportedMomo",
+            "reportedBank", "studentCount", "paidCount", "status", "submittedAt",
+            "updatedAt"
+          ]));
+      allow delete: if isSuperAdmin();
     }
 
     function schoolAdminOwnsSchool(schoolId) {
