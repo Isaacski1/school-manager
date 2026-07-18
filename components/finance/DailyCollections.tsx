@@ -302,6 +302,28 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
         </button>}
       </div>
 
+      <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-950">
+        <p className="font-semibold">How daily collections work</p>
+        {teacherMode ? (
+          <ol className="mt-2 grid gap-2 text-xs leading-5 text-blue-900 sm:grid-cols-2 lg:grid-cols-4">
+            <li><strong>1. Select:</strong> Choose the date, your assigned class and the daily fee.</li>
+            <li><strong>2. Record:</strong> Mark each pupil paid, partial, unpaid, absent or exempt and enter the payment method.</li>
+            <li><strong>3. Check:</strong> Confirm the cash, MoMo and bank totals shown above the register.</li>
+            <li><strong>4. Submit:</strong> Submit to the head teacher, then hand over the reported cash for confirmation.</li>
+          </ol>
+        ) : (
+          <ol className="mt-2 grid gap-2 text-xs leading-5 text-blue-900 sm:grid-cols-2 lg:grid-cols-4">
+            <li><strong>1. Set up:</strong> Create Feeding, Transport, Extra Classes or another daily fee and assign its classes.</li>
+            <li><strong>2. Teachers collect:</strong> Teachers record pupil payments and submit their completed class registers.</li>
+            <li><strong>3. Management verifies:</strong> Open Teacher Cash Handover, review the pupil list and count the money received.</li>
+            <li><strong>4. Confirm:</strong> Verify Cash, MoMo and Bank, record any difference, then confirm or return the register.</li>
+          </ol>
+        )}
+        <p className="mt-3 border-t border-blue-100 pt-2 text-xs text-blue-700">
+          Paid and partial describe what the pupil paid. The handover difference describes whether the teacher submitted all money collected; these are separate checks.
+        </p>
+      </div>
+
       {showFeeForm && (
         <div className="mt-5 grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 md:grid-cols-5">
           <input value={feeForm.name} onChange={(e) => setFeeForm({ ...feeForm, name: e.target.value })} placeholder="Fee name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />
@@ -356,7 +378,16 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
             </table>
           </div>
           {batch && <div className={`mt-4 rounded-xl px-4 py-3 text-sm font-semibold ${batch.status === 'returned' ? 'bg-amber-50 text-amber-700' : registerLocked ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-600'}`}>Status: {batch.status.replaceAll('_', ' ')}{batch.returnReason ? ` — ${batch.returnReason}` : ''}</div>}
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-900 p-4 text-white"><div className="flex items-center gap-3">{selectedFee.name.toLowerCase().includes('bus') ? <Bus /> : selectedFee.name.toLowerCase().includes('feed') ? <Utensils /> : <Banknote />}<div><p className="font-semibold">{selectedFee.name} register</p><p className="text-xs text-slate-300">{registerLocked ? 'Locked while management reviews this handover.' : selectedFee.billingMode === 'daily_debt' ? 'Unpaid pupils will remain outstanding.' : 'Missed payments do not automatically become debt.'}</p></div></div><div className="flex gap-2"><button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(false)} className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 font-semibold text-white disabled:opacity-50">{saving ? <RefreshCw size={17} className="animate-spin" /> : <Save size={17} />} Save draft</button>{teacherMode && <button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(true)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-white disabled:opacity-50">Submit to head teacher</button>}</div></div>
+          <div className="mt-4 flex min-w-0 flex-col gap-4 rounded-2xl bg-slate-900 p-3 text-white sm:flex-row sm:items-center sm:justify-between sm:p-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 shrink-0">{selectedFee.name.toLowerCase().includes('bus') ? <Bus size={20} /> : selectedFee.name.toLowerCase().includes('feed') ? <Utensils size={20} /> : <Banknote size={20} />}</span>
+              <div className="min-w-0"><p className="break-words text-sm font-semibold sm:text-base">{selectedFee.name} register</p><p className="mt-1 text-xs leading-5 text-slate-300">{registerLocked ? 'Locked while management reviews this handover.' : selectedFee.billingMode === 'daily_debt' ? 'Unpaid pupils will remain outstanding.' : 'Missed payments do not automatically become debt.'}</p></div>
+            </div>
+            <div className={`grid w-full min-w-0 gap-2 sm:flex sm:w-auto sm:shrink-0 ${teacherMode ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(false)} className="inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/20 px-2 py-2.5 text-xs font-semibold leading-4 text-white disabled:opacity-50 sm:px-4 sm:text-sm">{saving ? <RefreshCw size={16} className="shrink-0 animate-spin" /> : <Save size={16} className="shrink-0" />} <span className="whitespace-nowrap">Save draft</span></button>
+              {teacherMode && <button disabled={saving || !students.length || registerLocked} onClick={() => saveRegister(true)} className="inline-flex min-h-11 min-w-0 items-center justify-center rounded-xl bg-emerald-500 px-2 py-2.5 text-xs font-semibold leading-4 text-white disabled:opacity-50 sm:px-5 sm:text-sm"><span className="whitespace-nowrap sm:hidden">Submit register</span><span className="hidden whitespace-nowrap sm:inline">Submit to head teacher</span></button>}
+            </div>
+          </div>
         </>
       )}
       {!fees.length && !showFeeForm && <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Create the school’s first daily fee type to begin collecting.</div>}

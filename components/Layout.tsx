@@ -1034,25 +1034,25 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       <div className="flex-1 min-w-0 flex flex-col min-h-screen overflow-hidden">
         {/* Top Header */}
         <header className="bg-white shadow-sm min-h-14 sm:min-h-16 lg:min-h-20 flex items-center z-10 border-b border-[#E6F0FA]">
-          <div className="flex items-center justify-between w-full px-4 sm:px-6">
-            <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center justify-between gap-2 w-full px-2 sm:px-6">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="xl:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600"
+                className="xl:hidden shrink-0 p-1.5 sm:p-2 rounded-lg hover:bg-slate-100 text-slate-600"
               >
                 <Menu size={20} />
               </button>
-              <h2 className="text-base sm:text-lg font-semibold text-slate-800 truncate">
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 sm:text-lg">
                 {title}
               </h2>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-4">
+            <div className="flex shrink-0 items-center gap-1 sm:gap-4">
               {(isAdmin || isTeacher || isParent) && !tourCompleted && (
                 <button
                   type="button"
                   onClick={() => setTourRestartSignal((current) => current + 1)}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
+                  className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-0 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100 sm:h-10 sm:w-auto sm:px-3"
                   aria-label="Start dashboard tour"
                   title="Dashboard tour"
                 >
@@ -1065,7 +1065,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <button
                   type="button"
                   onClick={() => setDashboardDarkMode((current) => !current)}
-                  className="dashboard-theme-toggle inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100"
+                  className="dashboard-theme-toggle inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-cyan-100 sm:h-10 sm:w-10"
                   aria-label={
                     dashboardDarkMode
                       ? "Switch dashboard to light mode"
@@ -1083,7 +1083,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <div className="relative" ref={notificationRef}>
                   <button
                     onClick={() => setShowNotifications(!showNotifications)}
-                    className="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"
+                    className="relative p-1.5 sm:p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"
                   >
                     <Bell size={20} />
                     {unreadCount > 0 && (
@@ -1141,7 +1141,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   <UserAvatar
                     user={user}
                     size="lg"
-                    className="lg:!h-16 lg:!w-16 lg:!text-xl"
+                    className="!h-9 !w-9 !text-sm sm:!h-12 sm:!w-12 sm:!text-base lg:!h-16 lg:!w-16 lg:!text-xl"
                   />
                   <label className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity overflow-hidden" title="Change Profile Photo">
                     {uploadingPhoto ? (
