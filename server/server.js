@@ -8438,8 +8438,10 @@ app.post(
       const schoolId = schoolRef.id;
 
       const now = Date.now();
-      const trialEndsAt =
-        plan === "trial" ? new Date(now + 30 * 24 * 60 * 60 * 1000) : null;
+      const trialEndsAt = new Date(now + 30 * 24 * 60 * 60 * 1000);
+      const postTrialPlan = ["monthly", "termly", "yearly"].includes(plan)
+        ? plan
+        : "monthly";
 
       const schoolData = {
         schoolId,
@@ -8452,13 +8454,13 @@ app.post(
         address: address ? address.trim() : "",
         logoUrl: logoUrl ? logoUrl.trim() : "",
         schoolType: schoolType ? String(schoolType).trim() : "Basic School",
-        status: plan === "trial" ? "trial_active" : "active",
-        plan,
-        planEndsAt: trialEndsAt
-          ? admin.firestore.Timestamp.fromDate(trialEndsAt)
-          : null,
+        status: "trial_active",
+        plan: "trial",
+        planEndsAt: admin.firestore.Timestamp.fromDate(trialEndsAt),
         featurePlan: featurePlan || "starter",
         billing: {
+          status: "trialing",
+          postTrialPlan,
           startType:
             billingStartType === "mid_term" ? "mid_term" : "term_start",
           ...(normalizedSpecialPricing
@@ -9331,8 +9333,10 @@ app.post(
           entityId = schoolId;
 
           const now = Date.now();
-          const trialEndsAt =
-            plan === "trial" ? new Date(now + 30 * 24 * 60 * 60 * 1000) : null;
+          const trialEndsAt = new Date(now + 30 * 24 * 60 * 60 * 1000);
+          const postTrialPlan = ["monthly", "termly", "yearly"].includes(plan)
+            ? plan
+            : "monthly";
 
           await schoolRef.set({
             schoolId,
@@ -9341,11 +9345,13 @@ app.post(
             phone: phone ? phone.trim() : "",
             address: address ? address.trim() : "",
             logoUrl: logoUrl ? logoUrl.trim() : "",
-            status: "active",
-            plan,
-            planEndsAt: trialEndsAt,
+            status: "trial_active",
+            plan: "trial",
+            planEndsAt: admin.firestore.Timestamp.fromDate(trialEndsAt),
             featurePlan: featurePlan || "starter",
             billing: {
+              status: "trialing",
+              postTrialPlan,
               startType:
                 billingStartType === "mid_term" ? "mid_term" : "term_start",
             },
@@ -10976,7 +10982,9 @@ app.post(
       if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
         return res.status(400).json({ error: "A valid billing amount is required" });
       }
-      const configuredCycle = String(schoolData.plan || "monthly").toLowerCase();
+      const configuredCycle = String(
+        schoolData?.billing?.postTrialPlan || schoolData.plan || "monthly",
+      ).toLowerCase();
       const billingCycle = hasSpecialPricing
         ? specialCycle
         : ["monthly", "termly", "yearly"].includes(configuredCycle)
@@ -13274,11 +13282,19 @@ app.post("/api/public/start-trial", async (req, res) => {
       studentsCount: 0,
       limits: { maxStudents }, // Enforce hard limits based on plan
       status: "trial_active",
-      plan: String(plan || "trial").trim(),
+      plan: "trial",
       featurePlan: featurePlanSafe,
       logoUrl: finalLogoUrl, // Store the URL immediately
       onboardingTemplate: String(onboardingTemplate || "default"),
       planEndsAt: admin.firestore.Timestamp.fromDate(trialEndDate),
+      billing: {
+        status: "trialing",
+        postTrialPlan: ["monthly", "termly", "yearly"].includes(
+          String(plan || "").trim().toLowerCase(),
+        )
+          ? String(plan).trim().toLowerCase()
+          : "monthly",
+      },
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -13573,7 +13589,7 @@ app.post("/api/public/start-trial", async (req, res) => {
             </div>
 
             <p style="color:#64748B;font-size:13px;line-height:1.7;margin:0">
-              Once verified, you can log in at <a href="https://school-manager-gh.web.app" style="color:#0B4A82">school-manager-gh.web.app</a> 
+              Once verified, you can log in at <a href="https://schoolmanagergh.com" style="color:#0B4A82">schoolmanagergh.com</a>
               and start managing your school — add teachers, enrol students, configure classes and more.
             </p>
           </div>
@@ -13593,7 +13609,7 @@ app.post("/api/public/start-trial", async (req, res) => {
           ? `Click this link to activate your account: ${emailVerificationLink}`
           : "Please log in and request a new verification email.",
         "",
-        "Once verified, log in at: https://school-manager-gh.web.app",
+        "Once verified, log in at: https://schoolmanagergh.com",
         "",
         "School Manager GH",
       ].join("\n");

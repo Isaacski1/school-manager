@@ -654,14 +654,18 @@ const AdminDashboard = () => {
     ],
   );
 
+  const isTrialWorkspace =
+    (school as any)?.plan === "trial" ||
+    (school as any)?.status === "trial_active";
+
   const subscriptionPlanEndsAt = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
-    if ((school as any)?.plan === "trial") return null;
+    if (isTrialWorkspace) return null;
     if (!resolvedPlanEndsAt) return null;
     return resolvedPlanEndsAt.getTime() > subscriptionNow
       ? resolvedPlanEndsAt
       : null;
-  }, [resolvedPlanEndsAt, school?.plan, subscriptionNow]);
+  }, [resolvedPlanEndsAt, school?.plan, subscriptionNow, isTrialWorkspace]);
   const isRenewalDueSoon = Boolean(
     subscriptionPlanEndsAt &&
       subscriptionPlanEndsAt.getTime() - subscriptionNow <=
@@ -669,11 +673,11 @@ const AdminDashboard = () => {
   );
 
   const trialPlanEndsAt = useMemo(() => {
-    if ((school as any)?.plan !== "trial") return null;
+    if (!isTrialWorkspace) return null;
     const planEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
     if (!planEndsAt) return null;
     return planEndsAt.getTime() > subscriptionNow ? planEndsAt : null;
-  }, [school?.planEndsAt, school?.plan, subscriptionNow]);
+  }, [school?.planEndsAt, school?.plan, subscriptionNow, isTrialWorkspace]);
 
   const gracePeriod = useMemo(() => {
     if ((school as any)?.plan === "free") return null;

@@ -120,7 +120,17 @@ const Billing: React.FC = () => {
   }, [school]);
 
   const isFreePlan = billingStatus.plan === "free";
-  const isTrialPlan = billingStatus.plan === "trial";
+  const isTrialPlan =
+    billingStatus.plan === "trial" || (school as any)?.status === "trial_active";
+  const trialEndsAt = useMemo(() => {
+    const raw = (school as any)?.planEndsAt;
+    if (!raw) return null;
+    const date = new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }, [school]);
+  const isTrialActive = Boolean(
+    isTrialPlan && trialEndsAt && trialEndsAt.getTime() > Date.now(),
+  );
   const specialPricing = useMemo(() => {
     const pricing = (school as any)?.billing?.specialPricing;
     const amount = Number(pricing?.amount);
@@ -139,7 +149,10 @@ const Billing: React.FC = () => {
       note: String(pricing?.note || "").trim(),
     };
   }, [school]);
-  const effectiveBillingCycle = specialPricing?.cycle || billingStatus.plan;
+  const effectiveBillingCycle =
+    specialPricing?.cycle ||
+    (school as any)?.billing?.postTrialPlan ||
+    (isTrialPlan ? "monthly" : billingStatus.plan);
 
   const parseSchoolDate = (value?: string | null) => {
     if (!value) return null;
@@ -164,7 +177,7 @@ const Billing: React.FC = () => {
   const expectedAmount = useMemo(() => {
     if (specialPricing) return specialPricing.amount;
 
-    const billingCycle = billingStatus.plan || "monthly"; // monthly | termly | yearly
+    const billingCycle = effectiveBillingCycle || "monthly"; // monthly | termly | yearly
     const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
 
     // Base monthly prices
@@ -206,7 +219,7 @@ const Billing: React.FC = () => {
     }
 
     return base;
-  }, [billingStatus.plan, school, schoolConfig, specialPricing]);
+  }, [effectiveBillingCycle, school, schoolConfig, specialPricing]);
 
   useEffect(() => {
     if (isFreePlan) return;
@@ -374,7 +387,7 @@ const Billing: React.FC = () => {
     }
   };
 
-  if (isFreePlan || isTrialPlan) {
+  if (isFreePlan || isTrialActive) {
     return (
       <Layout title="Billing & Subscription">
         <div className="max-w-5xl mx-auto space-y-6">
@@ -385,11 +398,12 @@ const Billing: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-slate-900">
-                  {isTrialPlan ? "Trial Plan Active" : "Free Plan Active"}
+                  {isTrialActive ? "Free 30-Day Trial Active" : "Free Plan Active"}
                 </h1>
                 <p className="text-sm text-slate-600 mt-1">
-                  Billing is disabled for your school. Contact your super admin
-                  if you need to change your subscription.
+                  {isTrialActive && trialEndsAt
+                    ? `Your free access continues until ${trialEndsAt.toLocaleDateString()}. You can choose a paid plan when the trial ends.`
+                    : "Billing is disabled for your school. Contact your super admin if you need to change your subscription."}
                 </p>
               </div>
             </div>
