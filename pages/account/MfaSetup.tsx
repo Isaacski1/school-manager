@@ -16,6 +16,7 @@ import {
   AlertCircle,
   Download,
   CheckCircle,
+  Copy,
   Loader2,
   KeyRound,
   QrCode,
@@ -415,6 +416,17 @@ const MfaSetup: React.FC = () => {
     }
   };
 
+  const handleCopySetupKey = async () => {
+    const setupKey = String(totpSecret?.secretKey || "");
+    if (!setupKey) return;
+    try {
+      await navigator.clipboard.writeText(setupKey);
+      showToast("Manual setup key copied.", { type: "success" });
+    } catch {
+      setError("Could not copy the setup key. Press and hold the key to copy it manually.");
+    }
+  };
+
   const handleRemoveFactor = async (factor: any) => {
     if (!currentUser || !factor?.uid) return;
     const confirmed = window.confirm(
@@ -704,9 +716,10 @@ const MfaSetup: React.FC = () => {
               ) : (
                 <form onSubmit={handleEnrollTotp} className="space-y-4">
                   <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                    Open your authenticator app, choose add account, then scan
-                    the QR code below. After scanning, enter the 6-digit code
-                    shown in the app to finish setup.
+                    <strong>Using a computer?</strong> Scan the QR code with your
+                    phone. <strong>Using this same phone?</strong> Copy the manual
+                    setup key below and add it to your authenticator app. Then
+                    enter the 6-digit code created by the app.
                   </div>
                   <div className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
                     <img
@@ -721,6 +734,14 @@ const MfaSetup: React.FC = () => {
                       <div className="mt-2 break-all rounded-lg bg-slate-50 p-3 font-mono text-sm text-slate-700">
                         {totpSecret?.secretKey}
                       </div>
+                      <button
+                        type="button"
+                        onClick={handleCopySetupKey}
+                        className="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <Copy size={16} />
+                        Copy Setup Key
+                      </button>
                     </div>
                   </div>
                   <div>
@@ -767,8 +788,10 @@ const MfaSetup: React.FC = () => {
                 How to Set It Up
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-500">
-                You only need a phone and an authenticator app. The app creates
-                a new 6-digit code every few seconds for secure admin login.
+                Follow these steps from top to bottom. You will need your phone,
+                your School Manager GH password, and about two minutes. An
+                authenticator app creates a temporary 6-digit security code and
+                works even when your phone has no internet connection.
               </p>
 
               <div className="mt-5 space-y-4">
@@ -781,8 +804,28 @@ const MfaSetup: React.FC = () => {
                       1. Install an authenticator app
                     </div>
                     <p className="mt-1 text-sm leading-6 text-slate-500">
-                      Use Google Authenticator, Microsoft Authenticator, Authy,
-                      or another trusted authenticator app on your phone.
+                      On your phone, open the Google Play Store (Android) or App
+                      Store (iPhone). Search for <strong>Google Authenticator</strong>
+                      {" "}or <strong>Microsoft Authenticator</strong>, install one,
+                      and open it. You do not need both apps.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#0B4A82]">
+                    <ShieldCheck size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      2. Start the setup on this page
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Click <strong>Start Authenticator Setup</strong> in the panel
+                      on the left. If you are asked to confirm your password,
+                      enter the same password you use to sign in, click
+                      <strong> Confirm Password</strong>, then click Start
+                      Authenticator Setup again.
                     </p>
                   </div>
                 </div>
@@ -793,11 +836,43 @@ const MfaSetup: React.FC = () => {
                   </div>
                   <div>
                     <div className="font-semibold text-slate-800">
-                      2. Start setup and scan the QR code
+                      3. Add School Manager GH to the authenticator app
                     </div>
                     <p className="mt-1 text-sm leading-6 text-slate-500">
-                      Tap add account in the app, choose scan QR code, and point
-                      the phone camera at the code shown on this page.
+                      <strong>If this page is open on a computer:</strong> open
+                      the app on your phone, tap <strong>+</strong> or
+                      <strong> Add account</strong>, choose
+                      <strong> Scan a QR code</strong>, and scan the QR code on
+                      the computer screen.
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      <strong>If this page is open on the same phone:</strong>
+                      {" "}tap <strong>Copy Setup Key</strong> on this page. Open
+                      the authenticator app, tap <strong>+</strong> or
+                      <strong> Add account</strong>, choose
+                      <strong> Enter a setup key</strong> or
+                      <strong> Enter code manually</strong>, type
+                      <strong> School Manager GH</strong> as the account name,
+                      paste the copied key, select <strong>Time based</strong> if
+                      asked, and save it. Return to this page afterward.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#0B4A82]">
+                    <Smartphone size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      4. Find the new 6-digit code
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      After scanning the QR code or saving the manual key, the
+                      app will show a School Manager GH entry with a 6-digit
+                      number. The number changes about
+                      every 30 seconds, which is normal. Use the code currently
+                      visible in the app.
                     </p>
                   </div>
                 </div>
@@ -808,20 +883,42 @@ const MfaSetup: React.FC = () => {
                   </div>
                   <div>
                     <div className="font-semibold text-slate-800">
-                      3. Enter the 6-digit code
+                      5. Confirm and finish setup
                     </div>
                     <p className="mt-1 text-sm leading-6 text-slate-500">
-                      Type the current code from the app into the Authenticator
-                      code box, then finish setup. Keep the app installed for
-                      future logins.
+                      Return to this page and type that number into the
+                      <strong> Authenticator code</strong> box. Click
+                      <strong> Finish Authenticator Setup</strong>. If the code is
+                      rejected, wait for the next code in the app and try again.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                    <CheckCircle size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-800">
+                      6. Use it when you sign in
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Setup is complete when the authenticator appears under
+                      <strong> Enrolled Factors</strong>. From your next login,
+                      enter your email and password first, then open the app and
+                      enter its current 6-digit code when requested.
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                If the QR code will not scan, copy the manual setup key into
-                the authenticator app instead.
+                <strong>Keep access to your authenticator app.</strong> Do not
+                delete its School Manager GH entry after setup. If the QR code
+                will not scan—or you are using the same phone—use
+                <strong> Copy Setup Key</strong> and the app's manual setup
+                option. Never share the QR code, setup key, or 6-digit code with
+                another person.
               </div>
             </div>
 
