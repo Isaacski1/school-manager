@@ -4227,6 +4227,12 @@ async getDashboardStats(schoolId?: string): Promise<{
     );
   }
 
+  async deleteDailyFee(schoolId: string, feeId: string): Promise<void> {
+    await this.requireFeature(schoolId, "fees_payments");
+    const resolvedSchoolId = this.requireSchoolId(schoolId, "deleteDailyFee");
+    await deleteDoc(doc(firestore, "schools", resolvedSchoolId, "dailyFees", feeId));
+  }
+
   async getDailyCollections(filters: {
     schoolId?: string;
     date?: string;

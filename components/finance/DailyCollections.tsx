@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Trash2,
   Utensils,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -14,6 +15,7 @@ import { useSchool } from "../../context/SchoolContext";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { db } from "../../services/mockDb";
 import { showToast } from "../../services/toast";
+import Modal from "../../components/Modal";
 import {
   DailyBillingMode,
   DailyCollectionRecord,
@@ -71,6 +73,8 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
   const [saving, setSaving] = useState(false);
   const [savingFee, setSavingFee] = useState(false);
   const [showFeeForm, setShowFeeForm] = useState(false);
+  const [deletingFeeId, setDeletingFeeId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DailyFeeDefinition | null>(null);
   const [feeForm, setFeeForm] = useState({
     name: "Feeding",
     amount: "",
@@ -273,6 +277,34 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
     }
   };
 
+  const confirmDeleteFee = (fee: DailyFeeDefinition) => {
+    setDeleteTarget(fee);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    const fee = deleteTarget;
+    setDeleteTarget(null);
+    setDeletingFeeId(fee.id);
+    try {
+      await db.deleteDailyFee(fee.schoolId, fee.id);
+      showToast("Daily fee type deleted.", { type: "success" });
+      await loadFees();
+      if (feeId === fee.id) {
+        setFeeId("");
+      }
+    } catch (error) {
+      console.error("Failed to delete daily fee", error);
+      showToast("Could not delete the daily fee type.", { type: "error" });
+    } finally {
+      setDeletingFeeId(null);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteTarget(null);
+  };
+
   const totals = useMemo(() => {
     const rows = students.map((student) => drafts[student.id]).filter(Boolean);
     const collected = rows.reduce((sum, row) => sum + (Number(row.amountPaid) || 0), 0);
@@ -355,10 +387,56 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
         </div>
       )}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <label className="relative"><CalendarDays className="absolute left-3 top-3 text-slate-400" size={18} /><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm" /></label>
-        <select value={classId} onChange={(e) => setClassId(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Select class</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-        <select value={feeId} onChange={(e) => setFeeId(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Select daily fee</option>{applicableFees.map((fee) => <option key={fee.id} value={fee.id}>{fee.name} — {money(fee.amount)}</option>)}</select>
+      <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-end">
+        <label className="relative md:w-56">
+          <CalendarDays className="absolute left-3 top-3 text-slate-400" size={18} />
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm"
+          />
+        </label>
+        <select
+          value={classId}
+          onChange={(e) => setClassId(e.target.value)}
+          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm md:w-56"
+        >
+          <option value="">Select class</option>
+          {classes.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <div className="flex flex-1 flex-col gap-2">
+          <select
+            value={feeId}
+            onChange={(e) => setFeeId(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+          >
+            <option value="">Select daily fee</option>
+            {applicableFees.map((fee) => (
+              <option key={fee.id} value={fee.id}>
+                {fee.name} — {money(fee.amount)}
+              </option>
+            ))}
+          </select>
+          {feeId && selectedFee && !teacherMode && (
+            <button
+              onClick={() => confirmDeleteFee(selectedFee)}
+              disabled={deletingFeeId === feeId}
+              className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:cursor-wait disabled:opacity-70"
+            >
+              {deletingFeeId === feeId ? (
+                <RefreshCw size={16} className="animate-spin" />
+              ) : (
+                <Trash2 size={16} />
+              )}
+              Delete fee type
+            </button>
+          )}
+        </div>
       </div>
 
       {selectedFee && classId && (
@@ -391,6 +469,45 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
         </>
       )}
       {!fees.length && !showFeeForm && <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Create the school’s first daily fee type to begin collecting.</div>}
+
+      <Modal
+        isOpen={Boolean(deleteTarget)}
+        onClose={handleCancelDelete}
+        title="Delete daily fee type"
+        contentClassName="p-4 sm:p-6"
+        overlayClassName="bg-black/60 backdrop-blur-sm"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-slate-600">
+            Are you sure you want to delete <span className="font-semibold text-slate-900">"{deleteTarget?.name}"</span>? This will remove this daily fee type.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={handleCancelDelete}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              disabled={deletingFeeId === deleteTarget?.id}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-70"
+            >
+              {deletingFeeId === deleteTarget?.id ? (
+                <>
+                  <RefreshCw size={16} className="animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 size={16} />
+                  Delete
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 };

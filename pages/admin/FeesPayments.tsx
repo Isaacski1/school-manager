@@ -331,6 +331,7 @@ const FeesPayments: React.FC = () => {
   const [fees, setFees] = useState<FeeDefinition[]>([]);
   const [allFees, setAllFees] = useState<FeeDefinition[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [selectedStudentClassId, setSelectedStudentClassId] = useState("");
   const [ledgers, setLedgers] = useState<StudentFeeLedger[]>([]);
   const [payments, setPayments] = useState<StudentFeePayment[]>([]);
   const [lastTermLedgers, setLastTermLedgers] = useState<StudentFeeLedger[]>(
@@ -4599,27 +4600,60 @@ const handleExportReport = () => {
                       Selected Students
                     </label>
                     <select
-                      multiple
-                      value={feeForm.selectedStudentIds}
+                      value={selectedStudentClassId}
                       onChange={(e) =>
-                        setFeeForm({
-                          ...feeForm,
-                          selectedStudentIds: Array.from(
-                            e.target.selectedOptions,
-                          ).map((option) => option.value),
-                        })
+                        setSelectedStudentClassId(e.target.value)
                       }
-                      className={`${DASH_INPUT} h-32 py-2`}
+                      className={DASH_INPUT}
                     >
-                      {students.map((student) => (
-                        <option key={student.id} value={student.id}>
-                          {student.name}
+                      <option value="">All classes</option>
+                      {availableClasses.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name}
                         </option>
                       ))}
                     </select>
-                    <p className="mt-1 text-[11px] text-slate-400">
-                      Hold Ctrl / Cmd to select multiple students.
-                    </p>
+                     <div className="max-h-32 overflow-y-auto rounded-md border border-slate-200 bg-white">
+                       {students
+                         .filter((student) =>
+                           selectedStudentClassId
+                             ? student.classId === selectedStudentClassId
+                             : true,
+                         )
+                         .map((student) => {
+                           const isSelected = feeForm.selectedStudentIds.includes(
+                             student.id,
+                           );
+                           return (
+                             <label
+                               key={student.id}
+                               className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm transition hover:bg-slate-50 ${isSelected ? "bg-slate-50" : ""}`}
+                             >
+                               <input
+                                 type="checkbox"
+                                 checked={isSelected}
+                                 onChange={() =>
+                                   setFeeForm((prev) => ({
+                                     ...prev,
+                                     selectedStudentIds: isSelected
+                                       ? prev.selectedStudentIds.filter(
+                                           (id) => id !== student.id,
+                                         )
+                                       : [...prev.selectedStudentIds, student.id],
+                                   }))
+                                 }
+                                 className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                               />
+                               <span className="text-slate-700">
+                                 {student.name}
+                               </span>
+                             </label>
+                           );
+                         })}
+                     </div>
+                     <p className="mt-1 text-[11px] text-slate-400">
+                       Select all students that this fee should apply to.
+                     </p>
                   </div>
                 )}
                 <div>

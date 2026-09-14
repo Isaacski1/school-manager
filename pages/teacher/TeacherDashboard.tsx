@@ -1628,17 +1628,17 @@ const TeacherDashboard = () => {
               <h4 className="font-bold text-slate-800 mb-2">
                 Subject Standings
               </h4>
-              <div className="space-y-2 max-h-none sm:max-h-24 overflow-y-visible sm:overflow-y-auto pr-0 sm:pr-1">
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-0 sm:pr-1">
                 {subjectStandings.slice(0, 3).length > 0 ? (
                   subjectStandings.slice(0, 3).map((s) => (
                     <div
                       key={s.subject}
-                      className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 text-xs min-w-0"
+                      className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs min-w-0"
                     >
                       <span className="text-slate-700 break-words">
                         {s.subject}:
                       </span>
-                      <span className="font-semibold text-slate-900 text-right break-words max-w-[9rem]">
+                      <span className="font-semibold text-slate-900 text-right break-words">
                         {s.topStudent || "N/A"}
                       </span>
                     </div>

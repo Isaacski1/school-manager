@@ -463,6 +463,44 @@ match /settings/{document} {
       allow read: if schoolScopedRead(schoolId);
       allow create, update, delete: if schoolAdminOwnsSchool(schoolId) &&
         request.resource.data.schoolId == schoolId;
+
+      allow create: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "name",
+          "amount",
+          "classId",
+          "billingMode",
+          "active",
+          "createdAt",
+          "createdBy"
+        ]);
+
+      allow read: if isSuperAdmin() || schoolScopedRead(schoolId);
+
+      allow update: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        onlyAllowedFields([
+          "id",
+          "schoolId",
+          "name",
+          "amount",
+          "classId",
+          "billingMode",
+          "active",
+          "createdAt",
+          "createdBy"
+        ]);
+
+      allow delete: if isAuthenticated() && isActiveUser() &&
+        (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
+        isActiveSchoolId(schoolId);
     }
 
     match /schools/{schoolId}/dailyCollections/{collectionId} {
