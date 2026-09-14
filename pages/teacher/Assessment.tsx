@@ -3,6 +3,8 @@ import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { db } from "../../services/mockDb";
+import { firestore } from "../../services/firebase";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { Student, Assessment, UserRole } from "../../types";
 import {
   CLASSES_LIST,
@@ -124,22 +126,29 @@ const AssessmentPage = () => {
     }
   }, [availableClasses]);
 
-  // Load school configuration (term + academic year)
+  // Load school configuration (term + academic year) with real-time updates
   useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        if (!schoolId) return;
-        const cfg = await db.getSchoolConfig(schoolId);
+    if (!schoolId) return;
+
+    const configRef = doc(firestore, "settings", schoolId);
+
+    const unsubscribe = onSnapshot(
+      configRef,
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        const cfg = snapshot.data() as any;
         setSchoolConfig({
           currentTerm: cfg.currentTerm || `Term ${CURRENT_TERM}`,
           academicYear: cfg.academicYear || ACADEMIC_YEAR,
           assessmentScoreWeights: cfg.assessmentScoreWeights,
         });
-      } catch (e) {
-        console.error("Failed to load school config", e);
-      }
-    };
-    loadConfig();
+      },
+      (error) => {
+        console.error("Failed to load school config", error);
+      },
+    );
+
+    return unsubscribe;
   }, [schoolId]);
 
   useEffect(() => {
@@ -199,58 +208,66 @@ const AssessmentPage = () => {
       return;
     }
 
-    const loadAssessments = async () => {
-      setLoading(true);
+    setLoading(true);
 
-      // Get existing assessments
-      let existing: Assessment[] = [];
-      try {
-        existing = await db.getAssessments(
-          schoolId,
-          selectedClassId,
-          selectedSubject,
-        );
-      } catch (error) {
+    // Determine dynamic term number from schoolConfig (e.g. "Term 2" -> 2)
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
+
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", schoolId),
+      where("classId", "==", selectedClassId),
+      where("subject", "==", selectedSubject),
+      where("term", "==", dynamicTerm),
+      where("academicYear", "==", schoolConfig.academicYear),
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const existing: Assessment[] = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Assessment, "id">),
+        }));
+
+        const map: Record<string, Assessment> = {};
+        students.forEach((s) => {
+          const found = existing.find(
+            (a) => a.studentId === s.id && a.term === dynamicTerm,
+          );
+          map[s.id] = found || {
+            id: `${s.id}_${selectedSubject.replace(/\//g, '-')}_${dynamicTerm}_${schoolConfig.academicYear}`,
+            schoolId: schoolId || "",
+            studentId: s.id,
+            classId: selectedClassId,
+            term: dynamicTerm as 1 | 2 | 3,
+            academicYear: schoolConfig.academicYear,
+            subject: selectedSubject,
+            testScore: 0,
+            homeworkScore: 0,
+            projectScore: 0,
+            examScore: 0,
+            total: 0,
+          };
+        });
+        setAssessments(map);
+        setLoading(false);
+      },
+      (error) => {
         if (isPermissionDeniedError(error)) {
           console.debug("Assessments unavailable: permission denied");
         } else {
           console.error("Failed to load assessments", error);
         }
-      }
+        setLoading(false);
+      },
+    );
 
-      // Determine dynamic term number from schoolConfig (e.g. "Term 2" -> 2)
-      let dynamicTerm = CURRENT_TERM;
-      if (schoolConfig.currentTerm) {
-        const match = schoolConfig.currentTerm.match(/\d+/);
-        if (match) dynamicTerm = parseInt(match[0], 10);
-      }
-
-      // Map to state
-      const map: Record<string, Assessment> = {};
-      students.forEach((s) => {
-        const found = existing.find(
-          (a) => a.studentId === s.id && a.term === dynamicTerm,
-        );
-        map[s.id] = found || {
-          id: `${s.id}_${selectedSubject.replace(/\//g, '-')}_${dynamicTerm}_${schoolConfig.academicYear}`,
-          schoolId: schoolId || "",
-          studentId: s.id,
-          classId: selectedClassId,
-          term: dynamicTerm as 1 | 2 | 3,
-          academicYear: schoolConfig.academicYear,
-          subject: selectedSubject,
-          testScore: 0,
-          homeworkScore: 0,
-          projectScore: 0,
-          examScore: 0,
-          total: 0,
-        };
-      });
-      setAssessments(map);
-      setLoading(false);
-    };
-
-    loadAssessments();
+    return unsubscribe;
   }, [
     selectedClassId,
     selectedSubject,
@@ -461,28 +478,28 @@ const AssessmentPage = () => {
                   Class Score
                   <br />
                   <span className="text-[10px] normal-case font-bold text-emerald-600">
-                    (15)
+                    ({LIMITS.testScore})
                   </span>
                 </th>
                 <th className="px-2 py-3 w-24 text-center">
                   Homework
                   <br />
                   <span className="text-[10px] normal-case font-bold text-emerald-600">
-                    (15)
+                    ({LIMITS.homeworkScore})
                   </span>
                 </th>
                 <th className="px-2 py-3 w-24 text-center">
                   Project
                   <br />
                   <span className="text-[10px] normal-case font-bold text-emerald-600">
-                    (20)
+                    ({LIMITS.projectScore})
                   </span>
                 </th>
                 <th className="px-2 py-3 w-28 text-center border-l border-slate-200 bg-red-50/50">
                   Exam
                   <br />
                   <span className="text-[10px] normal-case font-bold text-red-600">
-                    (100)
+                    ({LIMITS.examScore})
                   </span>
                 </th>
                 <th className="assessment-result-header w-24 bg-slate-200 px-4 py-3 text-center">
@@ -499,7 +516,7 @@ const AssessmentPage = () => {
               {students.map((student) => {
                 const data =
                   assessments[student.id] || ({} as Partial<Assessment>);
-                const total = calculateTotalScore(data);
+                const total = calculateTotalScore(data, LIMITS);
                 const { grade, remark } = calculateGrade(total);
                 const gradeColor = getGradeColor(grade);
 

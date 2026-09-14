@@ -5,25 +5,25 @@ export const ACADEMIC_YEAR = "2023-2024";
 export const CURRENT_TERM = 1;
 
 const DEFAULT_CLASS_DEFINITIONS: Array<
-  Pick<ClassRoom, "id" | "name" | "level">
+  Pick<ClassRoom, "id" | "name" | "shortName" | "level">
 > = [
-  { id: "c_creche", name: "Creche", level: "CRECHE" },
-  { id: "c_n1", name: "Nursery 1", level: "NURSERY" },
-  { id: "c_n2", name: "Nursery 2", level: "NURSERY" },
-  { id: "c_kg1", name: "KG 1", level: "KG" },
-  { id: "c_kg2", name: "KG 2", level: "KG" },
-  { id: "c_p1", name: "Class 1", level: "PRIMARY" },
-  { id: "c_p2", name: "Class 2", level: "PRIMARY" },
-  { id: "c_p3", name: "Class 3", level: "PRIMARY" },
-  { id: "c_p4", name: "Class 4", level: "PRIMARY" },
-  { id: "c_p5", name: "Class 5", level: "PRIMARY" },
-  { id: "c_p6", name: "Class 6", level: "PRIMARY" },
-  { id: "c_jhs1", name: "JHS 1", level: "JHS" },
-  { id: "c_jhs2", name: "JHS 2", level: "JHS" },
-  { id: "c_jhs3", name: "JHS 3", level: "JHS" },
-  { id: "c_shs1", name: "SHS 1", level: "SHS" },
-  { id: "c_shs2", name: "SHS 2", level: "SHS" },
-  { id: "c_shs3", name: "SHS 3", level: "SHS" },
+  { id: "c_creche", name: "Creche", shortName: "Cre", level: "CRECHE" },
+  { id: "c_n1", name: "Nursery 1", shortName: "Nur 1", level: "NURSERY" },
+  { id: "c_n2", name: "Nursery 2", shortName: "Nur 2", level: "NURSERY" },
+  { id: "c_kg1", name: "KG 1", shortName: "KG 1", level: "KG" },
+  { id: "c_kg2", name: "KG 2", shortName: "KG 2", level: "KG" },
+  { id: "c_p1", name: "Class 1", shortName: "Cl 1", level: "PRIMARY" },
+  { id: "c_p2", name: "Class 2", shortName: "Cl 2", level: "PRIMARY" },
+  { id: "c_p3", name: "Class 3", shortName: "Cl 3", level: "PRIMARY" },
+  { id: "c_p4", name: "Class 4", shortName: "Cl 4", level: "PRIMARY" },
+  { id: "c_p5", name: "Class 5", shortName: "Cl 5", level: "PRIMARY" },
+  { id: "c_p6", name: "Class 6", shortName: "Cl 6", level: "PRIMARY" },
+  { id: "c_jhs1", name: "JHS 1", shortName: "JHS 1", level: "JHS" },
+  { id: "c_jhs2", name: "JHS 2", shortName: "JHS 2", level: "JHS" },
+  { id: "c_jhs3", name: "JHS 3", shortName: "JHS 3", level: "JHS" },
+  { id: "c_shs1", name: "SHS 1", shortName: "SHS 1", level: "SHS" },
+  { id: "c_shs2", name: "SHS 2", shortName: "SHS 2", level: "SHS" },
+  { id: "c_shs3", name: "SHS 3", shortName: "SHS 3", level: "SHS" },
 ];
 
 const DEFAULT_CLASSES_LIST: ClassRoom[] = DEFAULT_CLASS_DEFINITIONS.map(
@@ -209,8 +209,31 @@ export const calculateGrade = (
   return { total, grade: "F", remark: "Fail" };
 };
 
-export const calculateTotalScore = (a: Partial<Assessment>): number => {
-  // CA (50 Marks) + Exam (100 Marks scaled to 50%) = 100%
+export const calculateTotalScore = (
+  a: Partial<Assessment>,
+  weights?: { testScore: number; homeworkScore: number; projectScore: number; examScore: number },
+): number => {
+  const effectiveWeights =
+    weights ||
+    ((a as any).assessmentScoreWeights as
+      | { testScore: number; homeworkScore: number; projectScore: number; examScore: number }
+      | undefined);
+
+  if (effectiveWeights) {
+    const raw =
+      (a.testScore || 0) +
+      (a.homeworkScore || 0) +
+      (a.projectScore || 0) +
+      (a.examScore || 0);
+    const max =
+      (effectiveWeights.testScore || 0) +
+      (effectiveWeights.homeworkScore || 0) +
+      (effectiveWeights.projectScore || 0) +
+      (effectiveWeights.examScore || 0);
+    if (max <= 0) return 0;
+    return Math.round((raw / max) * 100);
+  }
+
   const ca =
     (a.testScore || 0) + (a.homeworkScore || 0) + (a.projectScore || 0);
   const examScaled = (a.examScore || 0) * 0.5;

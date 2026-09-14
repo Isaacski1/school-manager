@@ -114,7 +114,7 @@ async function backfillAdminProfiles() {
     });
 
     console.log(
-      "\n💡 TIP: Use the Super Admin panel to provision these users manually.",
+      "\n TIP: Use the Super Admin panel to provision these users manually.",
     );
   } catch (error) {
     console.error("Error during backfill:", error.message);

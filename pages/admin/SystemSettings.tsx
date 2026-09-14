@@ -12,6 +12,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { requireSchoolId } from "../../services/authProfile";
 import { canAccessFeature } from "../../services/featureAccess";
+import TermResetEntertainment from "../../components/TermResetEntertainment";
 import { API_BASE_URL } from "../../src/config";
 import {
   nurserySubjects,
@@ -149,9 +150,11 @@ const SystemSettings = () => {
   const [savingClasses, setSavingClasses] = useState(false);
 
   // Danger Zone State
-  const [showDangerZone, setShowDangerZone] = useState(false);
-  const [termResetting, setTermResetting] = useState(false);
-  const [showTermResetModal, setShowTermResetModal] = useState(false);
+const [showDangerZone, setShowDangerZone] = useState(false);
+   const [termResetting, setTermResetting] = useState(false);
+   const [isEntertainmentVisible, setIsEntertainmentVisible] = useState(false);
+   const [resetProgress, setResetProgress] = useState("");
+   const [showTermResetModal, setShowTermResetModal] = useState(false);
   const [showDeleteSubjectModal, setShowDeleteSubjectModal] = useState(false);
   const [subjectToDeleteName, setSubjectToDeleteName] = useState<string | null>(
     null,
@@ -1117,39 +1120,114 @@ const SystemSettings = () => {
     setShowTermResetModal(true);
   };
 
-  const deleteCollectionInBatches = async (collectionName: string) => {
-    const collectionRef = collection(firestore, collectionName);
-    const batchSize = 200;
-
-    while (true) {
-      const snapshot = await getDocs(
-        query(
-          collectionRef,
-          where("schoolId", "==", schoolId),
-          limit(batchSize),
-        ),
+  const withTimeout = async (
+    promise: Promise<any>,
+    ms: number,
+    label = "operation",
+  ): Promise<any> => {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error(`${label} timed out after ${ms / 1000}s`)),
+        ms,
       );
-      if (snapshot.empty) break;
+    });
 
-      const batch = writeBatch(firestore);
-      snapshot.docs.forEach((docSnap) => {
-        batch.delete(docSnap.ref);
-      });
-      try {
-        await batch.commit();
-      } catch (error) {
-        throw new Error(
-          `Could not delete ${collectionName}: ${
-            error instanceof Error ? error.message : "Permission denied"
-          }`,
-        );
-      }
-
-      if (snapshot.size < batchSize) break;
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   };
 
-  const deleteSchoolSubcollectionInBatches = async (collectionName: string) => {
+  const withRetry = async (
+    operation: () => Promise<any>,
+    label = "operation",
+    retries = 3,
+    baseDelayMs = 3000,
+  ): Promise<any> => {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        const message = String(error?.message || error || "");
+        const isTransient =
+          message.includes("timed out") ||
+          message.includes("network") ||
+          message.includes("QUIC") ||
+          message.includes("unavailable") ||
+          message.includes("degraded");
+        if (!isTransient || attempt >= retries) {
+          throw error;
+        }
+        const delay = baseDelayMs * 2 ** attempt;
+        console.warn(
+          `${label} attempt ${attempt + 1} failed: ${message}. Retrying in ${delay}ms...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        attempt += 1;
+      }
+    }
+  };
+
+  const deleteCollectionInBatches = async (
+    collectionName: string,
+    onProgress?: (label: string) => void,
+  ) => {
+    const collectionRef = collection(firestore, collectionName);
+    const batchSize = 200;
+    const queryConstraints = [
+      where("schoolId", "==", schoolId),
+      limit(batchSize),
+    ];
+
+    onProgress?.(`Deleting ${collectionName}...`);
+
+    const operation = async () => {
+      let firstSnapshot = await withTimeout(
+        getDocs(query(collectionRef, ...queryConstraints)),
+        180000,
+        `Loading ${collectionName}`,
+      );
+      if (firstSnapshot.empty) return;
+
+      const deleteBatch = async (snapshot: any) => {
+        const batch = writeBatch(firestore);
+        snapshot.docs.forEach((docSnap: any) => batch.delete(docSnap.ref));
+        return withTimeout(
+          batch.commit(),
+          180000,
+          `Committing ${collectionName}`,
+        );
+      };
+
+      let cursor = firstSnapshot;
+      let pendingCommit = deleteBatch(cursor);
+
+      while (true) {
+        const nextSnapshot = await withTimeout(
+          getDocs(query(collectionRef, ...queryConstraints)),
+          180000,
+          `Loading next ${collectionName} batch`,
+        );
+        if (nextSnapshot.empty) break;
+
+        await pendingCommit;
+        pendingCommit = deleteBatch(nextSnapshot);
+        cursor = nextSnapshot;
+      }
+
+      await pendingCommit;
+    };
+
+    await withRetry(operation, `Deleting ${collectionName}`, 3, 3000);
+  };
+
+  const deleteSchoolSubcollectionInBatches = async (
+    collectionName: string,
+    onProgress?: (label: string) => void,
+  ) => {
     const collectionRef = collection(
       firestore,
       "schools",
@@ -1158,117 +1236,208 @@ const SystemSettings = () => {
     );
     const batchSize = 200;
 
-    while (true) {
-      const snapshot = await getDocs(query(collectionRef, limit(batchSize)));
-      if (snapshot.empty) break;
+    onProgress?.(`Deleting schools/${schoolId}/${collectionName}...`);
 
-      const batch = writeBatch(firestore);
-      snapshot.docs.forEach((docSnap) => {
-        batch.delete(docSnap.ref);
-      });
-      try {
-        await batch.commit();
-      } catch (error) {
-        throw new Error(
-          `Could not delete schools/${collectionName}: ${
-            error instanceof Error ? error.message : "Permission denied"
-          }`,
+    const operation = async () => {
+      let firstSnapshot = await withTimeout(
+        getDocs(query(collectionRef, limit(batchSize))),
+        180000,
+        `Loading ${collectionName}`,
+      );
+      if (firstSnapshot.empty) return;
+
+      const deleteBatch = async (snapshot: any) => {
+        const batch = writeBatch(firestore);
+        snapshot.docs.forEach((docSnap: any) => batch.delete(docSnap.ref));
+        return withTimeout(
+          batch.commit(),
+          180000,
+          `Committing ${collectionName}`,
         );
+      };
+
+      let cursor = firstSnapshot;
+      let pendingCommit = deleteBatch(cursor);
+
+      while (true) {
+        const nextSnapshot = await withTimeout(
+          getDocs(query(collectionRef, limit(batchSize))),
+          180000,
+          `Loading next ${collectionName} batch`,
+        );
+        if (nextSnapshot.empty) break;
+
+        await pendingCommit;
+        pendingCommit = deleteBatch(nextSnapshot);
+        cursor = nextSnapshot;
       }
 
-      if (snapshot.size < batchSize) break;
-    }
+      await pendingCommit;
+    };
+
+    await withRetry(
+      operation,
+      `Deleting schools/${schoolId}/${collectionName}`,
+      3,
+      3000,
+    );
   };
 
-  const confirmTermReset = async () => {
-    setShowTermResetModal(false);
-    setTermResetting(true);
-    try {
-      if (canUseBackups) {
-        await db.createTermBackup(
-          config,
-          config.currentTerm,
-          config.academicYear,
+const confirmTermReset = async () => {
+      setShowTermResetModal(false);
+      setTermResetting(true);
+      setIsEntertainmentVisible(true);
+      setResetProgress("Starting term reset...");
+
+      const safetyTimeoutMs = 15 * 60 * 1000;
+      const safetyTimeoutHandle = setTimeout(() => {
+        setIsEntertainmentVisible(false);
+        setTermResetting(false);
+        setResetProgress("");
+        showToast(
+          "Term reset is taking longer than expected. Please refresh and try again, or contact support if the issue persists.",
+          { type: "error" },
         );
-      }
+      }, safetyTimeoutMs);
 
-      const collectionsToDelete = [
-        "attendance",
-        "assessments",
-        "teacher_attendance",
-        "notices",
-        "student_remarks",
-        "admin_remarks",
-        "student_skills",
-        "admin_notifications",
-        "payments",
-        "student_ledgers",
-      ];
+      const failedCollections: string[] = [];
+      try {
+       if (canUseBackups) {
+         setResetProgress("Creating backup...");
+         try {
+           await withTimeout(
+             db.createTermBackup(
+               config,
+               config.currentTerm,
+               config.academicYear,
+             ),
+             180000,
+             "Creating term backup",
+           );
+          } catch (backupError) {
+            console.warn("Backup skipped:", backupError);
+            const message = String(
+              (backupError as any)?.message || backupError || "",
+            );
+            if (message.includes("permission") || message.includes("timed out")) {
+              showToast(
+                "Term backup could not be created due to permissions or timeout. Term reset will still proceed, but recovery may be limited.",
+                { type: "error" },
+              );
+            }
+          }
+       }
 
-      const schoolSubcollectionsToDelete = [
-        "payments",
-        "feeLedgers",
-      ];
+       const collectionsToDelete = [
+         "attendance",
+         "assessments",
+         "teacher_attendance",
+         "notices",
+         "student_remarks",
+         "admin_remarks",
+         "student_skills",
+         "admin_notifications",
+         "payments",
+         "student_ledgers",
+       ];
 
-      await Promise.all(
-        collectionsToDelete.map(async (colName) => {
-          console.log(`Deleting collection: ${colName}`);
-          await deleteCollectionInBatches(colName);
-        }),
-      );
-      await Promise.all(
-        schoolSubcollectionsToDelete.map(async (colName) => {
-          console.log(`Deleting school subcollection: ${colName}`);
-          await deleteSchoolSubcollectionInBatches(colName);
-        }),
-      );
+       const schoolSubcollectionsToDelete = [
+         "payments",
+         "feeLedgers",
+       ];
 
-      // Reset relevant school config fields
-      const schoolConfigRef = doc(firestore, "settings", schoolId);
-      await setDoc(
-        schoolConfigRef,
-        {
-          schoolReopenDate: "",
-          vacationDate: "",
-          nextTermBegins: "",
-        },
-        { merge: true },
-      );
+       for (const colName of collectionsToDelete) {
+         try {
+           setResetProgress(`Deleting ${colName}...`);
+           await deleteCollectionInBatches(colName, setResetProgress);
+         } catch (colError) {
+           console.error(`Failed to delete ${colName}:`, colError);
+           failedCollections.push(colName);
+         }
+       }
 
-      showToast("Term data reset successfully!", { type: "success" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "term_reset",
-        entityId: schoolId,
-        meta: {
-          status: "success",
-          module: "System Settings",
-          actorName: user?.fullName || "",
-        },
-      });
-      // Reload the page to reflect changes
-      window.location.reload();
-    } catch (error: any) {
-      console.error("Term Reset error:", error);
-      showToast(`Term Reset Failed: ${error.message}`, { type: "error" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "term_reset_failed",
-        entityId: schoolId,
-        meta: {
-          status: "failed",
-          module: "System Settings",
-          error: error?.message || "Unknown error",
-          actorName: user?.fullName || "",
-        },
-      });
-  } finally {
-      setTermResetting(false);
-    }
+       for (const colName of schoolSubcollectionsToDelete) {
+         try {
+           setResetProgress(
+             `Deleting schools/${schoolId}/${colName}...`,
+           );
+           await deleteSchoolSubcollectionInBatches(
+             colName,
+             setResetProgress,
+           );
+         } catch (colError) {
+           console.error(
+             `Failed to delete schools/${schoolId}/${colName}:`,
+             colError,
+           );
+           failedCollections.push(`schools/${schoolId}/${colName}`);
+         }
+       }
+
+       setResetProgress("Resetting configurations...");
+       const schoolConfigRef = doc(firestore, "settings", schoolId);
+       await setDoc(
+         schoolConfigRef,
+         {
+           schoolReopenDate: "",
+           vacationDate: "",
+           nextTermBegins: "",
+         },
+         { merge: true },
+       );
+
+       if (failedCollections.length > 0) {
+         showToast(
+           `Term reset completed with warnings. Some collections could not be fully cleared: ${failedCollections.join(", ")}. Please retry or contact support.`,
+           { type: "error" },
+         );
+       } else {
+         showToast("Term data reset successfully!", { type: "success" });
+       }
+
+       await logActivity({
+         schoolId,
+         actorUid: user?.id || null,
+         actorRole: user?.role || null,
+         eventType: "term_reset",
+         entityId: schoolId,
+         meta: {
+           status: failedCollections.length === 0 ? "success" : "partial",
+           module: "System Settings",
+           failedCollections,
+           actorName: user?.fullName || "",
+         },
+       });
+
+       setTimeout(() => {
+         window.location.replace(window.location.href);
+       }, 500);
+} catch (error: any) {
+       console.error("Term Reset error:", error);
+       showToast(
+         `Term Reset Failed: ${error.message}`,
+         { type: "error" },
+       );
+       setIsEntertainmentVisible(false);
+       await logActivity({
+         schoolId,
+         actorUid: user?.id || null,
+         actorRole: user?.role || null,
+         eventType: "term_reset_failed",
+         entityId: schoolId,
+         meta: {
+           status: "failed",
+           module: "System Settings",
+           error: error?.message || "Unknown error",
+           actorName: user?.fullName || "",
+         },
+       });
+} finally {
+       clearTimeout(safetyTimeoutHandle);
+       setIsEntertainmentVisible(false);
+       setTermResetting(false);
+       setResetProgress("");
+     }
   };
 
   const reportCardSettings =
@@ -2980,43 +3149,47 @@ const SystemSettings = () => {
         </div>
       )}
     
-      {/* Delete Class Stream Confirmation Modal */}
-      {showDeleteClassStreamModal && classStreamToDelete && (
-        <div className="fixed inset-0 bg-slate-900 bg-opacity-30 flex items-center justify-center z-50 transition-opacity duration-300">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
-            <div className="flex items-center mb-4">
-              <AlertTriangle className="text-red-600 mr-3" size={32} />
-              <h2 className="text-xl font-bold text-slate-800">
-                Delete Class Stream
-              </h2>
-            </div>
-            <p className="text-slate-600 mb-6">
-              Are you sure you want to delete the class stream "
-              <strong>{classStreamToDelete.name}</strong>"? This will also
-              remove its associated subjects and timetable. This action cannot
-              be undone.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteClassStreamModal(false);
-                  setClassStreamToDelete(null);
-                }}
-                className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteClassStream}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-              >
-                Delete Class Stream
-              </button>
-            </div>
-          </div>
-        </div>
-      )}</Layout>
-  );
+{/* Delete Class Stream Confirmation Modal */}
+       {showDeleteClassStreamModal && classStreamToDelete && (
+         <div className="fixed inset-0 bg-slate-900 bg-opacity-30 flex items-center justify-center z-50 transition-opacity duration-300">
+           <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
+             <div className="flex items-center mb-4">
+               <AlertTriangle className="text-red-600 mr-3" size={32} />
+               <h2 className="text-xl font-bold text-slate-800">
+                 Delete Class Stream
+               </h2>
+             </div>
+             <p className="text-slate-600 mb-6">
+               Are you sure you want to delete the class stream "
+               <strong>{classStreamToDelete.name}</strong>"? This will also
+               remove its associated subjects and timetable. This action cannot
+               be undone.
+             </p>
+             <div className="flex justify-end gap-3">
+               <button
+                 onClick={() => {
+                   setShowDeleteClassStreamModal(false);
+                   setClassStreamToDelete(null);
+                 }}
+                 className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+               >
+                 Cancel
+               </button>
+               <button
+                 onClick={confirmDeleteClassStream}
+                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+               >
+                 Delete Class Stream
+               </button>
+             </div>
+           </div>
+         </div>
+)}
+      {isEntertainmentVisible && (
+        <TermResetEntertainment message={resetProgress || undefined} />
+      )}
+    </Layout>
+ );
 };
 export default SystemSettings;
 

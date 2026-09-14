@@ -1232,17 +1232,20 @@ match /analyticsEvents/{eventId} {
 
     // Backups collection
     match /backups/{backupId} {
-      // Resource-scoped read handles both document reads and queries.
       allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
-      allow update, delete: if isSuperAdmin() ||
-        schoolAdminOwnsSchool(resource.data.schoolId);
+      allow update, delete: if isSuperAdmin() || schoolAdminOwnsSchool(resource.data.schoolId);
 
       match /chunks/{chunkId} {
         allow read: if schoolAdminOwnsSchool(resource.data.schoolId) ||
           schoolAdminOwnsSchool(get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId);
         allow delete: if schoolAdminOwnsSchool(resource.data.schoolId) ||
           schoolAdminOwnsSchool(get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId);
+      }
+
+      match /data/{docId} {
+        allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
+        allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       }
     }
 

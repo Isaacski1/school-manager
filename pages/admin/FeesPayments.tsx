@@ -979,6 +979,59 @@ const handleExportReport = () => {
     setTimeout(() => setActiveQuickExport(null), 600);
   };
 
+  const handleExportDefaultersCsv = () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const headers = ["Student", "Class", "Balance", "Status"];
+    const rows = defaulters.map(({ ledger, student, balance, status }) => {
+      const className = availableClasses.find((c) => c.id === ledger.classId)?.name;
+      return [
+        student?.name || ledger.studentId,
+        className || ledger.classId,
+        balance,
+        status,
+      ];
+    });
+
+    downloadCsv(
+      `defaulters_${academicYear}_${term}.csv`,
+      headers,
+      rows
+    );
+    setIsExporting(false);
+    showToast("CSV file downloaded successfully!", { type: "success" });
+  };
+
+  const handleExportWeeklyPaymentsCsv = () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const headers = ["Week", "Amount Collected"];
+    const rows = collectionTrend.map((item) => [item.label, item.value]);
+
+    downloadCsv(
+      `collections_weekly_${academicYear}_${term}.csv`,
+      headers,
+      rows
+    );
+    setIsExporting(false);
+    showToast("CSV file downloaded successfully!", { type: "success" });
+  };
+
+  const handleExportClassCollectionsCsv = () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const headers = ["Class", "Amount Collected"];
+    const rows = classCollection.map((item) => [item.label, item.value]);
+
+    downloadCsv(
+      `collections_by_class_${academicYear}_${term}.csv`,
+      headers,
+      rows
+    );
+    setIsExporting(false);
+    showToast("CSV file downloaded successfully!", { type: "success" });
+  };
+
   const loadStudentsForFinance = useCallback(
     async (requestId: number): Promise<Student[]> => {
       if (!schoolId) return [];
@@ -1419,21 +1472,23 @@ const handleExportReport = () => {
         : openingPaidTotal >= feesList.reduce((sum, fee) => sum + fee.amount, 0)
           ? "Paid"
           : "Part-paid";
-    const payload: StudentFeeLedger = {
-      id: ledgerId,
-      schoolId,
-      studentId: student.id,
-      classId: student.classId,
-      academicYear,
-      term,
-      fees: feesList,
-      openingPaidAmount: openingPaidTotal,
-      openingBalance: openingBalanceTotal,
-      openingStatus: openingStatusDerived,
-      openingDate: existing?.openingDate || onboardingDate || null,
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
+      const totalFee = feesList.reduce((sum, fee) => sum + fee.amount, 0);
+      const payload: StudentFeeLedger = {
+        id: ledgerId,
+        schoolId,
+        studentId: student.id,
+        classId: student.classId,
+        academicYear,
+        term,
+        fees: feesList,
+        totalFee,
+        openingPaidAmount: openingPaidTotal,
+        openingBalance: openingBalanceTotal,
+        openingStatus: openingStatusDerived,
+        openingDate: existing?.openingDate || onboardingDate || null,
+        createdAt: existing?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
     await db.upsertStudentLedger(payload);
     return payload;
   };
@@ -1484,6 +1539,7 @@ const handleExportReport = () => {
           : openingPaidTotal >= feesList.reduce((sum, fee) => sum + fee.amount, 0)
             ? "Paid"
             : "Part-paid";
+      const totalFee = feesList.reduce((sum, fee) => sum + fee.amount, 0);
       const payload: StudentFeeLedger = {
         id: ledgerId,
         schoolId,
@@ -1492,6 +1548,7 @@ const handleExportReport = () => {
         academicYear,
         term,
         fees: feesList,
+        totalFee,
         openingPaidAmount: openingPaidTotal,
         openingBalance: openingBalanceTotal,
         openingStatus: openingStatusDerived,
@@ -2502,65 +2559,12 @@ const handleExportReport = () => {
                 openingPaidAmount: Number(ledgerForm.openingPaidAmount || 0),
                 openingBalance: Number(ledgerForm.openingBalance || 0),
               }
-            : {
-                ...fee,
-                openingStatus: "Unpaid" as const,
-                openingPaidAmount: 0,
-                openingBalance: 0,
-};
-
-   const handleExportDefaultersCsv = () => {
-     if (isExporting) return;
-     setIsExporting(true);
-     const headers = ["Student", "Class", "Balance", "Status"];
-     const rows = defaulters.map(({ ledger, student, balance, status }) => {
-       const className = availableClasses.find((c) => c.id === ledger.classId)?.name;
-       return [
-         student?.name || ledger.studentId,
-         className || ledger.classId,
-         balance,
-         status,
-       ];
-     });
-
-     downloadCsv(
-       `defaulters_${academicYear}_${term}.csv`,
-       headers,
-       rows
-     );
-     setIsExporting(false);
-     showToast("CSV file downloaded successfully!", { type: "success" });
-   };
-
-   const handleExportWeeklyPaymentsCsv = () => {
-     if (isExporting) return;
-     setIsExporting(true);
-     const headers = ["Week", "Amount Collected"];
-     const rows = collectionTrend.map((item) => [item.label, item.value]);
-
-     downloadCsv(
-       `collections_weekly_${academicYear}_${term}.csv`,
-       headers,
-       rows
-     );
-     setIsExporting(false);
-     showToast("CSV file downloaded successfully!", { type: "success" });
-   };
-
-   const handleExportClassCollectionsCsv = () => {
-     if (isExporting) return;
-     setIsExporting(true);
-     const headers = ["Class", "Amount Collected"];
-     const rows = classCollection.map((item) => [item.label, item.value]);
-
-     downloadCsv(
-       `collections_by_class_${academicYear}_${term}.csv`,
-       headers,
-       rows
-     );
-     setIsExporting(false);
-     showToast("CSV file downloaded successfully!", { type: "success" });
-   };
+             : {
+                 ...fee,
+                 openingStatus: "Unpaid" as const,
+                 openingPaidAmount: 0,
+                 openingBalance: 0,
+               };
         }
         return {
           ...fee,
@@ -5016,120 +5020,125 @@ const handleExportReport = () => {
                 </select>
               </div>
             </div>
-            <div className="mt-4 max-h-[480px] overflow-x-auto overflow-y-auto rounded-[24px] border border-white/80 bg-white/70 p-2 sm:p-3 shadow-sm">
-              <table className="w-full min-w-[760px] text-left text-sm">
-                <thead>
-                  <tr className="text-xs uppercase text-slate-400">
-                    <th className="py-2 px-2 min-w-[170px]">Student</th>
-                    <th className="py-2 px-2 whitespace-nowrap">Class</th>
-                    <th className="py-2 px-2 whitespace-nowrap">Total Due</th>
-                    <th className="py-2 px-2 whitespace-nowrap">Paid</th>
-                    <th className="py-2 px-2 whitespace-nowrap">Balance</th>
-                    <th className="py-2 px-2 whitespace-nowrap">Status</th>
-                    <th className="py-2 px-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 6 }).map((_, index) => (
-                      <tr key={index} className="border-t border-slate-100">
-                        <td className="py-3 px-2" colSpan={7}>
-                          <SkeletonBlock className="h-6 w-full" />
-                        </td>
-                      </tr>
-                    ))
-                  ) : filteredLedgerRows.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="py-6 text-center text-slate-400"
-                      >
-                        No ledgers available for this term.
-                      </td>
-                    </tr>
-                  ) : (
-                    <>
-                      {filteredLedgerRows.slice(0, ledgersLimit).map(
-                        ({
-                          ledger,
-                          student,
-                          totalDue,
-                          totalPaid,
-                          balance,
-                          status,
-                        }) => (
-                          <tr
+            <div className="max-h-[480px] overflow-x-hidden overflow-y-auto rounded-[24px] border border-white/80 bg-white/70 p-2 sm:p-3 shadow-sm">
+              {loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div key={index} className="rounded-2xl border border-slate-100 bg-white p-4">
+                      <SkeletonBlock className="h-5 w-3/4" />
+                      <div className="mt-3 flex items-center gap-3">
+                        <SkeletonBlock className="h-10 w-10 shrink-0 rounded-2xl" />
+                        <SkeletonBlock className="h-4 flex-1" />
+                      </div>
+                      <div className="mt-4 flex items-center gap-2">
+                        <SkeletonBlock className="h-6 w-16 rounded-full" />
+                        <SkeletonBlock className="h-6 w-20 rounded-full" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredLedgerRows.length === 0 ? (
+                <div className="py-10 text-center text-slate-400">
+                  No ledgers available for this term.
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {filteredLedgerRows.slice(0, ledgersLimit).map(
+                      ({
+                        ledger,
+                        student,
+                        totalDue,
+                        totalPaid,
+                        balance,
+                        status,
+                      }) => {
+                        const className =
+                          availableClasses.find((cls) => cls.id === ledger.classId)
+                            ?.name || "-";
+                        const statusClasses =
+                          status === "paid"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : status === "part-paid"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-rose-50 text-rose-700";
+                        return (
+                          <div
                             key={ledger.id}
-                            className="border-t border-slate-100"
+                            className="flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-100 bg-white p-4"
                           >
-                            <td className="py-3 px-2 font-medium text-slate-800">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex items-center gap-3">
                                 <StudentAvatar
                                   student={student}
                                   fallbackId={ledger.studentId}
-                                  className="h-12 w-12 rounded-2xl text-sm"
+                                  className="h-11 w-11 shrink-0 rounded-2xl text-sm"
                                 />
-                                <span className="min-w-0 truncate">
-                                  {student?.name || ledger.studentId}
-                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-800">
+                                    {student?.name || ledger.studentId}
+                                  </p>
+                                  <p className="text-xs text-slate-500">{className}</p>
+                                </div>
                               </div>
-                            </td>
-                            <td className="py-3 px-2 whitespace-nowrap text-slate-500">
-                              {availableClasses.find(
-                                (cls) => cls.id === ledger.classId,
-                              )?.name || "-"}
-                            </td>
-                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                              {formatMoney(totalDue)}
-                            </td>
-                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                              {formatMoney(totalPaid)}
-                            </td>
-                            <td className="py-3 px-2 whitespace-nowrap text-slate-600">
-                              {formatMoney(balance)}
-                            </td>
-                            <td className="py-3 px-2 whitespace-nowrap">
                               <span
-                                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                  status === "paid"
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : status === "part-paid"
-                                      ? "bg-amber-50 text-amber-700"
-                                      : "bg-rose-50 text-rose-700"
-                                }`}
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses}`}
                               >
                                 {status}
                               </span>
-                            </td>
-                            <td className="py-3 px-2 text-right whitespace-nowrap">
-                              <button
-                                onClick={() =>
-                                  openLedgerPayments(ledger.id, ledger.studentId)
-                                }
-                                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 whitespace-nowrap"
-                              >
-                                <FilePenLine size={14} /> Edit
-                              </button>
-                            </td>
-                          </tr>
-                        ),
-                      )}
-                      {filteredLedgerRows.length > ledgersLimit && (
-                        <tr>
-                          <td colSpan={7} className="py-4">
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {ledger.fees.map((fee) => (
+                                <span
+                                  key={fee.feeId}
+                                  className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600"
+                                >
+                                  {fee.feeName}
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="flex flex-col gap-1.5 text-xs text-slate-600">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-500">Total Due</span>
+                                <span className="font-semibold text-slate-800">{formatMoney(totalDue)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-500">Paid</span>
+                                <span className="font-semibold text-slate-800">{formatMoney(totalPaid)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-500">Balance</span>
+                                <span className="font-semibold text-rose-700">{formatMoney(balance)}</span>
+                              </div>
+                            </div>
+
                             <button
-                              onClick={() => setLedgersLimit((prev) => prev + 25)}
-                              className="w-full rounded-2xl border border-slate-200 bg-white/80 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                              onClick={() =>
+                                openLedgerPayments(ledger.id, ledger.studentId)
+                              }
+                              className="inline-flex w-full items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                             >
-                              Load More Ledgers ({filteredLedgerRows.length - ledgersLimit} remaining)
+                              <FilePenLine size={14} /> Edit
                             </button>
-                          </td>
-                        </tr>
-                      )}
-                    </>
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                  {filteredLedgerRows.length > ledgersLimit && (
+                    <div className="mt-4">
+                      <button
+                        onClick={() => setLedgersLimit((prev) => prev + 25)}
+                        className="w-full rounded-2xl border border-slate-200 bg-white/80 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                      >
+                        Load More Ledgers ({filteredLedgerRows.length - ledgersLimit} remaining)
+                      </button>
+                    </div>
                   )}
-                </tbody>
-              </table>
+                </>
+              )}
             </div>
           </div>
 

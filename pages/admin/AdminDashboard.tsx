@@ -52,6 +52,7 @@ import {
   TeacherAttendanceRecord,
   SchoolConfig,
   UserRole,
+  User as UserType,
   PlatformBroadcast,
   StudentFeePayment,
 } from "../../types";
@@ -69,6 +70,8 @@ import { checkSchoolTermRollover } from "../../services/backendApi";
 
 const MemoAttendanceChart = React.memo(AttendanceChart);
 
+type ClassAttendanceStat = { className: string; shortName?: string; percentage: number; id: string };
+
 type AdminDashboardCache = {
   stats: {
     students: number;
@@ -76,7 +79,7 @@ type AdminDashboardCache = {
     classes: number;
     maleStudents: number;
     femaleStudents: number;
-    classAttendance: { className: string; percentage: number; id: string }[];
+    classAttendance: ClassAttendanceStat[];
   };
   notices: Notice[];
   recentStudents: Student[];
@@ -102,6 +105,42 @@ type AdminDashboardCache = {
 };
 
 const adminDashboardMemoryCache: Record<string, AdminDashboardCache> = {};
+
+const dashboardStatsInFlight = new Map<string, Promise<any>>();
+
+function buildDashboardStatsKey(
+  schoolId: string | null,
+  schoolType: string | undefined,
+  schoolReopenDate: string | undefined,
+  vacationDate: string | undefined,
+  holidayDates: any[] | undefined,
+  todayStr: string,
+  currentTerm: string | undefined,
+  academicYear: string | undefined,
+) {
+  const holidayKey = (holidayDates || [])
+    .map((h: any) => h.date || "")
+    .filter((date: string) => Boolean(date))
+    .sort()
+    .join(",");
+  return `dashboardStats:${schoolId || ""}:${schoolType || ""}:${schoolReopenDate || ""}:${vacationDate || ""}:${holidayKey}:${todayStr}:${currentTerm || ""}:${academicYear || ""}`;
+}
+
+async function getSharedDashboardStats(key: string, fn: () => Promise<any>): Promise<any> {
+  const existing = dashboardStatsInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+  const promise = (async () => {
+    try {
+      return await fn();
+    } finally {
+      dashboardStatsInFlight.delete(key);
+    }
+  })();
+  dashboardStatsInFlight.set(key, promise);
+  return promise;
+}
 
 type ParentFeePaymentSignal = StudentFeePayment & {
   studentName?: string;
@@ -423,11 +462,7 @@ const AdminDashboard = () => {
     classes: availableClasses.length,
     maleStudents: 0,
     femaleStudents: 0,
-    classAttendance: [] as {
-      className: string;
-      percentage: number;
-      id: string;
-    }[],
+    classAttendance: [] as ClassAttendanceStat[],
   });
   const [notices, setNotices] = useState<Notice[]>([]);
   const [broadcasts, setBroadcasts] = useState<PlatformBroadcast[]>([]);
@@ -536,6 +571,8 @@ const AdminDashboard = () => {
     Record<string, { id: string; name: string; class: string; avg: number }[]>
   >({ A: [], B: [], C: [], D: [], F: [] });
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
+  const selectedGradeBucket = selectedGrade ? gradeBuckets[selectedGrade] : undefined;
+  const selectedGradeBucketLength = selectedGradeBucket?.length ?? 0;
   const [totalSchoolDays, setTotalSchoolDays] = useState<number | null>(null);
   const [totalSchoolWeeks, setTotalSchoolWeeks] = useState<number | null>(null);
   const fallbackSchoolDays = useMemo(() => {
@@ -716,6 +753,8 @@ const AdminDashboard = () => {
     };
   }, [resolvedPlanEndsAt, school?.plan, subscriptionNow]);
 
+  const gracePeriodTarget = gracePeriod?.graceEndsAt ?? null;
+
   // Advanced visualization state
   const [heatmapData, setHeatmapData] = useState<
     Record<string, Record<string, number>>
@@ -749,9 +788,11 @@ const AdminDashboard = () => {
       schoolId
         ? `admin_dashboard_heavy_${schoolId}_${encodeURIComponent(
             schoolTypeLabel,
-          )}`
+          )}_${encodeURIComponent(
+            schoolConfig.currentTerm || "",
+          )}_${encodeURIComponent(schoolConfig.academicYear || "")}`
         : "",
-    [schoolId, schoolTypeLabel],
+    [schoolId, schoolTypeLabel, schoolConfig.currentTerm, schoolConfig.academicYear],
   );
 
   const cachedHeavy = useMemo(() => {
@@ -927,11 +968,7 @@ const AdminDashboard = () => {
           classes: availableClasses.length,
           maleStudents: 0,
           femaleStudents: 0,
-          classAttendance: [] as {
-            className: string;
-            percentage: number;
-            id: string;
-          }[],
+          classAttendance: [] as ClassAttendanceStat[],
         };
 
         setStats((prev) => ({
@@ -985,9 +1022,31 @@ const AdminDashboard = () => {
 
         const localToday = new Date();
         const today = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
-        const teacherRecordsStartDate = new Date(localToday);
-        teacherRecordsStartDate.setDate(teacherRecordsStartDate.getDate() - 180);
-        const teacherRecordsStart = `${teacherRecordsStartDate.getFullYear()}-${String(teacherRecordsStartDate.getMonth() + 1).padStart(2, "0")}-${String(teacherRecordsStartDate.getDate()).padStart(2, "0")}`;
+
+        // Use the configured term window for teacher attendance when available;
+        // otherwise keep the existing 180-day fallback.
+        let teacherRecordsStart = today;
+        if (schoolConfig?.schoolReopenDate) {
+          teacherRecordsStart = schoolConfig.schoolReopenDate;
+        } else {
+          const teacherRecordsStartDate = new Date(localToday);
+          teacherRecordsStartDate.setDate(teacherRecordsStartDate.getDate() - 180);
+          teacherRecordsStart = `${teacherRecordsStartDate.getFullYear()}-${String(teacherRecordsStartDate.getMonth() + 1).padStart(2, "0")}-${String(teacherRecordsStartDate.getDate()).padStart(2, "0")}`;
+        }
+        const teacherRecordsEnd =
+          schoolConfig?.vacationDate && schoolConfig.vacationDate < today
+            ? schoolConfig.vacationDate
+            : today;
+        const statsKey = buildDashboardStatsKey(
+          schoolId,
+          school?.schoolType,
+          schoolConfig.schoolReopenDate,
+          schoolConfig.vacationDate,
+          schoolConfig.holidayDates,
+          today,
+          schoolConfig.currentTerm,
+          schoolConfig.academicYear,
+        );
 
         // Wrap each call to prevent permission errors from blocking the whole dashboard
         const wrapCall = async <T,>(
@@ -1005,25 +1064,23 @@ const AdminDashboard = () => {
           }
         };
 
-        const [
+const [
           dashboardStats,
-          students,
           fetchedNotices,
           fetchedBroadcasts,
           config,
-          teachers,
-          teacherAttendanceData,
-          pendingTeacherAttendance,
           allTeacherRecords,
           feePayments,
-        ] = await Promise.all([
-          wrapCall(() => db.getDashboardStats(schoolId), {
+] = await Promise.all([
+          wrapCall(() => getSharedDashboardStats(statsKey, () => db.getDashboardStats(schoolId)), {
             studentsCount: 0,
             teachersCount: 0,
             gender: { male: 0, female: 0 },
-            classAttendance: [],
+            classAttendance: [] as { className: string; percentage: number; id: string }[],
+            students: [] as Student[],
+            users: [] as UserType[],
           }),
-          wrapCall(() => db.getStudents(schoolId), []),
+          // REMOVED: wrapCall(() => db.getStudents(schoolId), []),
           wrapCall(() => db.getNotices(schoolId), []),
           wrapCall(() => db.getPlatformBroadcasts(schoolId), []),
           wrapCall(() => db.getSchoolConfig(schoolId), {
@@ -1038,15 +1095,24 @@ const AdminDashboard = () => {
             nextTermBegins: "",
             termTransitionProcessed: false,
           }),
-          wrapCall(() => db.getUsers(schoolId), []),
+          // REMOVED: wrapCall(() => db.getUsers(schoolId), []),
+          wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId, teacherRecordsStart, today), [] as TeacherAttendanceRecord[]),
           wrapCall(
-            () => db.getAllApprovedTeacherAttendance(schoolId, today),
+            () =>
+              db.getPayments({
+                schoolId,
+                orderByField: "createdAt",
+                orderDirection: "desc",
+                limit: 50,
+              }),
             [],
           ),
-          wrapCall(() => db.getAllPendingTeacherAttendance(schoolId), []),
-          wrapCall(() => db.getAllTeacherAttendanceRecords(schoolId, teacherRecordsStart, today), []),
-          wrapCall(() => db.getPayments({ schoolId }), []),
         ]);
+
+        // Reuse students/users already returned by getDashboardStats
+        const students = dashboardStats.students as Student[];
+        const teachers = dashboardStats.users as UserType[];
+
 
         // Check for missed attendance from school reopen date through yesterday.
         const missedAlerts: any[] = [];
@@ -1291,28 +1357,8 @@ const AdminDashboard = () => {
           record.id ||
           `${record.schoolId || schoolId || "unknown"}_${record.teacherId || "unknown"}_${record.date || ""}`;
 
-        // Map today's attendance records to include teacher names and classes
-        const teacherAttendanceWithDetails = teacherAttendanceData.map(
-          (record) => {
-            const teacher = teachers.find((t) => t.id === record.teacherId);
-            return {
-              ...record,
-              id: attendanceKey(record),
-              teacherName: teacher?.fullName || "Unknown",
-              teacherClasses:
-                teacher?.assignedClassIds
-                  ?.map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
-                  .join(", ") || "Not Assigned",
-            };
-          },
-        ) as any[];
-
-        const pendingRecordsForToday = (
-          pendingTeacherAttendance.length > 0
-            ? pendingTeacherAttendance
-            : allTeacherRecords.filter(
-                (record) => record.approvalStatus === "pending",
-              )
+        const pendingRecordsForToday = allTeacherRecords.filter(
+          (record) => record.approvalStatus === "pending",
         ) as any[];
 
         const pendingAttendanceWithDetails = pendingRecordsForToday.map(
@@ -1334,7 +1380,7 @@ const AdminDashboard = () => {
         const approvedAttendanceWithDetails = allTeacherRecords
           .filter((record) =>
             Boolean(
-              record.date === today && record.approvalStatus !== "pending",
+              record.date === today && record.approvalStatus === "approved",
             ),
           )
           .map((record) => {
@@ -1383,6 +1429,11 @@ const AdminDashboard = () => {
           if (match) dynamicTerm = parseInt(match[0]);
         }
 
+        let dynamicAcademicYear = ACADEMIC_YEAR;
+        if (config.academicYear) {
+          dynamicAcademicYear = config.academicYear;
+        }
+
         // Performance Calculations
         const allAssessments = await db.getAllAssessments(schoolId);
 
@@ -1409,7 +1460,7 @@ const AdminDashboard = () => {
 
         const hasAssessmentData = allAssessments.some((a) => {
           const score = a.total ?? calculateTotalScore(a);
-          return a.term === (dynamicTerm as any) && score > 0;
+          return a.term === (dynamicTerm as any) && a.academicYear === dynamicAcademicYear && score > 0;
         });
 
         allAssessments.forEach((a) => {
@@ -1462,6 +1513,7 @@ const AdminDashboard = () => {
           if (
             hasAssessmentData &&
             a.term === (dynamicTerm as any) &&
+            a.academicYear === dynamicAcademicYear &&
             score > 0 &&
             studentMap.has(a.studentId)
           ) {
@@ -2007,7 +2059,19 @@ const AdminDashboard = () => {
   const fetchStats = useCallback(async () => {
     try {
       if (!schoolId || !isAuthenticatedRef.current) return;
-      const dashboardStats = await db.getDashboardStats(schoolId);
+      const localToday = new Date();
+      const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
+      const statsKey = buildDashboardStatsKey(
+        schoolId,
+        school?.schoolType,
+        schoolConfig.schoolReopenDate,
+        schoolConfig.vacationDate,
+        schoolConfig.holidayDates,
+        todayStr,
+        schoolConfig.currentTerm,
+        schoolConfig.academicYear,
+      );
+      const dashboardStats = await getSharedDashboardStats(statsKey, () => db.getDashboardStats(schoolId));
       startTransition(() => {
         setStats((prev) => ({
           ...prev,
@@ -2106,6 +2170,21 @@ const AdminDashboard = () => {
       console.error("Failed to refresh pending teacher attendance", error);
     }
   }, [schoolId]);
+
+  // Week Navigation Helpers
+  const getWeekRange = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    // Calculate Monday (1st day of week): if Sunday (0), go back 6 days; otherwise go back (day-1) days
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+
+    // For school schedule use weekdays only: calculate Friday (5th day)
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+
+    return { monday, friday };
+  };
 
   // Compute attendance percentage for a given week (monday -> friday)
   const computeAttendanceForWeek = async (monday: Date, friday: Date) => {
@@ -2448,20 +2527,6 @@ const AdminDashboard = () => {
   };
 
   // Week Navigation Helpers
-  const getWeekRange = (date: Date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    // Calculate Monday (1st day of week): if Sunday (0), go back 6 days; otherwise go back (day-1) days
-    const monday = new Date(d);
-    monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-
-    // For school schedule use weekdays only: calculate Friday (5th day)
-    const friday = new Date(monday);
-    friday.setDate(monday.getDate() + 4);
-
-    return { monday, friday };
-  };
-
   const getRelativeDayLabel = (dateStr?: string) => {
     if (!dateStr) return "";
     const date = new Date(`${dateStr}T00:00:00`);
@@ -3399,21 +3464,21 @@ const AdminDashboard = () => {
             {topStudents.length === 0 ? (
               <p className="text-sm text-slate-400 italic">No data yet.</p>
             ) : (
-              topStudents.map((s, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between border-b border-slate-50 pb-2 last:border-0 last:pb-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-black ${i === 0 ? "bg-amber-500" : "bg-slate-300"}`}
-                    >
-                      {i + 1}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-800">
-                        {s.name}
-                      </p>
+               topStudents.map((s) => (
+                 <div
+                   key={s.id}
+                   className="flex items-center justify-between border-b border-slate-50 pb-2 last:border-0 last:pb-0"
+                 >
+                   <div className="flex items-center gap-3">
+                     <div
+                       className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-black ${s.avg >= 80 ? "bg-amber-500" : "bg-slate-300"}`}
+                     >
+                       {s.avg.toFixed(0)}
+                     </div>
+                     <div>
+                       <p className="text-sm font-semibold text-slate-800">
+                         {s.name}
+                       </p>
                       <p className="text-xs text-slate-400">{s.class}</p>
                     </div>
                   </div>
@@ -4044,7 +4109,7 @@ const AdminDashboard = () => {
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         Grace ends on{" "}
-                        {gracePeriod.graceEndsAt.toLocaleDateString()}.
+                        {gracePeriodTarget?.toLocaleDateString()}.
                       </p>
                     </div>
                   </div>
@@ -4058,7 +4123,7 @@ const AdminDashboard = () => {
                         Countdown
                       </div>
                       <div className="text-lg font-bold">
-                        <LiveCountdownText target={gracePeriod.graceEndsAt} />
+                        <LiveCountdownText target={gracePeriodTarget!} />
                       </div>
                     </div>
                     {hasFeature("billing") && (
@@ -4142,11 +4207,11 @@ const AdminDashboard = () => {
                   </div>
                 </div>
                 <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-                  {visibleMissedAttendanceAlerts.map((alert: any) => (
-                    <div
-                      key={alert.teacherId}
-                      className="bg-white p-4 rounded-lg border border-red-100 shadow-sm"
-                    >
+                   {visibleMissedAttendanceAlerts.map((alert: any) => (
+                     <div
+                       key={`${alert.teacherId}-${alert.date}`}
+                       className="bg-white p-4 rounded-lg border border-red-100 shadow-sm"
+                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
 
@@ -4226,11 +4291,11 @@ const AdminDashboard = () => {
                   </div>
                 </div>
                 <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-                  {visibleMissedStudentAttendanceAlerts.map((alert: any) => (
-                    <div
-                      key={alert.teacherId}
-                      className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm"
-                    >
+                   {visibleMissedStudentAttendanceAlerts.map((alert: any) => (
+                     <div
+                       key={`${alert.teacherId}-${alert.date}`}
+                       className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm"
+                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
 
@@ -4402,7 +4467,7 @@ const AdminDashboard = () => {
             className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8"
             style={DASHBOARD_DEFERRED_RENDER_STYLE}
           >
-            <div className="lg:col-span-2 h-[550px]">
+            <div className="lg:col-span-2 h-[650px]">
               {showSkeletons ? (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
                   <SkeletonBlock className="h-5 w-40" />
@@ -4723,9 +4788,9 @@ const AdminDashboard = () => {
                         </p>
                         {b.type === "SYSTEM_UPDATE" && b.whatsNew?.length && (
                           <ul className="list-disc pl-5 text-xs text-slate-200 mt-2 space-y-1">
-                            {b.whatsNew.map((item, idx) => (
-                              <li key={idx}>{item}</li>
-                            ))}
+                             {b.whatsNew.map((item) => (
+                               <li key={item}>{item}</li>
+                             ))}
                           </ul>
                         )}
                         {b.type === "MAINTENANCE" && (
@@ -5044,9 +5109,9 @@ const AdminDashboard = () => {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {visibleTeacherTermStats.map((stat: any) => (
+                        {visibleTeacherTermStats.map((stat: any, index: number) => (
                           <div
-                            key={stat.id}
+                            key={stat.id || `${stat.name || "teacher"}-${index}`}
                             className="bg-white p-3 rounded-lg shadow-sm border border-[#E6F0FA] hover:shadow-md transition-all duration-200 hover:border-[#E6F0FA]"
                           >
                             <div className="flex items-center justify-between">
@@ -5146,7 +5211,7 @@ const AdminDashboard = () => {
                     <span>•</span>
                     <span>
                       {
-                        CLASSES_LIST.find((c) => c.id === viewStudent.classId)
+                        CLASSES_LIST.find((c) => c.id === viewStudent?.classId)
                           ?.name
                       }
                     </span>
@@ -5206,15 +5271,15 @@ const AdminDashboard = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {performanceData ? (
-                        performanceData.grades.map((g: any, i: number) => {
-                          const score = g.total ?? calculateTotalScore(g);
-                          const { grade, remark } = calculateGrade(score);
-                          return (
-                            <tr key={i} className="hover:bg-slate-50">
-                              <td className="px-4 py-3 font-medium text-slate-800">
-                                {g.subject}
-                              </td>
+                       {performanceData ? (
+                         performanceData.grades.map((g: any) => {
+                           const score = g.total ?? calculateTotalScore(g);
+                           const { grade, remark } = calculateGrade(score);
+                           return (
+                             <tr key={g.subject} className="hover:bg-slate-50">
+                               <td className="px-4 py-3 font-medium text-slate-800">
+                                 {g.subject}
+                               </td>
                               <td className="px-4 py-3 text-center">
                                 {score > 0 ? score : "-"}
                               </td>
@@ -5419,7 +5484,7 @@ const AdminDashboard = () => {
                   Students with grade {selectedGrade}
                 </h2>
                 <p className="text-sm text-slate-500">
-                  {(gradeBuckets[selectedGrade] || []).length} students
+                  {selectedGradeBucketLength} students
                 </p>
               </div>
               <button
@@ -5430,14 +5495,14 @@ const AdminDashboard = () => {
               </button>
             </div>
             <div className="p-6 space-y-4">
-              {!gradeBuckets[selectedGrade] ||
-              gradeBuckets[selectedGrade].length === 0 ? (
-                <div className="text-center text-slate-400 py-8">
-                  No students in this grade for the selected term.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {gradeBuckets[selectedGrade].map((s, i) => (
+{!selectedGradeBucket ||
+              selectedGradeBucket.length === 0 ? (
+        <div className="text-center text-slate-400 py-8">
+          No students in this grade for the selected term.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {selectedGradeBucket.map((s, i) => (
                     <div
                       key={s.id}
                       className="flex items-center justify-between border-b border-slate-100 pb-3 last:pb-0"

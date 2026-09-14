@@ -30,6 +30,7 @@ import SchoolAssistantDrawer, {
   SchoolAssistantLauncher,
 } from "./SchoolAssistantDrawer";
 import ConnectionStatusIndicator from "./ConnectionStatusIndicator";
+import { NetworkErrorHandler } from "./NetworkErrorHandler";
 import { showToast } from "../services/toast";
 
 import {
@@ -711,7 +712,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       }
       className="h-screen bg-[#fafafa] flex overflow-hidden transition-colors duration-300"
     >
-      <ConnectionStatusIndicator />
+      <NetworkErrorHandler />
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div

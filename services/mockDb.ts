@@ -88,6 +88,25 @@ class FirestoreService {
     );
   }
 
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    label = "operation",
+  ): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms / 1000}s`));
+      }, ms);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
   // Helper to get array from collection
   private async getCollection<T>(collectionName: string): Promise<T[]> {
     const querySnapshot = await getDocs(collection(firestore, collectionName));
@@ -1641,12 +1660,9 @@ private async createSnapshotRecord(params: {
     onProgress?: (percent: number, message: string) => void,
   ): Promise<{ attendanceCreated: number; assessmentsCreated: number }> {
     const scopedSchoolId = this.requireSchoolId(schoolId, "generateDemoAcademicData");
-    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
-    const schoolData = schoolSnap.data() as Partial<School> | undefined;
-    const isDemoSchool =
-      schoolData?.isDemo === true || /\bdemo\b/i.test(schoolData?.name || "");
-    if (!isDemoSchool) {
-      throw new Error("Demo results can only be generated for a designated demo school.");
+    const actorRole = await this.getCurrentActorRole();
+    if (actorRole !== UserRole.SUPER_ADMIN && actorRole !== UserRole.SCHOOL_ADMIN) {
+      throw new Error("Only school administrators and super administrators can generate demo data.");
     }
     await this.requireFeature(scopedSchoolId, "attendance");
     await this.requireFeature(scopedSchoolId, "basic_exam_reports");
@@ -1668,12 +1684,20 @@ private async createSnapshotRecord(params: {
       return Math.abs(result);
     };
     const schoolDays: string[] = [];
-    const cursor = new Date();
+    const today = new Date();
+    const cursor = new Date(today);
     cursor.setDate(cursor.getDate() - 1);
     while (schoolDays.length < 30) {
       const day = cursor.getDay();
       if (day !== 0 && day !== 6) schoolDays.unshift(cursor.toISOString().slice(0, 10));
       cursor.setDate(cursor.getDate() - 1);
+    }
+    const todayDay = today.getDay();
+    if (todayDay !== 0 && todayDay !== 6) {
+      const todayStr = today.toISOString().slice(0, 10);
+      if (!schoolDays.includes(todayStr)) {
+        schoolDays.push(todayStr);
+      }
     }
 
     onProgress?.(2, "Checking existing demo records...");
@@ -1689,7 +1713,7 @@ private async createSnapshotRecord(params: {
 
     Object.entries(studentsByClass).forEach(([classId, classStudents]) => {
       schoolDays.forEach((date) => {
-        const id = `${scopedSchoolId}_${classId}_${date}`;
+        const id = `${scopedSchoolId}_${classId}_${date}_${term}_${academicYear}`;
         if (existingAttendanceIds.has(id)) return;
         const presentStudentIds = classStudents
           .filter((student) => hash(`${student.id}_${date}`) % 100 >= 8)
@@ -1932,6 +1956,8 @@ private async createSnapshotRecord(params: {
     schoolId?: string,
     classId?: string,
     subject?: string,
+    term?: number,
+    academicYear?: string,
   ): Promise<Assessment[]> {
     await this.requireFeature(schoolId, "basic_exam_reports");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getAssessments");
@@ -1941,6 +1967,8 @@ private async createSnapshotRecord(params: {
       where("schoolId", "==", scopedSchoolId),
       where("classId", "==", classId),
       where("subject", "==", subject),
+      ...(typeof term === "number" ? [where("term", "==", term)] : []),
+      ...(academicYear ? [where("academicYear", "==", academicYear)] : []),
     );
     try {
       const snap = await getDocs(q);
@@ -2189,13 +2217,65 @@ private async createSnapshotRecord(params: {
       schoolId,
       "getPlatformBroadcasts",
     );
-    const q = query(
-      collection(firestore, "platformBroadcasts"),
-      orderBy("createdAt", "desc"),
-    );
-    let snap;
+    const now = Date.now();
+    const baseFilter = (b: PlatformBroadcast) => {
+      const publishAt = b.publishAt
+        ? b.publishAt instanceof Date
+          ? b.publishAt.getTime()
+          : typeof (b.publishAt as any)?.toDate === "function"
+            ? (b.publishAt as any).toDate().getTime()
+            : new Date(b.publishAt as any).getTime()
+        : null;
+      const expiresAt = b.expiresAt
+        ? b.expiresAt instanceof Date
+          ? b.expiresAt.getTime()
+          : typeof (b.expiresAt as any)?.toDate === "function"
+            ? (b.expiresAt as any).toDate().getTime()
+            : new Date(b.expiresAt as any).getTime()
+        : null;
+      const isPublished =
+        b.status === "PUBLISHED" || b.status === "SCHEDULED";
+      const isLive = !publishAt || publishAt <= now;
+      const isActive = !expiresAt || expiresAt > now;
+      return isPublished && isLive && isActive;
+    };
+
     try {
-      snap = await getDocs(q);
+      const [globalSnap, schoolSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(firestore, "platformBroadcasts"),
+            where("targetType", "==", "ALL"),
+            orderBy("createdAt", "desc"),
+          ),
+        ),
+        getDocs(
+          query(
+            collection(firestore, "platformBroadcasts"),
+            where("targetType", "==", "SCHOOLS"),
+            where("targetSchoolIds", "array-contains", scopedSchoolId),
+          ),
+        ),
+      ]);
+
+      const globalBroadcasts = globalSnap.docs
+        .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
+        .filter(baseFilter);
+
+      const schoolBroadcasts = schoolSnap.docs
+        .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
+        .filter(baseFilter);
+
+      const merged = [...globalBroadcasts, ...schoolBroadcasts];
+      merged.sort((a, b) => {
+        const aTime = (a.createdAt as any)?.toMillis?.() ||
+          (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+        const bTime = (b.createdAt as any)?.toMillis?.() ||
+          (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+        return bTime - aTime;
+      });
+
+      return merged;
     } catch (error) {
       if (this.isPermissionDeniedError(error)) {
         console.debug("[mockDb] getPlatformBroadcasts unavailable: permission denied");
@@ -2203,34 +2283,6 @@ private async createSnapshotRecord(params: {
       }
       throw error;
     }
-    const now = Date.now();
-    return snap.docs
-      .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
-      .filter((b) => {
-        const publishAt = b.publishAt
-          ? b.publishAt instanceof Date
-            ? b.publishAt.getTime()
-            : typeof (b.publishAt as any)?.toDate === "function"
-              ? (b.publishAt as any).toDate().getTime()
-              : new Date(b.publishAt as any).getTime()
-          : null;
-        const expiresAt = b.expiresAt
-          ? b.expiresAt instanceof Date
-            ? b.expiresAt.getTime()
-            : typeof (b.expiresAt as any)?.toDate === "function"
-              ? (b.expiresAt as any).toDate().getTime()
-              : new Date(b.expiresAt as any).getTime()
-          : null;
-        const matchesTarget =
-          b.targetType === "ALL" ||
-          (b.targetType === "SCHOOLS" &&
-            (b.targetSchoolIds || []).includes(scopedSchoolId));
-        const isPublished =
-          b.status === "PUBLISHED" || b.status === "SCHEDULED";
-        const isLive = !publishAt || publishAt <= now;
-        const isActive = !expiresAt || expiresAt > now;
-        return matchesTarget && isPublished && isLive && isActive;
-      });
   }
 
   // --- Student Remarks ---
@@ -2544,7 +2596,14 @@ private async createSnapshotRecord(params: {
     };
   }
 
-  async getDashboardStats(schoolId?: string) {
+async getDashboardStats(schoolId?: string): Promise<{
+    studentsCount: number;
+    teachersCount: number;
+    gender: { male: number; female: number };
+    classAttendance: { className: string; percentage: number; id: string }[];
+    students: Student[];
+    users: User[];
+  }> {
     await this.requireFeature(schoolId, "basic_analytics");
     const scopedSchoolId = this.requireSchoolId(schoolId, "getDashboardStats");
     const [studentsSnap, usersSnap, schoolSnap, config] = await Promise.all([
@@ -2620,11 +2679,28 @@ private async createSnapshotRecord(params: {
       (config.holidayDates || []).map((h) => h.date),
     );
     const attendance = attendanceDocs.filter(
-        (record) => !record.isHoliday && !configHolidaySet.has(record.date),
-      );
+      (record) => !record.isHoliday && !configHolidaySet.has(record.date),
+    );
 
-    const male = students.filter((s) => s.gender === "Male").length;
-    const female = students.filter((s) => s.gender === "Female").length;
+    const [maleCountSnap, femaleCountSnap] = await Promise.all([
+      getCountFromServer(
+        query(
+          collection(firestore, "students"),
+          where("schoolId", "==", scopedSchoolId),
+          where("gender", "==", "Male"),
+        ),
+      ),
+      getCountFromServer(
+        query(
+          collection(firestore, "students"),
+          where("schoolId", "==", scopedSchoolId),
+          where("gender", "==", "Female"),
+        ),
+      ),
+    ]);
+
+    const male = maleCountSnap.data().count;
+    const female = femaleCountSnap.data().count;
 
     const classAttendance = filteredClasses.map((cls) => {
       const records = attendance.filter((r) => r.classId === cls.id);
@@ -2637,10 +2713,10 @@ private async createSnapshotRecord(params: {
           0,
         );
         const pct = Math.round((totalPresent / totalPossible) * 100);
-        return { className: cls.name, percentage: pct, id: cls.id };
+        return { className: cls.name, shortName: cls.shortName || cls.name, percentage: pct, id: cls.id };
       }
 
-      return { className: cls.name, percentage: 0, id: cls.id };
+      return { className: cls.name, shortName: cls.shortName || cls.name, percentage: 0, id: cls.id };
     });
 
     return {
@@ -2648,6 +2724,8 @@ private async createSnapshotRecord(params: {
       teachersCount: users.filter((u) => u.role === UserRole.TEACHER).length,
       gender: { male, female },
       classAttendance,
+      students,
+      users,
     };
   }
 
@@ -3222,9 +3300,26 @@ private async createSnapshotRecord(params: {
        const backupId = this.generateBackupId("backup");
 
        // Reference to the data subcollection
-       const dataSubcol = collection(firestore, "backups", backupId, "data");
+       const backup = this.stripUndefinedDeep<Backup>({
+         id: backupId,
+         schoolId,
+         schoolName:
+           currentConfig.schoolName || schoolSettings?.schoolName || "",
+         timestamp: Date.now(),
+         term: currentTerm,
+         academicYear: academicYear,
+         backupType,
+         dedupeKey,
+         dataCollectionRef: `backups/${backupId}/data`,
+          status: "writing",
+         // Note: data field is omitted intentionally as it's stored in subcollection
+       });
 
-       // Prepare data to store in subcollection
+       await setDoc(doc(firestore, "backups", backup.id), backup);
+
+       await new Promise((resolve) => setTimeout(resolve, 500));
+
+       const dataSubcol = collection(firestore, "backups", backup.id, "data");
        const dataCollections = [
          { name: "schoolConfig", value: currentConfig },
          { name: "schoolSettings", value: schoolSettings },
@@ -3249,28 +3344,10 @@ private async createSnapshotRecord(params: {
          { name: "financeSettings", value: financeSettings },
        ];
 
-       // Write each collection to a document in the data subcollection
        const dataWritePromises = dataCollections.map(({ name, value }) =>
-         setDoc(doc(dataSubcol, name), { items: value })
+         setDoc(doc(dataSubcol, name), { items: value, schoolId }),
        );
        await Promise.all(dataWritePromises);
-
-       // Now create the backup document (without the large data)
-       const backup = this.stripUndefinedDeep<Backup>({
-         id: backupId,
-         schoolId,
-         schoolName:
-           currentConfig.schoolName || schoolSettings?.schoolName || "",
-         timestamp: Date.now(),
-         term: currentTerm,
-         academicYear: academicYear,
-         backupType,
-         dedupeKey,
-         dataCollectionRef: `backups/${backupId}/data`,
-         // Note: data field is omitted intentionally as it's stored in subcollection
-       });
-
-       await setDoc(doc(firestore, "backups", backup.id), backup);
       console.log(`Backup created successfully: ${backup.id}`);
 
       await logActivity({
@@ -3285,10 +3362,23 @@ private async createSnapshotRecord(params: {
           backupType,
         },
       });
-    } catch (error) {
-      console.error("Error creating backup:", error);
-      throw error;
-    }
+} catch (error) {
+       // Check if this is a Firebase permission error
+       const errorMessage = error instanceof Error ? String(error.message) : String(error);
+       if (
+         errorMessage.includes("permission-denied") ||
+         errorMessage.includes("Missing or insufficient permissions")
+       ) {
+         // Handle permission errors gracefully - log warning but don't break term reset flow
+         console.warn("Backup creation skipped due to insufficient permissions:", error);
+         console.warn("Term reset will proceed without backup. This may affect recovery options.");
+         // Don't rethrow - allow term reset to continue without backup
+         return;
+       }
+       // For all other errors, rethrow as before
+       console.error("Error creating backup:", error);
+       throw error;
+     }
   }
 
   async createSystemBackup(currentConfig: SchoolConfig): Promise<void> {
@@ -4330,6 +4420,9 @@ async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
     term?: FeeTerm;
     classId?: string;
     studentId?: string;
+    orderByField?: string;
+    orderDirection?: "asc" | "desc";
+    limit?: number;
   }): Promise<StudentFeePayment[]> {
     await this.requireFeature(filters.schoolId, "fees_payments");
     const scopedSchoolId = this.requireSchoolId(
@@ -4352,7 +4445,16 @@ async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
       ? collection(firestore, "payments")
       : collection(firestore, "schools", scopedSchoolId, "payments");
     const readPaymentsFrom = async (targetCollection: ReturnType<typeof collection>) => {
-      const q = query(targetCollection, ...conditions);
+      const queryConstraints = [...conditions];
+      if (filters.orderByField) {
+        queryConstraints.push(
+          orderBy(filters.orderByField, filters.orderDirection || "asc"),
+        );
+      }
+      if (filters.limit) {
+        queryConstraints.push(limit(filters.limit));
+      }
+      const q = query(targetCollection, ...queryConstraints);
       const snap = await getDocs(q);
       return snap.docs.map((d) => ({
         ...(d.data() as Omit<StudentFeePayment, "id">),

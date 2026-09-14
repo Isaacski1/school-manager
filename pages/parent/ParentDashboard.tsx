@@ -161,6 +161,15 @@ export default function ParentDashboard() {
         const studentsRef = collection(firestore, "students");
         let fetchedStudents: Student[] = [];
         const seenIds = new Set<string>();
+        const seenFingerprints = new Set<string>();
+
+        // Helper to create a fingerprint for duplicate detection
+        const getFingerprint = (s: Student) => {
+          const name = String(s.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+          const dob = String(s.dob || "").trim();
+          const classId = String(s.classId || "").trim().toLowerCase();
+          return `${name}|${dob}|${classId}`;
+        };
 
         // 1. DISCOVERY VIA PHONE NUMBER
         const phoneVariants = getPhoneVariants(phoneToMatch);
@@ -175,9 +184,14 @@ export default function ParentDashboard() {
         snapshots.forEach(snapshot => {
           snapshot.forEach(docSnap => {
             if (!seenIds.has(docSnap.id)) {
-              seenIds.add(docSnap.id);
               const data = docSnap.data() as Student;
-              fetchedStudents.push({ ...data, id: docSnap.id });
+              const fingerprint = getFingerprint(data);
+              // Skip if we already have a student with same name, DOB, and class
+              if (!seenFingerprints.has(fingerprint)) {
+                seenIds.add(docSnap.id);
+                seenFingerprints.add(fingerprint);
+                fetchedStudents.push({ ...data, id: docSnap.id });
+              }
             }
           });
         });
@@ -190,8 +204,12 @@ export default function ParentDashboard() {
           if (!seenIds.has(id)) {
             const s = await db.getStudent(id);
             if (s) {
-              seenIds.add(id);
-              fetchedStudents.push(s);
+              const fingerprint = getFingerprint(s);
+              if (!seenFingerprints.has(fingerprint)) {
+                seenIds.add(id);
+                seenFingerprints.add(fingerprint);
+                fetchedStudents.push(s);
+              }
             }
           }
         }

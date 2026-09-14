@@ -691,6 +691,17 @@ const isTransientFirebaseAdminNetworkError = (error) => {
   );
 };
 
+const isFirestoreQuotaError = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  const code = String(error?.code || error?.errorInfo?.code || "").toLowerCase();
+  return (
+    code === "resource-exhausted" ||
+    code === "8" ||
+    message.includes("quota exceeded") ||
+    message.includes("resource exhausted")
+  );
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const retryFirebaseAdminNetworkCall = async (label, operation) => {
@@ -717,6 +728,35 @@ const retryFirebaseAdminNetworkCall = async (label, operation) => {
   }
 
   throw lastError;
+};
+
+const retryFirebaseAdminQuotaCall = async (label, operation) => {
+  const baseDelay = 5000;
+  const maxDelay = 60_000;
+  const maxAttempts = 4;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isFirestoreQuotaError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+      console.warn(
+        `[FirebaseAdmin] ${label} hit quota limit. Backing off ${delay}ms before retry ${attempt + 2}/${maxAttempts}...`,
+      );
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+};
+
+const withFirestoreQuotaRetry = async (label, fn) => {
+  return retryFirebaseAdminQuotaCall(label, () => fn());
 };
 
 if (firebaseProjectId) {
@@ -14304,19 +14344,27 @@ app.get("/api/public/health", async (req, res) => {
 });
 
 // Background worker: process email_verification_queue with controlled rate and backoff
-const EMAIL_QUEUE_POLL_INTERVAL_MS = 30 * 1000; // poll every 30s
-const EMAIL_QUEUE_BATCH_SIZE = 3; // process up to 3 items per poll
+const EMAIL_QUEUE_POLL_INTERVAL_MS = 60 * 1000; // poll every 60s to reduce Firestore reads
+const EMAIL_QUEUE_BATCH_SIZE = 2; // process up to 2 items per poll
 const EMAIL_QUEUE_BASE_DELAY_MS = 5 * 60 * 1000; // 5 minutes base retry
 
 async function processEmailVerificationQueueOnce() {
   try {
     const now = admin.firestore.Timestamp.now();
     const queueRef = admin.firestore().collection("email_verification_queue");
-    const qSnap = await queueRef
-      .where("nextAttemptAt", "<=", now)
-      .orderBy("nextAttemptAt")
-      .limit(EMAIL_QUEUE_BATCH_SIZE)
-      .get();
+    let qSnap;
+    try {
+      qSnap = await withFirestoreQuotaRetry("email queue read", () =>
+        queueRef
+          .where("nextAttemptAt", "<=", now)
+          .orderBy("nextAttemptAt")
+          .limit(EMAIL_QUEUE_BATCH_SIZE)
+          .get(),
+      );
+    } catch (err) {
+      console.error("[EmailQueue] Failed to read queue:", err?.message || err);
+      return;
+    }
 
     if (qSnap.empty) return;
 
@@ -14336,7 +14384,13 @@ async function processEmailVerificationQueueOnce() {
           userRecord = await admin.auth().getUserByEmail(email);
         } catch (err) {
           console.warn(`[EmailQueue] Auth user not found for ${email}, removing queue item`);
-          await queueRef.doc(docId).delete();
+          try {
+            await withFirestoreQuotaRetry(`email queue delete ${docId}`, () =>
+              queueRef.doc(docId).delete(),
+            );
+          } catch (deleteErr) {
+            console.warn(`[EmailQueue] Failed to delete queue item ${docId}:`, deleteErr?.message || deleteErr);
+          }
           continue;
         }
 
@@ -14355,7 +14409,13 @@ async function processEmailVerificationQueueOnce() {
           const nextAttempts = attempts + 1;
           const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
           const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
-          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(linkErr?.message || linkErr), nextAttemptAt: nextAt });
+          try {
+            await withFirestoreQuotaRetry(`email queue update ${docId}`, () =>
+              queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(linkErr?.message || linkErr), nextAttemptAt: nextAt }),
+            );
+          } catch (updateErr) {
+            console.warn(`[EmailQueue] Failed to update queue item ${docId}:`, updateErr?.message || updateErr);
+          }
           continue;
         }
 
@@ -14364,7 +14424,13 @@ async function processEmailVerificationQueueOnce() {
           const nextAttempts = attempts + 1;
           const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
           const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
-          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: "no-link-generated", nextAttemptAt: nextAt });
+          try {
+            await withFirestoreQuotaRetry(`email queue update ${docId}`, () =>
+              queueRef.doc(docId).update({ attempts: nextAttempts, lastError: "no-link-generated", nextAttemptAt: nextAt }),
+            );
+          } catch (updateErr) {
+            console.warn(`[EmailQueue] Failed to update queue item ${docId}:`, updateErr?.message || updateErr);
+          }
           continue;
         }
 
@@ -14399,12 +14465,24 @@ async function processEmailVerificationQueueOnce() {
             const nextAttempts = attempts + 1;
             const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
             const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
-            await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: `resend:${r.status}`, nextAttemptAt: nextAt });
+            try {
+              await withFirestoreQuotaRetry(`email queue update ${docId}`, () =>
+                queueRef.doc(docId).update({ attempts: nextAttempts, lastError: `resend:${r.status}`, nextAttemptAt: nextAt }),
+              );
+            } catch (updateErr) {
+              console.warn(`[EmailQueue] Failed to update queue item ${docId}:`, updateErr?.message || updateErr);
+            }
             continue;
           }
 
           console.log(`[EmailQueue] Verification email sent for ${email}, removing queue item`);
-          await queueRef.doc(docId).delete();
+          try {
+            await withFirestoreQuotaRetry(`email queue delete ${docId}`, () =>
+              queueRef.doc(docId).delete(),
+            );
+          } catch (deleteErr) {
+            console.warn(`[EmailQueue] Failed to delete queue item ${docId}:`, deleteErr?.message || deleteErr);
+          }
           // small pause between sends to avoid hitting limits
           await new Promise((r) => setTimeout(r, 1000));
         } catch (sendErr) {
@@ -14412,7 +14490,13 @@ async function processEmailVerificationQueueOnce() {
           const nextAttempts = attempts + 1;
           const backoffMs = Math.pow(nextAttempts, 2) * EMAIL_QUEUE_BASE_DELAY_MS;
           const nextAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + backoffMs));
-          await queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(sendErr?.message || sendErr), nextAttemptAt: nextAt });
+          try {
+            await withFirestoreQuotaRetry(`email queue update ${docId}`, () =>
+              queueRef.doc(docId).update({ attempts: nextAttempts, lastError: String(sendErr?.message || sendErr), nextAttemptAt: nextAt }),
+            );
+          } catch (updateErr) {
+            console.warn(`[EmailQueue] Failed to update queue item ${docId}:`, updateErr?.message || updateErr);
+          }
           continue;
         }
       } catch (itemErr) {

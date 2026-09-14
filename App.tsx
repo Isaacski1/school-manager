@@ -364,6 +364,7 @@ const AppContent = () => {
           splashSchoolName={splashSchoolName} 
           splashSchoolLogo={splashSchoolLogo}
           hideDefault={hideDefault}
+          currentPath={currentPath}
         />
       </Suspense>
     </ErrorBoundary>
@@ -477,14 +478,24 @@ const RoleBasedHome = () => {
 const AppRoutes = ({ 
   splashSchoolName, 
   splashSchoolLogo,
-  hideDefault
+  hideDefault,
+  currentPath
 }: { 
   splashSchoolName: string; 
   splashSchoolLogo: string;
   hideDefault: boolean;
+  currentPath: string;
 }) => {
   const { isAuthenticated, authLoading } = useAuth();
   const routeSplashMessage = hideDefault ? "Preparing Your Dashboard." : "Loading";
+  
+  const isLoginPage = currentPath === "/login";
+  
+  React.useEffect(() => {
+    if (isLoginPage && isAuthenticated && !authLoading) {
+      window.location.replace("/");
+    }
+  }, [isLoginPage, isAuthenticated, authLoading]);
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

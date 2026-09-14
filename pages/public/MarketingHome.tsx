@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Sparkles, Users, Heart, ChevronDown, MessageCircle, Bell, Wallet, X } from "lucide-react";
+import { ArrowRight, BarChart3, BookOpen, CalendarDays, CheckCircle, CreditCard, GraduationCap, ShieldCheck, Smartphone, Users, Heart, ChevronDown, MessageCircle, Bell, Wallet, X } from "lucide-react";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 import { db } from "../../services/mockDb";
 
@@ -586,10 +586,7 @@ const MarketingHome = () => {
 
         <div className="hero-grid" style={{ maxWidth: 1440, margin: "0 auto", width: "100%", display: "grid", gridTemplateColumns: "1fr", gap: 60, alignItems: "flex-start", position: "relative", zIndex: 2 }}>
           <motion.div initial="hidden" animate="show" variants={stagger} className="hero-text-container" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-            <motion.div variants={fadeUp} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "8px 18px", marginBottom: 24 }}>
-              <Sparkles size={14} color="white" />
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "white" }}>🇬🇭 Built for Ghana</span>
-            </motion.div>
+            
 
             <motion.h1 variants={fadeUp} style={{ fontSize: "clamp(34px, 5vw, 60px)", fontWeight: 800, lineHeight: 1.1, color: "white", margin: "0 0 20px 0" }}>
               Automate report cards,<br />
@@ -741,7 +738,7 @@ const MarketingHome = () => {
                 </div>
                 <div style={{ display: "flex", gap: 16 }}>
                   <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(147, 197, 253, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Sparkles size={24} color="#93C5FD" />
+                     <GraduationCap size={24} color="#93C5FD" />
                   </div>
                   <div>
                     <h4 style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 4 }}>Built for Ghana</h4>

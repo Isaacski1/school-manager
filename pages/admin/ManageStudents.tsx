@@ -798,13 +798,13 @@ const ManageStudents = () => {
     const classStudents = students.filter(
       (student) => student.classId === promotionClassId,
     );
-    const updates = classStudents
-      .filter((student) => selectedSet.has(student.id))
-      .map((student) => ({
-        id: student.id,
-        classId: getNextClassId(student.classId),
-      }))
-      .filter((row) => row.classId);
+const updates = classStudents
+       .filter((student) => selectedSet.has(student.id))
+       .map((student) => ({
+         id: student.id,
+         classId: getNextClassId(student.classId),
+       }))
+       .filter((row): row is { id: string; classId: string } => !!row.classId);
 
     if (updates.length === 0) {
       showToast("No eligible students to promote.", { type: "info" });
@@ -1157,40 +1157,7 @@ const ManageStudents = () => {
                     </div>
                   );
                 })}
-                {studentPageCount > 1 && (
-                  <div className="col-span-full mt-2 flex flex-col items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 sm:flex-row">
-                    <p className="text-sm text-slate-500">
-                      Showing {(studentPage - 1) * studentsPerPage + 1}–
-                      {Math.min(studentPage * studentsPerPage, filteredStudents.length)} of{" "}
-                      {filteredStudents.length} students
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setStudentPage((page) => Math.max(1, page - 1))}
-                        disabled={studentPage === 1}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Previous
-                      </button>
-                      <span className="px-2 text-sm font-medium text-slate-600">
-                        Page {studentPage} of {studentPageCount}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setStudentPage((page) =>
-                            Math.min(studentPageCount, page + 1),
-                          )
-                        }
-                        disabled={studentPage === studentPageCount}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                )}
+                
               </div>
 
               <div className="mt-3 flex justify-center gap-4 text-[11px] text-slate-500">
@@ -1435,14 +1402,50 @@ const ManageStudents = () => {
                           >
                             <Trash2 size={16} className="pointer-events-none" />
                           </button>
-                        </div>
-                      </div>
-                    </div>
+</div>
+          </div>
+        </div>
                   );
                 })}
               </div>
             )}
           </div>
+
+           {/* Pagination */}
+           {studentPageCount > 1 && (
+             <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 sm:flex-row">
+               <p className="text-sm text-slate-500">
+                 Showing {(studentPage - 1) * studentsPerPage + 1}–
+                 {Math.min(studentPage * studentsPerPage, filteredStudents.length)} of{" "}
+                 {filteredStudents.length} students
+               </p>
+               <div className="flex items-center gap-2">
+                 <button
+                   type="button"
+                   onClick={() => setStudentPage((page) => Math.max(1, page - 1))}
+                   disabled={studentPage === 1}
+                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                 >
+                   Previous
+                 </button>
+                 <span className="px-2 text-sm font-medium text-slate-600">
+                   Page {studentPage} of {studentPageCount}
+                 </span>
+                 <button
+                   type="button"
+                   onClick={() =>
+                     setStudentPage((page) =>
+                       Math.min(studentPageCount, page + 1),
+                     )
+                   }
+                   disabled={studentPage === studentPageCount}
+                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                 >
+                   Next
+                 </button>
+               </div>
+             </div>
+           )}
         </div>
       </div>
 

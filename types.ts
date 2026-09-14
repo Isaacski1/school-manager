@@ -624,6 +624,7 @@ export interface ClassRoom {
   id: string;
   schoolId: string;
   name: string; // e.g., "Class 1-A", "JHS 1-B"
+  shortName?: string; // e.g., "Cl 1", "JHS 1"
   level: "CRECHE" | "NURSERY" | "KG" | "PRIMARY" | "JHS" | "SHS";
   baseClassId?: string;
   section?: string;

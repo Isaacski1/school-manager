@@ -74,6 +74,44 @@ const stripUndefined = (value) => {
   }, {});
 };
 
+const isFirestoreQuotaError = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  const code = String(error?.code || error?.errorInfo?.code || "").toLowerCase();
+  return (
+    code === "resource-exhausted" ||
+    code === "8" ||
+    message.includes("quota exceeded") ||
+    message.includes("resource exhausted")
+  );
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withQuotaRetry = async (label, operation) => {
+  const baseDelay = 5000;
+  const maxDelay = 60_000;
+  const maxAttempts = 4;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isFirestoreQuotaError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+      console.warn(
+        `[TermRollover] ${label} hit quota limit. Backing off ${delay}ms before retry ${attempt + 2}/${maxAttempts}...`,
+      );
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+};
+
 const rowsFromSnapshot = (snapshot) =>
   snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
@@ -112,25 +150,31 @@ const commitInBatches = async (db, operations) => {
     operations.slice(index, index + DELETE_BATCH_SIZE).forEach((operation) =>
       operation(batch),
     );
-    await batch.commit();
+    await withQuotaRetry(`commit batch ${index + 1}-${Math.min(index + DELETE_BATCH_SIZE, operations.length)}`, () =>
+      batch.commit(),
+    );
   }
 };
 
 const readRootRows = async (db, collectionName, schoolId) => {
-  const snapshot = await db
-    .collection(collectionName)
-    .where("schoolId", "==", schoolId)
-    .get();
-  return rowsFromSnapshot(snapshot);
+  return withQuotaRetry(`read ${collectionName}`, () =>
+    db
+      .collection(collectionName)
+      .where("schoolId", "==", schoolId)
+      .get()
+      .then((snapshot) => rowsFromSnapshot(snapshot)),
+  );
 };
 
 const readSubcollectionRows = async (db, schoolId, collectionName) => {
-  const snapshot = await db
-    .collection("schools")
-    .doc(schoolId)
-    .collection(collectionName)
-    .get();
-  return rowsFromSnapshot(snapshot);
+  return withQuotaRetry(`read schools/${schoolId}/${collectionName}`, () =>
+    db
+      .collection("schools")
+      .doc(schoolId)
+      .collection(collectionName)
+      .get()
+      .then((snapshot) => rowsFromSnapshot(snapshot)),
+  );
 };
 
 const buildBackupPayload = async (db, schoolId, config) => {
@@ -146,15 +190,20 @@ const buildBackupPayload = async (db, schoolId, config) => {
     throw new Error(`School ${schoolId} does not exist`);
   }
 
-  const entries = await Promise.all(
-    Object.entries(ROOT_BACKUP_COLLECTIONS).map(
-      async ([payloadKey, collectionName]) => [
+  const payload = {};
+  const rootEntries = Object.entries(ROOT_BACKUP_COLLECTIONS);
+  for (let index = 0; index < rootEntries.length; index += 3) {
+    const batch = rootEntries.slice(index, index + 3);
+    const results = await Promise.all(
+      batch.map(async ([payloadKey, collectionName]) => [
         payloadKey,
         await readRootRows(db, collectionName, schoolId),
-      ],
-    ),
-  );
-  const payload = Object.fromEntries(entries);
+      ]),
+    );
+    results.forEach(([payloadKey, value]) => {
+      payload[payloadKey] = value;
+    });
+  }
 
   const [v2Fees, v2Ledgers, v2Payments] = await Promise.all([
     readSubcollectionRows(db, schoolId, "fees"),
@@ -231,26 +280,30 @@ const createVerifiedBackup = async ({
     chunkManifest.push({ key, chunkIds, count: value.length });
   });
 
-  await backupRef.set({
-    id: backupId,
-    schoolId,
-    schoolName: String(config.schoolName || payload.schoolProfile?.name || ""),
-    timestamp: Date.now(),
-    term: config.currentTerm,
-    academicYear: config.academicYear,
-    backupType: "term-reset",
-    dedupeKey: transitionKey,
-    storageVersion: 2,
-    status: "writing",
-    dataCollectionRef: `backups/${backupId}/chunks`,
-    chunks: chunkManifest,
-    recordCounts,
-    data: stripUndefined(inlineData),
-    createdAt: FieldValue.serverTimestamp(),
-  });
+  await withQuotaRetry(`create backup manifest ${backupId}`, () =>
+    backupRef.set({
+      id: backupId,
+      schoolId,
+      schoolName: String(config.schoolName || payload.schoolProfile?.name || ""),
+      timestamp: Date.now(),
+      term: config.currentTerm,
+      academicYear: config.academicYear,
+      backupType: "term-reset",
+      dedupeKey: transitionKey,
+      storageVersion: 2,
+      status: "writing",
+      dataCollectionRef: `backups/${backupId}/chunks`,
+      chunks: chunkManifest,
+      recordCounts,
+      data: stripUndefined(inlineData),
+      createdAt: FieldValue.serverTimestamp(),
+    }),
+  );
   await commitInBatches(db, writeOperations);
 
-  const verificationSnapshot = await backupRef.collection("chunks").get();
+  const verificationSnapshot = await withQuotaRetry(`verify backup chunks ${backupId}`, () =>
+    backupRef.collection("chunks").get(),
+  );
   const verifiedCounts = {};
   verificationSnapshot.docs.forEach((doc) => {
     const chunk = doc.data();
@@ -276,10 +329,12 @@ const createVerifiedBackup = async ({
 };
 
 const deleteSchoolScopedCollection = async (db, collectionName, schoolId) => {
-  const snapshot = await db
-    .collection(collectionName)
-    .where("schoolId", "==", schoolId)
-    .get();
+  const snapshot = await withQuotaRetry(`read ${collectionName}`, () =>
+    db
+      .collection(collectionName)
+      .where("schoolId", "==", schoolId)
+      .get(),
+  );
   await commitInBatches(
     db,
     snapshot.docs.map((doc) => (batch) => batch.delete(doc.ref)),
@@ -288,11 +343,13 @@ const deleteSchoolScopedCollection = async (db, collectionName, schoolId) => {
 };
 
 const deleteSchoolSubcollection = async (db, schoolId, collectionName) => {
-  const snapshot = await db
-    .collection("schools")
-    .doc(schoolId)
-    .collection(collectionName)
-    .get();
+  const snapshot = await withQuotaRetry(`read schools/${schoolId}/${collectionName}`, () =>
+    db
+      .collection("schools")
+      .doc(schoolId)
+      .collection(collectionName)
+      .get(),
+  );
   await commitInBatches(
     db,
     snapshot.docs.map((doc) => (batch) => batch.delete(doc.ref)),
@@ -377,42 +434,46 @@ export const createTermRolloverService = ({
         lock.config.currentTerm,
         lock.config.academicYear,
       );
-      await lock.settingsRef.update({
-        currentTerm: nextPeriod.currentTerm,
-        academicYear: nextPeriod.academicYear,
-        schoolReopenDate: lock.config.nextTermBegins,
-        vacationDate: "",
-        nextTermBegins: "",
-        termTransitionProcessed: true,
-        termTransition: {
-          key: lock.transitionKey,
-          status: "completed",
-          source,
-          backupId: backup.backupId,
-          recordCounts: backup.recordCounts,
-          resetCounts,
-          completedAt: FieldValue.serverTimestamp(),
-          leaseExpiresAt: null,
-          error: null,
-        },
-      });
-      await db.collection("activity_logs").add({
-        schoolId,
-        eventType: "term_rollover_completed",
-        actorRole: "system",
-        actorUid: null,
-        entityId: backup.backupId,
-        createdAt: FieldValue.serverTimestamp(),
-        meta: {
-          fromTerm: lock.config.currentTerm,
-          fromAcademicYear: lock.config.academicYear,
-          toTerm: nextPeriod.currentTerm,
-          toAcademicYear: nextPeriod.academicYear,
-          backupId: backup.backupId,
-          resetCounts,
-          source,
-        },
-      });
+      await withQuotaRetry(`update settings ${schoolId}`, () =>
+        lock.settingsRef.update({
+          currentTerm: nextPeriod.currentTerm,
+          academicYear: nextPeriod.academicYear,
+          schoolReopenDate: lock.config.nextTermBegins,
+          vacationDate: "",
+          nextTermBegins: "",
+          termTransitionProcessed: true,
+          termTransition: {
+            key: lock.transitionKey,
+            status: "completed",
+            source,
+            backupId: backup.backupId,
+            recordCounts: backup.recordCounts,
+            resetCounts,
+            completedAt: FieldValue.serverTimestamp(),
+            leaseExpiresAt: null,
+            error: null,
+          },
+        }),
+      );
+      await withQuotaRetry(`add activity log ${schoolId}`, () =>
+        db.collection("activity_logs").add({
+          schoolId,
+          eventType: "term_rollover_completed",
+          actorRole: "system",
+          actorUid: null,
+          entityId: backup.backupId,
+          createdAt: FieldValue.serverTimestamp(),
+          meta: {
+            fromTerm: lock.config.currentTerm,
+            fromAcademicYear: lock.config.academicYear,
+            toTerm: nextPeriod.currentTerm,
+            toAcademicYear: nextPeriod.academicYear,
+            backupId: backup.backupId,
+            resetCounts,
+            source,
+          },
+        }),
+      );
       return {
         changed: true,
         backupId: backup.backupId,
@@ -424,19 +485,28 @@ export const createTermRolloverService = ({
         schoolId,
         error: error?.message || String(error),
       });
-      await lock.settingsRef.set(
-        {
-          termTransition: {
-            key: lock.transitionKey,
-            status: "failed",
-            source,
-            failedAt: FieldValue.serverTimestamp(),
-            leaseExpiresAt: null,
-            error: String(error?.message || error).slice(0, 500),
-          },
-        },
-        { merge: true },
-      );
+      try {
+        await withQuotaRetry(`mark rollover failed ${schoolId}`, () =>
+          lock.settingsRef.set(
+            {
+              termTransition: {
+                key: lock.transitionKey,
+                status: "failed",
+                source,
+                failedAt: FieldValue.serverTimestamp(),
+                leaseExpiresAt: null,
+                error: String(error?.message || error).slice(0, 500),
+              },
+            },
+            { merge: true },
+          ),
+        );
+      } catch (markFailedErr) {
+        logger.error("[TermRollover] Failed to mark failure", {
+          schoolId,
+          error: markFailedErr?.message || String(markFailedErr),
+        });
+      }
       throw error;
     }
   };

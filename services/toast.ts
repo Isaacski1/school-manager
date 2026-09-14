@@ -1,10 +1,15 @@
 import { getFriendlyErrorMessage } from "./errorMessages";
 
-type ToastType = "success" | "error" | "info" | "warning";
+type ToastType = "success" | "error" | "info" | "warning" | "duplicate";
 
 export const showToast = (
   message: string,
-  options?: { type?: ToastType; duration?: number },
+  options?: { 
+    type?: ToastType; 
+    duration?: number;
+    title?: string;
+    description?: string;
+  },
 ) => {
   const type = options?.type || "info";
   const detail = {
@@ -14,6 +19,8 @@ export const showToast = (
         : message,
     type,
     duration: options?.duration ?? 4000,
+    title: options?.title,
+    description: options?.description,
   };
   window.dispatchEvent(new CustomEvent("app-toast", { detail }));
 };

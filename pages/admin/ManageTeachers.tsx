@@ -753,7 +753,7 @@ const ManageTeachers = () => {
               </div>
 
               <p className="text-xs text-slate-500 bg-blue-50 p-3 rounded-lg border border-blue-200">
-                💡 <strong>Option 1:</strong> Leave password empty - a reset
+                 <strong>Option 1:</strong> Leave password empty - a reset
                 link will be sent to email. <strong>Option 2:</strong> Set a
                 password above - teacher can log in immediately with it.
               </p>

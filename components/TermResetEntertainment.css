@@ -1,0 +1,43 @@
+.term-reset-entertainment {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(180deg, #f8fafc 0%, #f5f9ff 34%, #ffffff 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.chalkboard {
+  position: relative;
+  width: 80%;
+  max-width: 520px;
+  height: 220px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 28px;
+  overflow: hidden;
+  color: #0f172a;
+  font-family: "Inter", system-ui, sans-serif;
+  padding: 24px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 18px 45px -34px rgba(15, 23, 42, 0.22);
+}
+
+.progress-text {
+  font-size: 1.6rem;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.02em;
+  min-height: 2.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0B4A82;
+}

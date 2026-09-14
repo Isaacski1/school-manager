@@ -2,7 +2,7 @@ import React from "react";
 import { CLASSES_LIST } from "../../constants";
 
 interface AttendanceChartProps {
-  data: { className: string; percentage: number; id: string }[];
+  data: { className: string; shortName?: string; percentage: number; id: string }[];
   week: Date | null;
   onPreviousWeek: () => void;
   onNextWeek: () => void;
@@ -69,7 +69,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
   };
 
   return (
-    <div className="bg-white p-8 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col overflow-hidden">
+    <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col overflow-hidden">
       {/* Header with Week Navigation */}
       <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-100">
         <div>
@@ -149,8 +149,8 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
       )}
 
       {/* Attendance Chart Container */}
-      <div className="flex-1 flex flex-col min-h-0 w-full mt-4 relative px-4 pb-4">
-        <div className="flex-1 relative w-full min-h-[200px]">
+      <div className="flex-1 flex flex-col min-h-0 w-full mt-4 px-4 pb-4">
+        <div className="flex-1 relative w-full min-h-[280px]">
           {/* Y-Axis Grid Lines (Background) */}
           <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
             {[100, 75, 50, 25, 0].map((level) => (
@@ -163,64 +163,69 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
             ))}
           </div>
 
-          {/* Bars Container */}
-          <div className="absolute inset-0 left-10 flex items-end justify-center gap-3 sm:gap-6 md:gap-10 overflow-x-auto no-scrollbar">
-            {data.map((item) => {
-              // Colors and gradients based on percentage
-              let barGradient = "from-amber-400 to-amber-600";
-              if (item.percentage < 50) barGradient = "from-rose-400 to-rose-600";
-              else if (item.percentage >= 80) barGradient = "from-emerald-400 to-emerald-600";
+          {/* Scrollable Chart Area - Bars + Labels together */}
+          <div className="absolute inset-0 left-10 overflow-x-scroll">
+            <div className="flex flex-col items-center h-full min-w-max">
+              <div className="flex items-end justify-center gap-3 sm:gap-6 md:gap-10 flex-1">
+                {data.map((item) => {
+                  // Colors and gradients based on percentage
+                  let barGradient = "from-amber-400 to-amber-600";
+                  if (item.percentage < 50) barGradient = "from-rose-400 to-rose-600";
+                  else if (item.percentage >= 80) barGradient = "from-emerald-400 to-emerald-600";
 
-              return (
-                <div
-                  key={item.id}
-                  className="group relative flex flex-col items-center justify-end h-full flex-shrink-0"
-                  style={{ 
-                    width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
-                    maxWidth: "80px"
-                  }}
-                >
-                  {/* Tooltip */}
-                  <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-2xl scale-75 group-hover:scale-100">
-                    <div className="flex flex-col items-center">
-                      <span>{item.className}</span>
-                      <span className="text-emerald-400">{item.percentage}%</span>
-                    </div>
-                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
-                  </div>
-
-                  {/* The Bar Track (Skeleton) */}
-                  <div className="w-full h-full bg-slate-50/50 rounded-t-xl relative overflow-hidden border border-slate-100/30 group-hover:bg-slate-100/50 transition-colors">
-                    {/* The Actual Colored Bar */}
+                  return (
                     <div
-                      className={`absolute bottom-0 w-full bg-gradient-to-t ${barGradient} rounded-t-lg transition-all duration-1000 ease-out shadow-sm group-hover:brightness-110`}
-                      style={{ height: `${item.percentage}%` }}
+                      key={item.id}
+                      className="group relative flex flex-col items-center flex-shrink-0 h-full"
+                      style={{ 
+                        width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
+                        maxWidth: "80px"
+                      }}
                     >
-                      <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                      {/* Tooltip */}
+                      <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-2xl scale-75 group-hover:scale-100">
+                        <div className="flex flex-col items-center">
+                          <span>{item.className}</span>
+                          <span className="text-emerald-400">{item.percentage}%</span>
+                        </div>
+                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
+                      </div>
 
-        {/* Labels Area */}
-        <div className="mt-4 ml-10 flex items-start justify-center gap-3 sm:gap-6 md:gap-10 overflow-x-auto no-scrollbar">
-          {data.map((item) => (
-            <div 
-              key={item.id} 
-              className="text-center flex-shrink-0"
-              style={{ 
-                width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
-                maxWidth: "80px"
-              }}
-            >
-              <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block">
-                {data.length > 8 ? item.className.replace("JHS ", "J").replace("Class ", "P") : item.className}
-              </span>
+                      {/* The Bar Track (Skeleton) - Fixed height container */}
+                      <div className="w-full flex-1 bg-slate-50/50 rounded-t-xl relative overflow-hidden border border-slate-100/30 group-hover:bg-slate-100/50 transition-colors">
+                        {/* The Actual Colored Bar - Uses percentage height */}
+                        <div
+                          className={`absolute bottom-0 w-full bg-gradient-to-t ${barGradient} rounded-t-lg transition-all duration-1000 ease-out shadow-sm group-hover:brightness-110`}
+                          style={{ height: `${item.percentage}%` }}
+                        >
+                          <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              {/* Class Labels Below Bars */}
+               <div className="flex items-center justify-center gap-3 sm:gap-6 md:gap-10 mt-2">
+                 {data.map((item) => (
+                   <div 
+                     key={item.id} 
+                     className="text-center flex-shrink-0"
+                     style={{ 
+                       width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
+                       maxWidth: "80px"
+                     }}
+                   >
+                     <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block">
+                       <span className="sm:hidden">{item.shortName || item.className}</span>
+                       <span className="hidden sm:inline">{item.className}</span>
+                     </span>
+                   </div>
+                 ))}
+               </div>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

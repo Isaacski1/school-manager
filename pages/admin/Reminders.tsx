@@ -382,15 +382,29 @@ const Reminders: React.FC = () => {
   const classes = ["All", ...Array.from(new Set(parents.map((p) => p.class).filter(Boolean) as string[])).sort()];
   
   const filteredParents = classFilter === "All"
-      ? parents
-      : classFilter === "No Class"
-        ? parents.filter((p) => !p.classId && !p.class)
-        : parents.filter(
-            (p) =>
-              normalizeRecipientClassName(p.class) ===
-              normalizeRecipientClassName(classFilter),
-          );
-        
+       ? parents
+       : classFilter === "No Class"
+         ? parents.filter((p) => !p.classId && !p.class)
+         : parents.filter(
+             (p) =>
+               (classFilterId !== null && p.classId === classFilterId) ||
+               normalizeRecipientClassName(p.class) ===
+                 normalizeRecipientClassName(classFilter),
+           );
+         
+  const visibleParents = classFilter === "All" || classFilter === "No Class"
+    ? filteredParents
+    : parents.filter((p) => {
+        const selectedClassId = classFilterId ? String(classFilterId) : null;
+        const parentClassId = p.classId ? String(p.classId) : null;
+        const matchesClassId = selectedClassId !== null && parentClassId === selectedClassId;
+        const matchesClassName = normalizeRecipientClassName(p.class) ===
+          normalizeRecipientClassName(classFilter);
+        return matchesClassId && matchesClassName;
+      });
+         
+  // Debug logging
+  console.log("Debug - classFilter:", classFilter, "classFilterId:", classFilterId, "filteredParents count:", filteredParents.length, "visibleParents count:", visibleParents.length, "total parents:", parents.length);
   const getClassParentCount = (_classId: string, className: string) => {
     return parents.filter(
       (p) =>
@@ -427,7 +441,7 @@ const Reminders: React.FC = () => {
   };
 
   const toggleAll = () => {
-    const visible = filteredParents.map((p) => p.phone);
+    const visible = visibleParents.map((p) => p.phone);
     const allSelected = visible.every((ph) => selectedPhones.has(ph));
     setSelectedPhones((prev) => {
       const next = new Set(prev);
@@ -924,46 +938,56 @@ const Reminders: React.FC = () => {
                           </span>
                         </div>
                       )}
-                      <div className="flex items-center justify-between mb-3 px-2">
-                        <p className="text-xs font-semibold text-slate-500">
-                          {filteredParents.length} Contacts {classFilter !== "All" && `in ${classFilter}`}
-                        </p>
-                        <button
-                          onClick={toggleAll}
-                          className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition"
-                        >
-                          {filteredParents.every(p => selectedPhones.has(p.phone)) ? "Deselect All" : "Select Max Allowed"}
-                        </button>
-                      </div>
-                      {filteredParents.length === 0 ? (
-                        <div className="text-center py-10 text-slate-400 text-sm">No parents found.</div>
-                      ) : (
-                        filteredParents.map((p) => {
-                          const isSelected = selectedPhones.has(p.phone);
-                          return (
-                            <label
-                              key={`${p.phone}-${p.class || "No Class"}`}
-                              className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition border ${isSelected ? "bg-indigo-50/50 border-indigo-200" : "hover:bg-slate-50 border-transparent"}`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => togglePhone(p.phone)}
-                                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
-                                <p className="text-[11px] text-slate-500 truncate">{p.phone} • Ward: {p.studentName}</p>
-                              </div>
-                              {p.class && (
-                                <span className="shrink-0 px-2 py-0.5 bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200 rounded text-[10px] font-bold">
-                                  {p.class}
-                                </span>
-                              )}
-                            </label>
-                          );
-                        })
-                      )}
+                       <div className="flex items-center justify-between mb-3 px-2">
+                         <p className="text-xs font-semibold text-slate-500">
+                           {visibleParents.length} Contacts {classFilter !== "All" && `in ${classFilter}`}
+                         </p>
+                         <div className="flex items-center gap-2">
+                           {selectedPhones.size > 0 && (
+                             <button
+                               onClick={() => setSelectedPhones(new Set())}
+                               className="text-xs font-bold text-rose-600 hover:text-rose-800 transition"
+                             >
+                               Clear Selection
+                             </button>
+                           )}
+                           <button
+                             onClick={toggleAll}
+                             className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition"
+                           >
+                             {visibleParents.every(p => selectedPhones.has(p.phone)) ? "Deselect All" : "Select Max Allowed"}
+                           </button>
+                         </div>
+                       </div>
+                       {visibleParents.length === 0 ? (
+                         <div className="text-center py-10 text-slate-400 text-sm">No parents found.</div>
+                       ) : (
+                         visibleParents.map((p) => {
+                           const isSelected = selectedPhones.has(p.phone);
+                           return (
+                             <label
+                               key={`${p.phone}-${p.class || "No Class"}`}
+                               className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition border ${isSelected ? "bg-indigo-50/50 border-indigo-200" : "hover:bg-slate-50 border-transparent"}`}
+                             >
+                               <input
+                                 type="checkbox"
+                                 checked={isSelected}
+                                 onChange={() => togglePhone(p.phone)}
+                                 className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                               />
+                               <div className="flex-1 min-w-0">
+                                 <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
+                                 <p className="text-[11px] text-slate-500 truncate">{p.phone} • Ward: {p.studentName}</p>
+                               </div>
+                               {p.class && (
+                                 <span className="shrink-0 px-2 py-0.5 bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200 rounded text-[10px] font-bold">
+                                   {p.class}
+                                 </span>
+                               )}
+                             </label>
+                           );
+                         })
+                       )}
                     </div>
                   )}
                 </div>

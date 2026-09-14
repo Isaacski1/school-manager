@@ -210,11 +210,7 @@ const Login = () => {
     }
   };
 
-  useEffect(() => {
-    if (isAuthenticated && !authLoading && !redirectingToMfaSetup) {
-      navigate("/", { replace: true });
-    }
-  }, [isAuthenticated, authLoading, navigate, redirectingToMfaSetup]);
+  // Post-login redirect is handled in App.tsx to avoid flashing the login screen.
 
   useEffect(() => {
     return () => {
