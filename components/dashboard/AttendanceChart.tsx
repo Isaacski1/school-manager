@@ -10,6 +10,50 @@ interface AttendanceChartProps {
   schoolReopenDate?: string;
 }
 
+const abbreviateClassName = (name: string): string => {
+  const normalized = String(name || "").trim();
+  if (!normalized) return normalized;
+
+  const abbreviations: Record<string, string> = {
+    Creche: "Cre",
+    Nursery: "Nur",
+    "Class 1": "Cl 1",
+    "Class 2": "Cl 2",
+    "Class 3": "Cl 3",
+    "Class 4": "Cl 4",
+    "Class 5": "Cl 5",
+    "Class 6": "Cl 6",
+    Class: "Cl",
+    Primary: "Pri",
+    "JHS 1": "JHS 1",
+    "JHS 2": "JHS 2",
+    "JHS 3": "JHS 3",
+    JHS: "JHS",
+    "SHS 1": "SHS 1",
+    "SHS 2": "SHS 2",
+    "SHS 3": "SHS 3",
+    SHS: "SHS",
+    KG: "KG",
+  };
+
+  const exactMatch = abbreviations[normalized];
+  if (exactMatch) return exactMatch;
+
+  const lower = normalized.toLowerCase();
+  for (const [key, value] of Object.entries(abbreviations)) {
+    if (lower.startsWith(key.toLowerCase())) {
+      const suffix = normalized.slice(key.length).trim();
+      const suffixMatch = abbreviations[suffix];
+      return suffixMatch ? value + " " + suffixMatch.replace(key, "").trim() : value + " " + suffix;
+    }
+  }
+
+  if (normalized.length > 6) {
+    return normalized.slice(0, 6).trim();
+  }
+  return normalized;
+};
+
 const AttendanceChart: React.FC<AttendanceChartProps> = ({
   data,
   week,
@@ -174,14 +218,14 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
                   else if (item.percentage >= 80) barGradient = "from-emerald-400 to-emerald-600";
 
                   return (
-                    <div
-                      key={item.id}
-                      className="group relative flex flex-col items-center flex-shrink-0 h-full"
-                      style={{ 
-                        width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
-                        maxWidth: "80px"
-                      }}
-                    >
+                      <div
+                        key={item.id}
+                        className="group relative flex flex-col items-center flex-shrink-0 h-full"
+                        style={{ 
+                          width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
+                          maxWidth: "80px"
+                        }}
+                      >
                       {/* Tooltip */}
                       <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-2xl scale-75 group-hover:scale-100">
                         <div className="flex flex-col items-center">
@@ -209,19 +253,18 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               {/* Class Labels Below Bars */}
                <div className="flex items-center justify-center gap-3 sm:gap-6 md:gap-10 mt-2">
                  {data.map((item) => (
-                   <div 
-                     key={item.id} 
-                     className="text-center flex-shrink-0"
-                     style={{ 
-                       width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
-                       maxWidth: "80px"
-                     }}
-                   >
-                     <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block">
-                       <span className="sm:hidden">{item.shortName || item.className}</span>
-                       <span className="hidden sm:inline">{item.className}</span>
-                     </span>
-                   </div>
+                      <div
+                        key={item.id}
+                        className="group relative flex flex-col items-center flex-shrink-0 h-full"
+                        style={{ 
+                          width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
+                          maxWidth: "80px"
+                        }}
+                      >
+                      <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block text-center">
+                        {abbreviateClassName(item.shortName || item.className)}
+                      </span>
+                    </div>
                  ))}
                </div>
             </div>

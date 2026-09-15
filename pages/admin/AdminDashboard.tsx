@@ -506,6 +506,7 @@ const AdminDashboard = () => {
   const heavyRefreshTimerRef = React.useRef<number | null>(null);
   const heavyRefreshInFlightRef = React.useRef(false);
   const lastHeavyRefreshAtRef = React.useRef(0);
+  const dashboardInitRef = React.useRef<Record<string, boolean>>({});
   const [thisWeekAttendance, setThisWeekAttendance] = useState<number | null>(
     null,
   );
@@ -961,27 +962,38 @@ const AdminDashboard = () => {
       if (!options?.background) setSummaryLoading(true);
       setError(null);
       try {
-        const summary = await db.getDashboardSummary(schoolId);
+        const localToday = new Date();
+        const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
+        const statsKey = buildDashboardStatsKey(
+          schoolId,
+          school?.schoolType,
+          schoolConfig.schoolReopenDate,
+          schoolConfig.vacationDate,
+          schoolConfig.holidayDates,
+          todayStr,
+          schoolConfig.currentTerm,
+          schoolConfig.academicYear,
+        );
+        const dashboardStats = await getSharedDashboardStats(
+          statsKey,
+          () => db.getDashboardStats(schoolId),
+        );
         const nextStats = {
-          students: summary.studentsCount,
-          teachers: summary.teachersCount,
+          students: dashboardStats.studentsCount,
+          teachers: dashboardStats.teachersCount,
           classes: availableClasses.length,
-          maleStudents: 0,
-          femaleStudents: 0,
-          classAttendance: [] as ClassAttendanceStat[],
+          maleStudents: dashboardStats.gender.male,
+          femaleStudents: dashboardStats.gender.female,
+          classAttendance: dashboardStats.classAttendance,
         };
 
         setStats((prev) => ({
           ...prev,
-          students: nextStats.students,
-          teachers: nextStats.teachers,
-          classes: nextStats.classes,
+          ...nextStats,
         }));
         setDashboardStatsCache((prev) => ({
           ...(prev || nextStats),
-          students: nextStats.students,
-          teachers: nextStats.teachers,
-          classes: nextStats.classes,
+          ...nextStats,
         }));
         if (summaryCacheKey) {
           sessionStorage.setItem(
@@ -999,7 +1011,7 @@ const AdminDashboard = () => {
         if (!options?.background) setSummaryLoading(false);
       }
     },
-    [schoolId, summaryCacheKey, isAuthenticated],
+    [schoolId, summaryCacheKey, isAuthenticated, availableClasses.length, school?.schoolType, schoolConfig.schoolReopenDate, schoolConfig.vacationDate, schoolConfig.holidayDates, schoolConfig.currentTerm, schoolConfig.academicYear],
   );
 
   const fetchHeavyData = useCallback(
@@ -2244,6 +2256,9 @@ const [
 
   useEffect(() => {
     if (schoolLoading || !schoolId || !isAuthenticated) return;
+
+    if (dashboardInitRef.current[schoolId]) return;
+    dashboardInitRef.current[schoolId] = true;
 
     setLoading(false);
 

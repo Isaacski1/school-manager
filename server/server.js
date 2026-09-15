@@ -1700,7 +1700,9 @@ app.get(
 
       const db = admin.firestore();
       const [callerDoc, settings] = await Promise.all([
-        db.collection("users").doc(uid).get(),
+        retryFirebaseAdminQuotaCall(`admin-mfa-policy user read ${uid}`, () =>
+          db.collection("users").doc(uid).get(),
+        ),
         getAdminMfaSettings(db),
       ]);
       const callerData = callerDoc.exists ? callerDoc.data() || {} : {};
@@ -2783,17 +2785,24 @@ const platformBroadcastMatchesViewer = (broadcast, viewer, now = Date.now()) => 
  */
 app.get("/api/platform-broadcasts/inbox", authMiddleware, async (req, res) => {
   try {
-    const viewer = await resolvePlatformBroadcastViewer(req);
+    const viewer = await retryFirebaseAdminQuotaCall(
+      "platform-broadcasts viewer resolve",
+      () => resolvePlatformBroadcastViewer(req),
+    );
     if (!viewer.uid || !PLATFORM_BROADCAST_ROLES.has(viewer.role)) {
       return res.json({ success: true, broadcasts: [] });
     }
 
-    const broadcastSnap = await admin
-      .firestore()
-      .collection("platformBroadcasts")
-      .orderBy("createdAt", "desc")
-      .limit(100)
-      .get();
+    const broadcastSnap = await retryFirebaseAdminQuotaCall(
+      "platform-broadcasts query",
+      () =>
+        admin
+          .firestore()
+          .collection("platformBroadcasts")
+          .orderBy("createdAt", "desc")
+          .limit(100)
+          .get(),
+    );
     const now = Date.now();
     const eligible = broadcastSnap.docs
       .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
@@ -2812,7 +2821,10 @@ app.get("/api/platform-broadcasts/inbox", authMiddleware, async (req, res) => {
         .doc(receiptId);
     });
     const receiptDocs = receiptRefs.length
-      ? await admin.firestore().getAll(...receiptRefs)
+      ? await retryFirebaseAdminQuotaCall(
+          "platform-broadcast receipts",
+          () => admin.firestore().getAll(...receiptRefs),
+        )
       : [];
     const hiddenBroadcastIds = new Set();
     receiptDocs.forEach((receiptDoc) => {
@@ -16634,9 +16646,13 @@ app.post(
   async (req, res) => {
     try {
       const schoolId = req.callerDoc?.schoolId;
-      const result = await termRolloverService.rolloverSchool(schoolId, {
-        source: "school_admin_dashboard",
-      });
+      const result = await retryFirebaseAdminQuotaCall(
+        `term-rollover check ${schoolId}`,
+        () =>
+          termRolloverService.rolloverSchool(schoolId, {
+            source: "school_admin_dashboard",
+          }),
+      );
       return res.json({ success: true, ...result });
     } catch (error) {
       console.error("[TermRollover] Admin check failed:", error);
@@ -16699,7 +16715,14 @@ app.post("/api/jobs/term-rollovers", async (req, res) => {
 const termRolloverEnabled =
   String(process.env.TERM_ROLLOVER_ENABLED || "true").toLowerCase() !== "false";
 if (termRolloverEnabled) {
+  let schedulerCooldownUntil = 0;
   const runScheduledTermRollovers = async () => {
+    if (Date.now() < schedulerCooldownUntil) {
+      console.log(
+        `[TermRollover] Scheduler in cooldown until ${new Date(schedulerCooldownUntil).toISOString()}; skipping run.`,
+      );
+      return;
+    }
     try {
       const results = await termRolloverService.runDueRollovers({
         source: "server_scheduler",
@@ -16708,8 +16731,15 @@ if (termRolloverEnabled) {
       if (changed > 0) {
         console.log(`[TermRollover] Completed ${changed} scheduled rollover(s).`);
       }
+      schedulerCooldownUntil = 0;
     } catch (error) {
       console.error("[TermRollover] Scheduler failed:", error);
+      if (isFirestoreQuotaError(error)) {
+        schedulerCooldownUntil = Date.now() + 15 * 60 * 1000;
+        console.warn(
+          "[TermRollover] Backing off scheduler for 15 minutes due to Firestore quota error.",
+        );
+      }
     }
   };
   const initialTermRolloverTimer = setTimeout(

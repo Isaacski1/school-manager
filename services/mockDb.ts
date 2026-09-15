@@ -3,7 +3,7 @@ import {
   collection,
   doc,
   documentId,
-  getCountFromServer,
+
   getDoc,
   getDocs,
   setDoc,
@@ -2682,25 +2682,8 @@ async getDashboardStats(schoolId?: string): Promise<{
       (record) => !record.isHoliday && !configHolidaySet.has(record.date),
     );
 
-    const [maleCountSnap, femaleCountSnap] = await Promise.all([
-      getCountFromServer(
-        query(
-          collection(firestore, "students"),
-          where("schoolId", "==", scopedSchoolId),
-          where("gender", "==", "Male"),
-        ),
-      ),
-      getCountFromServer(
-        query(
-          collection(firestore, "students"),
-          where("schoolId", "==", scopedSchoolId),
-          where("gender", "==", "Female"),
-        ),
-      ),
-    ]);
-
-    const male = maleCountSnap.data().count;
-    const female = femaleCountSnap.data().count;
+const male = students.filter(s => s.gender === "Male").length;
+     const female = students.filter(s => s.gender === "Female").length;
 
     const classAttendance = filteredClasses.map((cls) => {
       const records = attendance.filter((r) => r.classId === cls.id);
@@ -2729,33 +2712,7 @@ async getDashboardStats(schoolId?: string): Promise<{
     };
   }
 
-  async getDashboardSummary(schoolId?: string) {
-    await this.requireFeature(schoolId, "basic_analytics");
-    const scopedSchoolId = this.requireSchoolId(
-      schoolId,
-      "getDashboardSummary",
-    );
-    const [studentsCountSnap, teachersCountSnap] = await Promise.all([
-      getCountFromServer(
-        query(
-          collection(firestore, "students"),
-          where("schoolId", "==", scopedSchoolId),
-        ),
-      ),
-      getCountFromServer(
-        query(
-          collection(firestore, "users"),
-          where("schoolId", "==", scopedSchoolId),
-          where("role", "==", UserRole.TEACHER),
-        ),
-      ),
-    ]);
-
-    return {
-      studentsCount: studentsCountSnap.data().count,
-      teachersCount: teachersCountSnap.data().count,
-    };
-  }
+  
 
   // --- Teacher Attendance ---
   async getTeacherAttendance(
