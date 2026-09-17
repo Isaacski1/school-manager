@@ -1085,8 +1085,9 @@ const Login = () => {
                 <button
                   type="button"
                   onClick={toggleParentLogin}
-                  className="text-sm font-medium text-emerald-600 hover:text-emerald-700 transition-colors"
+                  className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-sm font-semibold text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800 transition-colors shadow-sm"
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                   Parent Login
                 </button>
               </div>

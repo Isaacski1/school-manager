@@ -566,11 +566,11 @@ const resolveDashboardTotals = async (
   apiTotals: DashboardTotals | null | undefined,
   normalizedSchools: School[],
 ) => {
-  const apiTotal = Number(apiTotals?.totalSchools ?? apiTotals?.schools ?? 0);
-  if (apiTotal > 0 || normalizedSchools.length > 0) {
+  if (apiTotals || normalizedSchools.length > 0) {
     return apiTotals || null;
   }
-  return (await countSchoolsFromFirestore(normalizedSchools)) || apiTotals || null;
+
+  return await countSchoolsFromFirestore(normalizedSchools);
 };
 
 const normalizeText = (value: unknown, fallback = "") => {

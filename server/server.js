@@ -7029,68 +7029,15 @@ app.get(
       };
 
       // Smart schools fetcher with fast fallback for better reliability
+      // Aligned with the reliable /api/superadmin/schools-page path.
       const safeGetSchools = async () => {
         try {
-          const schoolFields = [
-            "name",
-            "code",
-            "logoUrl",
-            "phone",
-            "address",
-            "plan",
-            "status",
-            "featurePlan",
-            "createdBy",
-            "createdAt",
-            "planEndsAt",
-            "studentsCount",
-            "limits",
-            "billing",
-            "subscription",
-          ];
-          // Run the ordered query and its index-free fallback concurrently.
-          const [orderedRows, unorderedRows] = await Promise.all([
-            withTimeoutFallback(
-              fetchCollectionRows({
-                collectionName: "schools",
-                limitCount: schoolsLimit,
-                orderField: "createdAt",
-                selectFields: schoolFields,
-              }),
-              Math.max(500, DASHBOARD_QUERY_TIMEOUT_MS - 500),
-              null,
-            ),
-            withTimeoutFallback(
-              fetchCollectionRows({
-                collectionName: "schools",
-                limitCount: schoolsLimit,
-                orderField: "",
-                selectFields: schoolFields,
-              }),
-              1200,
-              [],
-            ),
-          ]);
-
-          if (Array.isArray(orderedRows) && orderedRows.length > 0) {
-            return orderedRows;
-          }
-          if (Array.isArray(unorderedRows) && unorderedRows.length > 0) {
-            return unorderedRows;
-          }
-
-          // Final fallback mirrors /api/superadmin/schools-page, which is the
-          // reliable source for the dedicated Schools screen.
-          const page = await withTimeoutFallback(
-            listCollectionPage({
-              collectionName: "schools",
-              orderField: "createdAt",
-              direction: "desc",
-              limitCount: Math.min(schoolsLimit, 250),
-            }),
-            1200,
-            { items: [] },
-          );
+          const page = await listCollectionPage({
+            collectionName: "schools",
+            orderField: "createdAt",
+            direction: "desc",
+            limitCount: Math.min(schoolsLimit, 250),
+          });
           return Array.isArray(page.items) ? page.items : [];
         } catch (err) {
           console.error("Error fetching schools:", err?.message);
