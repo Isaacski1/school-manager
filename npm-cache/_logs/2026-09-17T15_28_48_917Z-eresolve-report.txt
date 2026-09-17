@@ -1,0 +1,76 @@
+'Log files:
+C:\Users\USER\Desktop\My Project\school-manager\npm-cache\_logs\2026-09-17T15_28_48_917Z-debug-0.log
+
+# npm resolution error report
+
+While resolving: react-paystack@6.0.0
+Found: react@19.2.3
+node_modules/react
+  react@"^19.2.3" from the root project
+  peerOptional react@"^18.0.0 || ^19.0.0" from framer-motion@12.24.12
+  node_modules/framer-motion
+    framer-motion@"^12.0.0" from the root project
+  peer react@"^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" from lucide-react@0.562.0
+  node_modules/lucide-react
+    lucide-react@"^0.562.0" from the root project
+  peer react@"^19.2.3" from react-dom@19.2.3
+  node_modules/react-dom
+    react-dom@"^19.2.3" from the root project
+    peerOptional react-dom@"^18.0.0 || ^19.0.0" from framer-motion@12.24.12
+    node_modules/framer-motion
+      framer-motion@"^12.0.0" from the root project
+    peer react-dom@">=18" from react-router-dom@7.11.0
+    node_modules/react-router-dom
+      react-router-dom@"^7.11.0" from the root project
+    peerOptional react-dom@">=18" from react-router@7.11.0
+    node_modules/react-router-dom/node_modules/react-router
+      react-router@"7.11.0" from react-router-dom@7.11.0
+      node_modules/react-router-dom
+        react-router-dom@"^7.11.0" from the root project
+    peer react-dom@"^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" from react-smooth@4.0.4
+    node_modules/react-smooth
+      react-smooth@"^4.0.0" from recharts@2.12.7
+      node_modules/recharts
+        recharts@"^2.12.7" from the root project
+    peer react-dom@">=16.6.0" from react-transition-group@4.4.5
+    node_modules/react-transition-group
+      react-transition-group@"^4.4.5" from react-smooth@4.0.4
+      node_modules/react-smooth
+        react-smooth@"^4.0.0" from recharts@2.12.7
+        node_modules/recharts
+          recharts@"^2.12.7" from the root project
+  peer react@">=18" from react-router-dom@7.11.0
+  node_modules/react-router-dom
+    react-router-dom@"^7.11.0" from the root project
+  peer react@">=18" from react-router@7.11.0
+  node_modules/react-router-dom/node_modules/react-router
+    react-router@"7.11.0" from react-router-dom@7.11.0
+    node_modules/react-router-dom
+      react-router-dom@"^7.11.0" from the root project
+  peer react@"^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" from react-smooth@4.0.4
+  node_modules/react-smooth
+    react-smooth@"^4.0.0" from recharts@2.12.7
+    node_modules/recharts
+      recharts@"^2.12.7" from the root project
+  peer react@">=16.6.0" from react-transition-group@4.4.5
+  node_modules/react-transition-group
+    react-transition-group@"^4.4.5" from react-smooth@4.0.4
+    node_modules/react-smooth
+      react-smooth@"^4.0.0" from recharts@2.12.7
+      node_modules/recharts
+        recharts@"^2.12.7" from the root project
+
+Could not resolve dependency:
+peer react@"^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0" from react-paystack@6.0.0
+node_modules/react-paystack
+  react-paystack@"^6.0.0" from the root project
+
+Conflicting peer dependency: react@18.3.1
+node_modules/react
+  peer react@"^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0" from react-paystack@6.0.0
+  node_modules/react-paystack
+    react-paystack@"^6.0.0" from the root project
+
+Fix the upstream dependency conflict, or retry
+this command with --force or --legacy-peer-deps
+to accept an incorrect (and potentially broken) dependency resolution.

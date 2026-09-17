@@ -9,7 +9,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
-import { GoogleGenAI } from "@google/genai";
 import {
   createTermRolloverService,
   TERM_ROLLOVER_INTERVAL_MS,
@@ -26,53 +25,49 @@ dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-const GOOGLE_AI_MODEL = "gemma-4-31b-it";
+const NVIDIA_MODEL = String(process.env.NVIDIA_MODEL || "nvidia/nemotron-3.5-lightning-30b-a3b").trim();
 const readOptionalPositiveInteger = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 };
-const GOOGLE_AI_QUOTA_LIMITS = Object.freeze({
+const NVIDIA_AI_QUOTA_LIMITS = Object.freeze({
   requestsPerMinute: readOptionalPositiveInteger(
-    process.env.GOOGLE_AI_FREE_RPM_LIMIT,
+    process.env.NVIDIA_AI_FREE_RPM_LIMIT,
   ),
   tokensPerMinute: readOptionalPositiveInteger(
-    process.env.GOOGLE_AI_FREE_TPM_LIMIT,
+    process.env.NVIDIA_AI_FREE_TPM_LIMIT,
   ),
   requestsPerDay: readOptionalPositiveInteger(
-    process.env.GOOGLE_AI_FREE_RPD_LIMIT,
+    process.env.NVIDIA_AI_FREE_RPD_LIMIT,
   ),
 });
-let googleAiClient = null;
+let nvidiaClient = null;
 
-const getGoogleAiClient = () => {
-  const apiKey = String(process.env.GOOGLE_API_KEY || "").trim();
+const getNvidiaApiKey = () => {
+  const apiKey = String(process.env.NVIDIA_API_KEY || "").trim();
   if (!apiKey) {
-    const error = new Error("Google AI Studio API key is not configured");
-    error.code = "GOOGLE_AI_NOT_CONFIGURED";
+    const error = new Error("NVIDIA API key is not configured");
+    error.code = "NVIDIA_AI_NOT_CONFIGURED";
     throw error;
   }
-  if (!googleAiClient) {
-    googleAiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: { timeout: 30000 },
-    });
-  }
-  return googleAiClient;
+  return apiKey;
 };
 
-const logGoogleAiError = (scope, error) => {
-  console.error(`[${scope}] Google AI request failed:`, {
+const getNvidiaModel = () => NVIDIA_MODEL;
+
+const logAiError = (scope, error) => {
+  console.error(`[${scope}] AI request failed:`, {
     name: error?.name || "Error",
     code: error?.code || error?.status || null,
     status: error?.status || error?.response?.status || null,
-    message: String(error?.message || error || "Unknown Google AI error").slice(
+    message: String(error?.message || error || "Unknown AI error").slice(
       0,
       500,
     ),
   });
 };
 
-const generateGoogleAiJson = async ({
+const generateNvidiaJson = async ({
   systemInstruction,
   messages,
   temperature = 0.2,
@@ -80,45 +75,68 @@ const generateGoogleAiJson = async ({
   timeoutMs = 15000,
   telemetryContext = {},
 }) => {
-  const client = getGoogleAiClient();
+  const apiKey = getNvidiaApiKey();
+  const model = getNvidiaModel();
   const effectiveTimeoutMs = Math.max(3000, timeoutMs);
-  const abortSignal = AbortSignal.timeout(effectiveTimeoutMs);
   const requestStartedAt = Date.now();
   const contents = (Array.isArray(messages) ? messages : [])
     .filter(
       (message) =>
         message &&
-        ["user", "assistant", "model"].includes(String(message.role || "")) &&
+        ["user", "assistant", "system"].includes(
+          String(message.role || ""),
+        ) &&
         String(message.content || "").trim(),
     )
     .map((message) => ({
-      role: message.role === "assistant" ? "model" : message.role,
-      parts: [{ text: String(message.content).trim() }],
+      role: message.role,
+      content: String(message.content).trim(),
     }));
+
+  const apiMessages = [];
+  if (typeof systemInstruction === "string" && systemInstruction.trim()) {
+    apiMessages.push({
+      role: "system",
+      content: systemInstruction.trim(),
+    });
+  }
+  apiMessages.push(...contents);
 
   let response;
   try {
-    response = await client.models.generateContent({
-      model: GOOGLE_AI_MODEL,
-      contents,
-      config: {
-        systemInstruction,
-        temperature,
-        maxOutputTokens,
-        responseMimeType: "application/json",
-        abortSignal,
-        httpOptions: { timeout: effectiveTimeoutMs },
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
+    try {
+      response = await fetch(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: apiMessages,
+            temperature,
+            max_tokens: maxOutputTokens,
+            response_format: { type: "json_object" },
+          }),
+          signal: controller.signal,
+        },
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (error) {
     const statusCode = Number(
       error?.status || error?.response?.status || error?.code || 0,
     );
     const errorMessage = String(error?.message || error || "");
     void recordAiTelemetry({
-      type: "google_ai_request",
-      provider: "google",
-      model: GOOGLE_AI_MODEL,
+      type: "nvidia_ai_request",
+      provider: "nvidia",
+      model,
       scope: telemetryContext?.scope || "unknown",
       schoolId: telemetryContext?.schoolId || null,
       actorUid: telemetryContext?.actorUid || null,
@@ -129,41 +147,74 @@ const generateGoogleAiJson = async ({
         statusCode === 429 || /quota|resource exhausted|429/i.test(errorMessage),
       timedOut:
         error?.name === "AbortError" ||
-        error?.name === "TimeoutError" ||
-        /abort|timed out|timeout/i.test(errorMessage),
+        /timed out|abort|timeout/i.test(errorMessage),
       error: errorMessage.slice(0, 300),
     });
-    if (
-      error?.name === "AbortError" ||
-      error?.name === "TimeoutError" ||
-      /abort|timed out|timeout/i.test(String(error?.message || ""))
-    ) {
+    if (error?.name === "AbortError") {
       const timeoutError = new Error(
-        `Google AI did not respond within ${effectiveTimeoutMs} ms`,
+        `AI provider did not respond within ${effectiveTimeoutMs} ms`,
       );
-      timeoutError.name = "GoogleAiTimeoutError";
-      timeoutError.code = "GOOGLE_AI_TIMEOUT";
+      timeoutError.name = "AiTimeoutError";
+      timeoutError.code = "NVIDIA_AI_TIMEOUT";
       timeoutError.cause = error;
       throw timeoutError;
     }
     throw error;
   }
-  const text = String(response?.text || "").trim();
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    const errorMessage = String(errorBody || `HTTP ${response.status}`);
+    void recordAiTelemetry({
+      type: "nvidia_ai_request",
+      provider: "nvidia",
+      model,
+      scope: telemetryContext?.scope || "unknown",
+      schoolId: telemetryContext?.schoolId || null,
+      actorUid: telemetryContext?.actorUid || null,
+      success: false,
+      statusCode: response.status,
+      responseMs: Date.now() - requestStartedAt,
+      rateLimited:
+        response.status === 429 || /quota|resource exhausted|429/i.test(errorMessage),
+      timedOut: false,
+      error: errorMessage.slice(0, 300),
+    });
+    const mappedError = new Error(
+      `AI provider request failed with status ${response.status}`,
+    );
+    mappedError.code =
+      response.status === 429
+        ? "NVIDIA_AI_QUOTA"
+        : response.status === 401 || response.status === 403
+          ? "NVIDIA_AI_AUTH"
+          : response.status === 404
+            ? "NVIDIA_AI_MODEL_UNAVAILABLE"
+            : "NVIDIA_AI_REQUEST_FAILED";
+    mappedError.status = response.status;
+    mappedError.cause = { body: errorBody };
+    throw mappedError;
+  }
+
+  const payload = await response.json();
+  const text = String(
+    payload?.choices?.[0]?.message?.content || "",
+  ).trim();
   if (!text) {
-    const error = new Error("Google AI returned an empty response");
-    error.code = "GOOGLE_AI_EMPTY_RESPONSE";
+    const error = new Error("AI provider returned an empty response");
+    error.code = "NVIDIA_AI_EMPTY_RESPONSE";
     throw error;
   }
-  const usage = response?.usageMetadata || {};
-  const promptTokens = Number(usage?.promptTokenCount || 0);
-  const outputTokens = Number(usage?.candidatesTokenCount || 0);
+  const usage = payload?.usage || {};
+  const promptTokens = Number(usage?.prompt_tokens || 0);
+  const outputTokens = Number(usage?.completion_tokens || 0);
   const totalTokens = Number(
-    usage?.totalTokenCount || promptTokens + outputTokens,
+    usage?.total_tokens || promptTokens + outputTokens,
   );
   void recordAiTelemetry({
-    type: "google_ai_request",
-    provider: "google",
-    model: GOOGLE_AI_MODEL,
+    type: "nvidia_ai_request",
+    provider: "nvidia",
+    model,
     scope: telemetryContext?.scope || "unknown",
     schoolId: telemetryContext?.schoolId || null,
     actorUid: telemetryContext?.actorUid || null,
@@ -174,7 +225,7 @@ const generateGoogleAiJson = async ({
     outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
     totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
   });
-  return { text, usage };
+  return { text, usage: { promptTokens, outputTokens, totalTokens } };
 };
 
 const escapeHtml = (unsafe) => {
@@ -871,8 +922,9 @@ School Manager GH admin navigation:
 
 app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) => {
   let telemetrySchoolId = null;
+  const routeStart = Date.now();
   try {
-    const apiKey = String(process.env.GOOGLE_API_KEY || "").trim();
+    const apiKey = String(process.env.NVIDIA_API_KEY || "").trim();
     if (!apiKey) {
       return res.status(503).json({
         code: "ASSISTANT_NOT_CONFIGURED",
@@ -1441,15 +1493,15 @@ ${JSON.stringify(schoolContext)}
 Approved routes:
 ${routeList}
 
-Return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
-Use null for action when navigation is unnecessary. The path must be approved.`;
+ Return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
+ Use null for action when navigation is unnecessary. The path must be approved.`;
 
-    const { text: rawContent } = await generateGoogleAiJson({
+    const { text: rawContent } = await generateNvidiaJson({
       systemInstruction: systemPrompt,
       messages: [...history, { role: "user", content: message }],
       temperature: 0.25,
-      maxOutputTokens: 600,
-      timeoutMs: 30000,
+      maxOutputTokens: 3000,
+      timeoutMs: 90000,
       telemetryContext: {
         scope: "school_assistant",
         schoolId,
@@ -1468,7 +1520,7 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
       const jsonStart = normalizedContent.indexOf("{");
       const jsonEnd = normalizedContent.lastIndexOf("}");
       if (jsonStart < 0 || jsonEnd <= jsonStart) {
-        throw new Error("Google AI returned a non-JSON assistant response.");
+        throw new Error("AI provider returned a non-JSON assistant response.");
       }
       parsed = JSON.parse(normalizedContent.slice(jsonStart, jsonEnd + 1));
     }
@@ -1480,7 +1532,7 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
         ? parsed.action.path
         : null;
     if (!answer) {
-      throw new Error("Google AI returned an invalid assistant response.");
+      throw new Error("AI provider returned an invalid assistant response.");
     }
 
     return res.json({
@@ -1496,10 +1548,10 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
         : null,
     });
   } catch (error) {
-    logGoogleAiError("SchoolAssistant", error);
+    logAiError("SchoolAssistant", error);
     void recordAiTelemetry({
       type: "school_assistant_error",
-      provider: "google",
+      provider: "nvidia",
       scope: "school_assistant",
       schoolId: telemetrySchoolId,
       actorUid: req.user?.uid || null,
@@ -2954,8 +3006,8 @@ const allowPaystackTestMode = () => String(process.env.PAYSTACK_ALLOW_TEST_MODE 
 const paystackConfigReady = () => Boolean(PAYSTACK_SECRET_KEY) && (isLivePaystackSecret() || allowPaystackTestMode());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
-const SUPERADMIN_GOOGLE_API_KEY = String(
-  process.env.GOOGLE_API_KEY || "",
+const SUPERADMIN_NVIDIA_API_KEY = String(
+  process.env.NVIDIA_API_KEY || "",
 ).trim();
 const DEMO_NOTIFY_EMAIL =
   process.env.DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
@@ -2971,16 +3023,16 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
 const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "";
 const SUPER_ADMIN_ASSISTANT_NAME = "School Manager GH AI";
 const SUPERADMIN_AI_MODE = (
-  process.env.SUPERADMIN_AI_MODE || "google_first"
+  process.env.SUPERADMIN_AI_MODE || "nvidia_first"
 ).toLowerCase();
 const SUPERADMIN_AI_TIMEOUT_MS = Math.min(
-  45000,
+  120000,
   Math.max(
-    10000,
+    30000,
     Number(
       process.env.SUPERADMIN_AI_TIMEOUT_MS ||
-        25000,
-    ) || 25000,
+        90000,
+    ) || 90000,
   ),
 );
 const AI_CONTEXT_CACHE_TTL_MS = Number(
@@ -4987,15 +5039,11 @@ const parseAiResponse = (rawText) => {
   }
 };
 
-const callSuperAdminGoogleAi = async ({
+const callSuperAdminNvidia = async ({
   messages = [],
   dataContext = {},
   actorUid = null,
 }) => {
-  if (!SUPERADMIN_GOOGLE_API_KEY) {
-    throw new Error("Google AI Studio API key is not configured");
-  }
-
   const compactMessages = messages
     .slice(-12)
     .filter(
@@ -5007,13 +5055,13 @@ const callSuperAdminGoogleAi = async ({
       role: message.role,
       content: trimToString(message.content, 4000),
     }));
-  const { text: content } = await generateGoogleAiJson({
+  const { text: content } = await generateNvidiaJson({
     systemInstruction: buildAiSystemPrompt(
       buildAiModelContext(dataContext),
     ),
     messages: compactMessages,
     temperature: 0.15,
-    maxOutputTokens: 900,
+    maxOutputTokens: 3000,
     timeoutMs: SUPERADMIN_AI_TIMEOUT_MS,
     telemetryContext: {
       scope: "super_admin_ai",
@@ -5022,7 +5070,7 @@ const callSuperAdminGoogleAi = async ({
   });
   const parsed = parseAiResponse(content);
   if (!parsed?.reply) {
-    throw new Error("Google AI returned an empty reply");
+    throw new Error("AI provider returned an empty reply");
   }
   return parsed;
 };
@@ -9055,11 +9103,11 @@ app.post(
         .find((message) => message?.role === "user")?.content;
       const latestPrompt = String(latestUserMessage || "");
       const promptIntent = detectAiPromptIntents(latestPrompt);
-      const googleAiEnabled =
-        Boolean(SUPERADMIN_GOOGLE_API_KEY) &&
+      const nvidiaAiEnabled =
+        Boolean(SUPERADMIN_NVIDIA_API_KEY) &&
         SUPERADMIN_AI_MODE !== "local_only";
-      const googleAiPreferred =
-        googleAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
+      const nvidiaAiPreferred =
+        nvidiaAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
       const needsSchoolContext =
         promptIntent.asksSchoolsData ||
         promptIntent.wantsSummary ||
@@ -9151,12 +9199,12 @@ app.post(
             });
       let parsed = localParsed;
       let aiMode = "local";
-      let googleAiFallbackReason = null;
+      let aiFallbackReason = null;
       const hasTrustedLocalKnowledge =
         promptIntent.asksPlatformKnowledge &&
         !isGenericLocalFallbackReply(localParsed?.reply);
-      const shouldTryGoogleAi =
-        googleAiEnabled &&
+      const shouldTryNvidia =
+        nvidiaAiEnabled &&
         !promptIntent.isSmallTalk &&
         !promptIntent.asksCapabilities &&
         !hasTrustedLocalKnowledge;
@@ -9164,56 +9212,55 @@ app.post(
         /\b(create|add|new|update|change|switch|move|set|reset|activate|deactivate|enable|disable|suspend|delete|remove|assign|apply|provision|publish|broadcast|announcement|compare|analyze|why|which|best|worst|top|recent)\b/i.test(
           latestPrompt,
         );
-      const shouldUseGoogleAi =
-        shouldTryGoogleAi &&
-        (googleAiPreferred ||
+      const shouldUseNvidia =
+        shouldTryNvidia &&
+        (nvidiaAiPreferred ||
           isGenericLocalFallbackReply(localParsed?.reply) ||
           (!localParsed?.action && promptLooksActionOrComplex));
 
-      if (shouldUseGoogleAi) {
+      if (shouldUseNvidia) {
         try {
-          const parsedGoogleAi = await callSuperAdminGoogleAi({
+          const parsedNvidia = await callSuperAdminNvidia({
             messages,
             dataContext,
             actorUid: req.user.uid,
           });
-          if (parsedGoogleAi?.reply) {
-            const googleAiReply = String(parsedGoogleAi.reply || "").trim();
+          if (parsedNvidia?.reply) {
+            const nvidiaReply = String(parsedNvidia.reply || "").trim();
             const shouldMergeLocalAction =
-              !parsedGoogleAi.action && Boolean(localParsed?.action);
+              !parsedNvidia.action && Boolean(localParsed?.action);
             parsed = shouldMergeLocalAction
               ? {
-                  reply: /\bconfirm\b/i.test(googleAiReply)
-                    ? googleAiReply
-                    : `${googleAiReply}${/[.!?]$/.test(googleAiReply) ? "" : "."} I also prepared the matching action. Confirm when ready.`,
+                  reply: /\bconfirm\b/i.test(nvidiaReply)
+                    ? nvidiaReply
+                    : `${nvidiaReply}${/[.!?]$/.test(nvidiaReply) ? "" : "."} I also prepared the matching action. Confirm when ready.`,
                   action: localParsed.action,
                 }
-              : parsedGoogleAi;
-            // Preserve the existing wire value expected by the unchanged frontend.
+              : parsedNvidia;
             aiMode = "deepseek";
           }
-        } catch (googleAiError) {
-          const googleAiErrorMessage = String(
-            googleAiError?.message || googleAiError || "",
+        } catch (nvidiaError) {
+          const nvidiaErrorMessage = String(
+            nvidiaError?.message || nvidiaError || "",
           );
-          if (/quota|resource exhausted|429/i.test(googleAiErrorMessage)) {
-            googleAiFallbackReason = "Google AI quota is temporarily unavailable";
-          } else if (/timed out|abort|timeout/i.test(googleAiErrorMessage)) {
-            googleAiFallbackReason = "Google AI request timed out";
-          } else if (/api key|unauthorized|permission|401|403/i.test(googleAiErrorMessage)) {
-            googleAiFallbackReason = "Google AI authentication failed";
-          } else if (/not found|404|model/i.test(googleAiErrorMessage)) {
-            googleAiFallbackReason = "Google AI model is unavailable";
+          if (/quota|resource exhausted|429/i.test(nvidiaErrorMessage)) {
+            aiFallbackReason = "AI quota is temporarily unavailable";
+          } else if (/timed out|abort|timeout/i.test(nvidiaErrorMessage)) {
+            aiFallbackReason = "AI request timed out";
+          } else if (/api key|unauthorized|permission|401|403/i.test(nvidiaErrorMessage)) {
+            aiFallbackReason = "AI authentication failed";
+          } else if (/not found|404|model/i.test(nvidiaErrorMessage)) {
+            aiFallbackReason = "AI model is unavailable";
           } else {
-            googleAiFallbackReason = "Google AI request failed";
+            aiFallbackReason = "AI request failed";
           }
-          logGoogleAiError("SuperAdminAI", googleAiError);
+          logAiError("SuperAdminAI", nvidiaError);
           if (
             !localParsed?.reply ||
             isGenericLocalFallbackReply(localParsed?.reply)
           ) {
             parsed = {
-              reply: `${googleAiFallbackReason}. I am running in Limited mode, so I can still answer supported platform snapshots and prepare safe owner actions, but broad personal-AI questions need Google AI to be available.`,
+              reply: `${aiFallbackReason}. I am running in Limited mode, so I can still answer supported platform snapshots and prepare safe owner actions, but broad personal-AI questions need the AI provider to be available.`,
               action: null,
             };
           } else {
@@ -9230,7 +9277,7 @@ app.post(
 
       const responseMs = Date.now() - responseStart;
       const fallbackUsed =
-        googleAiEnabled && shouldUseGoogleAi && aiMode !== "deepseek";
+        nvidiaAiEnabled && shouldUseNvidia && aiMode !== "deepseek";
       const limitedMode =
         aiMode === "local" &&
         !hasTrustedLocalKnowledge &&
@@ -10530,44 +10577,44 @@ app.get(
       const nowMs = Date.now();
       const minuteCutoffMs = nowMs - 60 * 1000;
       const pacificDayStartMs = getPacificDayStartMs(new Date(nowMs));
-      const googleRows = telemetryRows.filter(
-        (row) => row.type === "google_ai_request",
+      const nvidiaRows = telemetryRows.filter(
+        (row) => row.type === "nvidia_ai_request",
       );
-      const googleMinuteRows = googleRows.filter(
+      const nvidiaMinuteRows = nvidiaRows.filter(
         (row) => Number(row.timestampMs || 0) >= minuteCutoffMs,
       );
-      const googleTodayRows = googleRows.filter(
+      const nvidiaTodayRows = nvidiaRows.filter(
         (row) => Number(row.timestampMs || 0) >= pacificDayStartMs,
       );
-      const sumGoogleMetric = (rows, field) =>
+      const sumNvidiaMetric = (rows, field) =>
         rows.reduce((sum, row) => sum + Math.max(0, Number(row[field] || 0)), 0);
-      const quotaHitsToday = googleTodayRows.filter(
+      const quotaHitsToday = nvidiaTodayRows.filter(
         (row) => row.rateLimited || Number(row.statusCode || 0) === 429,
       ).length;
-      const timeoutsToday = googleTodayRows.filter((row) => row.timedOut).length;
-      const failedToday = googleTodayRows.filter(
+      const timeoutsToday = nvidiaTodayRows.filter((row) => row.timedOut).length;
+      const failedToday = nvidiaTodayRows.filter(
         (row) => row.success === false,
       ).length;
-      const lastQuotaErrorAt = googleRows.reduce(
+      const lastQuotaErrorAt = nvidiaRows.reduce(
         (latest, row) =>
           row.rateLimited || Number(row.statusCode || 0) === 429
             ? Math.max(latest, Number(row.timestampMs || 0))
             : latest,
         0,
       );
-      const requestsThisMinute = googleMinuteRows.length;
-      const tokensThisMinute = sumGoogleMetric(
-        googleMinuteRows,
+      const requestsThisMinute = nvidiaMinuteRows.length;
+      const tokensThisMinute = sumNvidiaMetric(
+        nvidiaMinuteRows,
         "totalTokens",
       );
-      const requestsToday = googleTodayRows.length;
-      const totalTokensToday = sumGoogleMetric(googleTodayRows, "totalTokens");
-      const promptTokensToday = sumGoogleMetric(
-        googleTodayRows,
+      const requestsToday = nvidiaTodayRows.length;
+      const totalTokensToday = sumNvidiaMetric(nvidiaTodayRows, "totalTokens");
+      const promptTokensToday = sumNvidiaMetric(
+        nvidiaTodayRows,
         "promptTokens",
       );
-      const outputTokensToday = sumGoogleMetric(
-        googleTodayRows,
+      const outputTokensToday = sumNvidiaMetric(
+        nvidiaTodayRows,
         "outputTokens",
       );
       const utilizationPct = (value, limit) =>
@@ -10577,15 +10624,15 @@ app.get(
       const utilization = {
         requestsPerMinute: utilizationPct(
           requestsThisMinute,
-          GOOGLE_AI_QUOTA_LIMITS.requestsPerMinute,
+          NVIDIA_AI_QUOTA_LIMITS.requestsPerMinute,
         ),
         tokensPerMinute: utilizationPct(
           tokensThisMinute,
-          GOOGLE_AI_QUOTA_LIMITS.tokensPerMinute,
+          NVIDIA_AI_QUOTA_LIMITS.tokensPerMinute,
         ),
         requestsPerDay: utilizationPct(
           requestsToday,
-          GOOGLE_AI_QUOTA_LIMITS.requestsPerDay,
+          NVIDIA_AI_QUOTA_LIMITS.requestsPerDay,
         ),
       };
       const knownUtilizationValues = Object.values(utilization).filter(
@@ -10594,26 +10641,26 @@ app.get(
       const highestKnownUtilization = knownUtilizationValues.length
         ? Math.max(...knownUtilizationValues)
         : null;
-      let googleAiStatus = "healthy";
+      let nvidiaAiStatus = "healthy";
       if (quotaHitsToday > 0) {
-        googleAiStatus = "exhausted";
+        nvidiaAiStatus = "exhausted";
       } else if (
         highestKnownUtilization !== null &&
         highestKnownUtilization >= 90
       ) {
-        googleAiStatus = "critical";
+        nvidiaAiStatus = "critical";
       } else if (
         highestKnownUtilization !== null &&
         highestKnownUtilization >= 75
       ) {
-        googleAiStatus = "warning";
+        nvidiaAiStatus = "warning";
       } else if (failedToday > 0 || timeoutsToday > 0) {
-        googleAiStatus = "degraded";
+        nvidiaAiStatus = "degraded";
       } else if (knownUtilizationValues.length === 0) {
-        googleAiStatus = "tracking";
+        nvidiaAiStatus = "tracking";
       }
       const schoolUsageMap = new Map();
-      googleTodayRows.forEach((row) => {
+      nvidiaTodayRows.forEach((row) => {
         const rowSchoolId = String(row.schoolId || "").trim();
         if (!rowSchoolId) return;
         const current = schoolUsageMap.get(rowSchoolId) || {
@@ -10646,10 +10693,10 @@ app.get(
         positiveFeedback,
         negativeFeedback,
         googleAi: {
-          status: googleAiStatus,
-          model: GOOGLE_AI_MODEL,
+          status: nvidiaAiStatus,
+          model: NVIDIA_MODEL,
           resetTimeZone: "America/Los_Angeles",
-          limits: GOOGLE_AI_QUOTA_LIMITS,
+          limits: NVIDIA_AI_QUOTA_LIMITS,
           utilization,
           thisMinute: {
             requests: requestsThisMinute,
