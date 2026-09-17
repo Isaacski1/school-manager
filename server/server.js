@@ -74,6 +74,8 @@ const generateNvidiaJson = async ({
   maxOutputTokens = 900,
   timeoutMs = 15000,
   telemetryContext = {},
+  tools = null,
+  toolChoice = null,
 }) => {
   const apiKey = getNvidiaApiKey();
   const model = getNvidiaModel();
@@ -83,15 +85,26 @@ const generateNvidiaJson = async ({
     .filter(
       (message) =>
         message &&
-        ["user", "assistant", "system"].includes(
+        ["user", "assistant", "system", "tool"].includes(
           String(message.role || ""),
         ) &&
-        String(message.content || "").trim(),
+        (message.role !== "tool" || String(message.tool_call_id || "").trim()),
     )
-    .map((message) => ({
-      role: message.role,
-      content: String(message.content).trim(),
-    }));
+    .map((message) => {
+      const base = {
+        role: message.role,
+      };
+      if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+        base.tool_calls = message.tool_calls;
+        base.content = message.content;
+      } else if (message.role === "tool") {
+        base.tool_call_id = String(message.tool_call_id || "").trim();
+        base.content = String(message.content || "").trim();
+      } else {
+        base.content = String(message.content || "").trim();
+      }
+      return base;
+    });
 
   const apiMessages = [];
   if (typeof systemInstruction === "string" && systemInstruction.trim()) {
@@ -101,6 +114,21 @@ const generateNvidiaJson = async ({
     });
   }
   apiMessages.push(...contents);
+
+  const requestBody = {
+    model,
+    messages: apiMessages,
+    temperature,
+    max_tokens: maxOutputTokens,
+  };
+  if (tools && Array.isArray(tools) && tools.length > 0) {
+    requestBody.tools = tools;
+  }
+  if (toolChoice) {
+    requestBody.tool_choice = toolChoice;
+  } else if (tools && Array.isArray(tools) && tools.length > 0) {
+    requestBody.tool_choice = "auto";
+  }
 
   let response;
   try {
@@ -115,13 +143,7 @@ const generateNvidiaJson = async ({
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({
-            model,
-            messages: apiMessages,
-            temperature,
-            max_tokens: maxOutputTokens,
-            response_format: { type: "json_object" },
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         },
       );
@@ -200,7 +222,10 @@ const generateNvidiaJson = async ({
   const text = String(
     payload?.choices?.[0]?.message?.content || "",
   ).trim();
-  if (!text) {
+  const toolCalls = payload?.choices?.[0]?.message?.tool_calls || [];
+  const finishReason = payload?.choices?.[0]?.finish_reason || "stop";
+  
+  if (!text && toolCalls.length === 0) {
     const error = new Error("AI provider returned an empty response");
     error.code = "NVIDIA_AI_EMPTY_RESPONSE";
     throw error;
@@ -225,7 +250,7 @@ const generateNvidiaJson = async ({
     outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
     totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
   });
-  return { text, usage: { promptTokens, outputTokens, totalTokens } };
+  return { text, toolCalls, finishReason, usage: { promptTokens, outputTokens, totalTokens } };
 };
 
 const escapeHtml = (unsafe) => {
@@ -1043,6 +1068,8 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
       /\b(attendance|absent|absence|present|register|registers)\b/.test(
         normalizedQuestion,
       );
+    const asksAboutSpecificStudentAttendance =
+      /(\w+)'\s?s\s*(attendance|absent|present)\b/i.test(message);
     const asksAboutStudentFees =
       /\b(student|students|learner|learners|parent|parents)\b/.test(
         normalizedQuestion,
@@ -1329,7 +1356,7 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         },
       });
     }
-    if (asksAboutAttendance) {
+    if (asksAboutAttendance && !asksAboutSpecificStudentAttendance) {
       const formatSchoolDate = (date) =>
         new Intl.DateTimeFormat("en-CA", {
           timeZone: "Africa/Accra",
@@ -1486,6 +1513,23 @@ Use the current page and conversation history to understand follow-up questions.
 Never claim that you performed an action, changed data, sent a message, or saw school records. Never request passwords, API keys, card data, or secrets.
 If this guide does not establish a fact, say so instead of inventing a feature. When useful, recommend exactly one approved route.
 
+You have access to the following read-only school data tools. Use them when the user asks about specific students, attendance, assessments, or fees:
+- searchStudents: Search for students by name or class. Use this when the user mentions a student name.
+- getStudentProfile: Get detailed profile for a specific student by ID. Use after finding a student ID.
+- getStudentAttendance: Get attendance records for a specific student across a date range. Use for attendance questions.
+- getStudentAssessmentResults: Get assessment results for a specific student or class. Use for academic performance questions.
+- getStudentFeeBalance: Get fee balance and payment history for a specific student. Use for fee-related questions.
+- getDailyAttendanceSummary: Get daily attendance summary for the school or a specific class. Use for class-level attendance questions.
+
+IMPORTANT RULES:
+1. Do NOT guess student IDs. Always use searchStudents first to find the correct student ID.
+2. Do NOT invent data. If a tool returns no records, clearly state that.
+3. Do NOT calculate attendance percentages from missing registers. Only calculate from valid submitted registers.
+4. Do NOT mark a student as absent if the attendance register is missing.
+5. Do NOT mark a student as absent on a holiday.
+6. If a search returns multiple students with similar names, ask for clarification.
+7. Use the authenticated school's data only. Never access other schools' data.
+
 Current page: ${SCHOOL_ASSISTANT_ROUTES[pathname]} (${pathname})
 ${SCHOOL_ASSISTANT_GUIDE}
 Live school summary (read-only and authoritative):
@@ -1493,10 +1537,10 @@ ${JSON.stringify(schoolContext)}
 Approved routes:
 ${routeList}
 
- Return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
- Use null for action when navigation is unnecessary. The path must be approved.`;
+When you have enough information to answer, return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
+Use null for action when navigation is unnecessary. The path must be approved.`;
 
-    const { text: rawContent } = await generateNvidiaJson({
+     const { text: rawContent, toolCallsMade } = await callSchoolAssistantNvidia({
       systemInstruction: systemPrompt,
       messages: [...history, { role: "user", content: message }],
       temperature: 0.25,
@@ -1507,6 +1551,7 @@ ${routeList}
         schoolId,
         actorUid: req.user.uid,
       },
+      schoolId,
     });
 
     const normalizedContent = rawContent
@@ -1514,23 +1559,35 @@ ${routeList}
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "");
     let parsed;
+    let answer = "";
+    let actionPath = null;
     try {
       parsed = JSON.parse(normalizedContent);
+      answer = typeof parsed?.answer === "string" ? parsed.answer.trim().slice(0, 4000) : "";
+      actionPath =
+        typeof parsed?.action?.path === "string" &&
+        Object.hasOwn(SCHOOL_ASSISTANT_ROUTES, parsed.action.path)
+          ? parsed.action.path
+          : null;
     } catch {
       const jsonStart = normalizedContent.indexOf("{");
       const jsonEnd = normalizedContent.lastIndexOf("}");
-      if (jsonStart < 0 || jsonEnd <= jsonStart) {
-        throw new Error("AI provider returned a non-JSON assistant response.");
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        try {
+          parsed = JSON.parse(normalizedContent.slice(jsonStart, jsonEnd + 1));
+          answer = typeof parsed?.answer === "string" ? parsed.answer.trim().slice(0, 4000) : "";
+          actionPath =
+            typeof parsed?.action?.path === "string" &&
+            Object.hasOwn(SCHOOL_ASSISTANT_ROUTES, parsed.action.path)
+              ? parsed.action.path
+              : null;
+        } catch {
+          answer = normalizedContent.slice(0, 4000);
+        }
+      } else {
+        answer = normalizedContent.slice(0, 4000);
       }
-      parsed = JSON.parse(normalizedContent.slice(jsonStart, jsonEnd + 1));
     }
-    const answer =
-      typeof parsed?.answer === "string" ? parsed.answer.trim().slice(0, 4000) : "";
-    const actionPath =
-      typeof parsed?.action?.path === "string" &&
-      Object.hasOwn(SCHOOL_ASSISTANT_ROUTES, parsed.action.path)
-        ? parsed.action.path
-        : null;
     if (!answer) {
       throw new Error("AI provider returned an invalid assistant response.");
     }
@@ -1541,7 +1598,7 @@ ${routeList}
         ? {
             path: actionPath,
             label:
-              typeof parsed.action.label === "string"
+              typeof parsed?.action?.label === "string"
                 ? parsed.action.label.trim().slice(0, 50)
                 : `Open ${SCHOOL_ASSISTANT_ROUTES[actionPath]}`,
           }
@@ -5037,6 +5094,297 @@ const parseAiResponse = (rawText) => {
   } catch {
     return { reply: rawText };
   }
+};
+
+const TOOL_DEFINITIONS = [
+  {
+    type: "function",
+    function: {
+      name: "searchStudents",
+      description:
+        "Search for students by name or class within the authenticated school. Returns matching students with their IDs, names, class IDs, and genders. Use this to find a student when the user mentions a name.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query (student name or partial name, minimum 2 characters)",
+          },
+          classId: {
+            type: "string",
+            description: "Optional class ID to filter results",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of results to return (default 20, max 100)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getStudentProfile",
+      description:
+        "Get detailed profile information for a specific student by ID. Returns student details excluding sensitive contact information. Use this after finding a student ID with searchStudents.",
+      parameters: {
+        type: "object",
+        properties: {
+          studentId: {
+            type: "string",
+            description: "The student ID (must be obtained from searchStudents first)",
+          },
+        },
+        required: ["studentId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getStudentAttendance",
+      description:
+        "Get attendance records for a specific student across a date range. Returns attendance status for each day. Use this to answer questions about a student's attendance history.",
+      parameters: {
+        type: "object",
+        properties: {
+          studentId: {
+            type: "string",
+            description: "The student ID",
+          },
+          classId: {
+            type: "string",
+            description: "Optional class ID to filter attendance records",
+          },
+          startDate: {
+            type: "string",
+            description: "Start date in YYYY-MM-DD format",
+          },
+          endDate: {
+            type: "string",
+            description: "End date in YYYY-MM-DD format",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of records to return (default 100, max 100)",
+          },
+        },
+        required: ["studentId", "startDate", "endDate"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getStudentAssessmentResults",
+      description:
+        "Get assessment results for a specific student or class. Returns scores for tests, homework, projects, and exams. Use this to answer questions about academic performance.",
+      parameters: {
+        type: "object",
+        properties: {
+          studentId: {
+            type: "string",
+            description: "Optional student ID",
+          },
+          classId: {
+            type: "string",
+            description: "Optional class ID",
+          },
+          term: {
+            type: "string",
+            description: "Term number (1, 2, or 3)",
+          },
+          academicYear: {
+            type: "string",
+            description: "Academic year in YYYY-YYYY format",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of results (default 100, max 100)",
+          },
+        },
+        required: ["term", "academicYear"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getStudentFeeBalance",
+      description:
+        "Get fee balance and payment history for a specific student. Returns opening balance, payments made, and current balance. Use this to answer questions about outstanding fees.",
+      parameters: {
+        type: "object",
+        properties: {
+          studentId: {
+            type: "string",
+            description: "The student ID",
+          },
+          academicYear: {
+            type: "string",
+            description: "Academic year in YYYY-YYYY format",
+          },
+          term: {
+            type: "string",
+            description: "Term number (1, 2, or 3)",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of payment records (default 50, max 100)",
+          },
+        },
+        required: ["studentId", "academicYear", "term"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getDailyAttendanceSummary",
+      description:
+        "Get daily attendance summary for the school or a specific class. Returns present counts and holiday status for each class. Use this to answer questions about today's attendance or class-level attendance.",
+      parameters: {
+        type: "object",
+        properties: {
+          classId: {
+            type: "string",
+            description: "Optional class ID to filter",
+          },
+          date: {
+            type: "string",
+            description: "Date in YYYY-MM-DD format (defaults to today)",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of classes to return (default 50, max 100)",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
+const TOOL_EXECUTORS = {
+  searchStudents: async (schoolId, args) => {
+    const { searchStudents: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+  getStudentProfile: async (schoolId, args) => {
+    const { getStudentProfile: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+  getStudentAttendance: async (schoolId, args) => {
+    const { getStudentAttendance: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+  getStudentAssessmentResults: async (schoolId, args) => {
+    const { getStudentAssessmentResults: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+  getStudentFeeBalance: async (schoolId, args) => {
+    const { getStudentFeeBalance: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+  getDailyAttendanceSummary: async (schoolId, args) => {
+    const { getDailyAttendanceSummary: fn } = await import("./aiTools.js");
+    return fn({ schoolId, ...args });
+  },
+};
+
+const MAX_TOOL_CALLS = 3;
+const TOOL_EXECUTION_TIMEOUT_MS = 15000;
+
+const executeAiTool = async (toolName, toolArgs, schoolId) => {
+  const executor = TOOL_EXECUTORS[toolName];
+  if (!executor) {
+    return { error: `Unknown tool: ${toolName}`, tool: toolName };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TOOL_EXECUTION_TIMEOUT_MS);
+  
+  try {
+    const result = await executor(schoolId, toolArgs);
+    return { tool: toolName, result, success: true };
+  } catch (error) {
+    return {
+      tool: toolName,
+      error: String(error?.message || error || "Tool execution failed"),
+      success: false,
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const callSchoolAssistantNvidia = async ({
+  systemInstruction,
+  messages,
+  temperature = 0.2,
+  maxOutputTokens = 3000,
+  timeoutMs = 90000,
+  telemetryContext = {},
+  schoolId,
+}) => {
+  const requestStartedAt = Date.now();
+  let remainingCalls = MAX_TOOL_CALLS;
+  let conversationMessages = messages.slice(-10);
+  let finalText = "";
+  let toolCallsMade = [];
+
+  while (remainingCalls >= 0) {
+    const result = await generateNvidiaJson({
+      systemInstruction,
+      messages: conversationMessages,
+      temperature,
+      maxOutputTokens,
+      timeoutMs,
+      telemetryContext,
+      tools: TOOL_DEFINITIONS,
+      tool_choice: remainingCalls === MAX_TOOL_CALLS ? "required" : remainingCalls > 0 ? "auto" : { type: "none" },
+    });
+
+    finalText = result.text || "";
+    console.log("[TOOL_DEBUG] toolCalls=" + JSON.stringify(result.toolCalls) + " text=" + finalText.substring(0, 100));
+    
+    if (!result.toolCalls || result.toolCalls.length === 0) {
+      return { text: finalText, toolCallsMade };
+    }
+
+    const assistantMessage = {
+      role: "assistant",
+      content: finalText,
+      tool_calls: result.toolCalls,
+    };
+    conversationMessages.push(assistantMessage);
+    toolCallsMade.push(...result.toolCalls.map((tc) => tc.function?.name || tc.name));
+
+    const toolResults = [];
+    for (const toolCall of result.toolCalls) {
+      const toolName = toolCall.function?.name || toolCall.name;
+      let toolArgs = {};
+      try {
+        toolArgs = JSON.parse(toolCall.function?.arguments || "{}");
+      } catch {
+        toolArgs = {};
+      }
+
+      const toolResult = await executeAiTool(toolName, toolArgs, schoolId);
+      toolResults.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(toolResult),
+      });
+    }
+
+    conversationMessages.push(...toolResults);
+    remainingCalls -= 1;
+  }
+
+  return { text: finalText, toolCallsMade };
 };
 
 const callSuperAdminNvidia = async ({
