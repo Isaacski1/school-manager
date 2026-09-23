@@ -14,6 +14,7 @@ import { useAuth } from "../context/AuthContext";
 import { useSchool } from "../context/SchoolContext";
 import {
   canAccessFeature,
+  canAccessSchoolAssistant,
   FeatureKey,
   resolveFeaturePlan,
 } from "../services/featureAccess";
@@ -949,9 +950,10 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/fees" icon={<CreditCard size={18} />} label="Fees & Payments" />
               )}
-              {hasFeature("staff_payroll") && (
+              {/* Temporarily hidden until payroll feature is ready */}
+              {/* {hasFeature("staff_payroll") && (
                 <NavItem href="/admin/payroll" icon={<HandCoins size={18} />} label="Staff Payroll" />
-              )}
+              )} */}
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/payment-settings" icon={<Wallet size={18} />} label="Online Payment" />
               )}
@@ -974,7 +976,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("backups") && (
                 <NavItem href="/admin/backups" icon={<History size={18} />} label="Backups" />
               )}
-              {hasFeature("school_ai") && (
+              {canAccessSchoolAssistant(user) && hasFeature("school_ai") && !subscriptionGate ? (
                 <button
                   type="button"
                   data-tour="school-assistant"
@@ -990,7 +992,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                   <MessageSquare size={18} />
                   {!isCollapsed && <span className="truncate">School Assistant</span>}
                 </button>
-              )}
+              ) : null}
               {hasFeature("academic_year") && (
                 <NavItem href="/admin/settings" icon={<Settings size={18} />} label="Settings" />
               )}
@@ -1251,7 +1253,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         </main>
       </div>
 
-      {isAdmin && hasFeature("school_ai") && !subscriptionGate ? (
+      {canAccessSchoolAssistant(user) && hasFeature("school_ai") && !subscriptionGate ? (
         <>
           {!schoolAssistantOpen ? (
             <SchoolAssistantLauncher onClick={() => setSchoolAssistantOpen(true)} />

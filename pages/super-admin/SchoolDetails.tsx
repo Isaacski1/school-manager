@@ -225,6 +225,12 @@ const SchoolDetails = () => {
     email: "",
     password: "",
   });
+  const [adminFieldsFocused, setAdminFieldsFocused] = useState({
+    fullName: false,
+    email: false,
+    password: false,
+  });
+  const [createAdminKey, setCreateAdminKey] = useState(0);
   const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
   const [isDeletingAdmin, setIsDeletingAdmin] = useState<string | null>(null);
   const [showDeleteAdminModal, setShowDeleteAdminModal] = useState(false);
@@ -545,6 +551,32 @@ const SchoolDetails = () => {
       });
     } finally {
       setPlanUpdating(null);
+    }
+  };
+
+  const handleStatusToggle = async () => {
+    if (!resolvedSchoolId || !formState) return;
+
+    const nextStatus = formState.status === "active" ? "inactive" : "active";
+
+    try {
+      await updateDoc(doc(firestore, "schools", resolvedSchoolId), {
+        status: nextStatus,
+      });
+      clearSuperAdminCaches();
+
+      setFormState((prev) => (prev ? { ...prev, status: nextStatus } : prev));
+      setSchool((prev) => (prev ? { ...prev, status: nextStatus } : prev));
+
+      showToast(
+        `School ${nextStatus === "active" ? "activated" : "deactivated"} successfully.`,
+        { type: "success" },
+      );
+    } catch (error: any) {
+      console.error("Failed to update school status:", error);
+      showToast(error.message || "Failed to update school status.", {
+        type: "error",
+      });
     }
   };
 
@@ -1264,7 +1296,12 @@ const SchoolDetails = () => {
                     </div>
 
                     <button
-                      onClick={() => setShowCreateAdmin(true)}
+                      onClick={() => {
+                        setAdminForm({ fullName: "", email: "", password: "" });
+                        setAdminFieldsFocused({ fullName: false, email: false, password: false });
+                        setCreateAdminKey((prev) => prev + 1);
+                        setShowCreateAdmin(true);
+                      }}
                       className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                     >
                       <UserPlus size={16} />
@@ -1913,22 +1950,17 @@ const SchoolDetails = () => {
                   </div>
 
                   <div className="grid gap-3">
-                    <button
-                      onClick={() =>
-                        handleFormChange(
-                          "status",
-                          formState.status === "active" ? "inactive" : "active",
-                        )
-                      }
-                      className="flex items-center justify-between rounded-[20px] border border-red-200 bg-white px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-50"
-                    >
-                      <span>
-                        {formState.status === "active"
-                          ? "Deactivate School"
-                          : "Activate School"}
-                      </span>
-                      <Trash2 size={16} />
-                    </button>
+                     <button
+                       onClick={handleStatusToggle}
+                       className="flex items-center justify-between rounded-[20px] border border-red-200 bg-white px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                     >
+                       <span>
+                         {formState.status === "active"
+                           ? "Deactivate School"
+                           : "Activate School"}
+                       </span>
+                       <Trash2 size={16} />
+                     </button>
                     <button
                       onClick={() => setShowDeleteModal(true)}
                       className="flex items-center justify-between rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-100"
@@ -1945,7 +1977,7 @@ const SchoolDetails = () => {
       </div>
 
       {showCreateAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+        <div key={createAdminKey} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
           <div className="relative w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_35px_100px_-45px_rgba(15,23,42,0.55)]">
             <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-violet-100/70 via-cyan-50/20 to-sky-100/70" />
             <div className="relative p-6">
@@ -1974,9 +2006,17 @@ const SchoolDetails = () => {
                 <div>
                   <label className={LABEL_CLASS}>Full Name</label>
                   <input
+                    name="createAdminFullName"
+                    readOnly={!adminFieldsFocused.fullName}
                     value={adminForm.fullName}
                     onChange={(e) =>
                       setAdminForm({ ...adminForm, fullName: e.target.value })
+                    }
+                    onFocus={() =>
+                      setAdminFieldsFocused((prev) => ({ ...prev, fullName: true }))
+                    }
+                    onBlur={() =>
+                      setAdminFieldsFocused((prev) => ({ ...prev, fullName: false }))
                     }
                     className={INPUT_CLASS}
                     placeholder="Enter admin full name"
@@ -1986,9 +2026,18 @@ const SchoolDetails = () => {
                   <label className={LABEL_CLASS}>Email Address</label>
                   <input
                     type="email"
+                    name="createAdminEmail"
+                    autoComplete="off"
+                    readOnly={!adminFieldsFocused.email}
                     value={adminForm.email}
                     onChange={(e) =>
                       setAdminForm({ ...adminForm, email: e.target.value })
+                    }
+                    onFocus={() =>
+                      setAdminFieldsFocused((prev) => ({ ...prev, email: true }))
+                    }
+                    onBlur={() =>
+                      setAdminFieldsFocused((prev) => ({ ...prev, email: false }))
                     }
                     className={INPUT_CLASS}
                     placeholder="Enter admin email"
@@ -1997,15 +2046,24 @@ const SchoolDetails = () => {
                 <div>
                   <label className={LABEL_CLASS}>Password (Optional)</label>
                   <div className="relative">
-                    <input
-                      type={showAdminPassword ? "text" : "password"}
-                      value={adminForm.password}
-                      onChange={(e) =>
-                        setAdminForm({ ...adminForm, password: e.target.value })
-                      }
-                      className={`${INPUT_CLASS} pr-12`}
-                      placeholder="Leave blank to send reset link"
-                    />
+                     <input
+                       type={showAdminPassword ? "text" : "password"}
+                       name="createAdminPassword"
+                       autoComplete="new-password"
+                       readOnly={!adminFieldsFocused.password}
+                       value={adminForm.password}
+                       onChange={(e) =>
+                         setAdminForm({ ...adminForm, password: e.target.value })
+                       }
+                       onFocus={() =>
+                         setAdminFieldsFocused((prev) => ({ ...prev, password: true }))
+                       }
+                       onBlur={() =>
+                         setAdminFieldsFocused((prev) => ({ ...prev, password: false }))
+                       }
+                       className={`${INPUT_CLASS} pr-12`}
+                       placeholder="Leave blank to send reset link"
+                     />
                     <button
                       type="button"
                       onClick={() => setShowAdminPassword(!showAdminPassword)}

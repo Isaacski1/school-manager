@@ -91,6 +91,11 @@ export const canAccessFeature = (
   return hasFeature(plan, featureName);
 };
 
+export const canAccessSchoolAssistant = (user: User | null): boolean => {
+  if (!user) return false;
+  return user.role === UserRole.SUPER_ADMIN;
+};
+
 export const requireFeatureAccess = (
   user: User | null,
   school: School | null | undefined,

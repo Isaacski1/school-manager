@@ -1,0 +1,147 @@
+{
+  "current_simple": {
+    "key": "current_simple",
+    "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "avg": 196922,
+    "min": 196922,
+    "max": 196922,
+    "avgFirstByte": 196853,
+    "timeouts": 1,
+    "successCount": 1,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 196922,
+        "finishReason": "stop",
+        "toolCalls": [],
+        "reasoning": true
+      },
+      {
+        "totalTime": 56307,
+        "error": "read ECONNRESET",
+        "reasoning": false
+      }
+    ]
+  },
+  "candidate_simple": {
+    "key": "candidate_simple",
+    "model": "openai/gpt-oss-20b",
+    "avg": 308566,
+    "min": 308566,
+    "max": 308566,
+    "avgFirstByte": 308565,
+    "timeouts": 1,
+    "successCount": 1,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 308566,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      },
+      {
+        "totalTime": 56443,
+        "error": "read ECONNRESET",
+        "reasoning": false
+      }
+    ]
+  },
+  "current_student": {
+    "key": "current_student",
+    "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "avg": 52443,
+    "min": 47927,
+    "max": 56959,
+    "avgFirstByte": 52442,
+    "timeouts": 0,
+    "successCount": 2,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 56959,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      },
+      {
+        "totalTime": 47927,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      }
+    ]
+  },
+  "candidate_student": {
+    "key": "candidate_student",
+    "model": "openai/gpt-oss-20b",
+    "avg": 309357,
+    "min": 309357,
+    "max": 309357,
+    "avgFirstByte": 309357,
+    "timeouts": 1,
+    "successCount": 1,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 309357,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      },
+      {
+        "totalTime": 53306,
+        "error": "read ECONNRESET",
+        "reasoning": false
+      }
+    ]
+  },
+  "current_attendance": {
+    "key": "current_attendance",
+    "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "avg": 113131,
+    "min": 113131,
+    "max": 113131,
+    "avgFirstByte": 113130,
+    "timeouts": 1,
+    "successCount": 1,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 113131,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      },
+      {
+        "totalTime": 55210,
+        "error": "read ECONNRESET",
+        "reasoning": false
+      }
+    ]
+  },
+  "candidate_attendance": {
+    "key": "candidate_attendance",
+    "model": "openai/gpt-oss-20b",
+    "avg": 307448,
+    "min": 307448,
+    "max": 307448,
+    "avgFirstByte": 307448,
+    "timeouts": 1,
+    "successCount": 1,
+    "totalRuns": 2,
+    "results": [
+      {
+        "totalTime": 307448,
+        "finishReason": "unknown",
+        "toolCalls": [],
+        "reasoning": false
+      },
+      {
+        "totalTime": 51703,
+        "error": "read ECONNRESET",
+        "reasoning": false
+      }
+    ]
+  }
+}

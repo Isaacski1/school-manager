@@ -357,21 +357,22 @@ export const SCHOOL_ASSISTANT_TOPICS: SchoolAssistantTopic[] = [
     relatedIds: ["assign-teacher", "settings", "academic-reports"],
     contexts: ["/admin/timetable", "/admin"],
   },
-  {
-    id: "payroll",
-    question: "Where can I manage staff payroll?",
-    shortLabel: "Manage payroll",
-    keywords: ["payroll", "staff salary", "teacher salary", "pay staff"],
-    steps: [
-      "Open Staff Payroll from the left menu.",
-      "Review staff payment profiles and prepare the relevant payroll run.",
-      "Verify every amount before approving or recording payments.",
-    ],
-    path: "/admin/payroll",
-    actionLabel: "Open Staff Payroll",
-    relatedIds: ["add-teacher", "payment-settings", "activity"],
-    contexts: ["/admin/payroll"],
-  },
+  // Temporarily hidden until payroll feature is ready
+  // {
+  //   id: "payroll",
+  //   question: "Where can I manage staff payroll?",
+  //   shortLabel: "Manage payroll",
+  //   keywords: ["payroll", "staff salary", "teacher salary", "pay staff"],
+  //   steps: [
+  //     "Open Staff Payroll from the left menu.",
+  //     "Review staff payment profiles and prepare the relevant payroll run.",
+  //     "Verify every amount before approving or recording payments.",
+  //   ],
+  //   path: "/admin/payroll",
+  //   actionLabel: "Open Staff Payroll",
+  //   relatedIds: ["add-teacher", "payment-settings", "activity"],
+  //   contexts: ["/admin/payroll"],
+  // },
   {
     id: "activity",
     question: "Where can I review activity in my school account?",

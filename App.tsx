@@ -29,7 +29,8 @@ const ManageBackups = lazy(() => import("./pages/admin/ManageBackups"));
 const Timetable = lazy(() => import("./pages/admin/Timetable"));
 const Billing = lazy(() => import("./pages/admin/Billing"));
 const FeesPayments = lazy(() => import("./pages/admin/FeesPayments"));
-const StaffPayroll = lazy(() => import("./pages/admin/StaffPayroll"));
+// Temporarily hidden until payroll feature is ready
+// const StaffPayroll = lazy(() => import("./pages/admin/StaffPayroll"));
 const ActivityMonitor = lazy(() => import("./pages/admin/ActivityMonitor"));
 const TeacherDashboard = lazy(() => import("./pages/teacher/TeacherDashboard"));
 const Attendance = lazy(() => import("./pages/teacher/Attendance"));
@@ -711,7 +712,8 @@ const AppRoutes = ({
           </ProtectedRoute>
         }
       />
-      <Route
+      {/* Temporarily hidden until payroll feature is ready */}
+      {/* <Route
         path="/admin/payroll"
         element={
           <ProtectedRoute
@@ -721,7 +723,7 @@ const AppRoutes = ({
             <StaffPayroll />
           </ProtectedRoute>
         }
-      />
+      /> */}
 
       <Route
         path="/admin/activity"

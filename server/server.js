@@ -26,6 +26,8 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const NVIDIA_MODEL = String(process.env.NVIDIA_MODEL || "nvidia/nemotron-3.5-lightning-30b-a3b").trim();
+const AI_PROVIDER = String(process.env.AI_PROVIDER || "nvidia").trim();
+const AI_MODEL = String(process.env.AI_MODEL || NVIDIA_MODEL).trim();
 const readOptionalPositiveInteger = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
@@ -55,6 +57,69 @@ const getNvidiaApiKey = () => {
 
 const getNvidiaModel = () => NVIDIA_MODEL;
 
+import { registerProvider, resolveProvider } from "./aiProvider.js";
+import { NvidiaProvider } from "./aiProviders/nvidia.js";
+import { OpenAiProvider } from "./aiProviders/openai.js";
+import { GeminiProvider } from "./aiProviders/gemini.js";
+
+const nvidiaProviderInstance = new NvidiaProvider({
+  apiKey: getNvidiaApiKey(),
+  model: getNvidiaModel(),
+});
+
+registerProvider("nvidia", () => nvidiaProviderInstance);
+
+if (process.env.OPENAI_API_KEY) {
+  const openAiProviderInstance = new OpenAiProvider({
+    apiKey: String(process.env.OPENAI_API_KEY).trim(),
+    model: String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim(),
+  });
+  registerProvider("openai", () => openAiProviderInstance);
+}
+
+if (process.env.GEMINI_API_KEY) {
+  const geminiProviderInstance = new GeminiProvider({
+    apiKey: String(process.env.GEMINI_API_KEY).trim(),
+    model: String(process.env.GEMINI_MODEL || "gemini-3.7-flash").trim(),
+  });
+  registerProvider("gemini", () => geminiProviderInstance);
+}
+
+const resolveAiProvider = (providerName, modelOverride) => {
+  const name = String(providerName || AI_PROVIDER || "nvidia").trim();
+  const provider = resolveProvider(name);
+  if (typeof provider.complete !== "function") {
+    throw new Error(`AI provider "${name}" does not implement the complete() method`);
+  }
+  return { provider, model: String(modelOverride || AI_MODEL || "").trim() };
+};
+
+const getAiApiKey = () => {
+  const provider = String(AI_PROVIDER || "nvidia").trim();
+  if (provider === "nvidia") {
+    return getNvidiaApiKey();
+  }
+  return String(process.env.AI_API_KEY || "").trim();
+};
+
+const AI_TIMING_LOGGING_ENABLED = String(process.env.AI_TIMING_LOGGING || "false").toLowerCase() === "true";
+
+const generateAiRequestId = () => {
+  const timestamp = Date.now().toString(36);
+  const random = crypto.randomBytes(4).toString("hex");
+  return `ai_${timestamp}_${random}`;
+};
+
+const logAiTiming = (event, data = {}) => {
+  if (!AI_TIMING_LOGGING_ENABLED) return;
+  const logLine = {
+    event,
+    timestamp: new Date().toISOString(),
+    ...data,
+  };
+  console.log(`[AI_TIMING] ${event} ${JSON.stringify(logLine).slice(0, 500)}`);
+};
+
 const logAiError = (scope, error) => {
   console.error(`[${scope}] AI request failed:`, {
     name: error?.name || "Error",
@@ -76,9 +141,10 @@ const generateNvidiaJson = async ({
   telemetryContext = {},
   tools = null,
   toolChoice = null,
+  providerName,
+  modelOverride,
 }) => {
-  const apiKey = getNvidiaApiKey();
-  const model = getNvidiaModel();
+  const { provider, model } = resolveAiProvider(providerName, modelOverride);
   const effectiveTimeoutMs = Math.max(3000, timeoutMs);
   const requestStartedAt = Date.now();
   const contents = (Array.isArray(messages) ? messages : [])
@@ -130,23 +196,50 @@ const generateNvidiaJson = async ({
     requestBody.tool_choice = "auto";
   }
 
-  let response;
+  const payloadBytes = Buffer.byteLength(JSON.stringify(requestBody), "utf8");
+  const requestConstructionMs = Date.now() - requestStartedAt;
+
+  logAiTiming("AI_MODEL_REQUEST_BUILT", {
+    requestId: telemetryContext?.actorUid || "unknown",
+    schoolId: telemetryContext?.schoolId || null,
+    payloadBytes,
+    messageCount: apiMessages.length,
+    toolCount: Array.isArray(tools) ? tools.length : 0,
+    requestConstructionMs,
+  });
+
+  let providerResult;
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     try {
-      response = await fetch(
-        "https://integrate.api.nvidia.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        },
-      );
+      const modelStart = Date.now();
+      logAiTiming("AI_MODEL_START", {
+        requestId: telemetryContext?.actorUid || "unknown",
+        schoolId: telemetryContext?.schoolId || null,
+        model,
+        effectiveTimeoutMs,
+        payloadBytes,
+        messageCount: apiMessages.length,
+        toolCount: Array.isArray(tools) ? tools.length : 0,
+      });
+      providerResult = await provider.complete({
+        systemInstruction,
+        messages,
+        temperature,
+        maxOutputTokens,
+        timeoutMs,
+        tools,
+        toolChoice,
+        telemetryContext,
+      });
+      const firstByteMs = providerResult.timing?.firstByteMs || Date.now() - modelStart;
+      logAiTiming("AI_MODEL_FIRST_BYTE", {
+        requestId: telemetryContext?.actorUid || "unknown",
+        schoolId: telemetryContext?.schoolId || null,
+        firstByteMs,
+        httpStatus: 200,
+      });
     } finally {
       clearTimeout(timeoutId);
     }
@@ -157,7 +250,7 @@ const generateNvidiaJson = async ({
     const errorMessage = String(error?.message || error || "");
     void recordAiTelemetry({
       type: "nvidia_ai_request",
-      provider: "nvidia",
+      provider: String(error?.provider || "nvidia"),
       model,
       scope: telemetryContext?.scope || "unknown",
       schoolId: telemetryContext?.schoolId || null,
@@ -181,64 +274,46 @@ const generateNvidiaJson = async ({
       timeoutError.cause = error;
       throw timeoutError;
     }
+    if (error?.code) {
+      const mappedError = new Error(error.message || "AI provider request failed");
+      mappedError.code = error.code;
+      mappedError.status = error.status;
+      mappedError.cause = error.cause;
+      throw mappedError;
+    }
     throw error;
   }
 
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    const errorMessage = String(errorBody || `HTTP ${response.status}`);
-    void recordAiTelemetry({
-      type: "nvidia_ai_request",
-      provider: "nvidia",
-      model,
-      scope: telemetryContext?.scope || "unknown",
-      schoolId: telemetryContext?.schoolId || null,
-      actorUid: telemetryContext?.actorUid || null,
-      success: false,
-      statusCode: response.status,
-      responseMs: Date.now() - requestStartedAt,
-      rateLimited:
-        response.status === 429 || /quota|resource exhausted|429/i.test(errorMessage),
-      timedOut: false,
-      error: errorMessage.slice(0, 300),
-    });
-    const mappedError = new Error(
-      `AI provider request failed with status ${response.status}`,
-    );
-    mappedError.code =
-      response.status === 429
-        ? "NVIDIA_AI_QUOTA"
-        : response.status === 401 || response.status === 403
-          ? "NVIDIA_AI_AUTH"
-          : response.status === 404
-            ? "NVIDIA_AI_MODEL_UNAVAILABLE"
-            : "NVIDIA_AI_REQUEST_FAILED";
-    mappedError.status = response.status;
-    mappedError.cause = { body: errorBody };
-    throw mappedError;
-  }
+  const text = String(providerResult.content || "").trim();
+  const toolCalls = Array.isArray(providerResult.toolCalls) ? providerResult.toolCalls : [];
+  const finishReason = String(providerResult.finishReason || "stop");
+  const usage = providerResult.usage || {};
+  const promptTokens = Number(usage?.promptTokens || usage?.prompt_tokens || 0);
+  const outputTokens = Number(usage?.outputTokens || usage?.completion_tokens || 0);
+  const totalTokens = Number(usage?.totalTokens || usage?.total_tokens || promptTokens + outputTokens);
 
-  const payload = await response.json();
-  const text = String(
-    payload?.choices?.[0]?.message?.content || "",
-  ).trim();
-  const toolCalls = payload?.choices?.[0]?.message?.tool_calls || [];
-  const finishReason = payload?.choices?.[0]?.finish_reason || "stop";
-  
+  const totalModelMs = providerResult.timing?.totalMs || Date.now() - requestStartedAt;
+  const firstByteMs = providerResult.timing?.firstByteMs || totalModelMs;
+  const jsonParseMs = 0;
+
+  logAiTiming("AI_MODEL_END", {
+    requestId: telemetryContext?.actorUid || "unknown",
+    schoolId: telemetryContext?.schoolId || null,
+    totalModelMs,
+    firstByteMs: totalModelMs - jsonParseMs,
+    jsonParseMs,
+    httpStatus: 200,
+    responseLength: null,
+  });
+
   if (!text && toolCalls.length === 0) {
     const error = new Error("AI provider returned an empty response");
     error.code = "NVIDIA_AI_EMPTY_RESPONSE";
     throw error;
   }
-  const usage = payload?.usage || {};
-  const promptTokens = Number(usage?.prompt_tokens || 0);
-  const outputTokens = Number(usage?.completion_tokens || 0);
-  const totalTokens = Number(
-    usage?.total_tokens || promptTokens + outputTokens,
-  );
   void recordAiTelemetry({
     type: "nvidia_ai_request",
-    provider: "nvidia",
+    provider: String(providerResult.provider || "nvidia"),
     model,
     scope: telemetryContext?.scope || "unknown",
     schoolId: telemetryContext?.schoolId || null,
@@ -915,7 +990,7 @@ const SCHOOL_ASSISTANT_ROUTES = Object.freeze({
   "/admin/timetable": "Timetable",
   "/admin/assessment": "Assessment",
   "/admin/fees": "Fees & Payments",
-  "/admin/payroll": "Staff Payroll",
+  // "/admin/payroll": "Staff Payroll", // Temporarily hidden
   "/admin/activity": "Activity",
   "/admin/payment-settings": "Online Payment",
   "/admin/reminders": "SMS Reminders",
@@ -946,11 +1021,35 @@ School Manager GH admin navigation:
 `;
 
 app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) => {
-  let telemetrySchoolId = null;
+  const requestId = generateAiRequestId();
   const routeStart = Date.now();
+  let telemetrySchoolId = null;
+  let authDurationMs = 0;
+  let contextDurationMs = 0;
+  let modelDurationMs = 0;
+  let toolDurationMs = 0;
+  let totalDurationMs = 0;
+  let status = "failure";
+  let errorCategory = null;
+
+  logAiTiming("AI_REQUEST_START", {
+    requestId,
+    schoolId: null,
+    pathname: typeof req.body?.pathname === "string" ? req.body.pathname : null,
+    messageLength: typeof req.body?.message === "string" ? req.body.message.length : 0,
+  });
+
   try {
-    const apiKey = String(process.env.NVIDIA_API_KEY || "").trim();
+    const authStart = Date.now();
+    const apiKey = getAiApiKey();
     if (!apiKey) {
+      logAiTiming("AI_REQUEST_END", {
+        requestId,
+        schoolId: null,
+        totalDurationMs: Date.now() - routeStart,
+        status: "failure",
+        errorCategory: "NOT_CONFIGURED",
+      });
       return res.status(503).json({
         code: "ASSISTANT_NOT_CONFIGURED",
         message: "The AI assistant has not been configured yet.",
@@ -959,6 +1058,13 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
 
     const userSnap = await admin.firestore().collection("users").doc(req.user.uid).get();
     const userData = userSnap.exists ? userSnap.data() || {} : {};
+    authDurationMs = Date.now() - authStart;
+    if (userData.role === "school_admin") {
+      return res.status(403).json({
+        code: "AI_TEMPORARILY_DISABLED",
+        message: "The School Assistant is temporarily unavailable.",
+      });
+    }
     if (userData.role !== "school_admin") {
       return res.status(403).json({
         code: "ADMIN_ONLY",
@@ -1540,21 +1646,46 @@ ${routeList}
 When you have enough information to answer, return JSON only: {"answer":"A clear answer, usually 2-5 short sentences or steps.","action":{"label":"Open Students","path":"/admin/students"}}
 Use null for action when navigation is unnecessary. The path must be approved.`;
 
-     const { text: rawContent, toolCallsMade } = await callSchoolAssistantNvidia({
-      systemInstruction: systemPrompt,
-      messages: [...history, { role: "user", content: message }],
-      temperature: 0.25,
-      maxOutputTokens: 3000,
-      timeoutMs: 90000,
-      telemetryContext: {
-        scope: "school_assistant",
-        schoolId,
-        actorUid: req.user.uid,
-      },
+     const contextEndAt = Date.now();
+    contextDurationMs = contextEndAt - routeStart;
+    logAiTiming("AI_CONTEXT_READY", {
+      requestId,
       schoolId,
+      contextDurationMs,
+      totalStudents: schoolContext.totalStudents,
+      totalTeachers: schoolContext.totalTeachers,
+      totalClasses: schoolContext.totalClasses,
     });
 
-    const normalizedContent = rawContent
+    const modelStart = Date.now();
+     const { text: rawContent, toolCallsMade, toolDurationsMs } = await callSchoolAssistantNvidia({
+       systemInstruction: systemPrompt,
+       messages: [...history, { role: "user", content: message }],
+       temperature: 0.25,
+       maxOutputTokens: 3000,
+       timeoutMs: 30000,
+       telemetryContext: {
+         scope: "school_assistant",
+         schoolId,
+         actorUid: req.user.uid,
+       },
+       schoolId,
+     });
+
+     const modelEndAt = Date.now();
+    modelDurationMs = modelEndAt - modelStart;
+    toolDurationMs = Array.isArray(toolDurationsMs)
+      ? toolDurationsMs.reduce((sum, ms) => sum + (Number(ms) || 0), 0)
+      : 0;
+    logAiTiming("AI_MODEL_END", {
+      requestId,
+      schoolId,
+      modelDurationMs,
+      toolDurationMs,
+      toolCallsMade: toolCallsMade.length,
+    });
+
+     const normalizedContent = rawContent
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "");
@@ -1592,6 +1723,20 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
       throw new Error("AI provider returned an invalid assistant response.");
     }
 
+    status = "success";
+    totalDurationMs = Date.now() - routeStart;
+    logAiTiming("AI_REQUEST_END", {
+      requestId,
+      schoolId,
+      totalDurationMs,
+      status,
+      authDurationMs,
+      contextDurationMs,
+      modelDurationMs,
+      toolDurationMs,
+      answerLength: answer.length,
+    });
+
     return res.json({
       answer,
       action: actionPath
@@ -1604,8 +1749,22 @@ Use null for action when navigation is unnecessary. The path must be approved.`;
           }
         : null,
     });
-  } catch (error) {
-    logAiError("SchoolAssistant", error);
+   } catch (error) {
+     errorCategory = String(error?.code || error?.message || "UNKNOWN").slice(0, 50);
+     status = "failure";
+     totalDurationMs = Date.now() - routeStart;
+     logAiTiming("AI_REQUEST_ERROR", {
+       requestId,
+       schoolId: telemetrySchoolId,
+       totalDurationMs,
+       status,
+       authDurationMs,
+       contextDurationMs,
+       modelDurationMs,
+       toolDurationMs,
+       errorCategory,
+     });
+     logAiError("SchoolAssistant", error);
     void recordAiTelemetry({
       type: "school_assistant_error",
       provider: "nvidia",
@@ -3066,6 +3225,14 @@ const APP_ENV = process.env.APP_ENV || "development";
 const SUPERADMIN_NVIDIA_API_KEY = String(
   process.env.NVIDIA_API_KEY || "",
 ).trim();
+
+const isAiProviderConfigured = () => {
+  const provider = String(AI_PROVIDER || "nvidia").trim();
+  if (provider === "nvidia") {
+    return Boolean(SUPERADMIN_NVIDIA_API_KEY);
+  }
+  return Boolean(process.env.AI_API_KEY);
+};
 const DEMO_NOTIFY_EMAIL =
   process.env.DEMO_NOTIFY_EMAIL || "info@schoolmanagergh.com";
 const DEMO_NOTIFY_WHATSAPP =
@@ -5300,20 +5467,39 @@ const TOOL_EXECUTION_TIMEOUT_MS = 15000;
 const executeAiTool = async (toolName, toolArgs, schoolId) => {
   const executor = TOOL_EXECUTORS[toolName];
   if (!executor) {
-    return { error: `Unknown tool: ${toolName}`, tool: toolName };
+    return { error: `Unknown tool: ${toolName}`, tool: toolName, durationMs: 0 };
   }
 
+  const toolStart = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), TOOL_EXECUTION_TIMEOUT_MS);
   
   try {
     const result = await executor(schoolId, toolArgs);
-    return { tool: toolName, result, success: true };
+    const toolDurationMs = Date.now() - toolStart;
+    logAiTiming("AI_TOOL_END", {
+      requestId: "tool",
+      schoolId,
+      tool: toolName,
+      durationMs: toolDurationMs,
+      status: "success",
+    });
+    return { tool: toolName, result, success: true, durationMs: toolDurationMs };
   } catch (error) {
+    const toolDurationMs = Date.now() - toolStart;
+    logAiTiming("AI_TOOL_END", {
+      requestId: "tool",
+      schoolId,
+      tool: toolName,
+      durationMs: toolDurationMs,
+      status: "failure",
+      error: String(error?.message || error).slice(0, 100),
+    });
     return {
       tool: toolName,
       error: String(error?.message || error || "Tool execution failed"),
       success: false,
+      durationMs: toolDurationMs,
     };
   } finally {
     clearTimeout(timeoutId);
@@ -5330,12 +5516,29 @@ const callSchoolAssistantNvidia = async ({
   schoolId,
 }) => {
   const requestStartedAt = Date.now();
+  const requestId = generateAiRequestId();
   let remainingCalls = MAX_TOOL_CALLS;
   let conversationMessages = messages.slice(-10);
   let finalText = "";
   let toolCallsMade = [];
+  const toolDurationsMs = [];
+
+  logAiTiming("AI_CALL_START", {
+    requestId,
+    schoolId,
+    scope: telemetryContext?.scope || "unknown",
+    maxToolCalls: MAX_TOOL_CALLS,
+  });
 
   while (remainingCalls >= 0) {
+    const iterationStart = Date.now();
+    logAiTiming("AI_MODEL_ITERATION_START", {
+      requestId,
+      schoolId,
+      iteration: MAX_TOOL_CALLS - remainingCalls + 1,
+      remainingCalls,
+    });
+
     const result = await generateNvidiaJson({
       systemInstruction,
       messages: conversationMessages,
@@ -5378,13 +5581,33 @@ const callSchoolAssistantNvidia = async ({
         tool_call_id: toolCall.id,
         content: JSON.stringify(toolResult),
       });
+      if (typeof toolResult.durationMs === "number") {
+        toolDurationsMs.push(toolResult.durationMs);
+      }
     }
 
     conversationMessages.push(...toolResults);
     remainingCalls -= 1;
+
+    const iterationDurationMs = Date.now() - iterationStart;
+    logAiTiming("AI_MODEL_ITERATION_END", {
+      requestId,
+      schoolId,
+      iteration: MAX_TOOL_CALLS - remainingCalls,
+      iterationDurationMs,
+      toolCallsExecuted: result.toolCalls.length,
+    });
   }
 
-  return { text: finalText, toolCallsMade };
+  const totalDurationMs = Date.now() - requestStartedAt;
+  logAiTiming("AI_CALL_END", {
+    requestId,
+    schoolId,
+    totalDurationMs,
+    toolCallsMade: toolCallsMade.length,
+  });
+
+  return { text: finalText, toolCallsMade, toolDurationsMs };
 };
 
 const callSuperAdminNvidia = async ({
@@ -9451,9 +9674,7 @@ app.post(
         .find((message) => message?.role === "user")?.content;
       const latestPrompt = String(latestUserMessage || "");
       const promptIntent = detectAiPromptIntents(latestPrompt);
-      const nvidiaAiEnabled =
-        Boolean(SUPERADMIN_NVIDIA_API_KEY) &&
-        SUPERADMIN_AI_MODE !== "local_only";
+      const nvidiaAiEnabled = isAiProviderConfigured() && SUPERADMIN_AI_MODE !== "local_only";
       const nvidiaAiPreferred =
         nvidiaAiEnabled && SUPERADMIN_AI_MODE !== "local_first";
       const needsSchoolContext =

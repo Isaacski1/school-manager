@@ -1694,7 +1694,7 @@ const confirmTermReset = async () => {
                   <div className="relative group">
                     <div className="h-24 w-24 rounded-2xl bg-white p-2 shadow-lg border border-slate-100 flex items-center justify-center overflow-hidden">
                       <img
-                        src={config.logoUrl || schoolLogo}
+                         src={config.logoUrl || school?.logoUrl || schoolLogo}
                         alt="School Logo"
                         className="max-h-full max-w-full object-contain"
                       />

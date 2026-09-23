@@ -9,6 +9,7 @@ import {
   CircleHelp,
   GraduationCap,
   MessageCircle,
+  RefreshCw,
   Send,
   ThumbsDown,
   ThumbsUp,
@@ -44,7 +45,7 @@ const routeLabels: Record<string, string> = {
   "/admin/reports": "Academic Reports",
   "/admin/timetable": "Timetable",
   "/admin/fees": "Fees & Payments",
-  "/admin/payroll": "Staff Payroll",
+  // "/admin/payroll": "Staff Payroll", // Temporarily hidden
   "/admin/payment-settings": "Online Payment",
   "/admin/activity": "Activity",
   "/admin/reminders": "SMS Reminders",
@@ -69,6 +70,15 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
   const timerRef = useRef<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [lastFailedQuestion, setLastFailedQuestion] = useState<string | null>(null);
+
+  const retryLastQuestion = () => {
+    if (!lastFailedQuestion) return;
+    const question = lastFailedQuestion;
+    setLastFailedQuestion(null);
+    setQuery(question);
+    submitAIQuestion(question);
+  };
 
   const pageLabel = routeLabels[location.pathname] || "this page";
   const suggestions = useMemo(
@@ -133,6 +143,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
           { id: makeId(), role: "assistant", topic },
         ]);
       } else {
+        setLastFailedQuestion(trimmed);
         saveUnansweredQuestion(trimmed);
         setMessages((current) => [
           ...current,
@@ -140,20 +151,21 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
             id: makeId(),
             role: "assistant",
             topic: {
-              id: `unanswered-${Date.now()}`,
+              id: `unavailable-${Date.now()}`,
               question: trimmed,
-              shortLabel: "Question saved",
+              shortLabel: "Assistant unavailable",
               keywords: [],
               steps: [
-                "I don’t have a reliable answer for that yet.",
-                "I’ve saved your question so School Manager GH support can improve this guide.",
-                "Try asking about students, teachers, attendance, fees, reports, reminders, or settings.",
+                isTimeout
+                  ? "The AI service took too long to respond. Please try again in a moment."
+                  : "I couldn't reach the AI service and don't have a reliable saved answer for that question yet. Please try again shortly.",
               ],
-              relatedIds: ["support", "settings", "features"],
+              relatedIds: ["support"],
               contexts: [],
             },
           },
-        ]);
+        ],
+        );
       }
     }, 650);
   };
@@ -199,7 +211,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
           },
         },
       ]);
-    } catch {
+    } catch (error: any) {
       const topic = findAssistantTopic(trimmed);
       if (topic) {
         setMessages((current) => [
@@ -207,6 +219,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
           { id: makeId(), role: "assistant", topic },
         ]);
       } else {
+        const isTimeout = error?.name === "AbortError" || /timeout/i.test(error?.message || "");
         saveUnansweredQuestion(trimmed);
         setMessages((current) => [
           ...current,
@@ -219,13 +232,16 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
               shortLabel: "Assistant unavailable",
               keywords: [],
               steps: [
-                "I couldn’t reach the AI service and don’t have a reliable saved answer for that question yet. Please try again shortly.",
+                isTimeout
+                  ? "The AI service took too long to respond. Please try again in a moment."
+                  : "I couldn't reach the AI service and don't have a reliable saved answer for that question yet. Please try again shortly.",
               ],
               relatedIds: ["support"],
               contexts: [],
             },
           },
-        ]);
+        ],
+        );
       }
     } finally {
       setThinking(false);
@@ -282,7 +298,7 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
       "/admin/payment-settings": "payment-settings",
       "/admin/reminders": "sms-reminders",
       "/admin/timetable": "timetable",
-      "/admin/payroll": "payroll",
+      // "/admin/payroll": "payroll", // Temporarily hidden
       "/admin/activity": "activity",
       "/admin/backups": "backups",
       "/admin/settings": "settings",
@@ -470,6 +486,16 @@ const SchoolAssistantDrawer: React.FC<SchoolAssistantDrawerProps> = ({
                                 </ol>
                               </>
                             )}
+                            {message.topic.id.startsWith("unavailable-") ? (
+                              <button
+                                type="button"
+                                onClick={retryLastQuestion}
+                                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#0B4A82] ring-1 ring-slate-200 transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-[#0B4A82]/30"
+                              >
+                                <RefreshCw size={16} />
+                                Retry
+                              </button>
+                            ) : null}
                             {message.topic.path ? (
                               <button
                                 type="button"

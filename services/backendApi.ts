@@ -49,6 +49,7 @@ export async function askSchoolAssistant(payload: {
 }): Promise<SchoolAssistantChatResponse> {
   return apiRequest<SchoolAssistantChatResponse>("/api/admin/school-assistant/chat", {
     body: payload,
+    timeoutMs: 35000,
   });
 }
 
@@ -65,6 +66,7 @@ async function apiRequest<T>(
     requiresAuth?: boolean;
     method?: "GET" | "POST" | "PUT" | "DELETE";
     body?: Record<string, any>;
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   let retries = 0;
@@ -77,6 +79,11 @@ async function apiRequest<T>(
         token = await getIdTokenWithRetry();
       }
 
+      const controller = options.timeoutMs ? new AbortController() : undefined;
+      const timeoutId = options.timeoutMs
+        ? setTimeout(() => controller?.abort(), options.timeoutMs)
+        : undefined;
+
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: options.method || "POST",
         headers: {
@@ -84,7 +91,10 @@ async function apiRequest<T>(
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller?.signal,
       });
+
+      if (timeoutId) clearTimeout(timeoutId);
 
       if (!response.ok) {
         // Try to parse the error response from the backend
