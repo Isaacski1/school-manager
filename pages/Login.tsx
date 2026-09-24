@@ -655,10 +655,10 @@ const Login = () => {
           {/* Visit Marketing Site Link */}
           <a
             href="/"
-            className="absolute top-6 right-6 flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-[#0B4A82] transition-colors group"
+            className="relative mb-4 md:absolute md:top-6 md:right-6 md:mb-0 md:self-end inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white border border-slate-200 text-sm font-semibold text-slate-700 shadow-sm hover:border-[#0B4A82] hover:text-[#0B4A82] hover:shadow-md transition-all group text-center"
           >
             <span>Visit our website</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:translate-x-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:translate-x-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </a>
 
           {/* Logo & Header */}

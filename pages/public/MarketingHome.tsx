@@ -637,20 +637,7 @@ const MarketingHome = () => {
               <div style={{ position: "absolute", inset: "-50px", background: "radial-gradient(circle, rgba(11,74,130,0.35) 0%, transparent 70%)", zIndex: 0, borderRadius: 40 }} />
               
               {/* Dashboard Image */}
-              <img 
-                src="/hero-img.png" 
-                alt="School Manager GH Dashboard"
-                loading="lazy"
-                decoding="async"
-                style={{ 
-                  width: "100%", 
-                  height: "auto", 
-                  
-                  position: "relative", 
-                  zIndex: 1, 
-                  display: "block"
-                }} 
-              />
+              
             </motion.div>
           </motion.div>
         </div>
