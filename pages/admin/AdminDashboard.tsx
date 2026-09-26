@@ -514,18 +514,19 @@ const AdminDashboard = () => {
     null,
   );
 
-  const HEAVY_REFRESH_THROTTLE_MS = 15000;
-  const STATS_POLL_INTERVAL_MS = 30000;
-  const parseYmdDate = (value?: string) => {
-    if (!value) return null;
-    const parts = value.split("-");
-    if (parts.length !== 3) return null;
-    const year = Number(parts[0]);
-    const month = Number(parts[1]);
-    const day = Number(parts[2]);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day);
-  };
+const [todayClassAttendance, setTodayClassAttendance] = useState<ClassAttendanceStat[]>([]);
+   const HEAVY_REFRESH_THROTTLE_MS = 15000;
+   const STATS_POLL_INTERVAL_MS = 30000;
+   const parseYmdDate = (value?: string) => {
+     if (!value) return null;
+     const parts = value.split("-");
+     if (parts.length !== 3) return null;
+     const year = Number(parts[0]);
+     const month = Number(parts[1]);
+     const day = Number(parts[2]);
+     if (!year || !month || !day) return null;
+     return new Date(year, month - 1, day);
+   };
 
   const isPendingWithinReopenWindow = (
     value?: string,
@@ -978,14 +979,40 @@ const AdminDashboard = () => {
           statsKey,
           () => db.getDashboardStats(schoolId),
         );
-        const nextStats = {
-          students: dashboardStats.studentsCount,
-          teachers: dashboardStats.teachersCount,
-          classes: availableClasses.length,
-          maleStudents: dashboardStats.gender.male,
-          femaleStudents: dashboardStats.gender.female,
-          classAttendance: dashboardStats.classAttendance,
-        };
+// Compute today's class attendance for the chart
+         try {
+           const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, "0")}-${String(localToday.getDate()).padStart(2, "0")}`;
+           const holidaySet = new Set((schoolConfig?.holidayDates || []).map((h) => h.date));
+           const filteredClasses = getFilteredClasses(school?.schoolType);
+           const students = dashboardStats.students as Student[];
+           const todaysAttendance = await db.getAttendanceByDate(schoolId, todayStr);
+           const nonHolidayAttendance = todaysAttendance.filter((r) => !holidaySet.has(r.date));
+           const todayClassAttendance: ClassAttendanceStat[] = filteredClasses.map((cls) => {
+             const records = nonHolidayAttendance.filter((r) => r.classId === cls.id);
+             const studentsInClass = students.filter((s) => s.classId === cls.id);
+             const totalPossible = records.length * studentsInClass.length;
+             const totalPresent = records.reduce((sum, r) => sum + r.presentStudentIds.length, 0);
+             const pct = totalPossible > 0 ? Math.round((totalPresent / totalPossible) * 100) : 0;
+             return {
+               className: cls.name,
+               shortName: cls.shortName || cls.name,
+               percentage: pct,
+               id: cls.id,
+             };
+           });
+           setTodayClassAttendance(todayClassAttendance);
+         } catch (err) {
+           console.error("Failed to compute today's class attendance:", err);
+           setTodayClassAttendance([]);
+         }
+         const nextStats = {
+           students: dashboardStats.studentsCount,
+           teachers: dashboardStats.teachersCount,
+           classes: availableClasses.length,
+           maleStudents: dashboardStats.gender.male,
+           femaleStudents: dashboardStats.gender.female,
+           classAttendance: dashboardStats.classAttendance,
+         };
 
         setStats((prev) => ({
           ...prev,
@@ -4491,12 +4518,13 @@ const [
                 </div>
               ) : (
                 <MemoAttendanceChart
-                  data={stats.classAttendance}
+                  data={todayClassAttendance}
                   week={attendanceWeek}
                   onPreviousWeek={goToPreviousWeek}
                   onNextWeek={goToNextWeek}
                   onCurrentWeek={goToCurrentWeek}
                   schoolReopenDate={schoolConfig.schoolReopenDate}
+                  loading={summaryLoading || heavyLoading}
                 />
               )}
             </div>

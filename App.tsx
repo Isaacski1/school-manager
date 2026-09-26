@@ -29,6 +29,7 @@ const ManageBackups = lazy(() => import("./pages/admin/ManageBackups"));
 const Timetable = lazy(() => import("./pages/admin/Timetable"));
 const Billing = lazy(() => import("./pages/admin/Billing"));
 const FeesPayments = lazy(() => import("./pages/admin/FeesPayments"));
+const DailyFeesCollection = lazy(() => import("./pages/admin/DailyFeesCollection"));
 // Temporarily hidden until payroll feature is ready
 // const StaffPayroll = lazy(() => import("./pages/admin/StaffPayroll"));
 const ActivityMonitor = lazy(() => import("./pages/admin/ActivityMonitor"));
@@ -712,7 +713,18 @@ const AppRoutes = ({
           </ProtectedRoute>
         }
       />
-      {/* Temporarily hidden until payroll feature is ready */}
+      <Route
+         path="/admin/daily-fees-collection"
+         element={
+           <ProtectedRoute
+             allowedRoles={[UserRole.SCHOOL_ADMIN]}
+             requiredFeature="fees_payments"
+           >
+             <DailyFeesCollection />
+           </ProtectedRoute>
+         }
+       />
+       {/* Temporarily hidden until payroll feature is ready */}
       {/* <Route
         path="/admin/payroll"
         element={

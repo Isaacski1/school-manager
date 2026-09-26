@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
@@ -9,21 +9,29 @@ import {
 import { TeacherAttendanceRecord } from "../../types";
 import { logActivity } from "../../services/activityLog";
 import { getFriendlyErrorMessage } from "../../services/errorMessages";
+import { showToast } from "../../services/toast";
 import {
   Calendar,
   CheckCircle,
   XCircle,
   AlertTriangle,
   Clock,
+  ChevronLeft,
+  ChevronRight,
+  History,
+  Loader2,
 } from "lucide-react";
 
-/* =======================
-   ✅ FIX: MOVE THIS TO TOP
-======================= */
 const parseLocalDate = (dateString: string): Date => {
   return parseSchoolDate(dateString) || new Date(dateString);
 };
-/* ======================= */
+
+type WeekInfo = {
+  start: Date;
+  end: Date;
+  dates: string[];
+  label: string;
+};
 
 const TeacherAttendance = () => {
   const { user, authLoading } = useAuth();
@@ -44,9 +52,19 @@ const TeacherAttendance = () => {
   const [holidayOpen, setHolidayOpen] = useState<Record<string, boolean>>({});
   const [actionMessage, setActionMessage] = useState<string>("");
 
-  /* =======================
-     Dates
-  ======================= */
+  // Week navigation state
+  const [activeWeekStart, setActiveWeekStart] = useState<Date>(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const day = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    return monday;
+  });
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyWeeks, setHistoryWeeks] = useState<WeekInfo[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   const toYYYYMMDD = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -63,20 +81,83 @@ const TeacherAttendance = () => {
   const todayDate = useMemo(() => getLocalTodayDate(), []);
   const todayString = useMemo(() => toYYYYMMDD(todayDate), [todayDate]);
 
-  const weekDates = useMemo(() => {
-    const fallbackStartDate = new Date(todayDate);
-    fallbackStartDate.setDate(fallbackStartDate.getDate() - 10);
-    fallbackStartDate.setHours(0, 0, 0, 0);
+  const getWeekRange = (monday: Date): { start: Date; end: Date } => {
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return { start: monday, end: friday };
+  };
 
-    return getExpectedSchoolDayKeys({
-      reopenDate: schoolConfig?.schoolReopenDate,
-      endDate: todayDate,
-      holidayDates: schoolConfig?.holidayDates || [],
-      vacationDate: schoolConfig?.vacationDate,
-      nextTermBegins: schoolConfig?.nextTermBegins,
-      fallbackStartDate,
-    }).sort();
-  }, [todayDate, schoolConfig]);
+  const getWeekDates = useCallback(
+    (monday: Date): string[] => {
+      const { end } = getWeekRange(monday);
+      const allDates = getExpectedSchoolDayKeys({
+        reopenDate: schoolConfig?.schoolReopenDate,
+        endDate: end,
+        holidayDates: schoolConfig?.holidayDates || [],
+        vacationDate: schoolConfig?.vacationDate,
+        nextTermBegins: schoolConfig?.nextTermBegins,
+        fallbackStartDate: monday,
+      });
+
+      return allDates
+        .filter((date) => {
+          const d = parseLocalDate(date);
+          const isHoliday = (schoolConfig?.holidayDates || []).some(
+            (h: any) => h.date === date,
+          );
+          if (isHoliday) return false;
+          if (d < monday || d > end) return false;
+          return true;
+        })
+        .sort();
+    },
+    [schoolConfig],
+  );
+
+  const activeWeekDates = useMemo(
+    () => getWeekDates(activeWeekStart),
+    [activeWeekStart, getWeekDates],
+  );
+
+  const isCurrentWeek = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const currentMonday = new Date(today);
+    const day = today.getDay();
+    currentMonday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    return activeWeekStart.getTime() === currentMonday.getTime();
+  }, [activeWeekStart]);
+
+  const lastKnownWeekStartRef = React.useRef<Date>((() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const monday = new Date(today);
+    const day = today.getDay();
+    monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    return monday;
+  })());
+
+  useEffect(() => {
+    const checkWeekChange = () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const currentMonday = new Date(today);
+      const day = today.getDay();
+      currentMonday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+
+      if (lastKnownWeekStartRef.current.getTime() !== currentMonday.getTime()) {
+        lastKnownWeekStartRef.current = currentMonday;
+        if (!showHistory) {
+          setActiveWeekStart(currentMonday);
+        }
+      }
+    };
+
+    checkWeekChange();
+
+    const interval = setInterval(checkWeekChange, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [showHistory]);
 
   const getPreviousSchoolDay = (date: Date) => {
     const d = new Date(date);
@@ -114,13 +195,11 @@ const TeacherAttendance = () => {
     const nextTermDateObj = nextTerm ? parseLocalDate(nextTerm) : null;
     const isHoliday = (holidayDates || []).some((h) => h.date === dateString);
 
-    // If next term has begun but reopen date is missing, block attendance
     if (nextTermDateObj && checkDate >= nextTermDateObj) {
       return !hasNextTermBegunWithoutReopen;
     }
 
     if (isHoliday) return false;
-
     if (reopenDateObj && checkDate < reopenDateObj) return false;
     if (vacationDateObj && checkDate > vacationDateObj) return false;
 
@@ -129,7 +208,7 @@ const TeacherAttendance = () => {
 
   /* =======================
      Effects
-  ======================= */
+   ======================= */
   useEffect(() => {
     const fetchConfig = async () => {
       if (!schoolId) {
@@ -143,17 +222,14 @@ const TeacherAttendance = () => {
   }, [schoolId]);
 
   useEffect(() => {
-    if (authLoading) {
-      return;
-    }
-
+    if (authLoading) return;
     if (!user?.id || !schoolId) {
       setAttendanceRecords({});
       setLoading(false);
       return;
     }
 
-    if (weekDates.length === 0) {
+    if (activeWeekDates.length === 0) {
       setAttendanceRecords({});
       setLoading(false);
       return;
@@ -164,7 +240,7 @@ const TeacherAttendance = () => {
     const fetchAttendance = async () => {
       try {
         setLoading(true);
-        const validDates = weekDates.filter((date) =>
+        const validDates = activeWeekDates.filter((date) =>
           isValidAttendanceDate(
             date,
             schoolConfig?.schoolReopenDate,
@@ -214,7 +290,7 @@ const TeacherAttendance = () => {
     return () => {
       isMounted = false;
     };
-  }, [authLoading, user?.id, schoolId, weekDates, schoolConfig]);
+  }, [authLoading, user?.id, schoolId, activeWeekDates, schoolConfig]);
 
   useEffect(() => {
     if (authLoading || !user?.id || !schoolId || !schoolConfig) return;
@@ -258,8 +334,78 @@ const TeacherAttendance = () => {
   ]);
 
   /* =======================
+     History Loading
+   ======================= */
+  const loadHistoryWeeks = useCallback(async () => {
+    if (!schoolId || !user?.id || !schoolConfig || showHistory) return;
+
+    setLoadingHistory(true);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const currentMonday = new Date(today);
+      const day = today.getDay();
+      currentMonday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+
+      const weeks: WeekInfo[] = [];
+      // Load up to 8 previous weeks
+      for (let i = 1; i <= 8; i++) {
+        const weekStart = new Date(currentMonday);
+        weekStart.setDate(weekStart.getDate() - i * 7);
+        weekStart.setHours(0, 0, 0, 0);
+
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 4);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const dates = getExpectedSchoolDayKeys({
+          reopenDate: schoolConfig.schoolReopenDate,
+          endDate: weekEnd,
+          holidayDates: schoolConfig.holidayDates || [],
+          vacationDate: schoolConfig.vacationDate,
+          nextTermBegins: schoolConfig.nextTermBegins,
+          fallbackStartDate: weekStart,
+        });
+
+        const validDates = dates
+          .filter((date) => {
+            const d = parseLocalDate(date);
+            const isHoliday = (schoolConfig.holidayDates || []).some(
+              (h: any) => h.date === date,
+            );
+            if (isHoliday) return false;
+            if (d < weekStart || d > weekEnd) return false;
+            return true;
+          })
+          .sort();
+
+        if (validDates.length > 0) {
+          const startStr = toYYYYMMDD(weekStart);
+          const endStr = toYYYYMMDD(weekEnd);
+          weeks.push({
+            start: weekStart,
+            end: weekEnd,
+            dates: validDates,
+            label: `${weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${weekEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`,
+          });
+        }
+      }
+
+      setHistoryWeeks(weeks);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [schoolId, user?.id, schoolConfig, showHistory]);
+
+  useEffect(() => {
+    if (showHistory) {
+      loadHistoryWeeks();
+    }
+  }, [showHistory, loadHistoryWeeks]);
+
+  /* =======================
      Actions
-  ======================= */
+   ======================= */
   const handleMarkAttendance = async (
     date: string,
     status: "present" | "absent",
@@ -418,7 +564,6 @@ const TeacherAttendance = () => {
       ? parseLocalDate(schoolConfig.nextTermBegins)
       : null;
 
-    // If next term has begun but reopen date is missing, block session
     if (nextTermDateObj && checkDate >= nextTermDateObj) {
       return !hasNextTermBegunWithoutReopen;
     }
@@ -439,12 +584,61 @@ const TeacherAttendance = () => {
     });
   };
 
+  const formatWeekLabel = (monday: Date) => {
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return `${monday.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${friday.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  };
+
+  const isReopenWeek = useMemo(() => {
+    if (!schoolConfig?.schoolReopenDate) return false;
+    const reopen = parseLocalDate(schoolConfig.schoolReopenDate);
+    const monday = new Date(activeWeekStart);
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return reopen >= monday && reopen <= friday;
+  }, [activeWeekStart, schoolConfig?.schoolReopenDate]);
+
+  const goToPreviousWeek = () => {
+    const newMonday = new Date(activeWeekStart);
+    newMonday.setDate(newMonday.getDate() - 7);
+    const newFriday = new Date(newMonday);
+    newFriday.setDate(newMonday.getDate() + 4);
+    if (
+      schoolConfig?.schoolReopenDate &&
+      newFriday < parseLocalDate(schoolConfig.schoolReopenDate)
+    ) {
+      showToast("Cannot view weeks before school re-opens", {
+        type: "warning",
+      });
+      return;
+    }
+    setActiveWeekStart(newMonday);
+  };
+
+  const goToNextWeek = () => {
+    if (isCurrentWeek) return;
+    const newMonday = new Date(activeWeekStart);
+    newMonday.setDate(newMonday.getDate() + 7);
+    setActiveWeekStart(newMonday);
+  };
+
+  const goToCurrentWeek = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const currentMonday = new Date(today);
+    const day = today.getDay();
+    currentMonday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    setActiveWeekStart(currentMonday);
+  };
+
   /* =======================
      UI
-  ======================= */
+   ======================= */
   return (
     <Layout title="Daily Attendance">
       <div className="max-w-5xl mx-auto space-y-6">
+        {/* Header */}
         <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
           <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
           <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
@@ -487,6 +681,7 @@ const TeacherAttendance = () => {
           </div>
         </div>
 
+        {/* Missed Attendance Alert */}
         {missedAttendanceAlert && (
           <div className="relative overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm">
             <div className="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-amber-200/60 blur-2xl" />
@@ -529,12 +724,14 @@ const TeacherAttendance = () => {
           </div>
         )}
 
+        {/* Action Messages */}
         {actionMessage && (
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 text-sm text-emerald-800 shadow-sm">
             {actionMessage}
           </div>
         )}
 
+        {/* School Status Messages */}
         {!isSchoolOpen() && (
           <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-rose-800 shadow-sm">
             <div className="flex items-center gap-2 font-semibold">
@@ -554,14 +751,56 @@ const TeacherAttendance = () => {
             </div>
           )}
 
+        {/* Week Navigator */}
+        <div className="rounded-2xl border bg-white/80 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <button
+              onClick={goToPreviousWeek}
+              disabled={showHistory && historyWeeks.length === 0 || isReopenWeek}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed md:w-auto"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              {isReopenWeek ? "You've reached re-opening week" : "Previous Week"}
+            </button>
+
+            <div className="text-center">
+              <h3 className="text-base font-bold text-slate-800 md:text-lg">
+                {formatWeekLabel(activeWeekStart)}
+              </h3>
+            </div>
+
+            <button
+              onClick={goToNextWeek}
+              disabled={isCurrentWeek}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed md:w-auto"
+            >
+              Next Week
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!isCurrentWeek && (
+            <div className="mt-3 text-center">
+              <button
+                onClick={goToCurrentWeek}
+                className="text-xs text-indigo-700 hover:text-indigo-800 font-semibold bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-md hover:bg-indigo-100 transition-colors"
+              >
+                Return to Current Week
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Active Week Attendance */}
         <div className="rounded-2xl border bg-white/80 p-2 shadow-sm">
           {loading ? (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="p-8 text-center text-sm text-slate-500 flex items-center justify-center gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" />
               Loading attendance...
             </div>
           ) : (
             <div className="grid gap-3 p-2">
-              {weekDates.map((date) => {
+              {activeWeekDates.map((date) => {
                 const record = attendanceRecords[date];
                 const isFuture = date > todayString;
                 const isValid = isValidAttendanceDate(
@@ -578,16 +817,26 @@ const TeacherAttendance = () => {
                 const isHoliday = !!record?.isHoliday;
                 const holidayReason =
                   record?.holidayReason || configHoliday?.reason || "";
+                const isToday = date === todayString;
 
                 return (
                   <div
                     key={date}
-                    className="group flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
+                    className={`group flex flex-col gap-4 rounded-2xl border p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md ${
+                      isToday
+                        ? "border-indigo-200 bg-indigo-50/30"
+                        : "border-slate-200 bg-white"
+                    }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-900">
                           {formatDate(date)}
+                          {isToday && (
+                            <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full">
+                              TODAY
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-slate-500">{date}</p>
                       </div>
@@ -679,6 +928,7 @@ const TeacherAttendance = () => {
                                 onClick={() =>
                                   handleMarkAttendance(date, "present")
                                 }
+                                disabled={saving[date]}
                                 className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:scale-[1.02] hover:bg-emerald-100"
                               >
                                 <CheckCircle className="h-4 w-4" />
@@ -688,6 +938,7 @@ const TeacherAttendance = () => {
                                 onClick={() =>
                                   handleMarkAttendance(date, "absent")
                                 }
+                                disabled={saving[date]}
                                 className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:scale-[1.02] hover:bg-rose-100"
                               >
                                 <XCircle className="h-4 w-4" />
@@ -725,7 +976,9 @@ const TeacherAttendance = () => {
                           <input
                             type="text"
                             value={
-                              holidayDrafts[date] ?? record?.holidayReason ?? ""
+                              holidayDrafts[date] ??
+                              record?.holidayReason ??
+                              ""
                             }
                             onChange={(e) =>
                               setHolidayDrafts((prev) => ({
@@ -748,6 +1001,109 @@ const TeacherAttendance = () => {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        {/* History Module */}
+        <div className="rounded-2xl border bg-white/80 shadow-sm">
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="rounded-full bg-slate-100 p-2">
+                <History className="h-5 w-5 text-slate-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800">
+                  Attendance History
+                </h3>
+                <p className="text-xs text-slate-500">
+                  View and manage your past attendance records
+                </p>
+              </div>
+            </div>
+            <ChevronRight
+              className={`h-5 w-5 text-slate-400 transition-transform ${
+                showHistory ? "rotate-90" : ""
+              }`}
+            />
+          </button>
+
+          {showHistory && (
+            <div className="border-t border-slate-100 p-4">
+              {loadingHistory ? (
+                <div className="p-8 text-center text-sm text-slate-500 flex items-center justify-center gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Loading history...
+                </div>
+              ) : historyWeeks.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No previous attendance records found.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {historyWeeks.map((week) => (
+                    <div
+                      key={week.label}
+                      className="rounded-xl border border-slate-200 bg-slate-50/50 p-4"
+                    >
+                      <h4 className="text-sm font-semibold text-slate-700 mb-3">
+                        {week.label}
+                      </h4>
+                      <div className="grid gap-2">
+                        {week.dates.map((date) => {
+                          const record = attendanceRecords[date];
+                          const configHoliday = (
+                            schoolConfig?.holidayDates || []
+                          ).find((h: any) => h.date === date);
+                          const isConfigHoliday = Boolean(configHoliday);
+
+                          return (
+                            <div
+                              key={date}
+                              className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3"
+                            >
+                              <div>
+                                <p className="text-sm font-medium text-slate-800">
+                                  {formatDate(date)}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {isConfigHoliday
+                                    ? "Holiday"
+                                    : record
+                                      ? record.status === "present"
+                                        ? "Present"
+                                        : "Absent"
+                                      : "Not marked"}
+                                </p>
+                              </div>
+                              {record && (
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${
+                                    record.approvalStatus === "pending"
+                                      ? "bg-amber-50 text-amber-700"
+                                      : record.status === "present"
+                                        ? "bg-emerald-50 text-emerald-700"
+                                        : "bg-rose-50 text-rose-700"
+                                  }`}
+                                >
+                                  {record.approvalStatus === "pending"
+                                    ? "PENDING"
+                                    : record.status === "present"
+                                      ? "PRESENT"
+                                      : "ABSENT"}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

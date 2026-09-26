@@ -8,6 +8,8 @@ interface AttendanceChartProps {
   onNextWeek: () => void;
   onCurrentWeek: () => void;
   schoolReopenDate?: string;
+  loading?: boolean;
+  skeletonCount?: number;
 }
 
 const abbreviateClassName = (name: string): string => {
@@ -61,6 +63,8 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
   onNextWeek,
   onCurrentWeek,
   schoolReopenDate,
+  loading = false,
+  skeletonCount = 8,
 }) => {
   // Return placeholder if week hasn't loaded yet
   if (week === null) {
@@ -112,6 +116,17 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
     }).format(date);
   };
 
+  const showSkeleton = loading;
+  const isEmpty = !loading && data.length === 0;
+  const chartData = showSkeleton
+    ? Array.from({ length: skeletonCount }, (_, idx) => ({
+        id: `skeleton-${idx}`,
+        className: "",
+        shortName: "",
+        percentage: 0,
+      }))
+    : data;
+
   return (
     <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 h-full flex flex-col overflow-hidden">
       {/* Header with Week Navigation */}
@@ -119,7 +134,11 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
         <div>
           <h3 className="font-bold text-slate-800 text-lg">Class Attendance</h3>
           <p className="text-xs text-slate-500">
-            Weekly participation overview
+            {showSkeleton
+              ? "Loading attendance layout..."
+              : isEmpty
+                ? "No attendance data available for this period."
+                : "Weekly participation overview"}
           </p>
         </div>
         {schoolStatus && (
@@ -150,7 +169,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               <p className="text-xs text-slate-500 font-medium">
                 {monday.getFullYear()}
               </p>
-              {isCurrentWeek && (
+              {isCurrentWeek && !showSkeleton && (
                 <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full mt-1 uppercase tracking-wide">
                   Current Week
                 </span>
@@ -170,7 +189,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
           </button>
         </div>
 
-        {!isCurrentWeek && (
+        {!isCurrentWeek && !showSkeleton && (
           <div className="mt-3 text-center">
             <button
               onClick={onCurrentWeek}
@@ -194,6 +213,14 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
 
       {/* Attendance Chart Container */}
       <div className="flex-1 flex flex-col min-h-0 w-full mt-4 px-4 pb-4">
+        {isEmpty ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm font-semibold text-slate-600">No attendance data available</p>
+              <p className="text-xs text-slate-500 mt-1">Attendance records will appear here once classes are marked.</p>
+            </div>
+          </div>
+        ) : (
         <div className="flex-1 relative w-full min-h-[280px]">
           {/* Y-Axis Grid Lines (Background) */}
           <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
@@ -211,39 +238,48 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
           <div className="absolute inset-0 left-10 overflow-x-scroll">
             <div className="flex flex-col items-center h-full min-w-max">
               <div className="flex items-end justify-center gap-3 sm:gap-6 md:gap-10 flex-1">
-                {data.map((item) => {
+                {chartData.map((item) => {
+                  const isSkeleton = showSkeleton;
                   // Colors and gradients based on percentage
                   let barGradient = "from-amber-400 to-amber-600";
-                  if (item.percentage < 50) barGradient = "from-rose-400 to-rose-600";
-                  else if (item.percentage >= 80) barGradient = "from-emerald-400 to-emerald-600";
+                  if (!isSkeleton) {
+                    if (item.percentage < 50) barGradient = "from-rose-400 to-rose-600";
+                    else if (item.percentage >= 80) barGradient = "from-emerald-400 to-emerald-600";
+                  }
 
                   return (
                       <div
                         key={item.id}
                         className="group relative flex flex-col items-center flex-shrink-0 h-full"
                         style={{ 
-                          width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
+                          width: chartData.length > 10 ? "30px" : chartData.length > 5 ? "45px" : "60px",
                           maxWidth: "80px"
                         }}
                       >
                       {/* Tooltip */}
-                      <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-2xl scale-75 group-hover:scale-100">
-                        <div className="flex flex-col items-center">
-                          <span>{item.className}</span>
-                          <span className="text-emerald-400">{item.percentage}%</span>
+                      {!isSkeleton && (
+                        <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-2xl scale-75 group-hover:scale-100">
+                          <div className="flex flex-col items-center">
+                            <span>{item.className}</span>
+                            <span className="text-emerald-400">{item.percentage}%</span>
+                          </div>
+                          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
                         </div>
-                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
-                      </div>
+                      )}
 
                       {/* The Bar Track (Skeleton) - Fixed height container */}
                       <div className="w-full flex-1 bg-slate-50/50 rounded-t-xl relative overflow-hidden border border-slate-100/30 group-hover:bg-slate-100/50 transition-colors">
                         {/* The Actual Colored Bar - Uses percentage height */}
-                        <div
-                          className={`absolute bottom-0 w-full bg-gradient-to-t ${barGradient} rounded-t-lg transition-all duration-1000 ease-out shadow-sm group-hover:brightness-110`}
-                          style={{ height: `${item.percentage}%` }}
-                        >
-                          <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        </div>
+                        {isSkeleton ? (
+                          <div className="absolute bottom-0 w-full bg-slate-200 rounded-t-lg animate-pulse" style={{ height: "40%" }} />
+                        ) : (
+                          <div
+                            className={`absolute bottom-0 w-full bg-gradient-to-t ${barGradient} rounded-t-lg transition-all duration-1000 ease-out shadow-sm group-hover:brightness-110`}
+                            style={{ height: `${item.percentage}%` }}
+                          >
+                            <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -252,50 +288,47 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               
               {/* Class Labels Below Bars */}
                <div className="flex items-center justify-center gap-3 sm:gap-6 md:gap-10 mt-2">
-                 {data.map((item) => (
-                      <div
-                        key={item.id}
-                        className="group relative flex flex-col items-center flex-shrink-0 h-full"
-                        style={{ 
-                          width: data.length > 10 ? "30px" : data.length > 5 ? "45px" : "60px",
-                          maxWidth: "80px"
-                        }}
-                      >
-                      <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block text-center">
-                        {abbreviateClassName(item.shortName || item.className)}
-                      </span>
-                    </div>
-                 ))}
-               </div>
+                  {chartData.map((item) => (
+                       <div
+                         key={item.id}
+                         className="group relative flex flex-col items-center flex-shrink-0 h-full"
+                         style={{ 
+                           width: chartData.length > 10 ? "30px" : chartData.length > 5 ? "45px" : "60px",
+                           maxWidth: "80px"
+                         }}
+                       >
+                       {showSkeleton ? (
+                         <div className="h-3 w-3/4 bg-slate-200 rounded animate-pulse" />
+                       ) : (
+                         <span className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap block text-center">
+                           {abbreviateClassName(item.shortName || item.className)}
+                         </span>
+                       )}
+                     </div>
+                  ))}
+                </div>
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
 };
 
+export default AttendanceChart;
+
 // Helper functions (copied from AdminDashboard)
 const getWeekRange = (date: Date) => {
   const d = new Date(date);
   const day = d.getDay();
-  // Calculate Monday (1st day of week): if Sunday (0), go back 6 days; otherwise go back (day-1) days
   const monday = new Date(d);
   monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-
-  // For school schedule use weekdays only: calculate Friday (5th day)
   const friday = new Date(monday);
   friday.setDate(monday.getDate() + 4);
-
   return { monday, friday };
 };
 
 const getEffectiveCurrentWeekStart = () => {
-  // If school re-open date is set and is in the future, use it as reference
-  // Note: This function assumes schoolReopenDate is passed as prop, but it's not used here.
-  // In original, it used schoolConfig.schoolReopenDate, but since not passed, simplified.
-  // Actually, in original, it calls getWeekRange(new Date())
   return getWeekRange(new Date()).monday;
 };
-
-export default AttendanceChart;

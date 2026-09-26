@@ -950,7 +950,10 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               {hasFeature("fees_payments") && (
                 <NavItem href="/admin/fees" icon={<CreditCard size={18} />} label="Fees & Payments" />
               )}
-              {/* Temporarily hidden until payroll feature is ready */}
+              {hasFeature("fees_payments") && (
+                 <NavItem href="/admin/daily-fees-collection" icon={<CalendarDays size={18} />} label="Daily Fees Collection" />
+               )}
+               {/* Temporarily hidden until payroll feature is ready */}
               {/* {hasFeature("staff_payroll") && (
                 <NavItem href="/admin/payroll" icon={<HandCoins size={18} />} label="Staff Payroll" />
               )} */}
