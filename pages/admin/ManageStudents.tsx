@@ -7,12 +7,15 @@ import { useSchool } from "../../context/SchoolContext";
 import { useAuth } from "../../context/AuthContext";
 import { logActivity } from "../../services/activityLog";
 import { Student } from "../../types";
+import { AdmissionCustomization } from "../../types";
 import {
   CLASS_PROMOTION_MAP,
   calculateGrade,
   getGradeColor,
 } from "../../constants";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
+import { DEFAULT_ADMISSION_CUSTOMIZATION, resolveAdmissionCustomization } from "../../services/admissionCustomization";
+import AdmissionForm from "../../components/admission/AdmissionForm";
 
 import {
   Plus,
@@ -151,6 +154,11 @@ const ManageStudents = () => {
     guardianAddress: "",
     guardianWhatsApp: "",
   });
+  const [admissionCustomization, setAdmissionCustomization] =
+    useState<AdmissionCustomization>(() =>
+      resolveAdmissionCustomization(DEFAULT_ADMISSION_CUSTOMIZATION),
+    );
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
 
   // Performance Data (Shared for both View Modal and Edit Modal)
   const [viewStudent, setViewStudent] = useState<Student | null>(null);
@@ -267,6 +275,70 @@ const ManageStudents = () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
     XLSX.writeFile(workbook, "student-import-template.xlsx");
+  };
+
+  const exportAllStudents = async () => {
+    if (!schoolId) return;
+    setStudentsLoading(true);
+    try {
+      const allStudents = await db.getStudents(schoolId);
+      if (!allStudents.length) {
+        showToast("No student records found to export.", { type: "warning" });
+        return;
+      }
+
+      const classLookup = new Map<string, string>();
+      allClasses.forEach((classRoom) => {
+        classLookup.set(classRoom.id, classRoom.name);
+      });
+
+      const sortedStudents = [...allStudents].sort((a, b) => {
+        const classA = classLookup.get(a.classId) || a.classId;
+        const classB = classLookup.get(b.classId) || b.classId;
+        const classCompare = classA.localeCompare(classB);
+        if (classCompare !== 0) return classCompare;
+        return a.name.localeCompare(b.name);
+      });
+
+      const rows = sortedStudents.map((student) => ({
+        "Student Name": student.name,
+        Gender: student.gender,
+        "Date of Birth": student.dob,
+        Class: classLookup.get(student.classId) || student.classId,
+        "Home Town": student.homeTown || "",
+        Region: student.region || "",
+        "Residential Address": student.residentialAddress || "",
+        "Digital Address": student.digitalAddress || "",
+        "Guardian Name": student.guardianName || "",
+        "Guardian Phone": student.guardianPhone || "",
+        "Guardian Email": student.guardianEmail || "",
+        "Father Name": student.fatherName || "",
+        "Father Phone": student.fatherPhone || "",
+        "Father Occupation": student.fatherOccupation || "",
+        "Mother Name": student.motherName || "",
+        "Mother Phone": student.motherPhone || "",
+        "Mother Occupation": student.motherOccupation || "",
+        "Previous School": student.previousSchool || "",
+        "Reason for Leaving": student.reasonForLeaving || "",
+        "Date of Last Attendance": student.dateOfLastAttendance || "",
+        "Chronic Disease": student.chronicDisease || "",
+        "Languages Spoken": student.languagesSpoken || "",
+        ...(student.customFields || {}),
+      }));
+
+      const XLSX = await import("xlsx");
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet["!cols"] = Object.keys(rows[0]).map(() => ({ wch: 22 }));
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
+      XLSX.writeFile(workbook, `students-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      showToast(`Exported ${rows.length} student records.`, { type: "success" });
+    } catch (error) {
+      console.error("Failed to export students", error);
+      showToast("Could not export students. Try again.", { type: "error" });
+    } finally {
+      setStudentsLoading(false);
+    }
   };
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -717,9 +789,23 @@ const ManageStudents = () => {
       guardianAddress: "",
       guardianWhatsApp: "",
     });
+    setCustomFieldValues({});
     setEditingId(null);
     setPerformanceData(null);
   };
+
+  useEffect(() => {
+    if (!schoolId) return;
+    const loadAdmissionCustomization = async () => {
+      try {
+        const customization = await db.getAdmissionCustomization(schoolId);
+        setAdmissionCustomization(customization);
+      } catch (error) {
+        console.warn("Failed to load admission customization", error);
+      }
+    };
+    loadAdmissionCustomization();
+  }, [schoolId]);
 
   const togglePromote = (id: string) => {
     setSelectedPromoteIds((prev) =>
@@ -950,6 +1036,7 @@ const updates = classStudents
           motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
           guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
+          customFields: Object.keys(customFieldValues).length ? customFieldValues : undefined,
         };
         await db.updateStudent(updatedStudent);
         showToast("Student updated successfully.", { type: "success" });
@@ -987,6 +1074,7 @@ const updates = classStudents
           motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
           guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
+          customFields: Object.keys(customFieldValues).length ? customFieldValues : undefined,
           createdAt: Date.now(),
         };
         await db.addStudent(newStudent);
@@ -1244,11 +1332,12 @@ const updates = classStudents
               )}
               <button
                 type="button"
-                onClick={downloadImportTemplate}
-                className="flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white text-slate-700 px-4 py-2 text-sm font-semibold shadow-sm transition hover:bg-slate-50"
+                onClick={exportAllStudents}
+                disabled={studentsLoading || students.length === 0}
+                className="flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white text-slate-700 px-4 py-2 text-sm font-semibold shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download size={16} />
-                Template
+                Export All Students
               </button>
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 px-5 py-2 text-sm font-semibold shadow-sm transition hover:bg-indigo-100">
                 <Upload size={16} />
@@ -2137,47 +2226,47 @@ const updates = classStudents
                         onChange={(e) => setFormData({ ...formData, guardianAddress: e.target.value })}
                       />
                     </div>
-                  </div>
-                </div>
-              </div>
+                   </div>
+                 </div>
+               </div>
 
-              <div className="flex justify-end gap-3 mt-10 pt-6 border-t border-slate-100 sticky bottom-0 bg-white pb-2">
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  className="px-6 py-3 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className={`px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95 ${isSaving ? "opacity-60 cursor-not-allowed hover:bg-emerald-600" : "hover:bg-emerald-700 hover:-translate-y-0.5"}`}
-                >
-                  {isSaving ? (
-                    <span className="flex items-center">
-                      <svg
-                        className="animate-spin h-5 w-5 mr-3 text-white"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                      </svg>
-                      {editingId ? "Updating..." : "Admitting Student..."}
-                    </span>
-                  ) : editingId ? (
-                    "Save Changes"
-                  ) : (
-                    "Complete Admission"
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+               <div className="flex justify-end gap-3 mt-10 pt-6 border-t border-slate-100 sticky bottom-0 bg-white pb-2">
+                 <button
+                   type="button"
+                   onClick={handleClose}
+                   className="px-6 py-3 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors"
+                 >
+                   Cancel
+                 </button>
+                 <button
+                   type="submit"
+                   disabled={isSaving}
+                   className={`px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95 ${isSaving ? "opacity-60 cursor-not-allowed hover:bg-emerald-600" : "hover:bg-emerald-700 hover:-translate-y-0.5"}`}
+                 >
+                   {isSaving ? (
+                     <span className="flex items-center">
+                       <svg
+                         className="animate-spin h-5 w-5 mr-3 text-white"
+                         xmlns="http://www.w3.org/2000/svg"
+                         fill="none"
+                         viewBox="0 0 24 24"
+                       >
+                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                       </svg>
+                       {editingId ? "Updating..." : "Admitting Student..."}
+                     </span>
+                   ) : editingId ? (
+                     "Save Changes"
+                   ) : (
+                     "Complete Admission"
+                   )}
+                 </button>
+               </div>
+             </form>
+           </div>
+         </div>
+       )}
 
       {isGeneratingDemo && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">

@@ -50,6 +50,7 @@ import {
   BackupType,
   RecoveryCollectionName,
   RecoveryCollectionScope,
+  AdmissionCustomization,
 } from "../types";
 import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
 import { logActivity } from "./activityLog";
@@ -57,6 +58,7 @@ import {
   collectHolidayDateKeys,
   getExpectedSchoolDayKeys,
 } from "./schoolCalendar";
+import { resolveAdmissionCustomization } from "./admissionCustomization";
 import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
@@ -1130,12 +1132,8 @@ private async createSnapshotRecord(params: {
   async updateSchoolConfig(config: SchoolConfig): Promise<void> {
     const { schoolId, ...data } = config;
     await this.requireFeature(schoolId, "academic_year");
-    // Update private settings
     await setDoc(doc(firestore, "settings", schoolId), config);
     
-    // Also sync branding to the public school profile used by dashboards and Super Admin.
-    // This client-side mirror can be blocked by rules for school admins; logo uploads
-    // also call the backend branding endpoint with Admin SDK privileges.
     if (data.logoUrl || data.schoolName || data.notificationSettings) {
       setDoc(doc(firestore, "schools", schoolId), {
         ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
@@ -1146,6 +1144,23 @@ private async createSnapshotRecord(params: {
         console.warn("Failed to sync profile to schools collection from client", err);
       });
     }
+  }
+
+  async getAdmissionCustomization(schoolId?: string): Promise<AdmissionCustomization> {
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAdmissionCustomization");
+    const config = await this.getSchoolConfig(scopedSchoolId);
+    return resolveAdmissionCustomization(config.admissionCustomization);
+  }
+
+  async saveAdmissionCustomization(schoolId: string, customization: AdmissionCustomization): Promise<void> {
+    const config = await this.getSchoolConfig(schoolId);
+    await this.updateSchoolConfig({
+      ...config,
+      admissionCustomization: {
+        ...customization,
+        updatedAt: Date.now(),
+      },
+    });
   }
 
   async saveFinanceSettings(settings: FinanceSettings): Promise<void> {

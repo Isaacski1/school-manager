@@ -709,23 +709,35 @@ const ReportCardLayout: React.FC<ReportCardLayoutProps> = ({ data }) => {
         )}
 
         {/* Signatures */}
-        <div className="flex justify-between items-end pt-3 mt-auto border-t border-slate-300">
-          <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
-              {settings.classTeacherSignatureLabel}
-            </p>
+        {(settings.showClassTeacherSignature ||
+          settings.showHeadTeacherSignature ||
+          settings.showStampLabel) && (
+          <div className="flex justify-between items-end pt-3 mt-auto border-t border-slate-300">
+            {settings.showClassTeacherSignature && (
+              <div className="text-center">
+                <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
+                  {settings.classTeacherSignatureLabel}
+                </p>
+              </div>
+            )}
+            {settings.showStampLabel ? (
+              <div className="text-center">
+                <div className="w-12 h-12 border border-dashed border-slate-300 flex items-center justify-center">
+                  <p className="text-slate-400 text-[10px]">{settings.stampLabel}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="w-12" />
+            )}
+            {settings.showHeadTeacherSignature && (
+              <div className="text-center">
+                <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
+                  {settings.headTeacherSignatureLabel}
+                </p>
+              </div>
+            )}
           </div>
-          <div className="text-center">
-            <div className="w-12 h-12 border border-dashed border-slate-300 flex items-center justify-center">
-              <p className="text-slate-400 text-[10px]">{settings.stampLabel}</p>
-            </div>
-          </div>
-          <div className="text-center">
-            <p className="border-t border-dotted border-slate-400 w-36 pt-1 text-[10px] font-semibold">
-              {settings.headTeacherSignatureLabel}
-            </p>
-          </div>
-        </div>
+        )}
         </div>
       </div>
       <div className="flex justify-end mt-4">

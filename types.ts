@@ -523,6 +523,7 @@ export interface SchoolConfig {
     enablePaymentAlerts?: boolean;
     enableInvoiceNotifications?: boolean;
   };
+  admissionCustomization?: AdmissionCustomization;
 }
 export type BackupType =
   | "students"
@@ -653,9 +654,62 @@ export interface ReportCardSettings {
   showHeadTeacherRemark: boolean;
   showGradingScale: boolean;
   showPromotionStatus: boolean;
+  showClassTeacherSignature: boolean;
+  showHeadTeacherSignature: boolean;
+  showStampLabel: boolean;
   classTeacherSignatureLabel: string;
   headTeacherSignatureLabel: string;
   stampLabel: string;
+}
+
+export type AdmissionFieldType = "text" | "number" | "date" | "select" | "multiselect" | "checkbox" | "file";
+
+export interface AdmissionFieldValidation {
+  min?: number;
+  max?: number;
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
+}
+
+export interface AdmissionFieldCondition {
+  fieldKey: string;
+  operator: "equals" | "not_equals" | "contains";
+  value: string;
+}
+
+export interface AdmissionCustomField {
+  id: string;
+  key: string;
+  label: string;
+  placeholder?: string;
+  helpText?: string;
+  type: AdmissionFieldType;
+  required: boolean;
+  regionSpecific: boolean;
+  region?: string[];
+  options?: string[];
+  validation?: AdmissionFieldValidation;
+  order: number;
+  section: string;
+  conditionalShow?: AdmissionFieldCondition;
+  defaultValue?: any;
+  active: boolean;
+}
+
+export interface AdmissionCustomSection {
+  id: string;
+  title: string;
+  order: number;
+  collapsible: boolean;
+  visible: boolean;
+}
+
+export interface AdmissionCustomization {
+  preset: "default" | "ghana_basic" | "custom";
+  fields: AdmissionCustomField[];
+  sections: AdmissionCustomSection[];
+  updatedAt?: number;
 }
 
 export interface Student {
@@ -665,6 +719,7 @@ export interface Student {
   gender: "Male" | "Female";
   dob: string;
   classId: string;
+  customFields?: Record<string, any>;
   
   // Student Information (Ghana Standard)
   homeTown?: string;

@@ -48,7 +48,7 @@ const Reminders: React.FC = () => {
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const [classFilter, setClassFilter] = useState("All");
   const [classFilterId, setClassFilterId] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Dynamic Rate state
   const [smsCostPerMessage, setSmsCostPerMessage] = useState(0.05);
@@ -385,23 +385,26 @@ const Reminders: React.FC = () => {
        ? parents
        : classFilter === "No Class"
          ? parents.filter((p) => !p.classId && !p.class)
-         : parents.filter(
-             (p) =>
-               (classFilterId !== null && p.classId === classFilterId) ||
-               normalizeRecipientClassName(p.class) ===
-                 normalizeRecipientClassName(classFilter),
-           );
-         
-  const visibleParents = classFilter === "All" || classFilter === "No Class"
-    ? filteredParents
-    : parents.filter((p) => {
-        const selectedClassId = classFilterId ? String(classFilterId) : null;
-        const parentClassId = p.classId ? String(p.classId) : null;
-        const matchesClassId = selectedClassId !== null && parentClassId === selectedClassId;
-        const matchesClassName = normalizeRecipientClassName(p.class) ===
-          normalizeRecipientClassName(classFilter);
-        return matchesClassId && matchesClassName;
-      });
+         : parents.filter((p) => {
+             if (classFilterId !== null) {
+               return p.classId === classFilterId;
+             }
+             return normalizeRecipientClassName(p.class) === normalizeRecipientClassName(classFilter);
+           });
+  
+  const searchedParents = searchQuery.trim()
+     ? filteredParents.filter((p) => {
+         const q = searchQuery.trim().toLowerCase();
+         return (
+           p.name.toLowerCase().includes(q) ||
+           p.phone.includes(q) ||
+           (p.studentName && p.studentName.toLowerCase().includes(q)) ||
+           (p.class && p.class.toLowerCase().includes(q))
+         );
+       })
+     : filteredParents;
+     
+  const visibleParents = searchedParents;
          
   // Debug logging
   console.log("Debug - classFilter:", classFilter, "classFilterId:", classFilterId, "filteredParents count:", filteredParents.length, "visibleParents count:", visibleParents.length, "total parents:", parents.length);
@@ -508,11 +511,12 @@ const Reminders: React.FC = () => {
       const token = await fb.currentUser?.getIdToken() ?? "";
       
       const API_BASE = API_BASE_URL;
+      const phones = Array.from(selectedPhones);
       
       const res = await fetch(`${API_BASE}/api/admin/reminders/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message: message.trim(), phones: Array.from(selectedPhones) }),
+        body: JSON.stringify({ message: message.trim(), phones }),
       });
 
       const data = await res.json();
@@ -521,7 +525,15 @@ const Reminders: React.FC = () => {
         throw new Error(data.error || "Failed to send SMS reminders");
       }
 
-      showToast(`Successfully sent ${selectedPhones.size} messages!`, { type: "success" });
+      const deliveredCount = data.deliveredCount ?? data.results?.filter((r: any) => r.status === "delivered").length ?? selectedPhones.size;
+      const failedCount = data.failedCount ?? data.results?.filter((r: any) => r.status === "failed").length ?? 0;
+
+      if (failedCount > 0) {
+        showToast(`Sent to ${deliveredCount} of ${selectedPhones.size} recipients. ${failedCount} failed.`, { type: "warning" });
+      } else {
+        showToast(`Successfully sent ${selectedPhones.size} messages!`, { type: "success" });
+      }
+      
       setMessage("");
       setSelectedPhones(new Set());
       
@@ -537,6 +549,44 @@ const Reminders: React.FC = () => {
       showToast(err.message || "Failed to send reminders.", { type: "error" });
     } finally {
       setSending(false);
+    }
+  };
+
+  const [retryingBroadcastId, setRetryingBroadcastId] = useState<string | null>(null);
+
+  const handleRetryBroadcast = async (broadcast: any) => {
+    const recipientPhones = Array.isArray(broadcast?.recipientPhones)
+      ? broadcast.recipientPhones.filter((phone: any) => typeof phone === "string")
+      : [];
+
+    if (recipientPhones.length === 0 || !broadcast?.message) {
+      showToast("No recipients or message available to retry.", { type: "error" });
+      return;
+    }
+
+    setRetryingBroadcastId(broadcast.id);
+    try {
+      const { getAuth } = await import("firebase/auth");
+      const fb = getAuth();
+      const token = await fb.currentUser?.getIdToken() ?? "";
+
+      const res = await fetch(`${API_BASE_URL}/api/admin/reminders/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message: broadcast.message, phones: recipientPhones }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Retry failed");
+      }
+
+      showToast(`Retry sent to ${recipientPhones.length} recipients.`, { type: "success" });
+      loadBroadcastsHistory();
+    } catch (err: any) {
+      showToast(err.message || "Retry failed.", { type: "error" });
+    } finally {
+      setRetryingBroadcastId(null);
     }
   };
 
@@ -661,8 +711,9 @@ const Reminders: React.FC = () => {
                   {TEMPLATES.map((t) => (
                     <button
                       key={t.label}
+                      type="button"
                       onClick={() => setMessage(t.text)}
-                      className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition"
+                      className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition"
                     >
                       {t.label}
                     </button>
@@ -698,6 +749,15 @@ const Reminders: React.FC = () => {
                 </p>
               </div>
 
+              {selectedPhones.size > 0 && (
+                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                  <p className="text-xs font-bold text-indigo-700 mb-1">Selected Recipients</p>
+                  <p className="text-[11px] text-indigo-600 font-semibold">
+                    {selectedPhones.size} recipient{selectedPhones.size !== 1 ? "s" : ""} • Est. cost: GHS {(selectedPhones.size * smsCostPerMessage * (smsParts || 1)).toFixed(2)}
+                  </p>
+                </div>
+              )}
+
               <button
                 onClick={handleSend}
                 disabled={sending || !message.trim() || selectedPhones.size === 0 || walletBalance < totalEstimatedCost}
@@ -710,6 +770,37 @@ const Reminders: React.FC = () => {
                 )}
               </button>
             </div>
+
+            {selectedPhones.size > 0 && message.trim() && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-4 sm:p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 size={16} className="text-emerald-600" />
+                  <h2 className="font-semibold text-slate-800 text-sm sm:text-base">Review Before Sending</h2>
+                </div>
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Message</p>
+                    <p className="text-xs text-slate-700 leading-relaxed line-clamp-3">{message.trim()}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Recipients</p>
+                      <p className="text-sm font-bold text-slate-800">{selectedPhones.size} / {SAFE_BROADCAST_LIMIT}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Est. Cost</p>
+                      <p className="text-sm font-bold text-slate-800">GHS {totalEstimatedCost.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  {classFilter !== "All" && (
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1">Target Class</p>
+                      <p className="text-xs font-bold text-indigo-800">{classFilter}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white rounded-2xl border border-slate-100 p-4 sm:p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
@@ -819,96 +910,75 @@ const Reminders: React.FC = () => {
                     <Users size={16} className="text-slate-500" />
                     <h2 className="font-semibold text-slate-800 text-sm sm:text-base">Select Recipients</h2>
                   </div>
-                  <div className="relative">
-                    <button
-                      onClick={() => setDropdownOpen(!dropdownOpen)}
-                      className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-sm"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Filter size={14} className="text-indigo-500" />
-                        Class: <strong className="text-indigo-700">{classFilter === "All" ? "All Classes" : classFilter}</strong>
-                      </span>
-                      <ChevronDown size={14} className={`text-slate-400 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
-                    </button>
-
-                    {dropdownOpen && (
-                      <>
-                        <div 
-                          className="fixed inset-0 z-10" 
-                          onClick={() => setDropdownOpen(false)}
-                        />
-                        <div className="absolute left-0 right-0 mt-2 z-20 bg-white border border-slate-150 rounded-xl shadow-xl max-h-60 overflow-y-auto custom-scrollbar p-1">
-                          <button
-                            onClick={() => {
-                              selectClassGroup("All School", parents, null);
-                              setDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition ${classFilter === "All" ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
-                          >
-                            All Classes
-                          </button>
-                          {availableClasses.map((cls) => {
-                            const count = getClassParentCount(cls.id, cls.name);
-                            return (
-                              <button
-                                key={cls.id}
-                                onClick={() => {
-                                  const classContacts = parents.filter(
-                                    (parent) =>
-                                      normalizeRecipientClassName(
-                                        parent.class,
-                                      ) ===
-                                      normalizeRecipientClassName(cls.name),
-                                  );
-                                  selectClassGroup(
-                                    cls.name,
-                                    classContacts,
-                                    cls.id,
-                                  );
-                                  setDropdownOpen(false);
-                                }}
-                                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-between border ${
-                                  classFilterId === cls.id
-                                    ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                                    : "hover:bg-slate-50 text-slate-600 border-transparent"
-                                }`}
-                              >
-                                <span>{cls.name}</span>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] ${
-                                    classFilterId === cls.id
-                                      ? "bg-white/20 text-white"
-                                      : "bg-slate-100 text-slate-500"
-                                  }`}
-                                >
-                                  {count}
-                                </span>
-                              </button>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">Class Filter</label>
+                      <select
+                        value={classFilter === "All" ? "All" : classFilterId || classFilter}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === "All") {
+                            selectClassGroup("All School", parents, null);
+                          } else {
+                            const cls = availableClasses.find((c) => c.id === value);
+                            const classContacts = parents.filter(
+                              (parent) =>
+                                normalizeRecipientClassName(parent.class) ===
+                                normalizeRecipientClassName(cls?.name || value),
                             );
-                          })}
-                          {noClassCount > 0 && (
-                            <button
-                              onClick={() => {
-                                selectClassGroup(
-                                  "No Class",
-                                  parents.filter(
-                                    (p) => !p.classId && !p.class,
-                                  ),
-                                  null,
-                                );
-                                  setDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-between ${classFilter === "No Class" ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
-                            >
-                              <span>No Class</span>
-                              <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full text-[10px]">{noClassCount}</span>
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
+                            selectClassGroup(cls?.name || value, classContacts, cls?.id || value);
+                          }
+                        }}
+                        className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-white"
+                      >
+                        <option value="All">All Classes</option>
+                        {availableClasses.map((cls) => (
+                          <option key={cls.id} value={cls.id}>
+                            {cls.name} ({getClassParentCount(cls.id, cls.name)})
+                          </option>
+                        ))}
+                        {noClassCount > 0 && (
+                          <option value="No Class">No Class ({noClassCount})</option>
+                        )}
+                      </select>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search parents, students, phones..."
+                        className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-semibold text-slate-700 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+                      />
+                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.3-4.3" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
+
+                {selectedPhones.size > 0 && (
+                  <div className="mx-4 sm:mx-5 mb-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-bold text-indigo-700">
+                          {selectedPhones.size} recipient{selectedPhones.size !== 1 ? "s" : ""} selected
+                        </p>
+                        <p className="text-[11px] text-indigo-600 font-semibold">
+                          Estimated cost: GHS {selectedPhones.size * smsCostPerMessage * (smsParts || 1)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPhones(new Set())}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-800 transition"
+                      >
+                        Clear Selection
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar">
                   {loadingParents ? (
@@ -916,78 +986,103 @@ const Reminders: React.FC = () => {
                       <Loader2 size={24} className="animate-spin" />
                       <p className="text-sm font-medium">Loading parents...</p>
                     </div>
+                  ) : visibleParents.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+                      <Users size={32} className="text-slate-300" />
+                      <p className="text-sm font-medium">No recipients found</p>
+                      <p className="text-xs">Try adjusting your class filter or search query.</p>
+                    </div>
                   ) : (
-                    <div className="space-y-1">
-                      {classFilter !== "All" && (
-                        <div className="mb-4 flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                              <Users size={14} />
-                            </span>
-                            <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">
-                                Selected class
-                              </p>
-                              <p className="text-sm font-bold text-indigo-800">
-                                {classFilter}
-                              </p>
+                    <div className="space-y-4">
+                      {(() => {
+                        const grouped = new Map<string, ParentContact[]>();
+                        visibleParents.forEach((parent) => {
+                          const key = parent.class || "No Class";
+                          const list = grouped.get(key) || [];
+                          list.push(parent);
+                          grouped.set(key, list);
+                        });
+                        const sortedGroups = Array.from(grouped.entries()).sort(([a], [b]) => {
+                          if (a === "No Class") return 1;
+                          if (b === "No Class") return -1;
+                          return a.localeCompare(b);
+                        });
+                        return sortedGroups.map(([groupName, groupParents]) => {
+                          const selectedInGroup = groupParents.filter((p) => selectedPhones.has(p.phone)).length;
+                          const allSelected = groupParents.length > 0 && selectedInGroup === groupParents.length;
+                          const toggleGroup = () => {
+                            setSelectedPhones((prev) => {
+                              const next = new Set(prev);
+                              if (allSelected) {
+                                groupParents.forEach((p) => next.delete(p.phone));
+                              } else {
+                                groupParents.forEach((p) => {
+                                  if (!next.has(p.phone) && next.size < SAFE_BROADCAST_LIMIT) {
+                                    next.add(p.phone);
+                                  }
+                                });
+                              }
+                              return next;
+                            });
+                          };
+                          return (
+                            <div key={groupName} className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={toggleGroup}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                                      allSelected
+                                        ? "bg-indigo-600 text-white border-indigo-600"
+                                        : "bg-white text-slate-600 border-slate-200 hover:border-indigo-300"
+                                    }`}
+                                  >
+                                    {allSelected ? "Deselect Group" : "Select Group"}
+                                  </button>
+                                  <span className="text-xs font-bold text-slate-700">{groupName}</span>
+                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                    {selectedInGroup}/{groupParents.length}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                {groupParents.map((p) => {
+                                  const isSelected = selectedPhones.has(p.phone);
+                                  return (
+                                    <label
+                                      key={`${p.phone}-${p.studentId}-${p.class || "No Class"}`}
+                                      className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition border ${
+                                        isSelected
+                                          ? "bg-indigo-50/60 border-indigo-200 shadow-sm"
+                                          : "bg-white border-slate-100 hover:border-indigo-200 hover:shadow-sm"
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => togglePhone(p.phone)}
+                                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
+                                        <p className="text-[11px] text-slate-500 truncate">
+                                          {p.phone} • Ward: {p.studentName}
+                                        </p>
+                                      </div>
+                                      {p.class && (
+                                        <span className="shrink-0 px-2 py-0.5 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 rounded text-[10px] font-bold">
+                                          {p.class}
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-indigo-700">
-                            {filteredParents.length} contacts
-                          </span>
-                        </div>
-                      )}
-                       <div className="flex items-center justify-between mb-3 px-2">
-                         <p className="text-xs font-semibold text-slate-500">
-                           {visibleParents.length} Contacts {classFilter !== "All" && `in ${classFilter}`}
-                         </p>
-                         <div className="flex items-center gap-2">
-                           {selectedPhones.size > 0 && (
-                             <button
-                               onClick={() => setSelectedPhones(new Set())}
-                               className="text-xs font-bold text-rose-600 hover:text-rose-800 transition"
-                             >
-                               Clear Selection
-                             </button>
-                           )}
-                           <button
-                             onClick={toggleAll}
-                             className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition"
-                           >
-                             {visibleParents.every(p => selectedPhones.has(p.phone)) ? "Deselect All" : "Select Max Allowed"}
-                           </button>
-                         </div>
-                       </div>
-                       {visibleParents.length === 0 ? (
-                         <div className="text-center py-10 text-slate-400 text-sm">No parents found.</div>
-                       ) : (
-                         visibleParents.map((p) => {
-                           const isSelected = selectedPhones.has(p.phone);
-                           return (
-                             <label
-                               key={`${p.phone}-${p.class || "No Class"}`}
-                               className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition border ${isSelected ? "bg-indigo-50/50 border-indigo-200" : "hover:bg-slate-50 border-transparent"}`}
-                             >
-                               <input
-                                 type="checkbox"
-                                 checked={isSelected}
-                                 onChange={() => togglePhone(p.phone)}
-                                 className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                               />
-                               <div className="flex-1 min-w-0">
-                                 <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
-                                 <p className="text-[11px] text-slate-500 truncate">{p.phone} • Ward: {p.studentName}</p>
-                               </div>
-                               {p.class && (
-                                 <span className="shrink-0 px-2 py-0.5 bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200 rounded text-[10px] font-bold">
-                                   {p.class}
-                                 </span>
-                               )}
-                             </label>
-                           );
-                         })
-                       )}
+                          );
+                        });
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1087,48 +1182,83 @@ const Reminders: React.FC = () => {
               <p className="text-xs max-w-xs leading-relaxed">Compose a message above and select recipients to send your first reminder broadcast.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto custom-scrollbar -mx-5 px-5">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400 font-bold">
-                    <th className="pb-3 pr-4 font-bold">Date & Time</th>
-                    <th className="pb-3 pr-4 font-bold">Recipients</th>
-                    <th className="pb-3 pr-4 font-bold">Message Content</th>
-                    <th className="pb-3 font-bold text-right">Cost (GHS)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100/60">
-                  {broadcastsHistory.map((b) => {
-                    const dateStr = b.createdAt instanceof Date 
-                      ? b.createdAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-                      : "Date Unknown";
-                    
-                    return (
-                      <tr key={b.id} className="text-xs text-slate-700 hover:bg-slate-50/50 transition">
-                        <td className="py-3.5 pr-4 whitespace-nowrap font-semibold text-slate-600">{dateStr}</td>
-                        <td className="py-3.5 pr-4 whitespace-nowrap">
-                          <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full font-bold">
-                            {b.recipientCount} parent{b.recipientCount !== 1 ? 's' : ''}
-                          </span>
-                          {Array.isArray(b.recipientPhones) && b.recipientPhones.length > 0 && (
-                            <p className="mt-1 text-[10px] font-semibold text-slate-400">
-                              {b.recipientPhones.slice(0, 2).join(", ")}
-                              {b.recipientPhones.length > 2 ? ` +${b.recipientPhones.length - 2}` : ""}
-                            </p>
-                          )}
-                        </td>
-                        <td className="py-3.5 pr-4 max-w-xs sm:max-w-md truncate font-medium text-slate-800" title={b.message}>
-                          {b.message}
-                        </td>
-                        <td className="py-3.5 font-bold text-right text-slate-800">
-                          GHS {Number(b.cost || 0).toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+             <div className="overflow-x-auto custom-scrollbar -mx-5 px-5">
+               <table className="w-full text-left border-collapse">
+                 <thead>
+                   <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                     <th className="pb-3 pr-4 font-bold">Date & Time</th>
+                     <th className="pb-3 pr-4 font-bold">Recipients</th>
+                     <th className="pb-3 pr-4 font-bold">Delivery Status</th>
+                     <th className="pb-3 pr-4 font-bold">Message Content</th>
+                     <th className="pb-3 font-bold text-right">Cost (GHS)</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-100/60">
+                   {broadcastsHistory.map((b) => {
+                     const dateStr = b.createdAt instanceof Date 
+                       ? b.createdAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                       : "Date Unknown";
+                     
+                     const results = Array.isArray(b.results) ? b.results : [];
+                     const deliveredCount = results.filter((r: any) => r.status === "delivered" || r.success).length;
+                     const failedCount = results.filter((r: any) => r.status === "failed" || !r.success).length;
+                     
+                     return (
+                       <tr key={b.id} className="text-xs text-slate-700 hover:bg-slate-50/50 transition">
+                         <td className="py-3.5 pr-4 whitespace-nowrap font-semibold text-slate-600">{dateStr}</td>
+                         <td className="py-3.5 pr-4 whitespace-nowrap">
+                           <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full font-bold">
+                             {b.recipientCount} parent{b.recipientCount !== 1 ? 's' : ''}
+                           </span>
+                           {Array.isArray(b.recipientPhones) && b.recipientPhones.length > 0 && (
+                             <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                               {b.recipientPhones.slice(0, 2).join(", ")}
+                               {b.recipientPhones.length > 2 ? ` +${b.recipientPhones.length - 2}` : ""}
+                             </p>
+                           )}
+                         </td>
+                         <td className="py-3.5 pr-4 whitespace-nowrap">
+                           {results.length > 0 ? (
+                             <div className="flex flex-wrap items-center gap-1.5">
+                               <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[10px] font-bold">
+                                 {deliveredCount} delivered
+                               </span>
+                               {failedCount > 0 && (
+                                 <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-100 rounded-full text-[10px] font-bold">
+                                   {failedCount} failed
+                                 </span>
+                               )}
+                             </div>
+                           ) : (
+                             <span className="text-[10px] text-slate-400 font-semibold">No delivery data</span>
+                           )}
+                         </td>
+                         <td className="py-3.5 pr-4 max-w-xs sm:max-w-md truncate font-medium text-slate-800" title={b.message}>
+                           {b.message}
+                         </td>
+                         <td className="py-3.5 font-bold text-right text-slate-800">
+                           <div className="flex flex-col items-end gap-1">
+                             <span>GHS {Number(b.cost || 0).toFixed(2)}</span>
+                             {failedCount > 0 && retryingBroadcastId !== b.id && (
+                               <button
+                                 type="button"
+                                 onClick={() => handleRetryBroadcast(b)}
+                                 className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+                               >
+                                 Retry failed ({failedCount})
+                               </button>
+                             )}
+                             {retryingBroadcastId === b.id && (
+                               <span className="text-[10px] text-amber-600 font-bold">Retrying...</span>
+                             )}
+                           </div>
+                         </td>
+                       </tr>
+                     );
+                   })}
+                 </tbody>
+               </table>
+             </div>
           )}
         </div>
 
@@ -1451,40 +1581,54 @@ const Reminders: React.FC = () => {
                   <AlertTriangle size={28} />
                 </div>
                 
-                <h3 className="text-lg font-bold text-slate-800">Confirm Broadcast</h3>
-                <p className="text-slate-500 text-xs mt-1 max-w-xs leading-relaxed">
-                  You are about to broadcast an SMS to parents. Please verify the billing estimates below.
-                </p>
+                 <h3 className="text-lg font-bold text-slate-800">Confirm Broadcast</h3>
+                 <p className="text-slate-500 text-xs mt-1 max-w-xs leading-relaxed">
+                   You are about to broadcast an SMS to parents. Please verify the details below.
+                 </p>
 
-                {/* Estimate Breakdown Card */}
-                <div className="w-full mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-150 text-left space-y-3">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-semibold">Total Recipients:</span>
-                    <span className="text-slate-800 font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">{selectedPhones.size} contact{selectedPhones.size !== 1 ? 's' : ''}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-semibold">Message Length:</span>
-                    <span className="text-slate-800 font-bold">{message.length} chars ({smsParts} part{smsParts !== 1 ? 's' : ''})</span>
-                  </div>
-                  <div className="h-px bg-slate-200/60 my-2" />
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-semibold">Rate per SMS Part:</span>
-                    <span className="text-slate-700 font-bold">GHS {smsCostPerMessage.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-semibold">Estimated Cost:</span>
-                    <span className="text-amber-600 font-extrabold text-sm">GHS {totalEstimatedCost.toFixed(2)}</span>
-                  </div>
-                  <div className="h-px bg-slate-200/60 my-2" />
-                  <div className="flex justify-between items-center text-[11px]">
-                    <span className="text-slate-500 font-semibold">Wallet Balance:</span>
-                    <span className="text-slate-600 font-semibold">GHS {walletBalance.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-[11px]">
-                    <span className="text-slate-500 font-semibold">Remaining Balance:</span>
-                    <span className="text-emerald-600 font-bold">GHS {(walletBalance - totalEstimatedCost).toFixed(2)}</span>
-                  </div>
-                </div>
+                 {/* Message Preview */}
+                 {message.trim() && (
+                   <div className="w-full mt-4 p-4 bg-white rounded-2xl border border-slate-200 text-left">
+                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Message Preview</p>
+                     <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{message.trim()}</p>
+                   </div>
+                 )}
+
+                 {/* Estimate Breakdown Card */}
+                 <div className="w-full mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-150 text-left space-y-3">
+                   <div className="flex justify-between items-center text-xs">
+                     <span className="text-slate-500 font-semibold">Total Recipients:</span>
+                     <span className="text-slate-800 font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">{selectedPhones.size} contact{selectedPhones.size !== 1 ? 's' : ''}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-xs">
+                     <span className="text-slate-500 font-semibold">Message Length:</span>
+                     <span className="text-slate-800 font-bold">{message.length} chars ({smsParts} part{smsParts !== 1 ? 's' : ''})</span>
+                   </div>
+                   {classFilter !== "All" && (
+                     <div className="flex justify-between items-center text-xs">
+                       <span className="text-slate-500 font-semibold">Target Class:</span>
+                       <span className="text-slate-800 font-bold">{classFilter}</span>
+                     </div>
+                   )}
+                   <div className="h-px bg-slate-200/60 my-2" />
+                   <div className="flex justify-between items-center text-xs">
+                     <span className="text-slate-500 font-semibold">Rate per SMS Part:</span>
+                     <span className="text-slate-700 font-bold">GHS {smsCostPerMessage.toFixed(2)}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-xs">
+                     <span className="text-slate-500 font-semibold">Estimated Cost:</span>
+                     <span className="text-amber-600 font-extrabold text-sm">GHS {totalEstimatedCost.toFixed(2)}</span>
+                   </div>
+                   <div className="h-px bg-slate-200/60 my-2" />
+                   <div className="flex justify-between items-center text-[11px]">
+                     <span className="text-slate-500 font-semibold">Wallet Balance:</span>
+                     <span className="text-slate-600 font-semibold">GHS {walletBalance.toFixed(2)}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[11px]">
+                     <span className="text-slate-500 font-semibold">Remaining Balance:</span>
+                     <span className="text-emerald-600 font-bold">GHS {(walletBalance - totalEstimatedCost).toFixed(2)}</span>
+                   </div>
+                 </div>
 
                 {/* Confirm & Cancel Buttons */}
                 <div className="w-full grid grid-cols-2 gap-3 mt-6">

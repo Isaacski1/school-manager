@@ -7,7 +7,7 @@ import { showToast } from "../../services/toast";
 import { db } from "../../services/mockDb";
 import { auth } from "../../services/firebase";
 import { logActivity } from "../../services/activityLog";
-import { Notice, ClassRoom, SchoolConfig } from "../../types";
+import { Notice, ClassRoom, SchoolConfig, AdmissionCustomization, AdmissionCustomField } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { requireSchoolId } from "../../services/authProfile";
@@ -27,6 +27,8 @@ import {
   normalizeClassName,
 } from "../../services/classCatalog";
 import { DEFAULT_REPORT_CARD_SETTINGS } from "../../services/reportCardSettings";
+import { DEFAULT_ADMISSION_CUSTOMIZATION, resolveAdmissionCustomization, ADMISSION_PRESETS } from "../../services/admissionCustomization";
+import FieldEditorModal from "../../components/admin/FieldEditorModal";
 import {
   Plus,
   Trash2,
@@ -40,12 +42,34 @@ import {
   AlertTriangle,
   History,
   Settings,
+  Settings2,
   Shield,
   Bell,
   School,
   ArrowUp,
   ArrowDown,
   Lock,
+  Type,
+  Hash,
+  AlignLeft,
+  HelpCircle,
+  Globe,
+  List,
+  CheckSquare,
+  Upload,
+  FileText,
+  Users,
+  User,
+  BookOpen,
+  Heart,
+  GripVertical,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  Layers,
+  Wand2,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -149,6 +173,16 @@ const SystemSettings = () => {
   const [newClassSection, setNewClassSection] = useState("");
   const [savingClasses, setSavingClasses] = useState(false);
 
+  const FIELD_TYPES = [
+    { value: "text", label: "Text", icon: Type, color: "text-blue-600", bg: "bg-blue-50" },
+    { value: "number", label: "Number", icon: Hash, color: "text-purple-600", bg: "bg-purple-50" },
+    { value: "date", label: "Date", icon: Calendar, color: "text-green-600", bg: "bg-green-50" },
+    { value: "select", label: "Dropdown", icon: List, color: "text-amber-600", bg: "bg-amber-50" },
+    { value: "multiselect", label: "Multi-select", icon: CheckSquare, color: "text-indigo-600", bg: "bg-indigo-50" },
+    { value: "checkbox", label: "Checkbox", icon: CheckSquare, color: "text-emerald-600", bg: "bg-emerald-50" },
+    { value: "file", label: "File Upload", icon: Upload, color: "text-rose-600", bg: "bg-rose-50" },
+  ] as const;
+
   // Danger Zone State
 const [showDangerZone, setShowDangerZone] = useState(false);
    const [termResetting, setTermResetting] = useState(false);
@@ -166,6 +200,14 @@ const [showDangerZone, setShowDangerZone] = useState(false);
     useState(false);
   const [resettingReportCardSettings, setResettingReportCardSettings] =
     useState(false);
+   const [savingAdmissionSettings, setSavingAdmissionSettings] = useState(false);
+  const [showResetAdmissionModal, setShowResetAdmissionModal] = useState(false);
+  const [resettingAdmissionSettings, setResettingAdmissionSettings] = useState(false);
+  const [editingField, setEditingField] = useState<AdmissionCustomField | null>(null);
+  const [showFieldEditor, setShowFieldEditor] = useState(false);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+  const [showAddSection, setShowAddSection] = useState(false);
 
   // Logo/Photo Upload State
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1497,6 +1539,72 @@ const confirmTermReset = async () => {
       setResettingReportCardSettings(false);
     }
   };
+
+  const admissionCustomization =
+    config.admissionCustomization ||
+    resolveAdmissionCustomization(DEFAULT_ADMISSION_CUSTOMIZATION);
+  const updateAdmissionCustomization = (
+    updates: Partial<AdmissionCustomization>,
+  ) => {
+    const presetChanged =
+      !!updates.preset && updates.preset !== admissionCustomization.preset;
+    const presetKey = updates.preset as keyof typeof ADMISSION_PRESETS | undefined;
+    const presetConfig = presetChanged && presetKey ? ADMISSION_PRESETS[presetKey] : null;
+    setConfig({
+      ...config,
+      admissionCustomization: {
+        ...(presetConfig || DEFAULT_ADMISSION_CUSTOMIZATION),
+        ...(config.admissionCustomization || {}),
+        ...updates,
+        fields: presetConfig ? (updates.fields || presetConfig.fields) : (updates.fields || config.admissionCustomization?.fields || DEFAULT_ADMISSION_CUSTOMIZATION.fields),
+        sections: presetConfig ? (updates.sections || presetConfig.sections) : (updates.sections || config.admissionCustomization?.sections || DEFAULT_ADMISSION_CUSTOMIZATION.sections),
+      },
+    });
+  };
+  const resetAdmissionCustomization = () => {
+    setShowResetAdmissionModal(true);
+  };
+  const confirmResetAdmissionCustomization = async () => {
+    setResettingAdmissionSettings(true);
+    try {
+      const defaultCustomization = { ...DEFAULT_ADMISSION_CUSTOMIZATION };
+      await setDoc(
+        doc(firestore, "settings", schoolId),
+        { admissionCustomization: defaultCustomization },
+        { merge: true },
+      );
+      setConfig((current) => ({
+        ...current,
+        admissionCustomization: defaultCustomization,
+      }));
+      setShowResetAdmissionModal(false);
+      showToast("Admission form customization reset to default.", {
+        type: "success",
+      });
+      logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "admission_customization_reset",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "System Settings",
+          actorName: user?.fullName || "",
+        },
+      }).catch((error) =>
+        console.warn("Background activity log failed", error),
+      );
+    } catch (error) {
+      console.error("Failed to reset admission customization", error);
+      showToast("Could not reset the admission customization. Try again.", {
+        type: "error",
+      });
+    } finally {
+      setResettingAdmissionSettings(false);
+    }
+  };
+
   const sampleReportCardData = {
     schoolInfo: {
       name: school?.name || config.schoolName || "Sample School",
@@ -2443,8 +2551,195 @@ const confirmTermReset = async () => {
 
           </div>
 
-          {/* Right Column */}
-          <div className="space-y-6">
+           {/* Right Column */}
+           <div className="space-y-6">
+             <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
+               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                 <div>
+                   <h2 className="text-xl font-bold text-slate-800">
+                     Admission Form Customization
+                   </h2>
+                   <p className="text-xs text-slate-500">
+                     Design beautiful admission forms with custom fields and sections.
+                   </p>
+                 </div>
+                 <div className="flex flex-wrap gap-2">
+                   <button
+                     type="button"
+                     onClick={resetAdmissionCustomization}
+                     className="flex items-center text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full transition-colors"
+                   >
+                     Reset Default
+                   </button>
+                   <button
+                     onClick={handleSaveConfig}
+                     disabled={savingAdmissionSettings}
+                     className="flex items-center text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-full transition-colors shadow-lg shadow-indigo-200"
+                   >
+                     <Save size={14} className="mr-1" />{" "}
+                     {savingAdmissionSettings ? "Saving..." : "Save Changes"}
+                   </button>
+                 </div>
+               </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-3">
+                      Preset Template
+                    </label>
+                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                       {[
+                         { value: "default", label: "Default", desc: "Generic fields", color: "bg-slate-100 text-slate-700 border-slate-200" },
+                         { value: "ghana_basic", label: "Ghana Basic", desc: "Region & guardian", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+                         { value: "custom", label: "Custom", desc: "Build your own", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+                       ].map((preset) => {
+                         const presetConfig = ADMISSION_PRESETS[preset.value];
+                         return (
+                           <button
+                             key={preset.value}
+                             type="button"
+                             onClick={() => {
+                               if (presetConfig) {
+                                 updateAdmissionCustomization({
+                                   preset: preset.value as AdmissionCustomization["preset"],
+                                   fields: presetConfig.fields,
+                                   sections: presetConfig.sections,
+                                 });
+                               } else {
+                                 updateAdmissionCustomization({
+                                   preset: preset.value as AdmissionCustomization["preset"],
+                                 });
+                               }
+                             }}
+                             className={`p-3 sm:p-4 rounded-xl border-2 text-left transition-all ${
+                               admissionCustomization.preset === preset.value
+                                 ? `${preset.color} border-current shadow-md scale-[1.02]`
+                                 : "border-slate-100 bg-white hover:border-slate-200"
+                             }`}
+                           >
+                             <p className="text-sm sm:text-base font-bold">{preset.label}</p>
+                             <p className="text-[11px] sm:text-xs opacity-75 mt-0.5">{preset.desc}</p>
+                           </button>
+                         );
+                       })}
+                     </div>
+                  </div>
+
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <label className="block text-xs font-semibold text-slate-600">
+                        Form Fields
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowFieldEditor(true)}
+                        className="w-full sm:w-auto flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-full transition-colors shadow-md shadow-indigo-200"
+                      >
+                        <Plus size={14} />
+                        Add Field
+                      </button>
+                    </div>
+
+                    {admissionCustomization.fields.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 sm:p-8 text-center">
+                        <Settings2 size={32} className="mx-auto text-slate-300 mb-3" />
+                        <p className="text-sm font-semibold text-slate-600">No fields configured</p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Click "Add Field" to build your admission form
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="max-h-[520px] overflow-y-auto pr-1 space-y-4">
+                        {admissionCustomization.sections
+                          .filter((s) => s.visible)
+                          .sort((a, b) => a.order - b.order)
+                          .map((section) => {
+                            const sectionFields = admissionCustomization.fields
+                              .filter((f) => f.section === section.id && f.active)
+                              .sort((a, b) => a.order - b.order);
+                            if (sectionFields.length === 0) return null;
+                            return (
+                              <div key={section.id} className="rounded-2xl border border-slate-100 bg-white overflow-hidden">
+                                <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Layers size={14} className="text-slate-400" />
+                                    <h4 className="text-sm font-bold text-slate-700">{section.title}</h4>
+                                    <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-full">
+                                      {sectionFields.length} {sectionFields.length === 1 ? "field" : "fields"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="p-3 space-y-2">
+                                  {sectionFields.map((field, idx) => {
+                                    const typeInfo = FIELD_TYPES.find((t) => t.value === field.type) || FIELD_TYPES[0];
+                                    const Icon = typeInfo?.icon || Type;
+                                    return (
+                                      <div
+                                        key={field.id}
+                                        className="group flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 hover:border-indigo-200 hover:shadow-sm transition-all"
+                                      >
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <GripVertical size={14} className="text-slate-300 cursor-grab hidden sm:block" />
+                                            <div className={`p-1.5 rounded-lg ${typeInfo?.bg || "bg-slate-100"}`}>
+                                              <Icon size={16} className={typeInfo?.color || "text-slate-500"} />
+                                            </div>
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-semibold text-slate-800 truncate">
+                                              {field.label}
+                                            </p>
+                                            <p className="text-[11px] text-slate-500">
+                                              {field.key}
+                                              {field.regionSpecific && (
+                                                <span className="ml-1 inline-flex items-center gap-0.5 text-indigo-600">
+                                                  <Globe size={10} /> Region-specific
+                                                </span>
+                                              )}
+                                              {field.required && (
+                                                <span className="ml-1 text-red-600">Required</span>
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1 sm:justify-end">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingField(field);
+                                              setShowFieldEditor(true);
+                                            }}
+                                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                          >
+                                            <Edit size={14} />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              updateAdmissionCustomization({
+                                                fields: admissionCustomization.fields.filter(
+                                                  (f) => f.id !== field.id,
+                                                ),
+                                              })
+                                            }
+                                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                 </div>
+               </div>
+             </div>
+
             <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
@@ -2591,6 +2886,9 @@ const confirmTermReset = async () => {
                     ["showSkills", "Show skills/behaviour"],
                     ["showClassTeacherRemark", "Show class teacher remark"],
                     ["showHeadTeacherRemark", "Show head teacher remark"],
+                    ["showClassTeacherSignature", "Show class teacher signature"],
+                    ["showHeadTeacherSignature", "Show head teacher signature"],
+                    ["showStampLabel", "Show stamp label"],
                     ["showGradingScale", "Show grading scale"],
                     ["showPromotionStatus", "Show promotion status"],
                   ].map(([key, label]) => (
@@ -3185,11 +3483,82 @@ const confirmTermReset = async () => {
            </div>
          </div>
 )}
+      {/* Reset Admission Confirmation Modal */}
+      {showResetAdmissionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <AlertTriangle size={26} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  Reset Admission Form?
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  This will restore the default admission fields and sections.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              The default admission form design will be saved immediately for this school.
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowResetAdmissionModal(false)}
+                disabled={resettingAdmissionSettings}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmResetAdmissionCustomization}
+                disabled={resettingAdmissionSettings}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {resettingAdmissionSettings
+                  ? "Resetting..."
+                  : "Reset to Default"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Editor Modal */}
+      {showFieldEditor && (
+        <FieldEditorModal
+          field={editingField}
+          sections={admissionCustomization.sections}
+          onSave={(field) => {
+            if (editingField) {
+              updateAdmissionCustomization({
+                fields: admissionCustomization.fields.map((f) =>
+                  f.id === field.id ? field : f,
+                ),
+              });
+            } else {
+              updateAdmissionCustomization({
+                fields: [...admissionCustomization.fields, field],
+              });
+            }
+            setShowFieldEditor(false);
+            setEditingField(null);
+          }}
+          onClose={() => {
+            setShowFieldEditor(false);
+            setEditingField(null);
+          }}
+        />
+      )}
+
       {isEntertainmentVisible && (
         <TermResetEntertainment message={resetProgress || undefined} />
       )}
     </Layout>
- );
+  );
 };
 export default SystemSettings;
 
