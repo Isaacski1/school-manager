@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Check, ChevronDown, Info } from "lucide-react";
+import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import PublicSiteLayout from "../../components/marketing/PublicSiteLayout";
 
 const fadeUp = { hidden: { opacity: 0, y: 28 }, show: { opacity: 1, y: 0, transition: { duration: 0.55 } } };
@@ -33,8 +33,6 @@ const plans = [
     tagline: "For schools that want a clean digital foundation.",
     popular: false,
     monthlyPrice: 100,
-    setupFee: 300,
-    onboardingDetails: "Covers standard Excel student data import and remote admin walk-through.",
     bullets: [
       "Up to 200 Students",
       "Student & Staff Profiles",
@@ -46,8 +44,6 @@ const plans = [
     tagline: "For schools that need deeper operations visibility.",
     popular: true,
     monthlyPrice: 300,
-    setupFee: 1000,
-    onboardingDetails: "Covers complete physical/digital record migration, custom grading configuration, and 1 day of on-site staff training.",
     bullets: [
       "Unlimited Students",
       "All Starter Features",
@@ -61,10 +57,9 @@ const plans = [
 const faqs = [
   { q: "Do I need a credit card to start?", a: "No. You can start a free trial and set up your school with no payment required upfront." },
   { q: "Can I switch plans later?", a: "Yes. You can upgrade from Starter Plan to Standard Plan at any time from your admin settings." },
-  { q: "Is there a setup fee?", a: "Yes. Starter Plan has a GH₵ 300 one-time setup fee, and Standard Plan has a GH₵ 1,000 one-time setup fee. These fees are cover onboarding, data migration, configuration, and training, and they can be negotiated if you need a smaller arrangement." },
   { q: "How long does onboarding take?", a: "Starter onboarding is handled remotely. Standard onboarding includes record migration, grading configuration, and 1 day of on-site staff training." },
   { q: "Is my school data safe?", a: "Yes. All data is stored securely on Firebase with role-based access control and regular backups." },
-  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 4 months with a 10% discount, and yearly covers 12 months with a 20% discount. The one-time setup fee is charged only when the school is first onboarded." },
+  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 4 months with a 10% discount, and yearly covers 12 months with a 20% discount." },
 ];
 
 const featureComparisonRows = [
@@ -101,7 +96,6 @@ const featureComparisonRows = [
 const Pricing = () => {
   const [cycle, setCycle] = useState<Cycle>("monthly");
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
-  const [activeSetupTooltip, setActiveSetupTooltip] = useState<string | null>(null);
 
   return (
     <PublicSiteLayout>
@@ -178,8 +172,7 @@ const Pricing = () => {
         <motion.div initial="hidden" animate="show" variants={stagger} className="pricing-grid" style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 32 }}>
           {plans.map((plan) => {
             const subscription = getSubscriptionPrice(plan.monthlyPrice, cycle);
-            const totalDueToday = subscription.amount + plan.setupFee;
-            const isSetupTooltipOpen = activeSetupTooltip === plan.name;
+            const isSetupTooltipOpen = false;
             return (
               <motion.div
                 key={plan.name}
@@ -219,26 +212,6 @@ const Pricing = () => {
                       Save {formatCurrency(subscription.savings)}
                     </p>
                   )}
-                  <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-                    <span style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", fontWeight: 600 }}>
-                      + {formatCurrency(plan.setupFee)} one-time setup fee
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`${plan.name} setup fee details`}
-                      onClick={() => setActiveSetupTooltip(isSetupTooltipOpen ? null : plan.name)}
-                      onMouseEnter={() => setActiveSetupTooltip(plan.name)}
-                      onMouseLeave={() => setActiveSetupTooltip(null)}
-                      style={{ width: 24, height: 24, borderRadius: "50%", border: "1px solid rgba(245, 158, 11, 0.45)", background: "rgba(245, 158, 11, 0.12)", color: "#FBBF24", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
-                    >
-                      <Info size={14} />
-                    </button>
-                    {isSetupTooltipOpen && (
-                      <div style={{ position: "absolute", left: 0, top: "calc(100% + 10px)", width: 280, maxWidth: "min(280px, calc(100vw - 64px))", padding: "12px 14px", borderRadius: 12, background: "#082A4A", border: "1px solid rgba(251, 191, 36, 0.35)", color: "rgba(255,255,255,0.86)", fontSize: 13, lineHeight: 1.5, boxShadow: "0 18px 45px rgba(0,0,0,0.35)", zIndex: 30 }}>
-                        {plan.onboardingDetails}
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "24px 0 32px" }} />
@@ -248,13 +221,9 @@ const Pricing = () => {
                     <span>{cycle.charAt(0).toUpperCase() + cycle.slice(1)} subscription</span>
                     <strong style={{ color: "white" }}>{formatCurrency(subscription.amount)}</strong>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, color: "rgba(255,255,255,0.68)", fontSize: 13, marginBottom: 12 }}>
-                    <span>One-time setup</span>
-                    <strong style={{ color: "white" }}>{formatCurrency(plan.setupFee)}</strong>
-                  </div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 12, borderTop: "1px solid rgba(251, 191, 36, 0.24)" }}>
                     <span style={{ color: "#FBBF24", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Due Today</span>
-                    <strong style={{ color: "#FBBF24", fontSize: 20 }}>{formatCurrency(totalDueToday)}</strong>
+                    <strong style={{ color: "#FBBF24", fontSize: 20 }}>{formatCurrency(subscription.amount)}</strong>
                   </div>
                 </div>
 
@@ -350,20 +319,18 @@ const Pricing = () => {
         <div style={{ maxWidth: 860, margin: "0 auto", overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ minWidth: 720, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
             {/* Header row */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Plan</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Monthly</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly <span style={{ fontSize: 10 }}>(-10%)</span></span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly <span style={{ fontSize: 10 }}>(-20%)</span></span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#FBBF24", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Setup Fee</span>
             </div>
             {plans.map((plan) => (
-              <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
+              <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: "white" }}>{plan.name}</span>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "monthly").amount)}</span>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "termly").amount)}</span>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "yearly").amount)}</span>
-                <span style={{ fontSize: 15, fontWeight: 800, color: "#FBBF24", textAlign: "center" }}>{formatCurrency(plan.setupFee)}</span>
               </div>
             ))}
           </div>
