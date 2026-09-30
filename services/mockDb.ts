@@ -2111,6 +2111,23 @@ private async createSnapshotRecord(params: {
     await setDoc(doc(firestore, "assessments", id), { ...assessment, id });
   }
 
+  async saveAssessmentsBatch(assessments: Assessment[]): Promise<void> {
+    const scopedSchoolId = this.requireSchoolId(
+      assessments[0]?.schoolId,
+      "saveAssessmentsBatch",
+    );
+    await this.requireFeature(assessments[0]?.schoolId, "basic_exam_reports");
+
+    const batch = writeBatch(firestore);
+    assessments.forEach((assessment) => {
+      const id =
+        assessment.id ||
+        `${scopedSchoolId}_${assessment.studentId}_${assessment.subject}_${assessment.term}_${assessment.academicYear}`;
+      batch.set(doc(firestore, "assessments", id), { ...assessment, id });
+    });
+    await batch.commit();
+  }
+
   async resetAssessmentsForClass(
     schoolId?: string,
     classId?: string,
@@ -2429,14 +2446,16 @@ private async createSnapshotRecord(params: {
     message: string,
     type: "attendance" | "assessment" | "system",
     schoolId?: string,
+    id?: string,
   ): Promise<void> {
     const scopedSchoolId = this.requireSchoolId(
       schoolId,
       "addSystemNotification",
     );
-    const id = `${scopedSchoolId}_${Date.now()}`;
+    const notificationId =
+      id || `${scopedSchoolId}_${Date.now()}`;
     const notification: SystemNotification = {
-      id,
+      id: notificationId,
       schoolId: scopedSchoolId,
       message,
       createdAt: Date.now(),
@@ -2444,7 +2463,7 @@ private async createSnapshotRecord(params: {
       type,
     };
     try {
-      await setDoc(doc(firestore, "admin_notifications", id), notification);
+      await setDoc(doc(firestore, "admin_notifications", notificationId), notification);
     } catch (error) {
       console.warn("Failed to create system notification", error);
     }

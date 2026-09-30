@@ -1,7 +1,0 @@
-);
-    await this.commitChunkedOperations(operations);
-  }/feeLedgers/${ledger.id}`) : doc(firestore, `student_ledgers/${ledger.id}`);
-        batch.set(ref, this.stripUndefinedDeep(ledger), { merge: true });
-      });
-    await this.commitChunkedOperations(operations);
-  }

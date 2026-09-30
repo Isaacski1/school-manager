@@ -1,3 +1,0 @@
-);
-  } : cleanedLedger;    await setDoc(docRef, preparedLedger, {      merge: true,    }););
-  }

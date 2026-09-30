@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
 import { db } from "../../services/mockDb";
 import { firestore } from "../../services/firebase";
-import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { Student, Assessment, UserRole } from "../../types";
 import {
   CLASSES_LIST,
@@ -18,6 +18,8 @@ import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { Save } from "lucide-react";
 import { showToast } from "../../services/toast";
 import { logActivity } from "../../services/activityLog";
+import { useNetworkStatus } from "../../hooks/useNetworkStatus";
+import { AssessmentDraftStorage } from "../../src/assessmentDraftStorage";
 
 const nurserySubjects = [
   "Language & Literacy",
@@ -79,6 +81,7 @@ const AssessmentPage = () => {
   const { school } = useSchool();
   const isAdmin = user?.role === UserRole.SCHOOL_ADMIN;
   const { classes: schoolClasses } = useSchoolClasses();
+  const { isOnline } = useNetworkStatus();
 
   const availableClasses = React.useMemo(() => {
     if (isAdmin) {
@@ -99,6 +102,9 @@ const AssessmentPage = () => {
   >({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "saving" | "syncing" | "error" | "pending">("idle");
+  const [draftRecovered, setDraftRecovered] = useState(false);
+
   // School config (term + academic year) fetched from DB
   const [schoolConfig, setSchoolConfig] = useState<{
     currentTerm: string;
@@ -119,7 +125,418 @@ const AssessmentPage = () => {
     examScore: schoolConfig.assessmentScoreWeights?.examScore ?? 100,
   }), [schoolConfig.assessmentScoreWeights]);
 
-  // Initialize selected class
+  // Offline-first refs
+  const currentDraftRef = useRef<{
+    schoolId: string;
+    classId: string;
+    subject: string;
+    term: number;
+    academicYear: string;
+    assessments: Record<string, Partial<Assessment>>;
+    lastModified: number;
+    version: number;
+  } | null>(null);
+  const draftVersionRef = useRef(0);
+  const isSyncingRef = useRef(false);
+  const pendingSyncVersionRef = useRef<{ lastModified: number; version: number; schoolId: string; classId: string; subject: string; term: number; academicYear: string } | null>(null);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assessmentsRef = useRef(assessments);
+  const prevIsOnlineRef = useRef(isOnline);
+  const didMountRef = useRef(false);
+  const [externalDraftChanged, setExternalDraftChanged] = useState(false);
+  const currentContextRef = useRef({
+    schoolId: schoolId || "",
+    classId: selectedClassId,
+    subject: selectedSubject,
+    term: CURRENT_TERM,
+    academicYear: schoolConfig.academicYear,
+  });
+  const loadedDraftRevisionRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    assessmentsRef.current = assessments;
+  }, [assessments]);
+
+  // Multi-tab draft change detection
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (!schoolId || !selectedClassId || !selectedSubject) return;
+
+      let dynamicTerm = CURRENT_TERM;
+      if (schoolConfig.currentTerm) {
+        const match = schoolConfig.currentTerm.match(/\d+/);
+        if (match) dynamicTerm = parseInt(match[0], 10);
+      }
+
+      const currentKey = AssessmentDraftStorage.getDraftKey(
+        schoolId,
+        selectedClassId,
+        selectedSubject,
+        dynamicTerm,
+        schoolConfig.academicYear,
+      );
+
+      if (event.key === currentKey && event.newValue) {
+        try {
+          const externalDraft = JSON.parse(event.newValue);
+          const localDraft = currentDraftRef.current;
+          const storedRevision = externalDraft.version ?? null;
+          const loadedRevision = loadedDraftRevisionRef.current;
+
+          if (storedRevision !== null && loadedRevision !== null && storedRevision !== loadedRevision) {
+            setExternalDraftChanged(true);
+          } else if (!localDraft) {
+            setExternalDraftChanged(true);
+          } else if (externalDraft.lastModified > localDraft.lastModified) {
+            setExternalDraftChanged(true);
+          }
+        } catch {
+          // ignore malformed external storage events
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [schoolId, selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
+
+  // Track the current assessment context so old async operations
+  // cannot accidentally mutate a newer context's UI state.
+  useEffect(() => {
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
+
+    currentContextRef.current = {
+      schoolId: schoolId || "",
+      classId: selectedClassId,
+      subject: selectedSubject,
+      term: dynamicTerm,
+      academicYear: schoolConfig.academicYear,
+    };
+  }, [schoolId, selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
+
+  // Helper: detect whether the stored draft has been changed by another tab
+  // since the current tab loaded its local copy.
+  const hasStoredRevisionChanged = useCallback(() => {
+    if (!schoolId || !selectedClassId || !selectedSubject) return false;
+    if (loadedDraftRevisionRef.current === null) return false;
+
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
+
+    const storedDraft = AssessmentDraftStorage.loadDraft(
+      schoolId,
+      selectedClassId,
+      selectedSubject,
+      dynamicTerm,
+      schoolConfig.academicYear,
+    );
+
+    if (!storedDraft) return false;
+
+    const loadedRevision = loadedDraftRevisionRef.current;
+    const currentStoredVersion = storedDraft.version;
+    const loadedContext = currentContextRef.current;
+    const storedContextMatches =
+      storedDraft.schoolId === loadedContext.schoolId &&
+      storedDraft.classId === loadedContext.classId &&
+      storedDraft.subject === loadedContext.subject &&
+      storedDraft.term === loadedContext.term &&
+      storedDraft.academicYear === loadedContext.academicYear;
+
+    return storedContextMatches && currentStoredVersion !== loadedRevision;
+  }, [schoolId, selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
+
+  // Draft recovery on context change
+  useEffect(() => {
+    if (!schoolId || !selectedClassId || !selectedSubject) {
+      return;
+    }
+
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
+
+    const draft = AssessmentDraftStorage.loadDraft(
+      schoolId,
+      selectedClassId,
+      selectedSubject,
+      dynamicTerm,
+      schoolConfig.academicYear,
+    );
+
+    if (draft) {
+      setAssessments(draft.assessments);
+      currentDraftRef.current = draft;
+      draftVersionRef.current = draft.version;
+      loadedDraftRevisionRef.current = draft.version;
+      setDraftRecovered(true);
+      showToast("Draft recovered", { type: "info" });
+    } else {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
+      }
+      currentDraftRef.current = null;
+      draftVersionRef.current = 0;
+      loadedDraftRevisionRef.current = null;
+      pendingSyncVersionRef.current = null;
+      setDraftRecovered(false);
+      setSyncStatus("idle");
+      setExternalDraftChanged(false);
+    }
+  }, [schoolId, selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
+
+  // Debounced draft persistence
+  const scheduleDraftSave = useCallback(() => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+
+    draftTimerRef.current = setTimeout(() => {
+      if (!schoolId || !selectedClassId || !selectedSubject) return;
+
+      // Multi-tab protection: if the stored draft has been changed by another
+      // tab since this tab loaded it, do not silently overwrite it.
+      if (hasStoredRevisionChanged()) {
+        setExternalDraftChanged(true);
+        return;
+      }
+
+      let dynamicTerm = CURRENT_TERM;
+      if (schoolConfig.currentTerm) {
+        const match = schoolConfig.currentTerm.match(/\d+/);
+        if (match) dynamicTerm = parseInt(match[0], 10);
+      }
+
+      const version = draftVersionRef.current;
+      const success = AssessmentDraftStorage.saveDraft(
+        schoolId,
+        selectedClassId,
+        selectedSubject,
+        dynamicTerm,
+        schoolConfig.academicYear,
+        assessmentsRef.current,
+        version,
+      );
+
+      if (success) {
+        currentDraftRef.current = {
+          schoolId,
+          classId: selectedClassId,
+          subject: selectedSubject,
+          term: dynamicTerm,
+          academicYear: schoolConfig.academicYear,
+          assessments: assessmentsRef.current,
+          lastModified: Date.now(),
+          version,
+        };
+        loadedDraftRevisionRef.current = version;
+        setSyncStatus("idle");
+      }
+    }, 1000);
+  }, [schoolId, selectedClassId, selectedSubject, schoolConfig, hasStoredRevisionChanged]);
+
+  // Reconnection sync
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      prevIsOnlineRef.current = isOnline;
+      return;
+    }
+
+    const wasOffline = !prevIsOnlineRef.current;
+    prevIsOnlineRef.current = isOnline;
+
+    if (!isOnline || !wasOffline) return;
+    if (isSyncingRef.current) return;
+
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
+
+    const draft = AssessmentDraftStorage.loadDraft(
+      schoolId || "",
+      selectedClassId,
+      selectedSubject,
+      dynamicTerm,
+      schoolConfig.academicYear,
+    );
+
+    if (!draft) return;
+
+    // If there is a pending sync version, only sync if draft matches
+    if (pendingSyncVersionRef.current) {
+      const matches =
+        draft.schoolId === pendingSyncVersionRef.current.schoolId &&
+        draft.classId === pendingSyncVersionRef.current.classId &&
+        draft.subject === pendingSyncVersionRef.current.subject &&
+        draft.term === pendingSyncVersionRef.current.term &&
+        draft.academicYear === pendingSyncVersionRef.current.academicYear &&
+        draft.lastModified === pendingSyncVersionRef.current.lastModified &&
+        draft.version === pendingSyncVersionRef.current.version;
+      if (!matches) return;
+    }
+
+    const syncDraft = async () => {
+      if (isSyncingRef.current) return;
+      // We are about to start a sync, so we set the flag to true
+      isSyncingRef.current = true;
+
+      // Capture the context of the draft we are about to sync
+      const syncContext = {
+        schoolId: draft.schoolId,
+        classId: draft.classId,
+        subject: draft.subject,
+        term: draft.term,
+        academicYear: draft.academicYear,
+      };
+
+      // Check if the context has changed since we loaded the draft (in the useEffect)
+      const currentContext = currentContextRef.current;
+      const contextChanged =
+        currentContext.schoolId !== syncContext.schoolId ||
+        currentContext.classId !== syncContext.classId ||
+        currentContext.subject !== syncContext.subject ||
+        currentContext.term !== syncContext.term ||
+        currentContext.academicYear !== syncContext.academicYear;
+
+      if (contextChanged) {
+        isSyncingRef.current = false;
+        return;
+      }
+
+      setSyncStatus("syncing");
+
+      const capturedVersion = {
+        lastModified: draft.lastModified,
+        version: draft.version,
+        schoolId: draft.schoolId,
+        classId: draft.classId,
+        subject: draft.subject,
+        term: draft.term,
+        academicYear: draft.academicYear,
+      };
+      pendingSyncVersionRef.current = capturedVersion;
+
+      try {
+        const completeRecords = (Object.values(draft.assessments) as Assessment[]).map(
+          (a) => {
+            const total = calculateTotalScore(a);
+            return {
+              ...a,
+              id: a.id || `${draft.schoolId}_${a.studentId}_${draft.subject}_${draft.term}_${draft.academicYear}`,
+              schoolId: draft.schoolId,
+              total,
+              studentId: a.studentId!,
+              classId: draft.classId,
+              subject: draft.subject,
+              term: draft.term as 1 | 2 | 3,
+              academicYear: draft.academicYear,
+              testScore: a.testScore || 0,
+              homeworkScore: a.homeworkScore || 0,
+              projectScore: a.projectScore || 0,
+              examScore: a.examScore || 0,
+            } as Assessment;
+          },
+        );
+
+        await db.saveAssessmentsBatch(completeRecords);
+
+        // Guard: if context changed, do not mutate current UI state
+        const currentContext = currentContextRef.current;
+        const contextChanged =
+          currentContext.schoolId !== capturedVersion.schoolId ||
+          currentContext.classId !== capturedVersion.classId ||
+          currentContext.subject !== capturedVersion.subject ||
+          currentContext.term !== capturedVersion.term ||
+          currentContext.academicYear !== capturedVersion.academicYear;
+
+        if (contextChanged) {
+          isSyncingRef.current = false;
+          return;
+        }
+
+        const currentDraft = AssessmentDraftStorage.loadDraft(
+          draft.schoolId,
+          draft.classId,
+          draft.subject,
+          draft.term,
+          draft.academicYear,
+        );
+
+        if (
+          currentDraft &&
+          currentDraft.version === capturedVersion.version &&
+          currentDraft.lastModified === capturedVersion.lastModified &&
+          currentDraft.schoolId === capturedVersion.schoolId &&
+          currentDraft.classId === capturedVersion.classId &&
+          currentDraft.subject === capturedVersion.subject &&
+          currentDraft.term === capturedVersion.term &&
+          currentDraft.academicYear === capturedVersion.academicYear
+        ) {
+          AssessmentDraftStorage.deleteDraft(
+            draft.schoolId,
+            draft.classId,
+            draft.subject,
+            draft.term,
+            draft.academicYear,
+          );
+          currentDraftRef.current = null;
+          pendingSyncVersionRef.current = null;
+          setSyncStatus("idle");
+        } else if (currentDraft) {
+          setSyncStatus("pending");
+          pendingSyncVersionRef.current = null;
+        } else {
+          setSyncStatus("idle");
+          pendingSyncVersionRef.current = null;
+        }
+      } catch (error) {
+        console.error("Reconnection sync failed:", error);
+        // Check if context has changed before setting error status
+        const currentContext = currentContextRef.current;
+        const contextChanged =
+          currentContext.schoolId !== capturedVersion.schoolId ||
+          currentContext.classId !== capturedVersion.classId ||
+          currentContext.subject !== capturedVersion.subject ||
+          currentContext.term !== capturedVersion.term ||
+          currentContext.academicYear !== capturedVersion.academicYear;
+        if (!contextChanged) {
+          setSyncStatus("error");
+        }
+        pendingSyncVersionRef.current = null;
+      } finally {
+        isSyncingRef.current = false;
+      }
+    };
+
+syncDraft();
+   }, [isOnline, schoolId, selectedClassId, selectedSubject, schoolConfig.currentTerm, schoolConfig.academicYear]);
+ 
+   // Clean up draft timer on unmount to prevent stray saves after component unmount
+   useEffect(() => {
+     return () => {
+       if (draftTimerRef.current) {
+         clearTimeout(draftTimerRef.current);
+         draftTimerRef.current = null;
+       }
+     };
+   }, []);
+ 
+   // Initialize selected class
   useEffect(() => {
     if (availableClasses.length > 0 && !selectedClassId) {
       setSelectedClassId(availableClasses[0].id);
@@ -239,7 +656,7 @@ const AssessmentPage = () => {
           const found = existing.find(
             (a) => a.studentId === s.id && a.term === dynamicTerm,
           );
-          map[s.id] = found || {
+          const base = found || {
             id: `${s.id}_${selectedSubject.replace(/\//g, '-')}_${dynamicTerm}_${schoolConfig.academicYear}`,
             schoolId: schoolId || "",
             studentId: s.id,
@@ -253,6 +670,14 @@ const AssessmentPage = () => {
             examScore: 0,
             total: 0,
           };
+
+          // If we have an active local draft, prefer local values over server values
+          const draftRecord = currentDraftRef.current?.assessments[s.id];
+          if (draftRecord) {
+            map[s.id] = { ...base, ...draftRecord };
+          } else {
+            map[s.id] = base;
+          }
         });
         setAssessments(map);
         setLoading(false);
@@ -293,67 +718,151 @@ const AssessmentPage = () => {
 
     setAssessments((prev) => {
       const current = prev[studentId] || {};
-      return {
-        ...prev,
-        [studentId]: { ...current, [field]: numValue },
+      const next = { ...prev, [studentId]: { ...current, [field]: numValue } };
+      assessmentsRef.current = next;
+
+      // Update draft ref immediately for snapshot protection
+      currentDraftRef.current = {
+        ...(currentDraftRef.current || {
+          schoolId: schoolId || "",
+          classId: selectedClassId,
+          subject: selectedSubject,
+          term: CURRENT_TERM,
+          academicYear: schoolConfig.academicYear,
+          assessments: {},
+          lastModified: Date.now(),
+          version: 0,
+        }),
+        assessments: {
+          ...currentDraftRef.current?.assessments,
+          [studentId]: { ...current, [field]: numValue },
+        },
+        lastModified: Date.now(),
       };
+      draftVersionRef.current += 1;
+      currentDraftRef.current.version = draftVersionRef.current;
+
+      scheduleDraftSave();
+
+      return next;
     });
   };
 
-  const handleSave = async () => {
-    if (!selectedClassId || !schoolId) return;
-    setSaving(true);
-    try {
-      // determine dynamic term from config
-      let dynamicTerm = CURRENT_TERM;
-      if (schoolConfig.currentTerm) {
-        const match = schoolConfig.currentTerm.match(/\d+/);
-        if (match) dynamicTerm = parseInt(match[0], 10);
+const handleSave = async () => {
+  if (!selectedClassId || !schoolId || !selectedSubject) return;
+  setSaving(true);
+
+  // Multi-tab protection: do not save if another tab has written since
+  // this tab loaded its local copy.
+  if (hasStoredRevisionChanged()) {
+    setExternalDraftChanged(true);
+    setSaving(false);
+    return;
+  }
+
+  // Capture current draft version and context for race protection
+  const capturedVersion = currentDraftRef.current
+    ? {
+        lastModified: currentDraftRef.current.lastModified,
+        version: currentDraftRef.current.version,
+        schoolId: currentDraftRef.current.schoolId,
+        classId: currentDraftRef.current.classId,
+        subject: currentDraftRef.current.subject,
+        term: currentDraftRef.current.term,
+        academicYear: currentDraftRef.current.academicYear,
       }
+    : null;
 
-      const promises = (Object.values(assessments) as Assessment[]).map(
-        async (a) => {
-          if (!a.studentId) return;
+  try {
+    // determine dynamic term from config
+    let dynamicTerm = CURRENT_TERM;
+    if (schoolConfig.currentTerm) {
+      const match = schoolConfig.currentTerm.match(/\d+/);
+      if (match) dynamicTerm = parseInt(match[0], 10);
+    }
 
-          const total = calculateTotalScore(a);
+    const completeRecords = (Object.values(assessmentsRef.current) as Assessment[]).map(
+      (a) => {
+        const total = calculateTotalScore(a);
 
-          const completeRecord = {
-            ...a,
-            id: a.id || Math.random().toString(36),
+        const completeRecord = {
+          ...a,
+          id: a.id || Math.random().toString(36),
+          schoolId,
+          total,
+          // Ensuring required fields exist for TS
+          studentId: a.studentId!,
+          classId: selectedClassId!,
+          subject: selectedSubject,
+          term: dynamicTerm as 1 | 2 | 3,
+          academicYear: schoolConfig.academicYear,
+          testScore: a.testScore || 0,
+          homeworkScore: a.homeworkScore || 0,
+          projectScore: a.projectScore || 0,
+          examScore: a.examScore || 0,
+        } as Assessment;
+
+        return completeRecord;
+      },
+    );
+
+    if (isOnline) {
+      // Online save - write to Firestore
+      await db.saveAssessmentsBatch(completeRecords);
+
+      // Guard: if context changed, do not mutate draft refs or sync status
+      const currentContext = currentContextRef.current;
+      const contextChanged = capturedVersion
+        ? currentContext.schoolId !== capturedVersion.schoolId ||
+          currentContext.classId !== capturedVersion.classId ||
+          currentContext.subject !== capturedVersion.subject ||
+          currentContext.term !== capturedVersion.term ||
+          currentContext.academicYear !== capturedVersion.academicYear
+        : false;
+
+      if (!contextChanged && capturedVersion && currentDraftRef.current) {
+        const unchanged =
+          currentDraftRef.current.lastModified === capturedVersion.lastModified &&
+          currentDraftRef.current.version === capturedVersion.version &&
+          currentDraftRef.current.schoolId === capturedVersion.schoolId &&
+          currentDraftRef.current.classId === capturedVersion.classId &&
+          currentDraftRef.current.subject === capturedVersion.subject &&
+          currentDraftRef.current.term === capturedVersion.term &&
+          currentDraftRef.current.academicYear === capturedVersion.academicYear;
+
+        if (unchanged) {
+          AssessmentDraftStorage.deleteDraft(
             schoolId,
-            total,
-            // Ensuring required fields exist for TS
-            studentId: a.studentId!,
-            classId: selectedClassId!,
-            subject: selectedSubject,
-            term: dynamicTerm as 1 | 2 | 3,
-            academicYear: schoolConfig.academicYear,
-            testScore: a.testScore || 0,
-            homeworkScore: a.homeworkScore || 0,
-            projectScore: a.projectScore || 0,
-            examScore: a.examScore || 0,
-          } as Assessment;
-
-          return db.saveAssessment(completeRecord);
-        },
-      );
-      await Promise.all(promises);
+            selectedClassId,
+            selectedSubject,
+            dynamicTerm,
+            schoolConfig.academicYear,
+          );
+          currentDraftRef.current = null;
+          pendingSyncVersionRef.current = null;
+        }
+        // If changed, newer local edits exist; preserve draft
+      }
 
       // Notification logic
       const className =
         CLASSES_LIST.find((c) => c.id === selectedClassId)?.name ||
         selectedClassId;
+      const saveOperationVersion = capturedVersion?.version ?? draftVersionRef.current;
+      const notificationId = `${schoolId}_${selectedClassId}_${selectedSubject}_${dynamicTerm}_${schoolConfig.academicYear}_assessment_save_v${saveOperationVersion}`;
       try {
         await db.addSystemNotification(
           `${user?.fullName || "Teacher"} updated assessments for ${className} in ${selectedSubject}.`,
           "assessment",
           schoolId,
+          notificationId,
         );
       } catch (notificationError) {
         console.debug("Assessment notification skipped", notificationError);
       }
 
       showToast("Saved Successfully", { type: "success" });
+      loadedDraftRevisionRef.current = currentDraftRef.current?.version ?? null;
       await logActivity({
         schoolId,
         actorUid: user?.id || null,
@@ -370,30 +879,68 @@ const AssessmentPage = () => {
           actorName: user?.fullName || "",
         },
       });
-    } catch (e) {
-      console.error(e);
-      showToast("Error saving data", { type: "error" });
-      await logActivity({
-        schoolId,
-        actorUid: user?.id || null,
-        actorRole: user?.role || null,
-        eventType: "assessments_save_failed",
-        entityId: `${selectedClassId}_${selectedSubject}`,
-        meta: {
-          status: "failed",
-          module: "Assessment",
+    } else {
+      // Offline save - persist draft locally
+      let dynamicTerm = CURRENT_TERM;
+      if (schoolConfig.currentTerm) {
+        const match = schoolConfig.currentTerm.match(/\d+/);
+        if (match) dynamicTerm = parseInt(match[0], 10);
+      }
+
+      const success = AssessmentDraftStorage.saveDraft(
+        schoolId || "",
+        selectedClassId,
+        selectedSubject,
+        dynamicTerm,
+        schoolConfig.academicYear,
+        assessmentsRef.current,
+        draftVersionRef.current + 1, // Increment version for offline save
+      );
+
+      if (success) {
+        // Update local refs to match saved draft
+        currentDraftRef.current = {
+          schoolId: schoolId || "",
           classId: selectedClassId,
           subject: selectedSubject,
-          term: schoolConfig.currentTerm,
+          term: dynamicTerm,
           academicYear: schoolConfig.academicYear,
-          error: (e as any)?.message || "Unknown error",
-          actorName: user?.fullName || "",
-        },
-      });
-    } finally {
-      setSaving(false);
+          assessments: assessmentsRef.current,
+          lastModified: Date.now(),
+          version: draftVersionRef.current + 1,
+        };
+        draftVersionRef.current += 1;
+        loadedDraftRevisionRef.current = draftVersionRef.current;
+        
+        showToast("Saved locally — will sync when you're back online", { type: "info" });
+      } else {
+        showToast("Failed to save locally", { type: "error" });
+      }
     }
-  };
+  } catch (e) {
+    console.error(e);
+    showToast("Error saving data", { type: "error" });
+    await logActivity({
+      schoolId,
+      actorUid: user?.id || null,
+      actorRole: user?.role || null,
+      eventType: "assessments_save_failed",
+      entityId: `${selectedClassId}_${selectedSubject}`,
+      meta: {
+        status: "failed",
+        module: "Assessment",
+        classId: selectedClassId,
+        subject: selectedSubject,
+        term: schoolConfig.currentTerm,
+        academicYear: schoolConfig.academicYear,
+        error: (e as any)?.message || "Unknown error",
+        actorName: user?.fullName || "",
+      },
+    });
+  } finally {
+    setSaving(false);
+  }
+};
 
   if (availableClasses.length === 0)
     return (
@@ -455,14 +1002,82 @@ const AssessmentPage = () => {
                 {schoolConfig.currentTerm} &bull; {schoolConfig.academicYear}
               </p>
             </div>
-            <button
-              onClick={handleSave}
-              disabled={saving || !selectedSubject || !selectedClassId}
-              className="flex items-center bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
-            >
-              <Save size={18} className="mr-2" />
-              {saving ? "Saving..." : "Save Scores"}
-            </button>
+            <div className="flex items-center gap-4">
+              {/* Sync Status */}
+              {!isOnline && (
+                <div className="text-sm text-amber-600 font-medium flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  Offline — changes saved locally
+                </div>
+              )}
+              {isOnline && syncStatus === "syncing" && (
+                <div className="text-sm text-blue-600 font-medium flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  Syncing...
+                </div>
+              )}
+              {isOnline && syncStatus === "pending" && (
+                <div className="text-sm text-amber-600 font-medium flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  New changes saved locally — waiting to sync
+                </div>
+              )}
+              {externalDraftChanged && (
+                <div className="text-sm text-orange-700 font-medium flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-orange-500" />
+                  This assessment was changed in another tab.
+                  <button
+                    onClick={() => {
+                      setExternalDraftChanged(false);
+                      if (schoolId && selectedClassId && selectedSubject) {
+                        let dynamicTerm = CURRENT_TERM;
+                        if (schoolConfig.currentTerm) {
+                          const match = schoolConfig.currentTerm.match(/\d+/);
+                          if (match) dynamicTerm = parseInt(match[0], 10);
+                        }
+                        const draft = AssessmentDraftStorage.loadDraft(
+                          schoolId,
+                          selectedClassId,
+                          selectedSubject,
+                          dynamicTerm,
+                          schoolConfig.academicYear,
+                        );
+                        if (draft) {
+                          setAssessments(draft.assessments);
+                          currentDraftRef.current = draft;
+                          draftVersionRef.current = draft.version;
+                          loadedDraftRevisionRef.current = draft.version;
+                          setDraftRecovered(true);
+                        }
+                      }
+                    }}
+                    className="underline text-orange-900"
+                  >
+                    Review latest changes
+                  </button>
+                </div>
+              )}
+              {isOnline && syncStatus === "error" && (
+                <div className="text-sm text-red-600 font-medium flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                  Sync failed — changes preserved locally
+                </div>
+              )}
+              {isOnline && syncStatus === "idle" && draftRecovered && (
+                <div className="text-sm text-emerald-600 font-medium flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Draft recovered
+                </div>
+              )}
+<button
+  onClick={handleSave}
+  disabled={saving || !selectedSubject || !selectedClassId}
+  className="flex items-center bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+>
+  <Save size={18} className="mr-2" />
+  {saving ? "Saving..." : "Save Scores"}
+</button>
+            </div>
           </div>
         </div>
 
@@ -616,18 +1231,3 @@ const AssessmentPage = () => {
 };
 
 export default AssessmentPage;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
