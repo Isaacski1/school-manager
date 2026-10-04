@@ -4,7 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
 import { Student, StudentRemark } from "../../types";
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM } from "../../constants";
-import { Save, MessageSquare } from "lucide-react";
+import { Save, MessageSquare, Sparkles } from "lucide-react";
 import UserAvatar from "../../components/UserAvatar";
 import { logActivity } from "../../services/activityLog";
 
@@ -18,6 +18,19 @@ const isPermissionDeniedError = (error: unknown) => {
   );
 };
 
+const REMARK_SUGGESTIONS = [
+  "An outstanding performer with excellent academic progress.",
+  "Shows great potential and maintains good conduct in class.",
+  "Consistent effort and improvement throughout the term.",
+  "Active participant in class activities and assignments.",
+  "Demonstrates good leadership qualities among peers.",
+  "Maintains excellent attendance and punctuality.",
+  "Shows remarkable improvement in academic performance.",
+  "A disciplined student who follows school rules diligently.",
+  "Excellent interpersonal skills and teamwork abilities.",
+  "Creative and innovative in approaching class tasks.",
+];
+
 const WriteRemarks = () => {
   const { user } = useAuth();
   const assignedClassIds = (user?.assignedClassIds || []).sort((a, b) => {
@@ -29,7 +42,15 @@ const WriteRemarks = () => {
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [remarksData, setRemarksData] = useState<
+    Record<
+      string,
+      {
+        remark: string;
+        behaviorTag: "Excellent" | "Good" | "Needs Improvement" | "";
+      }
+    >
+  >({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -64,7 +85,6 @@ const WriteRemarks = () => {
             throw remarksError;
           }
         }
-        const remarksMap: Record<string, string> = {};
 
         // Determine dynamic term
         let dynamicTerm = CURRENT_TERM;
@@ -75,6 +95,14 @@ const WriteRemarks = () => {
         }
         const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
+        const data: Record<
+          string,
+          {
+            remark: string;
+            behaviorTag: "Excellent" | "Good" | "Needs Improvement" | "";
+          }
+        > = {};
+
         studentsList.forEach((s) => {
           const found = existingRemarks.find(
             (r) =>
@@ -82,10 +110,17 @@ const WriteRemarks = () => {
               r.term === dynamicTerm &&
               r.academicYear === currentAcademicYear,
           );
-          remarksMap[s.id] = found?.remark || "";
+          data[s.id] = {
+            remark: found?.remark || "",
+            behaviorTag: (found?.behaviorTag as
+              | "Excellent"
+              | "Good"
+              | "Needs Improvement"
+              | "") || "",
+          };
         });
 
-        setRemarks(remarksMap);
+        setRemarksData(data);
       } catch (err) {
         console.error(err);
       } finally {
@@ -97,7 +132,26 @@ const WriteRemarks = () => {
   }, [selectedClassId, schoolId]);
 
   const handleRemarkChange = (studentId: string, value: string) => {
-    setRemarks((prev) => ({ ...prev, [studentId]: value }));
+    setRemarksData((prev) => ({
+      ...prev,
+      [studentId]: {
+        ...prev[studentId],
+        remark: value,
+      },
+    }));
+  };
+
+  const handleBehaviorTagChange = (
+    studentId: string,
+    value: "Excellent" | "Good" | "Needs Improvement" | "",
+  ) => {
+    setRemarksData((prev) => ({
+      ...prev,
+      [studentId]: {
+        ...prev[studentId],
+        behaviorTag: value,
+      },
+    }));
   };
 
   const handleSave = async () => {
@@ -115,9 +169,9 @@ const WriteRemarks = () => {
       }
       const currentAcademicYear = config.academicYear || ACADEMIC_YEAR;
 
-      const promises = Object.entries(remarks).map(
-        async ([studentId, remarkText]) => {
-          const text = remarkText as string;
+      const promises = Object.entries(remarksData).map(
+        async ([studentId, data]) => {
+          const text = data.remark;
           if (!text.trim()) return;
 
           const remark: StudentRemark = {
@@ -128,7 +182,7 @@ const WriteRemarks = () => {
             academicYear: currentAcademicYear,
             schoolId,
             remark: text,
-            behaviorTag: "Good",
+            behaviorTag: data.behaviorTag || "Good",
             teacherId: user?.id || "",
             dateCreated: new Date().toISOString().split("T")[0],
           };
@@ -268,15 +322,70 @@ const WriteRemarks = () => {
                     </p>
                   </div>
                 </div>
-                <textarea
-                  value={remarks[student.id] || ""}
-                  onChange={(e) =>
-                    handleRemarkChange(student.id, e.target.value)
-                  }
-                  placeholder="Write remarks for this student..."
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
-                  rows={3}
-                />
+                <div className="mb-2">
+                  <label className="block text-sm font-medium mb-1">
+                    Behavior Tag
+                  </label>
+                  <select
+                    value={remarksData[student.id]?.behaviorTag || ""}
+                    onChange={(e) =>
+                      handleBehaviorTagChange(
+                        student.id,
+                        e.target.value as
+                          | "Excellent"
+                          | "Good"
+                          | "Needs Improvement"
+                          | "",
+                      )
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-black"
+                  >
+                    <option value="">Select Behavior</option>
+                    <option value="Excellent">Excellent</option>
+                    <option value="Good">Good</option>
+                    <option value="Needs Improvement">
+                      Needs Improvement
+                    </option>
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium mb-1 flex items-center gap-2">
+                    <Sparkles size={14} className="text-purple-600" />
+                    Remark
+                  </label>
+                  <textarea
+                    value={remarksData[student.id]?.remark || ""}
+                    onChange={(e) =>
+                      handleRemarkChange(student.id, e.target.value)
+                    }
+                    placeholder="Write remark or select from suggestions below..."
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                    rows={3}
+                  />
+                  {/* Remark Suggestions */}
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-500 mb-2">
+                      Tap to insert suggestion:
+                    </p>
+                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 bg-slate-50 rounded-lg">
+                      {REMARK_SUGGESTIONS.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() =>
+                            handleRemarkChange(student.id, suggestion)
+                          }
+                          className="max-w-full truncate rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-left text-xs text-purple-700 transition-colors hover:bg-purple-100"
+                          title={suggestion}
+                        >
+                          {suggestion.length > 50
+                            ? suggestion.substring(0, 50) + "..."
+                            : suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             ))
           )}

@@ -227,7 +227,7 @@ const TeacherDashboard = () => {
   const [subjects, setSubjects] = useState<string[]>([]);
 
   // Class selection for multi-class teachers
-  const assignedClassIds = (user as any)?.assignedClassIds || [];
+  const assignedClassIds = user?.assignedClassIds ?? [];
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   // School Config State
@@ -258,8 +258,8 @@ const TeacherDashboard = () => {
   }, [assignedClassIds, selectedClassId]);
 
   const assignedClass = CLASSES_LIST.find((c) => c.id === selectedClassId);
-  const classNames = assignedClassIds
-    .map((id) => CLASSES_LIST.find((c) => c.id === id)?.name)
+   const classNames = assignedClassIds
+     .map((id: string) => CLASSES_LIST.find((c) => c.id === id)?.name)
     .join(", ");
 
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -1407,7 +1407,7 @@ const TeacherDashboard = () => {
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="text-sm font-semibold text-slate-800 bg-transparent outline-none cursor-pointer"
               >
-                {assignedClassIds.map((id) => {
+                 {assignedClassIds.map((id: string) => {
                   const c = CLASSES_LIST.find((cls) => cls.id === id);
                   return (
                     <option key={id} value={id}>

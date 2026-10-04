@@ -18,7 +18,7 @@ const skillOptions = [
 
 const EditSkills = () => {
   const { user } = useAuth();
-  const assignedClassIds = (user as any)?.assignedClassIds || [];
+  const assignedClassIds = user?.assignedClassIds ?? [];
   const schoolId = user?.schoolId || null;
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
@@ -225,7 +225,7 @@ const EditSkills = () => {
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="w-full sm:w-64 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-black"
               >
-                {assignedClassIds.map((id) => {
+                 {assignedClassIds.map((id: string) => {
                   const c = CLASSES_LIST.find((cl) => cl.id === id);
                   return (
                     <option key={id} value={id}>

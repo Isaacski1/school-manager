@@ -3,8 +3,11 @@ import { Link } from "react-router-dom";
 import {
   BarChart3,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   GraduationCap,
+  History,
   MessageSquare,
   Search,
   Sparkles,
@@ -12,7 +15,7 @@ import {
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
-import { CLASSES_LIST, calculateGrade, calculateTotalScore, getGradeColor } from "../../constants";
+import { CLASSES_LIST, ACADEMIC_YEAR, calculateGrade, calculateTotalScore, getGradeColor } from "../../constants";
 import { db } from "../../services/mockDb";
 import { showToast } from "../../services/toast";
 import {
@@ -59,6 +62,12 @@ const parseAcademicYearStart = (value?: string) => {
   return match ? Number(match[1]) : 0;
 };
 
+const getCurrentTermNumber = (config: SchoolConfig | null): number | null => {
+  if (!config?.currentTerm) return null;
+  const match = config.currentTerm.match(/\d+/);
+  return match ? parseInt(match[1], 10) : null;
+};
+
 const termRecordSorter = (left: TermRecord, right: TermRecord) => {
   const yearDiff =
     parseAcademicYearStart(right.academicYear) -
@@ -71,6 +80,8 @@ const buildTermRecords = (
   assessments: Assessment[],
   remarks: StudentRemark[],
   skills: StudentSkills[],
+  currentAcademicYear?: string,
+  currentTerm?: number,
 ): TermRecord[] => {
   const records = new Map<string, TermRecord>();
 
@@ -104,6 +115,10 @@ const buildTermRecords = (
     ensureRecord(skill.academicYear, skill.term).skills.push(skill);
   });
 
+  if (currentAcademicYear && currentTerm) {
+    ensureRecord(currentAcademicYear, currentTerm);
+  }
+
   return Array.from(records.values()).sort(termRecordSorter);
 };
 
@@ -126,6 +141,8 @@ const StudentPerformance = () => {
     useState<StudentPerformanceSnapshot>(null);
   const [termRecords, setTermRecords] = useState<TermRecord[]>([]);
   const [selectedTermKey, setSelectedTermKey] = useState<string | null>(null);
+  const [performanceView, setPerformanceView] = useState<"current" | "history">("current");
+  const [previousTermKey, setPreviousTermKey] = useState<string | null>(null);
   const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
 
   useEffect(() => {
@@ -195,6 +212,8 @@ const StudentPerformance = () => {
       setPerformanceData(null);
       setTermRecords([]);
       setSelectedTermKey(null);
+      setPerformanceView("current");
+      setPreviousTermKey(null);
 
       try {
         const [snapshotResult, assessmentsResult, remarksResult, skillsResult] =
@@ -222,10 +241,28 @@ const StudentPerformance = () => {
         const remarks = readResult<StudentRemark[]>(remarksResult, []);
         const skills = readResult<StudentSkills[]>(skillsResult, []);
 
-        const nextTermRecords = buildTermRecords(assessments, remarks, skills);
+        const currentTermNum = getCurrentTermNumber(schoolConfig);
+        const currentAcademicYear = schoolConfig?.academicYear || ACADEMIC_YEAR;
+        const nextTermRecords = buildTermRecords(
+          assessments,
+          remarks,
+          skills,
+          currentAcademicYear,
+          currentTermNum || undefined,
+        );
+
+        const currentTermKey = currentTermNum
+          ? `${currentAcademicYear}__${currentTermNum}`
+          : null;
+        const defaultTermKey = currentTermKey
+          ? nextTermRecords.find((record) => record.key === currentTermKey)?.key ||
+            nextTermRecords[0]?.key ||
+            null
+          : nextTermRecords[0]?.key || null;
+
         setPerformanceData(snapshot || null);
         setTermRecords(nextTermRecords);
-        setSelectedTermKey(nextTermRecords[0]?.key || null);
+        setSelectedTermKey(defaultTermKey);
       } catch (error) {
         console.error("Failed to load student performance", error);
         showToast("Unable to load student performance right now.", {
@@ -262,38 +299,65 @@ const StudentPerformance = () => {
     [selectedTermKey, termRecords],
   );
 
-  const activeGrades = useMemo(() => {
-    if (selectedTermRecord?.grades?.length) return selectedTermRecord.grades;
-    return performanceData?.grades || [];
-  }, [performanceData?.grades, selectedTermRecord]);
+  const currentTermNum = getCurrentTermNumber(schoolConfig);
+  const currentAcademicYear = schoolConfig?.academicYear || ACADEMIC_YEAR;
+  const currentTermRecord = useMemo(
+    () =>
+      termRecords.find(
+        (record) =>
+          record.academicYear === currentAcademicYear &&
+          record.term === currentTermNum,
+      ) || null,
+    [currentAcademicYear, currentTermNum, termRecords],
+  );
+  const previousTermRecords = useMemo(
+    () =>
+      termRecords.filter(
+        (record) =>
+          record.academicYear !== currentAcademicYear ||
+          record.term !== currentTermNum,
+      ),
+    [currentAcademicYear, currentTermNum, termRecords],
+  );
+  const selectedPreviousTermRecord = useMemo(
+    () =>
+      previousTermRecords.find((record) => record.key === previousTermKey) ||
+      previousTermRecords[0] ||
+      null,
+    [previousTermKey, previousTermRecords],
+  );
 
-  const activeRemark = useMemo(() => {
-    if (!selectedTermRecord?.remarks?.length) return null;
-    return [...selectedTermRecord.remarks].sort((left, right) =>
+  const historyViewActive = performanceView === "history";
+  const displayTermRecord = historyViewActive
+    ? selectedPreviousTermRecord
+    : currentTermRecord;
+  const displayGrades = displayTermRecord?.grades || [];
+  const displayRemark = useMemo(() => {
+    if (!displayTermRecord?.remarks?.length) return null;
+    return [...displayTermRecord.remarks].sort((left, right) =>
       String(right.dateCreated || "").localeCompare(String(left.dateCreated || "")),
     )[0];
-  }, [selectedTermRecord]);
-
-  const activeSkills = useMemo(() => {
-    if (!selectedTermRecord?.skills?.length) return null;
-    return [...selectedTermRecord.skills].sort((left, right) =>
+  }, [displayTermRecord]);
+  const displaySkills = useMemo(() => {
+    if (!displayTermRecord?.skills?.length) return null;
+    return [...displayTermRecord.skills].sort((left, right) =>
       String(right.term).localeCompare(String(left.term)),
     )[0];
-  }, [selectedTermRecord]);
+  }, [displayTermRecord]);
 
-  const attendanceSummary = performanceData?.attendance || null;
-  const averageScore = useMemo(() => {
-    if (!activeGrades.length) return null;
-    const totals = activeGrades.map((row) =>
+  const displayAverageScore = useMemo(() => {
+    if (!displayGrades.length) return null;
+    const totals = displayGrades.map((row) =>
       typeof row.total === "number" && Number.isFinite(row.total)
         ? row.total
         : calculateTotalScore(row),
     );
     const total = totals.reduce((sum, value) => sum + value, 0);
     return Math.round(total / Math.max(1, totals.length));
-  }, [activeGrades]);
+  }, [displayGrades]);
 
-  const subjectCount = activeGrades.length;
+  const attendanceSummary = performanceData?.attendance || null;
+  const subjectCount = displayGrades.length;
   const currentTermLabel = selectedTermRecord?.label
     ? selectedTermRecord.label
     : schoolConfig
@@ -505,7 +569,10 @@ const StudentPerformance = () => {
                       {selectedStudent.name}
                     </h2>
                     <p className="mt-2 text-sm text-slate-500">
-                      {selectedClassName} | Current focus: {currentTermLabel}
+                      {selectedClassName} | {historyViewActive ? "Reviewing" : "Current focus"}:{" "}
+                      {historyViewActive
+                        ? selectedPreviousTermRecord?.label || "Previous term"
+                        : currentTermRecord?.label || currentTermLabel}
                     </p>
                   </div>
                   <button
@@ -515,6 +582,8 @@ const StudentPerformance = () => {
                       setPerformanceData(null);
                       setTermRecords([]);
                       setSelectedTermKey(null);
+                      setPerformanceView("current");
+                      setPreviousTermKey(null);
                     }}
                     className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
                     aria-label="Close student details"
@@ -553,7 +622,7 @@ const StudentPerformance = () => {
                       Average Score
                     </p>
                     <p className="mt-2 text-2xl font-bold text-amber-900">
-                      {averageScore ?? "-"}
+                      {displayAverageScore ?? "-"}
                     </p>
                     <p className="mt-1 text-xs text-amber-700">
                       Average across visible subjects
@@ -564,7 +633,7 @@ const StudentPerformance = () => {
                       Behavior
                     </p>
                     <p className="mt-2 text-lg font-bold text-violet-900">
-                      {activeRemark?.behaviorTag || "Not tagged"}
+                      {displayRemark?.behaviorTag || "Not tagged"}
                     </p>
                     <p className="mt-1 text-xs text-violet-700">
                       Latest teacher behavior note
@@ -572,29 +641,135 @@ const StudentPerformance = () => {
                   </div>
                 </div>
 
-                {termRecords.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                      Report Terms
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {termRecords.map((record) => (
-                        <button
-                          key={record.key}
-                          type="button"
-                          onClick={() => setSelectedTermKey(record.key)}
-                          className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                            selectedTermKey === record.key
-                              ? "bg-[#0B4A82] text-white"
-                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                          }`}
-                        >
-                          {record.label}
-                        </button>
-                      ))}
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                        {historyViewActive ? "History" : "Current Term"}
+                      </p>
+                      <h3 className="text-base font-bold text-slate-900">
+                        {historyViewActive
+                          ? selectedPreviousTermRecord?.label || "Previous terms"
+                          : currentTermRecord?.label || currentTermLabel}
+                      </h3>
+                    </div>
+                    <div className="flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerformanceView("current");
+                          setPreviousTermKey(null);
+                        }}
+                        className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                          !historyViewActive
+                            ? "bg-[#0B4A82] text-white shadow-sm"
+                            : "text-slate-600 hover:text-slate-800"
+                        }`}
+                      >
+                        Current Term
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerformanceView("history");
+                          setPreviousTermKey(
+                            selectedPreviousTermRecord?.key ||
+                              previousTermRecords[0]?.key ||
+                              null,
+                          );
+                        }}
+                        className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                          historyViewActive
+                            ? "bg-[#0B4A82] text-white shadow-sm"
+                            : "text-slate-600 hover:text-slate-800"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <History size={14} />
+                          Previous Terms
+                        </span>
+                      </button>
                     </div>
                   </div>
-                )}
+
+                  {historyViewActive && previousTermRecords.length > 0 ? (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-slate-600">
+                        Select term
+                      </label>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <select
+                          value={previousTermKey || ""}
+                          onChange={(event) => setPreviousTermKey(event.target.value)}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#1160A8] focus:ring-2 focus:ring-[#1160A8]/20"
+                        >
+                          {previousTermRecords.map((record) => (
+                            <option key={record.key} value={record.key}>
+                              {record.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!previousTermKey) {
+                                setPreviousTermKey(previousTermRecords[0]?.key || null);
+                                return;
+                              }
+                              const currentIndex = previousTermRecords.findIndex(
+                                (record) => record.key === previousTermKey,
+                              );
+                              if (currentIndex > 0) {
+                                setPreviousTermKey(
+                                  previousTermRecords[currentIndex - 1].key,
+                                );
+                              }
+                            }}
+                            disabled={!previousTermKey || previousTermRecords[0]?.key === previousTermKey}
+                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                            aria-label="Previous term"
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!previousTermKey) {
+                                setPreviousTermKey(previousTermRecords[0]?.key || null);
+                                return;
+                              }
+                              const currentIndex = previousTermRecords.findIndex(
+                                (record) => record.key === previousTermKey,
+                              );
+                              if (currentIndex < previousTermRecords.length - 1) {
+                                setPreviousTermKey(
+                                  previousTermRecords[currentIndex + 1].key,
+                                );
+                              }
+                            }}
+                            disabled={previousTermRecords[previousTermRecords.length - 1]?.key === previousTermKey}
+                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                            aria-label="Next term"
+                          >
+                            <ChevronRight size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      {previousTermKey === previousTermRecords[previousTermRecords.length - 1]?.key && (
+                        <p className="text-xs text-slate-500">
+                          You have reached the earliest available record for this student.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {historyViewActive && previousTermRecords.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+                      No previous term records found for this student yet.
+                    </div>
+                  ) : null}
+                </div>
 
                 <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
                   <div className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4">
@@ -612,7 +787,7 @@ const StudentPerformance = () => {
                       </div>
                     </div>
 
-                    {activeGrades.length === 0 ? (
+                    {displayGrades.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
                         No assessment scores found for this student yet.
                       </div>
@@ -629,7 +804,7 @@ const StudentPerformance = () => {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {activeGrades.map((row, index) => {
+                            {displayGrades.map((row, index) => {
                               const hasBreakdown =
                                 "testScore" in row ||
                                 "homeworkScore" in row ||
@@ -699,20 +874,20 @@ const StudentPerformance = () => {
                       </div>
 
                       <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                        {activeRemark ? (
+                        {displayRemark ? (
                           <>
                             <div className="mb-3 flex flex-wrap items-center gap-2">
-                              {activeRemark.behaviorTag ? (
+                              {displayRemark.behaviorTag ? (
                                 <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                                  {activeRemark.behaviorTag}
+                                  {displayRemark.behaviorTag}
                                 </span>
                               ) : null}
                               <span className="text-xs text-slate-400">
-                                {activeRemark.dateCreated || "No date"}
+                                {displayRemark.dateCreated || "No date"}
                               </span>
                             </div>
                             <p className="text-sm leading-6 text-slate-700">
-                              {activeRemark.remark}
+                              {displayRemark.remark}
                             </p>
                           </>
                         ) : (
@@ -738,15 +913,15 @@ const StudentPerformance = () => {
                         </div>
                       </div>
 
-                      {activeSkills ? (
+                      {displaySkills ? (
                         <div className="grid grid-cols-1 gap-2">
                           {[
-                            ["Punctuality", activeSkills.punctuality],
-                            ["Neatness", activeSkills.neatness],
-                            ["Conduct", activeSkills.conduct],
-                            ["Attitude to Work", activeSkills.attitudeToWork],
-                            ["Class Participation", activeSkills.classParticipation],
-                            ["Homework Completion", activeSkills.homeworkCompletion],
+                            ["Punctuality", displaySkills.punctuality],
+                            ["Neatness", displaySkills.neatness],
+                            ["Conduct", displaySkills.conduct],
+                            ["Attitude to Work", displaySkills.attitudeToWork],
+                            ["Class Participation", displaySkills.classParticipation],
+                            ["Homework Completion", displaySkills.homeworkCompletion],
                           ].map(([label, value]) => (
                             <div
                               key={label}
