@@ -28,13 +28,19 @@ service cloud.firestore {
     function isSchoolAdmin() {
       return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'school_admin';
+             (
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'school_admin' ||
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userRole == 'school_admin'
+             );
     }
 
     function isTeacher() {
       return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+             (
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userRole == 'teacher'
+             );
     }
 
     function isParent() {
@@ -1282,8 +1288,8 @@ match /analyticsEvents/{eventId} {
       }
 
       match /data/{docId} {
-        allow read: if schoolAdminOwnsSchool(resource.data.schoolId);
-        allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
+        allow read: if schoolAdminOwnsSchool(get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId);
+        allow create: if schoolAdminOwnsSchool(get(/databases/$(database)/documents/backups/$(backupId)).data.schoolId);
       }
     }
 

@@ -792,6 +792,75 @@ const [showDangerZone, setShowDangerZone] = useState(false);
       img.src = URL.createObjectURL(file);
     });
 
+  const removeBackgroundFromImage = async (file: File, maxPx = 400): Promise<string> => {
+    const imageBitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxPx / Math.max(imageBitmap.width, imageBitmap.height));
+    const width = Math.round(imageBitmap.width * scale);
+    const height = Math.round(imageBitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("Canvas is not supported in this browser.");
+    ctx.drawImage(imageBitmap, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
+    const samplePoints = [
+      [0, 0],
+      [width - 1, 0],
+      [0, height - 1],
+      [width - 1, height - 1],
+    ];
+    const sampleColors = samplePoints.map(([x, y]) => {
+      const index = (y * width + x) * 4;
+      return [data[index], data[index + 1], data[index + 2]];
+    });
+
+    let totalR = 0,
+      totalG = 0,
+      totalB = 0;
+    sampleColors.forEach(([r, g, b]) => {
+      totalR += r;
+      totalG += g;
+      totalB += b;
+    });
+    const bgR = Math.round(totalR / sampleColors.length);
+    const bgG = Math.round(totalG / sampleColors.length);
+    const bgB = Math.round(totalB / sampleColors.length);
+
+    const tolerance = 42;
+    const maxChannelDistance = 90;
+
+    const colorDistance = (r: number, g: number, b: number) => {
+      const dr = r - bgR;
+      const dg = g - bgG;
+      const db = b - bgB;
+      return Math.sqrt(dr * dr + dg * dg + db * db);
+    };
+
+    const channelDistance = (value: number, bgValue: number) =>
+      Math.abs(value - bgValue);
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const distance = colorDistance(r, g, b);
+      const maxChannelDelta = Math.max(
+        channelDistance(r, bgR),
+        channelDistance(g, bgG),
+        channelDistance(b, bgB),
+      );
+      if (distance < tolerance || maxChannelDelta < maxChannelDistance) {
+        data[i + 3] = 0;
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/png");
+  };
+
   const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -829,8 +898,7 @@ const [showDangerZone, setShowDangerZone] = useState(false);
 
     setUploadingLogo(true);
     try {
-      // Compress logo to max 400px, stored as base64 in Firestore (free, no Storage needed)
-      const base64 = await compressImageToBase64(file, 400, 0.8);
+      const base64 = await removeBackgroundFromImage(file, 400);
       const updatedConfig = { ...config, schoolId, logoUrl: base64 };
       setConfig(updatedConfig);
       await db.updateSchoolConfig(updatedConfig);
@@ -1800,9 +1868,9 @@ const confirmTermReset = async () => {
                 <div className="flex flex-col items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                   <p className="text-sm font-semibold text-slate-700 mb-4">School Logo</p>
                   <div className="relative group">
-                    <div className="h-24 w-24 rounded-2xl bg-white p-2 shadow-lg border border-slate-100 flex items-center justify-center overflow-hidden">
+                    <div className="h-32 w-32 rounded-2xl bg-white p-3 shadow-lg border border-slate-100 flex items-center justify-center overflow-hidden">
                       <img
-                         src={config.logoUrl || school?.logoUrl || schoolLogo}
+                        src={config.logoUrl || school?.logoUrl || schoolLogo}
                         alt="School Logo"
                         className="max-h-full max-w-full object-contain"
                       />

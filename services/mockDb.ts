@@ -805,13 +805,7 @@ private async createSnapshotRecord(params: {
     // Filter out any collections that are undefined (so we don't write empty documents)
     const filteredDataCollections = dataCollections.filter(({ value }) => value !== undefined);
 
-    // Write each collection to a document in the data subcollection
-    const dataWritePromises = filteredDataCollections.map(({ name, value }) =>
-        setDoc(doc(dataSubcol, name), { items: value })
-    );
-    await Promise.all(dataWritePromises);
-
-    // Now create the backup document (without the large data)
+    // Create the backup document first so subcollection rules can read its schoolId
     const backup = this.stripUndefinedDeep<Backup>({
         id: backupId,
         schoolId: params.schoolId,
@@ -836,10 +830,17 @@ private async createSnapshotRecord(params: {
                 recordCount: params.recordCount,
                 collections: params.collections,
                 expiresAt: params.expiresAt ?? null,
-            },
+              },
     });
 
     await setDoc(doc(firestore, "backups", backup.id), backup);
+
+    // Write each collection to a document in the data subcollection
+    const dataWritePromises = filteredDataCollections.map(({ name, value }) =>
+        setDoc(doc(dataSubcol, name), { items: value })
+    );
+    await Promise.all(dataWritePromises);
+
     return backup;
 }
 
