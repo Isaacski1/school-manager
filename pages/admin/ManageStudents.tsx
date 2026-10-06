@@ -1036,7 +1036,7 @@ const updates = classStudents
           motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
           guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
-          customFields: Object.keys(customFieldValues).length ? customFieldValues : undefined,
+          ...(Object.keys(customFieldValues).length ? { customFields: customFieldValues } : {}),
         };
         await db.updateStudent(updatedStudent);
         showToast("Student updated successfully.", { type: "success" });
@@ -1074,7 +1074,7 @@ const updates = classStudents
           motherWhatsApp: normalizePhone(formData.motherWhatsApp || ""),
           guardianPhone: normalizePhone(formData.guardianPhone || ""),
           guardianWhatsApp: normalizePhone(formData.guardianWhatsApp || ""),
-          customFields: Object.keys(customFieldValues).length ? customFieldValues : undefined,
+          ...(Object.keys(customFieldValues).length ? { customFields: customFieldValues } : {}),
           createdAt: Date.now(),
         };
         await db.addStudent(newStudent);
