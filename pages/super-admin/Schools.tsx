@@ -57,7 +57,7 @@ const Schools = () => {
     address: "",
     logoUrl: "",
     plan: "trial" as "free" | "trial" | "monthly" | "termly" | "yearly",
-    featurePlan: "starter" as "starter" | "standard",
+    featurePlan: "standard" as "starter" | "standard",
     billingStartType: "term_start" as "term_start" | "mid_term",
     specialPricingEnabled: false,
     specialPricingAmount: "",
@@ -79,7 +79,7 @@ const Schools = () => {
     id: string;
     name: string;
     maxStudents: number;
-  }>({ id: "starter", name: "Starter", maxStudents: 0 });
+  }>({ id: "standard", name: "Standard", maxStudents: 0 });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<School | null>(null);
   const [isCreatingSchool, setIsCreatingSchool] = useState(false);
@@ -460,7 +460,7 @@ const Schools = () => {
         plan: "trial",
         schoolType: "Basic School (Nursery to JHS)",
 
-        featurePlan: "starter",
+        featurePlan: "standard",
         billingStartType: "term_start",
         specialPricingEnabled: false,
         specialPricingAmount: "",
@@ -639,10 +639,9 @@ const Schools = () => {
     if (!nextPlanId) return;
     try {
       if (["starter", "standard"].includes(nextPlanId)) {
-        const nextLimit = nextPlanId === "standard" ? 0 : 500;
         await updateDoc(doc(firestore, "schools", schoolId), {
           featurePlan: nextPlanId,
-          "limits.maxStudents": nextLimit,
+          "limits.maxStudents": 0,
         });
         setSchools((prev) =>
           prev.map((school) =>
@@ -650,7 +649,7 @@ const Schools = () => {
               ? { 
                   ...school, 
                   featurePlan: nextPlanId as "starter" | "standard",
-                  limits: { ...(school.limits || {}), maxStudents: nextLimit }
+                  limits: { ...(school.limits || {}), maxStudents: 0 }
                 }
               : school,
           ),
@@ -706,7 +705,7 @@ const Schools = () => {
       setPlans((prev) => prev.filter((plan) => plan.id !== planId));
 
       if (planForm.id === planId) {
-        setPlanForm({ id: "starter", name: "Starter", maxStudents: 0 });
+        setPlanForm({ id: "standard", name: "Standard", maxStudents: 0 });
       }
 
       showToast("Plan deleted successfully.", { type: "success" });
@@ -768,27 +767,21 @@ const Schools = () => {
               pricing. Soft target: first {SPECIAL_PRICING_SOFT_LIMIT} schools.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => void loadFirstSchoolsPage(true)}
-              className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              Refresh
-            </button>
-            <button
-              onClick={() => setShowPlanModal(true)}
-              className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              Manage Plans
-            </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
-            >
-              <Plus size={18} className="mr-2" />
-              Create School
-            </button>
-          </div>
+           <div className="flex flex-wrap items-center gap-3">
+             <button
+               onClick={() => void loadFirstSchoolsPage(true)}
+               className="flex items-center px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+             >
+               Refresh
+             </button>
+             <button
+               onClick={() => setShowCreateModal(true)}
+               className="flex items-center px-4 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#0B4A82] transition-colors"
+             >
+               <Plus size={18} className="mr-2" />
+               Create School
+             </button>
+           </div>
         </div>
 
         <div
@@ -957,24 +950,15 @@ const Schools = () => {
                       </td>
                       <td className="px-6 py-4">
                         <div className="space-y-2">
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
-                            {resolvePlanName(school)}
-                          </span>
-                          {getSpecialPricingSummary(school) ? (
-                            <div className="text-xs font-medium text-emerald-700">
-                              Special price: {getSpecialPricingSummary(school)}
-                            </div>
-                          ) : null}
-                          <select
-                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white"
-                            value={school.featurePlan || "starter"}
-                            onChange={(e) =>
-                              handleAssignPlan(school.id, e.target.value)
-                            }
-                          >
-                            <option value="starter">Starter</option>
-                            <option value="standard">Standard</option>
-                          </select>
+                           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                             {resolvePlanName(school)}
+                           </span>
+                           {getSpecialPricingSummary(school) ? (
+                             <div className="text-xs font-medium text-emerald-700">
+                               Special price: {getSpecialPricingSummary(school)}
+                             </div>
+                           ) : null}
+                           <span className="text-xs text-slate-600">Complete School Management (full features)</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -1428,13 +1412,12 @@ const Schools = () => {
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      featurePlan: e.target.value as "starter" | "standard",
-                    })
-                  }
-                >
-                  <option value="starter">Starter</option>
-                  <option value="standard">Standard</option>
-                </select>
+                       featurePlan: e.target.value as "starter" | "standard",
+                     })
+                   }
+                 >
+                   <option value="standard">Complete School Management</option>
+                 </select>
               </div>
 
               <div>
@@ -1799,7 +1782,7 @@ const Schools = () => {
                     onChange={(e) =>
                       setPlanForm((prev) => ({ ...prev, name: e.target.value }))
                     }
-                    placeholder="Starter"
+                     placeholder="Complete School Management"
                   />
                 </div>
                 <div>

@@ -1685,7 +1685,7 @@ const SchoolDetails = () => {
                     </div>
                   </div>
 
-                  <div className="grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
+                  <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.92fr_1.08fr]">
                     <div className={PANEL_CLASS}>
                       <div className="mb-5">
                         <p className={LABEL_CLASS}>Access Lifecycle</p>
@@ -1819,9 +1819,9 @@ const SchoolDetails = () => {
                             )}
                           </div>
 
-                          {formState.specialPricing.enabled && (
-                            <div className="mt-4 space-y-4">
-                              <div className="grid gap-4 sm:grid-cols-2">
+                            {formState.specialPricing.enabled && (
+                              <div className="mt-4 space-y-4">
+                                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                                 <div>
                                   <label className={LABEL_CLASS}>
                                     Custom Amount (GHS)

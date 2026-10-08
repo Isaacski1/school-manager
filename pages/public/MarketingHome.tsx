@@ -14,9 +14,9 @@ const features = [
   { icon: CreditCard, title: "Fees & Payments", desc: "Manage school finances, track payment activity and plan billing from one screen.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: null },
   { icon: Users, title: "Staff & Student Records", desc: "Centralise classes, teachers and students so your school runs from one workspace.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: null },
   { icon: Smartphone, title: "Parent Dashboard", desc: "Real-time access for parents to track attendance, grades, and pay fees from any device.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: null },
-  { icon: MessageCircle, title: "WhatsApp Broadcast", desc: "Send instant bulk messages to all parents via WhatsApp directly from the admin dashboard — no extra app needed.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Standard" },
-  { icon: Wallet, title: "Online Fee Payments", desc: "Parents pay fees securely via Paystack — Mobile Money or card — directly from the parent portal with auto-generated PDF invoices.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Standard" },
-  { icon: Bell, title: "Admin Payment Alerts", desc: "Get an instant WhatsApp notification whenever a parent completes a payment, including amount, student details, and a PDF receipt.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Standard" },
+  { icon: MessageCircle, title: "WhatsApp Broadcast", desc: "Send instant bulk messages to all parents via WhatsApp directly from the admin dashboard — no extra app needed.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Included" },
+  { icon: Wallet, title: "Online Fee Payments", desc: "Parents pay fees securely via Paystack — Mobile Money or card — directly from the parent portal with auto-generated PDF invoices.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Included" },
+  { icon: Bell, title: "Admin Payment Alerts", desc: "Get an instant WhatsApp notification whenever a parent completes a payment, including amount, student details, and a PDF receipt.", color: "rgba(147, 197, 253, 0.15)", accent: "#93C5FD", badge: "Included" },
 ];
 
 const roles = [

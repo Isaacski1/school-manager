@@ -1125,10 +1125,11 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         .get(),
     ]);
     const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
-    if (String(schoolData.featurePlan || "starter").toLowerCase() !== "standard") {
+    const featurePlan = String(schoolData.featurePlan || "standard").toLowerCase();
+    if (featurePlan !== "standard" && featurePlan !== "starter") {
       return res.status(403).json({
         code: "FEATURE_ACCESS_DENIED",
-        message: "School AI is available on the Standard Plan.",
+        message: "School AI is available on the Complete School Management plan.",
       });
     }
     const schoolContext = {
@@ -4391,7 +4392,7 @@ const normalizeSchoolForView = (docId, data = {}) => {
     address: String(data.address || "").trim(),
     plan: validPlan,
     status: validStatus,
-    featurePlan: String(data.featurePlan || "starter").toLowerCase(),
+    featurePlan: String(data.featurePlan || "standard").toLowerCase(),
     createdBy: data.createdBy || null,
     createdAt: toMillisValue(data.createdAt),
     planEndsAt: toMillisValue(data.planEndsAt),
@@ -10009,7 +10010,7 @@ app.post(
             plan: "trial",
             planEndsAt: admin.firestore.Timestamp.fromDate(trialEndsAt),
             ...buildTrialVacationFields(trialVacationSettings, now),
-            featurePlan: featurePlan || "starter",
+        featurePlan: featurePlan || "standard",
             billing: {
               status: "trialing",
               postTrialPlan,
@@ -12746,10 +12747,11 @@ const resolveSchoolAdmin = async (req, res) => {
 
   const schoolSnap = await admin.firestore().collection("schools").doc(String(user.schoolId)).get();
   const schoolData = schoolSnap.exists ? schoolSnap.data() || {} : {};
-  if (String(schoolData.featurePlan || "starter").toLowerCase() !== "standard") {
+  const featurePlan = String(schoolData.featurePlan || "standard").toLowerCase();
+  if (featurePlan !== "standard" && featurePlan !== "starter") {
     res.status(403).json({
       code: "FEATURE_ACCESS_DENIED",
-      error: "Staff Payroll is available on the Standard Plan.",
+      error: "Staff Payroll is available on the Complete School Management plan.",
     });
     return null;
   }
@@ -14199,8 +14201,8 @@ app.post("/api/public/start-trial", async (req, res) => {
       }
     }
 
-    const featurePlanSafe = String(featurePlan || "starter").trim().toLowerCase();
-    const maxStudents = featurePlanSafe === "standard" ? 0 : 500;
+    const featurePlanSafe = String(featurePlan || "standard").trim().toLowerCase();
+    const maxStudents = 0;
 
     // Calculate trial end date (30 days from now) - store as Firestore Timestamp
     const trialEndDate = new Date();
@@ -14346,7 +14348,7 @@ app.post("/api/public/start-trial", async (req, res) => {
     const safeSchoolEmail = String(schoolEmail || "").trim().toLowerCase() || "Not provided";
     const safeAddress = String(address || "").trim() || "Not provided";
     const safeStudentEstimate = studentEstimate || "Not provided";
-    const safeFeaturePlan = String(featurePlan || "starter").toUpperCase();
+    const safeFeaturePlan = String(featurePlan || "standard").toUpperCase();
     const safeBillingCycle = String(plan || "trial").toUpperCase();
     const safeAcademicYear = String(academicYear || "").trim() || "N/A";
     const safeCurrentTerm = String(currentTerm || "").trim() || "N/A";
@@ -17462,6 +17464,3 @@ server.on("error", (err) => {
   console.error("Server failed to start:", err);
   process.exit(1);
 });
-
-
-

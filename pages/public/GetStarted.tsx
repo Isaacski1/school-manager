@@ -24,16 +24,16 @@ const GetStarted = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
-  const [formData, setFormData] = useState({
-    schoolName: "", schoolPhone: "", schoolEmail: "", address: "",
-    schoolType: "", studentEstimate: "", adminFullName: "", adminEmail: "",
-    password: "", confirmPassword: "", academicYear: "", currentTerm: "Term 1",
-    onboardingTemplate: "default",
-    logoFile: null as File | null,
-    logoPreview: "",
-    plan: "trial",
-    featurePlan: "starter",
-  });
+    const [formData, setFormData] = useState({
+      schoolName: "", schoolPhone: "", schoolEmail: "", address: "",
+      schoolType: "", studentEstimate: "", adminFullName: "", adminEmail: "",
+      password: "", confirmPassword: "", academicYear: "", currentTerm: "Term 1",
+      onboardingTemplate: "default",
+      logoFile: null as File | null,
+      logoPreview: "",
+      plan: "trial",
+      featurePlan: "starter", // Feature plan is now fixed; both starter and standard provide full features
+    });
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -50,19 +50,15 @@ const GetStarted = () => {
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setFormData(p => ({ ...p, [field]: e.target.value }));
 
-  const valid = useMemo(() => {
-    if (currentStep === 0) return !!(formData.schoolName.trim() && formData.schoolPhone.trim() && formData.schoolEmail.trim());
-    if (currentStep === 1) return !!(formData.adminFullName.trim() && formData.adminEmail.trim() && formData.password.length >= 6 && formData.password === formData.confirmPassword);
-    if (currentStep === 2) return !!(formData.plan && formData.featurePlan && !(formData.featurePlan === "starter" && Number(formData.studentEstimate) > 200));
-    if (currentStep === 3) return !!(formData.academicYear.trim() && formData.currentTerm.trim());
-    return true;
-  }, [currentStep, formData]);
+    const valid = useMemo(() => {
+      if (currentStep === 0) return !!(formData.schoolName.trim() && formData.schoolPhone.trim() && formData.schoolEmail.trim());
+      if (currentStep === 1) return !!(formData.adminFullName.trim() && formData.adminEmail.trim() && formData.password.length >= 6 && formData.password === formData.confirmPassword);
+      if (currentStep === 2) return !!(formData.plan && formData.featurePlan);
+      if (currentStep === 3) return !!(formData.academicYear.trim() && formData.currentTerm.trim());
+      return true;
+    }, [currentStep, formData]);
 
-  useEffect(() => {
-    if (Number(formData.studentEstimate) > 200 && formData.featurePlan === "starter") {
-      setFormData((prev) => ({ ...prev, featurePlan: "standard" }));
-    }
-  }, [formData.studentEstimate, formData.featurePlan]);
+
 
   const handleNext = () => {
     if (!valid) { showToast("Please complete all required fields.", { type: "error" }); return; }
@@ -427,85 +423,61 @@ const GetStarted = () => {
                       </div>
                     )}
 
-                    {currentStep === 2 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                        <div className="subscription-plan-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                          <div 
-                            className="subscription-plan-card"
-                            onClick={() => { if (Number(formData.studentEstimate) <= 200) setFormData(p => ({ ...p, featurePlan: "starter" })); }}
-                            style={{ 
-                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "starter" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
-                              background: formData.featurePlan === "starter" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", 
-                              cursor: Number(formData.studentEstimate) > 200 ? "not-allowed" : "pointer", 
-                              transition: "all 0.2s", opacity: Number(formData.studentEstimate) > 200 ? 0.72 : 1, position: "relative", backdropFilter: "blur(10px)", minHeight: 180
-                            }}
-                          >
-                            <div className="subscription-plan-card-icon" style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
-                              <CheckCircle2 size={24} color="#10B981" style={{ margin: "auto" }} />
-                            </div>
-                            <div>
-                              <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Starter</h3>
-                              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Max 200 Students. Perfect for small schools.</p>
-                              {Number(formData.studentEstimate) > 200 && (
-                                <p style={{ fontSize: 11, color: "#F87171", fontWeight: 700, marginTop: 8 }}>Est. {formData.studentEstimate} students exceeds limit</p>
-                              )}
-                            </div>
-                          </div>
-                          <div 
-                            className="subscription-plan-card"
-                            onClick={() => setFormData(p => ({ ...p, featurePlan: "standard" }))}
-                            style={{ 
-                              padding: 24, borderRadius: 20, border: `2px solid ${formData.featurePlan === "standard" ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
-                              background: formData.featurePlan === "standard" ? "rgba(11, 74, 130, 0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", transition: "all 0.2s", backdropFilter: "blur(10px)", minHeight: 180
-                            }}
-                          >
-                            <div className="subscription-plan-card-icon" style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(11, 74, 130, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
-                              <ShieldCheck size={24} color="#93C5FD" style={{ margin: "auto" }} />
-                            </div>
-                            <div>
-                              <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Standard</h3>
-                              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Unlimited Students. Advanced features for growing schools.</p>
-                            </div>
-                          </div>
-                        </div>
+    {currentStep === 2 && (
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div className="subscription-plan-grid" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
+          <div 
+            className="subscription-plan-card"
+            style={{ 
+              padding: 24, borderRadius: 20, border: `2px solid #0B4A82`,
+              background: "rgba(11, 74, 130, 0.1)", 
+              cursor: "default", 
+              transition: "all 0.2s", 
+              position: "relative", 
+              backdropFilter: "blur(10px)", 
+              minHeight: 180
+            }}
+          >
+            <div className="subscription-plan-card-icon" style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(16, 185, 129, 0.1)", display: "flex", alignItems: "center", justifyItems: "center", marginBottom: 16 }}>
+              <CheckCircle2 size={24} color="#10B981" style={{ margin: "auto" }} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px 0", color: "white" }}>Complete School Management</h3>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5 }}>Unlimited Students. Full feature set for all schools.</p>
+            </div>
+          </div>
+        </div>
 
-                        <div>
-                          <label style={labelCls}>Preferred Billing Cycle (starts after trial)</label>
-                          <div className="billing-cycle-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                            {([
-                              { key: "monthly", label: "Monthly", discount: null, price: (base: number) => base },
-                              { key: "termly", label: "Termly", discount: "10% off", price: (base: number) => Math.round(base * 4 * 0.9) },
-                              { key: "yearly", label: "Yearly", discount: "20% off", price: (base: number) => Math.round(base * 12 * 0.8) },
-                            ] as const).map(({ key, label, discount, price }) => {
-                              const base = formData.featurePlan === "starter" ? 100 : 300;
-                              const amt = price(base);
-                              return (
-                                <button
-                                  className="billing-cycle-option"
-                                  key={key} type="button" onClick={() => setFormData(prev => ({ ...prev, plan: key }))}
-                                  style={{
-                                    padding: "14px 10px", borderRadius: 12, fontSize: 13, fontWeight: 600,
-                                    border: `1.5px solid ${formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
-                                    background: formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.03)",
-                                    color: "white", cursor: "pointer", transition: "all 0.2s",
-                                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                                  }}
-                                >
-                                  <span style={{ fontWeight: 700 }}>{label}</span>
-                                  <span style={{ fontSize: 15, fontWeight: 800 }}>GH₵ {amt.toLocaleString()}</span>
-                                  {discount && (
-                                    <span className="billing-discount" style={{ fontSize: 10, fontWeight: 800, color: "#93C5FD", background: "rgba(147,197,253,0.15)", borderRadius: 999, padding: "2px 8px" }}>{discount}</span>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <p className="billing-note" style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
-                            <Lightbulb size={14} color="#93C5FD" style={{ flexShrink: 0 }} /> Your free 30-day trial runs first. The selected billing cycle (monthly, termly, or yearly) starts only after the trial ends, so the first termly or yearly payment is due after day 30.
-                          </p>
-                        </div>
-                      </div>
-                    )}
+        <div>
+          <label style={labelCls}>Preferred Billing Cycle (starts after trial)</label>
+          <div className="billing-cycle-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            {([
+              { key: "monthly", label: "Monthly", price: 150 },
+              { key: "termly", label: "Termly", price: 400 },
+              { key: "yearly", label: "Yearly", price: 1200 },
+            ] as const).map(({ key, label, price }) => (
+              <button
+                className="billing-cycle-option"
+                key={key} type="button" onClick={() => setFormData(prev => ({ ...prev, plan: key }))}
+                style={{
+                  padding: "14px 10px", borderRadius: 12, fontSize: 13, fontWeight: 600,
+                  border: `1.5px solid ${formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.1)"}`,
+                  background: formData.plan === key ? "#0B4A82" : "rgba(255,255,255,0.03)",
+                  color: "white", cursor: "pointer", transition: "all 0.2s",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                }}
+              >
+                <span style={{ fontWeight: 700 }}>{label}</span>
+                <span style={{ fontSize: 15, fontWeight: 800 }}>GH₵ {price.toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+          <p className="billing-note" style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 12, fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
+            <Lightbulb size={14} color="#93C5FD" style={{ flexShrink: 0 }} /> Your free 30-day trial runs first. The selected billing cycle (monthly, termly, or yearly) starts only after the trial ends, so the first termly or yearly payment is due after day 30.
+          </p>
+        </div>
+      </div>
+    )}
 
                     {currentStep === 3 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

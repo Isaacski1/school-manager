@@ -82,10 +82,10 @@ const featureCategories = [
   },
   {
     title: "Communication & Payments",
-    desc: "Standard-plan features that connect your school to parents and streamline fee collection",
+    desc: "All features included to connect your school to parents and streamline fee collection",
     color: "#93C5FD",
     bgColor: "rgba(147, 197, 253, 0.15)",
-    badge: "Standard Plan",
+    badge: "Included",
     features: [
       {
         icon: MessageCircle,
@@ -162,7 +162,7 @@ const Features = () => {
                   <motion.div key={feature.title} whileHover={{ y: -8, translateZ: 0 }} className="feature-card" style={{ background: "rgba(255,255,255,0.05)", borderRadius: 24, padding: "32px", border: "1.5px solid rgba(255,255,255,0.1)", willChange: "transform", position: "relative" }}>
                     {(category as any).badge && (
                       <div style={{ position: "absolute", top: 16, right: 16, background: "rgba(147,197,253,0.15)", border: "1px solid rgba(147,197,253,0.3)", borderRadius: 999, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                        Standard
+                        Included
                       </div>
                     )}
                     <div style={{ width: 56, height: 56, borderRadius: 16, background: category.bgColor, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>

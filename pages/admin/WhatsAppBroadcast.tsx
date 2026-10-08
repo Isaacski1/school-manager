@@ -44,60 +44,9 @@ const WhatsAppBroadcast: React.FC = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const featurePlan = resolveFeaturePlan(school);
-  const isStandard = featurePlan === "standard";
+  const isStandard = true; // All plans now have full features
 
-  // ── Upgrade Wall for Starter Plan ───────────────────────────────────────────
-  if (!isStandard) {
-    return (
-      <Layout title="WhatsApp Broadcast">
-        <div className="max-w-2xl mx-auto mt-10 sm:mt-16 px-4">
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-lg overflow-hidden">
-            {/* Gradient banner */}
-            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-8 sm:p-10 flex flex-col items-center text-center">
-              <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center mb-4">
-                <WhatsAppIcon size={32} />
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">WhatsApp Broadcast</h1>
-              <p className="text-emerald-100 text-sm sm:text-base">Send messages to all parents at once — completely free</p>
-            </div>
-
-            {/* Lock state */}
-            <div className="p-8 sm:p-10 flex flex-col items-center text-center">
-              <div className="w-14 h-14 rounded-full bg-amber-50 border-2 border-amber-200 flex items-center justify-center mb-4">
-                <svg className="w-7 h-7 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              </div>
-              <span className="text-xs font-bold bg-amber-100 text-amber-700 px-3 py-1 rounded-full mb-4">Standard Plan Feature</span>
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-3">Upgrade to Standard</h2>
-              <p className="text-slate-500 text-sm sm:text-base mb-6 max-w-md">
-                WhatsApp Broadcast allows you to message all parents instantly — no phone needed. Upgrade your plan to unlock this feature and many more.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full mb-8">
-                {[
-                  { icon: "💬", label: "Bulk WhatsApp Messaging" },
-                  { icon: "📄", label: "Auto Payment Invoices" },
-                  { icon: "👨‍👩‍👧", label: "Parent Portal Access" },
-                ].map(f => (
-                  <div key={f.label} className="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
-                    <div className="text-2xl mb-1">{f.icon}</div>
-                    <p className="text-xs font-semibold text-slate-600">{f.label}</p>
-                  </div>
-                ))}
-              </div>
-              <Link
-                to="/admin/billing"
-                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-full transition shadow-md text-sm sm:text-base"
-              >
-                Upgrade to Standard
-              </Link>
-              <p className="text-xs text-slate-400 mt-3">Contact your administrator or visit the Billing page to upgrade.</p>
-            </div>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
+  // Note: All schools now have access to WhatsApp Broadcast regardless of feature plan
 
   return (
     <Layout title="WhatsApp Notifications">

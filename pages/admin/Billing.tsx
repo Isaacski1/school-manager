@@ -170,52 +170,25 @@ const Billing: React.FC = () => {
     return getStatusMeta(latestPayment?.status || billingStatus.status);
   }, [billingStatus.status, subscriptionPaymentHistory]);
 
-  const expectedAmount = useMemo(() => {
-    if (specialPricing) return specialPricing.amount;
+    const expectedAmount = useMemo(() => {
+      if (specialPricing) return specialPricing.amount;
 
-    const billingCycle = effectiveBillingCycle || "monthly"; // monthly | termly | yearly
-    const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
+      const billingCycle = effectiveBillingCycle || "monthly"; // monthly | termly | yearly
 
-    // Base monthly prices
-    const BASE_PRICES: Record<string, number> = { starter: 100, standard: 300 };
-    const base = BASE_PRICES[featurePlan] ?? 100;
+      // Fixed prices for the Complete School Management plan
+      if (billingCycle === "monthly") {
+        return 150; // GHS 150 per month
+      }
+      if (billingCycle === "termly") {
+        return 400; // GHS 400 per term
+      }
+      if (billingCycle === "yearly") {
+        return 1200; // GHS 1200 per year
+      }
 
-    // Calculate total based on cycle
-    if (billingCycle === "monthly") {
-      return base; // GHS 100 or GHS 300
-    }
-
-    if (billingCycle === "termly") {
-      // 4 months Ã— base Ã— 0.90 (10% discount)
-      const total = base * 4 * 0.9;
-
-      // Pro-rate if mid-term
-      const startType = (school as any)?.billing?.startType || "term_start";
-      if (startType === "term_start") return Math.round(total);
-
-      const startDate = parseSchoolDate(schoolConfig?.schoolReopenDate);
-      const endDate = parseSchoolDate(schoolConfig?.vacationDate);
-      if (!startDate || !endDate || endDate <= startDate) return Math.round(total);
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (today <= startDate) return Math.round(total);
-
-      const totalDays = diffDays(startDate, endDate) + 1;
-      const remainingDays = Math.max(0, diffDays(today, endDate) + 1);
-      if (!totalDays || remainingDays <= 0) return Math.round(total);
-
-      const prorated = (total * remainingDays) / totalDays;
-      return Math.max(1, Math.round(prorated));
-    }
-
-    if (billingCycle === "yearly") {
-      // 12 months Ã— base Ã— 0.80 (20% discount)
-      return Math.round(base * 12 * 0.8);
-    }
-
-    return base;
-  }, [effectiveBillingCycle, school, schoolConfig, specialPricing]);
+      // Default to monthly if cycle is not recognized
+      return 150;
+    }, [effectiveBillingCycle, specialPricing]);
 
   useEffect(() => {
     if (isFreePlan) return;
@@ -527,7 +500,10 @@ const Billing: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Amount Due</span>
                 <span className="font-bold text-slate-900">
-                  GHâ‚µ {expectedAmount.toLocaleString()}
+                  {new Intl.NumberFormat("en-GH", {
+                    style: "currency",
+                    currency: "GHS",
+                  }).format(expectedAmount)}
                 </span>
               </div>
               {specialPricing ? (
@@ -573,9 +549,9 @@ const Billing: React.FC = () => {
             <button
               onClick={loadPaymentHistory}
               className="text-sm text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50"
-              disabled={loadingMore}
+              disabled={loadingHistory}
             >
-              {loadingMore ? "Loading..." : "Refresh"}
+              {loadingHistory ? "Loading..." : "Refresh"}
             </button>
           </div>
           </div>

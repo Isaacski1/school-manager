@@ -11,86 +11,57 @@ type Cycle = "monthly" | "termly" | "yearly";
 
 const formatCurrency = (amount: number) => `GH₵ ${amount.toLocaleString()}`;
 
-function getSubscriptionPrice(monthlyPrice: number, cycle: Cycle): { amount: number; label: string; savings: number } {
+function getSubscriptionPrice(cycle: Cycle): { amount: number; label: string } {
   if (cycle === "monthly") {
-    return { amount: monthlyPrice, label: "/ month", savings: 0 };
+    return { amount: 150, label: "/ month" };
   }
-
   if (cycle === "termly") {
-    const undiscounted = monthlyPrice * 4;
-    const amount = Math.round(undiscounted * 0.9);
-    return { amount, label: "/ term", savings: undiscounted - amount };
+    return { amount: 400, label: "/ term" };
   }
-
-  const undiscounted = monthlyPrice * 12;
-  const amount = Math.round(undiscounted * 0.8);
-  return { amount, label: "/ year", savings: undiscounted - amount };
+  return { amount: 1200, label: "/ year" };
 }
 
 const plans = [
   {
-    name: "Starter Plan",
-    tagline: "For schools that want a clean digital foundation.",
-    popular: false,
-    monthlyPrice: 100,
-    bullets: [
-      "Up to 200 Students",
-      "Student & Staff Profiles",
-      "Core School Setup Tools",
-    ],
-  },
-  {
-    name: "Standard Plan",
-    tagline: "For schools that need deeper operations visibility.",
+    name: "Complete School Management",
+    tagline: "Full-featured school management software for your school.",
     popular: true,
-    monthlyPrice: 300,
     bullets: [
       "Unlimited Students",
-      "All Starter Features",
+      "Student & Staff Profiles",
+      "Core School Setup Tools",
       "NaCCA Grading System & Terminal Reports",
       "Exam Results Analytics",
       "Parent Portal Access",
+      "Fees & Billing",
+      "Payment Tracking",
+      "Financial Reporting",
+      "Assessments & Reports",
+      "Report Cards",
+      "Skills & Remarks",
+      "Student Performance",
+      "Timetable Management",
+      "School Announcements",
+      "Online Fee Payments",
+      "Admin Payment Alerts",
+      "Notifications & Alerts",
+      "Analytics & Reports",
+      "Activity Monitoring",
+      "Backup & Recovery",
+      "System Settings",
+      "Security & Access Control",
+      "Mobile Responsive Access",
     ],
   },
 ];
 
 const faqs = [
   { q: "Do I need a credit card to start?", a: "No. You can start a free trial and set up your school with no payment required upfront." },
-  { q: "Can I switch plans later?", a: "Yes. You can upgrade from Starter Plan to Standard Plan at any time from your admin settings." },
-  { q: "How long does onboarding take?", a: "Starter onboarding is handled remotely. Standard onboarding includes record migration, grading configuration, and 1 day of on-site staff training." },
+  { q: "Can I switch billing cycles later?", a: "Yes. You can change between monthly, termly, and yearly billing at any time from your admin settings." },
+  { q: "How long does onboarding take?", a: "Onboarding is handled remotely and can be completed in minutes. Our team is available to assist if needed." },
   { q: "Is my school data safe?", a: "Yes. All data is stored securely on Firebase with role-based access control and regular backups." },
-  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly covers 4 months with a 10% discount, and yearly covers 12 months with a 20% discount." },
-];
-
-const featureComparisonRows = [
-  { feature: "Up to 200 Students", starter: true, standard: true },
-  { feature: "Unlimited Students", starter: false, standard: true },
-  { feature: "Student & Staff Records", starter: true, standard: true },
-  { feature: "Class & Section Organization", starter: true, standard: true },
-  { feature: "Attendance Tracking", starter: true, standard: true },
-  { feature: "Teacher Attendance Tracking", starter: true, standard: true },
-  { feature: "Fees & Billing", starter: false, standard: true },
-  { feature: "Payment Tracking", starter: false, standard: true },
-  { feature: "Financial Reporting", starter: false, standard: true },
-  { feature: "Assessments & Reports", starter: false, standard: true },
-  { feature: "NaCCA Grading System & Terminal Reports", starter: false, standard: true },
-  { feature: "Exam Results Analytics", starter: false, standard: true },
-  { feature: "Report Cards", starter: false, standard: true },
-  { feature: "Skills & Remarks", starter: false, standard: true },
-  { feature: "Student Performance", starter: false, standard: true },
-  { feature: "Timetable Management", starter: false, standard: true },
-  { feature: "Parent Portal Access", starter: false, standard: true },
-  { feature: "School Announcements", starter: false, standard: true },
-  { feature: "WhatsApp Broadcast", starter: false, standard: true },
-  { feature: "Online Fee Payments", starter: false, standard: true },
-  { feature: "Admin Payment Alerts", starter: false, standard: true },
-  { feature: "Notifications & Alerts", starter: false, standard: true },
-  { feature: "Analytics & Reports", starter: false, standard: true },
-  { feature: "Activity Monitoring", starter: false, standard: true },
-  { feature: "Backup & Recovery", starter: false, standard: true },
-  { feature: "System Settings", starter: false, standard: true },
-  { feature: "Security & Access Control", starter: true, standard: true },
-  { feature: "Mobile Responsive Access", starter: true, standard: true },
+  { q: "How do monthly, termly, and yearly prices work?", a: "Monthly is billed every month. Termly is GHS 400 per term. Yearly is GHS 1,200 per year." },
+  { q: "Are SMS credits included?", a: "No. SMS bundles are purchased separately and are not included in the software subscription." },
 ];
 
 const Pricing = () => {
@@ -159,8 +130,6 @@ const Pricing = () => {
                 }}
               >
                 {billingCycle.charAt(0).toUpperCase() + billingCycle.slice(1)}
-                {billingCycle === "termly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#FBBF24", background: "rgba(251,191,36,0.12)", borderRadius: 999, padding: "2px 8px" }}>-10%</span>}
-                {billingCycle === "yearly" && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#FBBF24", background: "rgba(251,191,36,0.12)", borderRadius: 999, padding: "2px 8px" }}>-20%</span>}
               </button>
             ))}
           </div>
@@ -171,7 +140,7 @@ const Pricing = () => {
       <section className="pricing-grid-section" style={{ padding: "0 24px", marginTop: -80, position: "relative", zIndex: 10 }}>
         <motion.div initial="hidden" animate="show" variants={stagger} className="pricing-grid" style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 32 }}>
           {plans.map((plan) => {
-            const subscription = getSubscriptionPrice(plan.monthlyPrice, cycle);
+            const subscription = getSubscriptionPrice(cycle);
             const isSetupTooltipOpen = false;
             return (
               <motion.div
@@ -207,11 +176,6 @@ const Pricing = () => {
                     <span className="price-amount" style={{ fontSize: "48px", fontWeight: "800", color: "white", lineHeight: 1 }}>{formatCurrency(subscription.amount)}</span>
                   </div>
                   <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.5)", margin: "4px 0 0 0" }}>{subscription.label}</p>
-                  {subscription.savings > 0 && (
-                    <p style={{ fontSize: 13, color: "#10B981", margin: "6px 0 0 0", fontWeight: 700 }}>
-                      Save {formatCurrency(subscription.savings)}
-                    </p>
-                  )}
                 </div>
 
                 <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "24px 0 32px" }} />
@@ -267,51 +231,13 @@ const Pricing = () => {
         </p>
       </section>
 
-      {/* Feature Comparison Table */}
-      <section style={{ padding: "80px 24px 0" }}>
-        <div style={{ maxWidth: 860, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 48 }}>
-            <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Plan feature comparison</h2>
-            <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what's included in each plan.</p>
-            <div className="scroll-hint" style={{ display: "none", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
-              <span>← Scroll to see all plans →</span>
-            </div>
-          </div>
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ minWidth: 600, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
-            {/* Header */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px", padding: "14px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)", gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Feature</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Starter</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Standard</span>
-            </div>
-            {featureComparisonRows.map((row, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px", padding: "14px 24px", borderBottom: "1px solid rgba(255,255,255,0.04)", alignItems: "center", gap: 8, background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
-                <span style={{ fontSize: 15, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>{row.feature}</span>
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  {row.starter
-                    ? <div style={{ width: 22, height: 22, borderRadius: "50%", background: "rgba(147,197,253,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}><Check size={13} color="#93C5FD" strokeWidth={3} /></div>
-                    : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 14, color: "rgba(255,255,255,0.2)", lineHeight: 1 }}>—</span></div>
-                  }
-                </div>
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  {row.standard
-                    ? <div style={{ width: 22, height: 22, borderRadius: "50%", background: "rgba(147,197,253,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}><Check size={13} color="#93C5FD" strokeWidth={3} /></div>
-                    : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 14, color: "rgba(255,255,255,0.2)", lineHeight: 1 }}>—</span></div>
-                  }
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
+
 
       {/* Comparison table */}
       <section style={{ padding: "100px 24px 0" }}>
         <div style={{ maxWidth: 860, margin: "0 auto", textAlign: "center", marginBottom: 48 }}>
-          <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Quick price comparison</h2>
-          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>See exactly what each plan costs across billing cycles.</p>
+          <h2 style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 800, color: "white", margin: "0 0 12px 0" }}>Simple, transparent pricing</h2>
+          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 16 }}>One plan. All features. No hidden fees.</p>
           <div className="scroll-hint" style={{ display: "none", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
             <span>← Scroll to see all pricing details →</span>
           </div>
@@ -322,15 +248,15 @@ const Pricing = () => {
             <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr", padding: "16px 24px", background: "rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Plan</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Monthly</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly <span style={{ fontSize: 10 }}>(-10%)</span></span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly <span style={{ fontSize: 10 }}>(-20%)</span></span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Termly</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>Yearly</span>
             </div>
             {plans.map((plan) => (
               <div key={plan.name} style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr 1fr 1fr", padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: "white" }}>{plan.name}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "monthly").amount)}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "termly").amount)}</span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice(plan.monthlyPrice, "yearly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.8)", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice("monthly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice("termly").amount)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#93C5FD", textAlign: "center" }}>{formatCurrency(getSubscriptionPrice("yearly").amount)}</span>
               </div>
             ))}
           </div>
