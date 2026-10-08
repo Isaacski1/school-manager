@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/mockDb";
@@ -10,6 +16,8 @@ import { TeacherAttendanceRecord } from "../../types";
 import { logActivity } from "../../services/activityLog";
 import { getFriendlyErrorMessage } from "../../services/errorMessages";
 import { showToast } from "../../services/toast";
+import { useNetworkStatus } from "../../hooks/useNetworkStatus";
+import { TeacherAttendanceDraftStorage } from "../../src/teacherAttendanceDraftStorage";
 import {
   Calendar,
   CheckCircle,
@@ -36,6 +44,56 @@ type WeekInfo = {
 const TeacherAttendance = () => {
   const { user, authLoading } = useAuth();
   const schoolId = user?.schoolId || null;
+
+  const isOnline = useNetworkStatus().isOnline;
+
+  const teacherAttendanceDraftRef = useRef<{
+    schoolId: string;
+    teacherId: string;
+    date: string;
+    status: "present" | "absent";
+    approvalStatus: "pending" | "approved" | "rejected";
+    isHoliday: boolean;
+    holidayReason: string;
+    lastModified: number;
+    version: number;
+  } | null>(null);
+
+  const draftVersionRef = useRef(0);
+
+  const isSyncingRef = useRef(false);
+
+  const pendingSyncVersionRef = useRef<{
+    schoolId: string;
+    teacherId: string;
+    date: string;
+    lastModified: number;
+    version: number;
+  } | null>(null);
+
+  const prevIsOnlineRef = useRef(isOnline);
+
+  const didMountRef = useRef(false);
+
+  const currentContextRef = useRef<{
+    schoolId: string;
+    teacherId: string;
+    date: string | null;
+  }>({
+    schoolId: schoolId || "",
+    teacherId: user?.id || "",
+    date: null,
+  });
+
+  const loadedDraftRevisionRef = useRef<number | null>(null);
+
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [syncStatus, setSyncStatus] = useState<
+    "idle" | "saving" | "syncing" | "error" | "pending"
+  >("idle");
+
+  const [draftRecovered, setDraftRecovered] = useState(false);
 
   const [attendanceRecords, setAttendanceRecords] = useState<
     Record<string, TeacherAttendanceRecord>
@@ -206,9 +264,89 @@ const TeacherAttendance = () => {
     return true;
   };
 
+  const loadTeacherAttendanceDraft = (
+    schoolId: string,
+    teacherId: string,
+    date: string,
+  ): {
+    schoolId: string;
+    teacherId: string;
+    date: string;
+    status: "present" | "absent";
+    approvalStatus: "pending" | "approved" | "rejected";
+    isHoliday: boolean;
+    holidayReason: string;
+    lastModified: number;
+    version: number;
+  } | null => {
+    if (!schoolId || !teacherId || !date) {
+      return null;
+    }
+
+    return TeacherAttendanceDraftStorage.loadDraft(schoolId, teacherId, date);
+  };
+
+  const scheduleTeacherAttendanceDraftSave = (
+    schoolId: string,
+    teacherId: string,
+    date: string,
+    status: "present" | "absent",
+    approvalStatus: "pending" | "approved" | "rejected",
+    isHoliday: boolean,
+    holidayReason: string,
+  ) => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+
+    // Increment version for this scheduled save
+    draftVersionRef.current += 1;
+    const version = draftVersionRef.current;
+
+    draftTimerRef.current = setTimeout(() => {
+      if (!schoolId || !teacherId || !date) return;
+
+      // Context safety: verify we're still operating on the correct context
+      if (
+        currentContextRef.current.schoolId !== schoolId ||
+        currentContextRef.current.teacherId !== teacherId ||
+        currentContextRef.current.date !== date
+      ) {
+        return;
+      }
+
+      const success = TeacherAttendanceDraftStorage.saveDraft(
+        schoolId,
+        teacherId,
+        date,
+        status,
+        approvalStatus,
+        isHoliday,
+        holidayReason,
+        version,
+      );
+
+      if (success) {
+        teacherAttendanceDraftRef.current = {
+          schoolId,
+          teacherId,
+          date,
+          status,
+          approvalStatus,
+          isHoliday,
+          holidayReason,
+          lastModified: Date.now(),
+          version,
+        };
+        loadedDraftRevisionRef.current = version;
+        setSyncStatus("idle");
+      }
+    }, 1000);
+  };
+
   /* =======================
      Effects
-   ======================= */
+    ======================= */
   useEffect(() => {
     const fetchConfig = async () => {
       if (!schoolId) {
@@ -278,6 +416,38 @@ const TeacherAttendance = () => {
         );
 
         setAttendanceRecords(records);
+
+        for (const draftDate of validDates) {
+          const capturedSchoolId = schoolId;
+          const capturedTeacherId = user.id;
+          const capturedDate = draftDate;
+
+          currentContextRef.current = {
+            schoolId: capturedSchoolId,
+            teacherId: capturedTeacherId,
+            date: capturedDate,
+          };
+
+          const draft = loadTeacherAttendanceDraft(
+            capturedSchoolId,
+            capturedTeacherId,
+            capturedDate,
+          );
+
+          if (
+            currentContextRef.current.schoolId !== capturedSchoolId ||
+            currentContextRef.current.teacherId !== capturedTeacherId ||
+            currentContextRef.current.date !== capturedDate
+          ) {
+            continue;
+          }
+
+          if (!draft) continue;
+
+          teacherAttendanceDraftRef.current = draft;
+          loadedDraftRevisionRef.current = draft.version;
+          setDraftRecovered(true);
+        }
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -421,21 +591,32 @@ const TeacherAttendance = () => {
 
     setSaving((s) => ({ ...s, [date]: true }));
 
-    const record: TeacherAttendanceRecord = {
-      id: `${schoolId}_${user.id}_${date}`,
-      date,
-      teacherId: user.id,
-      schoolId: schoolId || schoolConfig?.schoolId || "",
-      status,
-      approvalStatus: "pending",
-      isHoliday: false,
-      holidayReason: "",
-    };
+     const record: TeacherAttendanceRecord = {
+       id: `${schoolId}_${user.id}_${date}`,
+       date,
+       teacherId: user.id,
+       schoolId: schoolId || schoolConfig?.schoolId || "",
+       status,
+       approvalStatus: "pending",
+       isHoliday: false,
+       holidayReason: "",
+     };
 
-    try {
-      await db.saveTeacherAttendance(record);
-      setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
-      setMissedAttendanceAlert(null);
+      try {
+        await db.saveTeacherAttendance(record);
+        setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
+        setMissedAttendanceAlert(null);
+
+        // Schedule local draft save
+        scheduleTeacherAttendanceDraftSave(
+          schoolId,
+          user.id,
+          date,
+          record.status,
+          "pending",
+          false,
+          "",
+        );
 
       await db.addSystemNotification(
         `${user?.fullName || "Teacher"} submitted ${status} attendance for ${date} (pending approval)`,
@@ -491,31 +672,42 @@ const TeacherAttendance = () => {
 
     setSaving((s) => ({ ...s, [date]: true }));
 
-    try {
-      const existing = await db.getAllTeacherAttendance(schoolId, date);
-      const hasNonHoliday = existing.some((r) => !r.isHoliday);
-      if (hasNonHoliday) {
-        setActionMessage(
-          "This date already has attendance records. Clear them before marking a holiday.",
+     try {
+       const existing = await db.getAllTeacherAttendance(schoolId, date);
+       const hasNonHoliday = existing.some((r) => !r.isHoliday);
+       if (hasNonHoliday) {
+         setActionMessage(
+           "This date already has attendance records. Clear them before marking a holiday.",
+         );
+         setTimeout(() => setActionMessage(""), 4000);
+         return;
+       }
+
+       const record: TeacherAttendanceRecord = {
+         id: `${schoolId}_${user.id}_${date}`,
+         date,
+         teacherId: user.id,
+         schoolId: schoolId || schoolConfig?.schoolId || "",
+         status: "absent",
+         approvalStatus: "pending",
+         isHoliday: true,
+         holidayReason: holidayDrafts[date]?.trim() || "",
+       };
+
+        await db.saveTeacherAttendance(record);
+        setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
+        setMissedAttendanceAlert(null);
+
+        // Schedule local draft save
+        scheduleTeacherAttendanceDraftSave(
+          schoolId,
+          user.id,
+          date,
+          record.status,
+          "pending",
+          true,
+          holidayDrafts[date]?.trim() || "",
         );
-        setTimeout(() => setActionMessage(""), 4000);
-        return;
-      }
-
-      const record: TeacherAttendanceRecord = {
-        id: `${schoolId}_${user.id}_${date}`,
-        date,
-        teacherId: user.id,
-        schoolId: schoolId || schoolConfig?.schoolId || "",
-        status: "absent",
-        approvalStatus: "pending",
-        isHoliday: true,
-        holidayReason: holidayDrafts[date]?.trim() || "",
-      };
-
-      await db.saveTeacherAttendance(record);
-      setAttendanceRecords((prev) => ({ ...prev, [date]: record }));
-      setMissedAttendanceAlert(null);
 
       await db.addSystemNotification(
         `${user?.fullName || "Teacher"} submitted ${date} as Holiday (pending approval).`,

@@ -82,6 +82,15 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
     billingMode: "pay_as_you_go" as DailyBillingMode,
   });
 
+  // Auto-select class when teacher has only one assigned class
+  const isSingleAssignedClass = teacherMode && classes.length === 1;
+  
+  useEffect(() => {
+    if (isSingleAssignedClass && !classId) {
+      setClassId(classes[0].id);
+    }
+  }, [isSingleAssignedClass, classId, classes]);
+
   const applicableFees = useMemo(
     () => fees.filter((fee) => fee.active && (!fee.classId || fee.classId === classId)),
     [fees, classId],
@@ -397,18 +406,20 @@ const DailyCollections: React.FC<{ teacherMode?: boolean }> = ({ teacherMode = f
             className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm"
           />
         </label>
-        <select
-          value={classId}
-          onChange={(e) => setClassId(e.target.value)}
-          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm md:w-56"
-        >
-          <option value="">Select class</option>
-          {classes.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
+        {!isSingleAssignedClass && (
+          <select
+            value={classId}
+            onChange={(e) => setClassId(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm md:w-56"
+          >
+            <option value="">Select class</option>
+            {classes.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="flex flex-1 flex-col gap-2">
           <select
             value={feeId}
