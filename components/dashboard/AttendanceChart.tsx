@@ -4,6 +4,7 @@ import { CLASSES_LIST } from "../../constants";
 interface AttendanceChartProps {
   data: { className: string; shortName?: string; percentage: number; id: string }[];
   week: Date | null;
+  viewMode?: "week" | "day";
   onPreviousWeek: () => void;
   onNextWeek: () => void;
   onCurrentWeek: () => void;
@@ -59,6 +60,7 @@ const abbreviateClassName = (name: string): string => {
 const AttendanceChart: React.FC<AttendanceChartProps> = ({
   data,
   week,
+  viewMode = "week",
   onPreviousWeek,
   onNextWeek,
   onCurrentWeek,
@@ -78,7 +80,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
     );
   }
 
-  const { monday, friday } = getWeekRange(week);
+  const { monday, friday } = viewMode === "day" ? getDayRange(week) : getWeekRange(week);
   const effectiveCurrentWeekStart = getEffectiveCurrentWeekStart();
   const isCurrentWeek =
     effectiveCurrentWeekStart.toDateString() === monday.toDateString();
@@ -116,6 +118,14 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
     }).format(date);
   };
 
+  const formatDateLong = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(date);
+  };
+
   const showSkeleton = loading;
   const isEmpty = !loading && data.length === 0;
   const chartData = showSkeleton
@@ -138,7 +148,9 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               ? "Loading attendance layout..."
               : isEmpty
                 ? "No attendance data available for this period."
-                : "Weekly participation overview"}
+                : viewMode === "day"
+                  ? "Daily participation overview"
+                  : "Weekly participation overview"}
           </p>
         </div>
         {schoolStatus && (
@@ -156,7 +168,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
           <button
             onClick={onPreviousWeek}
             className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold"
-            title="Previous week"
+            title={viewMode === "day" ? "Previous day" : "Previous week"}
           >
             ←
           </button>
@@ -164,14 +176,16 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
           <div className="flex-1 mx-4 text-center">
             <div className="flex flex-col items-center gap-1">
               <p className="text-sm font-semibold text-slate-800">
-                {formatDate(monday)} — {formatDate(friday)}
+                {viewMode === "day"
+                  ? formatDateLong(monday)
+                  : `${formatDate(monday)} — ${formatDate(friday)}`}
               </p>
               <p className="text-xs text-slate-500 font-medium">
                 {monday.getFullYear()}
               </p>
               {isCurrentWeek && !showSkeleton && (
                 <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full mt-1 uppercase tracking-wide">
-                  Current Week
+                  Current {viewMode === "day" ? "Day" : "Week"}
                 </span>
               )}
             </div>
@@ -182,7 +196,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
             disabled={isCurrentWeek}
             className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-600"
             title={
-              isCurrentWeek ? "You are viewing the current week" : "Next week"
+              isCurrentWeek ? `You are viewing the current ${viewMode === "day" ? "day" : "week"}` : viewMode === "day" ? "Next day" : "Next week"
             }
           >
             →
@@ -195,7 +209,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               onClick={onCurrentWeek}
               className="text-xs text-red-700 hover:text-red-800 font-semibold bg-white border border-red-200 px-3 py-1.5 rounded-md hover:bg-red-50 transition-colors"
             >
-              Return to Current Week
+              Return to Current {viewMode === "day" ? "Day" : "Week"}
             </button>
           </div>
         )}
@@ -319,16 +333,23 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
 export default AttendanceChart;
 
 // Helper functions (copied from AdminDashboard)
-const getWeekRange = (date: Date) => {
-  const d = new Date(date);
-  const day = d.getDay();
-  const monday = new Date(d);
-  monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4);
-  return { monday, friday };
-};
+  const getWeekRange = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return { monday, friday };
+  };
 
-const getEffectiveCurrentWeekStart = () => {
-  return getWeekRange(new Date()).monday;
-};
+  const getEffectiveCurrentWeekStart = () => {
+    return getWeekRange(new Date()).monday;
+  };
+
+  // For day view, use the same date for both monday and friday
+  const getDayRange = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return { monday: d, friday: d };
+  };

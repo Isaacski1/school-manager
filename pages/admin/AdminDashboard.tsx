@@ -63,6 +63,7 @@ import {
   CURRENT_TERM,
   ACADEMIC_YEAR,
   calculateTotalScore,
+  getFilteredClasses,
 } from "../../constants";
 import AttendanceChart from "../../components/dashboard/AttendanceChart";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
@@ -561,6 +562,7 @@ const [todayClassAttendance, setTodayClassAttendance] = useState<ClassAttendance
 
   // Attendance Week Navigation (initialized to null, set after config loads)
   const [attendanceWeek, setAttendanceWeek] = useState<Date | null>(null);
+  const [attendanceViewMode, setAttendanceViewMode] = useState<"week" | "day">("day");
 
   // Performance Stats
   const [gradeDistribution, setGradeDistribution] = useState<
@@ -2094,6 +2096,57 @@ const [
     setIsRefreshing(false);
   }, [fetchSummary, fetchHeavyData, schoolId]);
 
+  // Compute class attendance for a specific date range (used by chart navigation)
+  const computeClassAttendanceForRange = useCallback(
+    async (startDate: Date, endDate: Date) => {
+      if (!schoolId || !isAuthenticated) return;
+      try {
+        const holidaySet = new Set((schoolConfig?.holidayDates || []).map((h: any) => h.date));
+        const filteredClasses = getFilteredClasses(school?.schoolType);
+        const dashboardStats = await getSharedDashboardStats(
+          buildDashboardStatsKey(
+            schoolId,
+            school?.schoolType,
+            schoolConfig?.schoolReopenDate,
+            schoolConfig?.vacationDate,
+            schoolConfig?.holidayDates,
+            startDate.toISOString().slice(0, 10),
+            schoolConfig?.currentTerm,
+            schoolConfig?.academicYear,
+          ),
+          () => db.getDashboardStats(schoolId),
+        );
+        const students = dashboardStats.students as Student[];
+        const attendanceRecords = await db.getAttendanceByDateRange(
+          schoolId,
+          startDate.toISOString().slice(0, 10),
+          endDate.toISOString().slice(0, 10),
+        );
+        const nonHolidayRecords = attendanceRecords.filter((r: any) => !holidaySet.has(r.date));
+        const classStats: ClassAttendanceStat[] = filteredClasses.map((cls) => {
+          const records = nonHolidayRecords.filter((r: any) => r.classId === cls.id);
+          const studentsInClass = students.filter((s: any) => s.classId === cls.id);
+          const totalPossible = records.length * studentsInClass.length;
+          const totalPresent = records.reduce(
+            (sum: number, r: any) => sum + (r.presentStudentIds?.length || 0),
+            0,
+          );
+          const pct = totalPossible > 0 ? Math.round((totalPresent / totalPossible) * 100) : 0;
+          return {
+            className: cls.name,
+            shortName: cls.shortName || cls.name,
+            percentage: pct,
+            id: cls.id,
+          };
+        });
+        setTodayClassAttendance(classStats);
+      } catch (err) {
+        console.error("Failed to compute class attendance for range:", err);
+      }
+    },
+    [schoolId, isAuthenticated, schoolConfig, school?.schoolType],
+  );
+
   // Lightweight stats fetch used by the live updater
   const fetchStats = useCallback(async () => {
     try {
@@ -2410,6 +2463,26 @@ const [
     };
   }, [schoolId, attendanceWeek, isAuthenticated, availableClasses]);
 
+  // Recompute chart data when attendanceWeek or view mode changes
+  useEffect(() => {
+    if (!schoolId || !isAuthenticated || attendanceWeek === null) return;
+    let active = true;
+    const recompute = async () => {
+      const { monday } = getWeekRange(attendanceWeek);
+      const friday = new Date(monday);
+      friday.setDate(monday.getDate() + 4);
+      if (attendanceViewMode === "day") {
+        await computeClassAttendanceForRange(monday, monday);
+      } else {
+        await computeClassAttendanceForRange(monday, friday);
+      }
+    };
+    recompute();
+    return () => {
+      active = false;
+    };
+  }, [schoolId, attendanceWeek, attendanceViewMode, isAuthenticated, computeClassAttendanceForRange]);
+
   // Real-time listeners: refresh stats when attendance, assessments, or config change
   useEffect(() => {
     if (!schoolId || !isAuthenticated) return;
@@ -2609,6 +2682,28 @@ const [
   const goToPreviousWeek = () => {
     if (attendanceWeek === null) return;
 
+    if (attendanceViewMode === "day") {
+      const prevDay = new Date(attendanceWeek);
+      prevDay.setDate(prevDay.getDate() - 1);
+      if (schoolConfig.schoolReopenDate) {
+        const parts = schoolConfig.schoolReopenDate.split("-");
+        const reopenDate =
+          parts.length === 3
+            ? new Date(
+                parseInt(parts[0]),
+                parseInt(parts[1]) - 1,
+                parseInt(parts[2]),
+              )
+            : new Date(schoolConfig.schoolReopenDate);
+        if (prevDay < reopenDate) {
+          showToast("Cannot view days before school re-opens", { type: "info" });
+          return;
+        }
+      }
+      setAttendanceWeek(prevDay);
+      return;
+    }
+
     const prevWeek = new Date(attendanceWeek);
     prevWeek.setDate(prevWeek.getDate() - 7);
 
@@ -2635,12 +2730,24 @@ const [
   const goToNextWeek = () => {
     if (attendanceWeek === null) return;
 
+    if (attendanceViewMode === "day") {
+      const nextDay = new Date(attendanceWeek);
+      nextDay.setDate(nextDay.getDate() + 1);
+      setAttendanceWeek(nextDay);
+      return;
+    }
+
     const nextWeek = new Date(attendanceWeek);
     nextWeek.setDate(nextWeek.getDate() + 7);
     setAttendanceWeek(nextWeek);
   };
 
   const goToCurrentWeek = () => {
+    if (attendanceViewMode === "day") {
+      setAttendanceWeek(new Date());
+      return;
+    }
+
     if (schoolConfig.schoolReopenDate) {
       const parts = schoolConfig.schoolReopenDate.split("-");
       const reopenDate =
@@ -4503,7 +4610,31 @@ const [
             <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
               Attendance & Demographics
             </h2>
-            {showHeavyLoading && <SectionLoadingBadge />}
+            <div className="flex items-center gap-2">
+              {showHeavyLoading && <SectionLoadingBadge />}
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-semibold">
+                <button
+                  onClick={() => setAttendanceViewMode("week")}
+                  className={`px-3 py-1 rounded-md transition-colors ${
+                    attendanceViewMode === "week"
+                      ? "bg-[#0B4A82] text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Week
+                </button>
+                <button
+                  onClick={() => setAttendanceViewMode("day")}
+                  className={`px-3 py-1 rounded-md transition-colors ${
+                    attendanceViewMode === "day"
+                      ? "bg-[#0B4A82] text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Day
+                </button>
+              </div>
+            </div>
           </div>
           <div
             className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8"
@@ -4520,6 +4651,7 @@ const [
                 <MemoAttendanceChart
                   data={todayClassAttendance}
                   week={attendanceWeek}
+                  viewMode={attendanceViewMode}
                   onPreviousWeek={goToPreviousWeek}
                   onNextWeek={goToNextWeek}
                   onCurrentWeek={goToCurrentWeek}
