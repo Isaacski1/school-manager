@@ -2172,6 +2172,28 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
       parentPhone: matchedContact.phone || normalizedPhone,
     });
 
+    // Persist a trusted parent identity document so the security login-history
+    // handler can resolve parent identity from users/{uid} after ID-token
+    // verification. Only server-derived, already-validated values are written.
+    // Merge semantics preserve any pre-existing fields on this document.
+    await admin
+      .firestore()
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          role: "parent",
+          fullName: matchedContact.name,
+          phoneNumber: normalizedPhone,
+          schoolIds,
+          studentIds,
+          parentContactRole: matchedContact.role,
+          parentContactName: matchedContact.name,
+          parentPhone: matchedContact.phone || normalizedPhone,
+        },
+        { merge: true },
+      );
+
     return res.json({
       success: true,
       token: customToken
