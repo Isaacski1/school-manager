@@ -30,8 +30,8 @@ const LoginHistory: React.FC = () => {
         const snap = await getDocs(q);
         setLogs(
           snap.docs.map((docSnap) => ({
-            id: docSnap.id,
             ...(docSnap.data() as SecurityLoginLog),
+            id: docSnap.id,
           })),
         );
       } finally {
@@ -135,7 +135,9 @@ const LoginHistory: React.FC = () => {
                       <td className="px-6 py-4">{log.schoolName || "—"}</td>
                       <td className="px-6 py-4">
                         {log.ipAddress
-                          ? log.ipAddress.replace(/\d+$/, "***")
+                          ? log.ipAddress === "::1" || log.ipAddress === "127.0.0.1"
+                            ? "Localhost"
+                            : log.ipAddress.replace(/\d+$/, "***")
                           : "—"}
                       </td>
                       <td className="px-6 py-4">{log.status}</td>

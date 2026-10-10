@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { auth } from "../services/firebase";
-import {
-  getAdminMfaPolicyStatus,
-  logSecurityLogin,
-} from "../services/backendApi";
+import { getAdminMfaPolicyStatus } from "../services/backendApi";
 import {
   getMultiFactorResolver,
   PhoneAuthProvider,
@@ -202,9 +199,35 @@ const Login = () => {
     email?: string | null;
     errorCode?: string | null;
     userAgent?: string | null;
+    idToken?: string | null;
   }) => {
     try {
-      await logSecurityLogin(payload);
+      // For SUCCESS events, include the Firebase ID token; for FAILED, omit it.
+      // This allows unauthenticated failed-login reporting while preventing
+      // forged successful-login events from unauthenticated callers.
+      const token = payload.status === "SUCCESS" && payload.idToken
+        ? payload.idToken
+        : undefined;
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const { idToken: _omit, ...body } = payload;
+      const response = await fetch(`${API_BASE_URL}/api/security/log-login`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      // Do not throw so the login outcome is not unexpectedly changed.
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.warn("Security login logging failed", errorData);
+      }
     } catch (logError) {
       console.warn("Security login logging failed", logError);
     }
@@ -243,24 +266,34 @@ const Login = () => {
       try {
         await evaluateAdminMfaPolicy();
       } catch (mfaError: any) {
-        if (isMfaEnrollmentRequiredError(mfaError)) {
+if (isMfaEnrollmentRequiredError(mfaError)) {
           setRedirectingToMfaSetup(true);
-          await safeLogSecurityLogin({
-            status: "SUCCESS",
-            email: normalizeEmailInput(email),
-            userAgent: navigator.userAgent,
-          });
+          // Send SUCCESS event with ID token after email/password auth succeeds
+          const idToken = await auth.currentUser?.getIdToken();
+          if (idToken) {
+            await safeLogSecurityLogin({
+              status: "SUCCESS",
+              email: normalizeEmailInput(email),
+              userAgent: navigator.userAgent,
+              idToken,
+            });
+          }
           navigate("/account/mfa-setup?required=1", { replace: true });
           return;
         }
         console.warn("Skipping admin MFA policy check due to backend error", mfaError);
       }
       
-      await safeLogSecurityLogin({
-        status: "SUCCESS",
-        email: normalizeEmailInput(email),
-        userAgent: navigator.userAgent,
-      });
+      // Send SUCCESS event with ID token after email/password auth succeeds
+      const idToken = await auth.currentUser?.getIdToken();
+      if (idToken) {
+        await safeLogSecurityLogin({
+          status: "SUCCESS",
+          email: normalizeEmailInput(email),
+          userAgent: navigator.userAgent,
+          idToken,
+        });
+      }
     } catch (err: any) {
       console.error("Login failed", err);
 
@@ -376,11 +409,15 @@ const Login = () => {
             );
       await mfaResolver.resolveSignIn(assertion);
 
-      await safeLogSecurityLogin({
-        status: "SUCCESS",
-        email: normalizeEmailInput(email),
-        userAgent: navigator.userAgent,
-      });
+      const idToken = await auth.currentUser?.getIdToken();
+      if (idToken) {
+        await safeLogSecurityLogin({
+          status: "SUCCESS",
+          email: normalizeEmailInput(email),
+          userAgent: navigator.userAgent,
+          idToken,
+        });
+      }
     } catch (err: any) {
       console.error("MFA verification failed", err);
       let msg = "Invalid verification code. Please try again.";
@@ -450,11 +487,16 @@ const Login = () => {
 
       await signInWithCustomToken(auth, data.token);
 
-      await safeLogSecurityLogin({
-        status: "SUCCESS",
-        email: formattedPhone || "phone_login",
-        userAgent: navigator.userAgent,
-      });
+      // Send SUCCESS event with ID token after parent custom token sign-in
+      const idToken = await auth.currentUser?.getIdToken();
+      if (idToken) {
+        await safeLogSecurityLogin({
+          status: "SUCCESS",
+          email: formattedPhone || "phone_login",
+          userAgent: navigator.userAgent,
+          idToken,
+        });
+      }
     } catch (err: any) {
       console.error("Parent Custom Login failed", err);
       let msg = getFriendlyErrorMessage(
@@ -466,6 +508,12 @@ const Login = () => {
         msg = "We could not complete sign in right now. Please contact the school office or support.";
       }
       
+      await safeLogSecurityLogin({
+        status: "FAILED",
+        email: formattedPhone || "phone_login",
+        errorCode: err?.code || "unknown",
+        userAgent: navigator.userAgent,
+      });
       setParentError(msg);
     } finally {
       setParentLoading(false);

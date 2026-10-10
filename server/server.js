@@ -17,6 +17,7 @@ import {
   createPaymentVerificationService,
   PaymentVerificationError,
 } from "./paymentVerification.js";
+import { createSecurityLoginLogHandler } from "./securityLoginLog.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9320,62 +9321,7 @@ app.post(
  * Log security login events
  * POST /api/security/log-login
  */
-app.post("/api/security/log-login", authLimiter, async (req, res) => {
-  try {
-    const { status, email, errorCode, userAgent } = req.body || {};
-    if (!status || !email) {
-      return res.status(400).json({ error: "status and email are required" });
-    }
-
-    let userDoc = null;
-    let userData = null;
-    let schoolData = null;
-
-    const userSnap = await admin
-      .firestore()
-      .collection("users")
-      .where("email", "==", String(email).toLowerCase())
-      .limit(1)
-      .get();
-    if (!userSnap.empty) {
-      userDoc = userSnap.docs[0];
-      userData = userDoc.data();
-      if (userData?.schoolId) {
-        const schoolDoc = await admin
-          .firestore()
-          .collection("schools")
-          .doc(String(userData.schoolId))
-          .get();
-        if (schoolDoc.exists) schoolData = schoolDoc.data();
-      }
-    }
-
-    const ipAddress =
-      (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
-      req.socket?.remoteAddress ||
-      null;
-
-    const logRef = admin.firestore().collection("securityLoginLogs").doc();
-    await logRef.set({
-      userId: userDoc?.id || null,
-      name: userData?.fullName || null,
-      email: String(email).toLowerCase(),
-      role: userData?.role || null,
-      schoolId: userData?.schoolId || null,
-      schoolName: schoolData?.name || null,
-      timestamp: Date.now(),
-      userAgent: userAgent || req.headers["user-agent"] || null,
-      ipAddress,
-      status,
-      errorCode: errorCode || null,
-    });
-
-    return res.json({ success: true });
-  } catch (error) {
-    console.error("Failed to log login event", error);
-    return res.status(500).json({ error: "Failed to log login event" });
-  }
-});
+app.post("/api/security/log-login", authLimiter, createSecurityLoginLogHandler(admin));
 
 /**
  * Create or update a plan
