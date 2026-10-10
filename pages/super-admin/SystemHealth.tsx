@@ -116,7 +116,25 @@ const getOverallHealth = (
 ): HealthStatus => {
   const errorRate = Number(metrics.requests.last5m.errorRatePct || 0);
   const latency = Number(metrics.requests.last5m.p95LatencyMs || 0);
+  const latencySamples = metrics.requests.last5m.totalRequests || 0;
   const firestoreDown = metrics.dependencies.firestore.status === "unavailable";
+  const firestoreDegraded =
+    metrics.dependencies.firestore.status === "degraded";
+
+  // When no request samples exist, latency-based thresholds (P95, error-rate
+  // percentiles) cannot be assessed. Confirmed dependency failures and
+  // resource-pressure thresholds still apply since they are always available.
+  if (latencySamples === 0) {
+    if (firestoreDown) return "critical";
+    if (pressures.cpuPressure >= 90) return "critical";
+    if (pressures.memoryPressure >= 90) return "critical";
+    if (pressures.cpuPressure >= 70) return "degraded";
+    if (pressures.memoryPressure >= 75) return "degraded";
+    if (pressures.limiterPressure >= 90) return "critical";
+    if (pressures.limiterPressure >= 70) return "degraded";
+    // No confirmed failures and no latency samples — insufficient telemetry.
+    return "healthy";
+  }
 
   if (
     firestoreDown ||
@@ -129,7 +147,7 @@ const getOverallHealth = (
     return "critical";
   }
   if (
-    metrics.dependencies.firestore.status === "degraded" ||
+    firestoreDegraded ||
     errorRate >= 2 ||
     latency >= 1000 ||
     pressures.cpuPressure >= 70 ||
@@ -148,6 +166,7 @@ const getHealthReasons = (
   const reasons: string[] = [];
   const errorRate = Number(metrics.requests.last5m.errorRatePct || 0);
   const latency = Number(metrics.requests.last5m.p95LatencyMs || 0);
+  const latencySamples = metrics.requests.last5m.totalRequests || 0;
 
   if (metrics.dependencies.firestore.status === "unavailable") {
     reasons.push("Firestore is unavailable");
@@ -157,7 +176,7 @@ const getHealthReasons = (
     );
   }
   if (errorRate >= 2) reasons.push(`5-minute error rate is ${formatNumber(errorRate)}%`);
-  if (latency >= 1000) reasons.push(`P95 latency is ${formatNumber(latency, 0)} ms`);
+  if (latencySamples > 0 && latency >= 1000) reasons.push(`P95 latency is ${formatNumber(latency, 0)} ms`);
   if (pressures.cpuPressure >= 70) {
     reasons.push(`CPU pressure is ${formatNumber(pressures.cpuPressure)}%`);
   }
@@ -218,6 +237,7 @@ const SystemHealth: React.FC = () => {
         cpuPressure: 0,
         memoryPressure: 0,
         limiterPressure: 0,
+        latencySamples: 0,
       };
     }
 
@@ -236,6 +256,7 @@ const SystemHealth: React.FC = () => {
       cpuPressure: Math.max(0, cpuPressure),
       memoryPressure: Math.max(0, memoryPressure),
       limiterPressure: Math.max(0, limiterPressure),
+      latencySamples: metrics.requests.last5m.totalRequests || 0,
     };
   }, [metrics]);
 
@@ -450,10 +471,10 @@ const SystemHealth: React.FC = () => {
                   <Clock3 size={18} className="text-[#0B4A82]" />
                 </div>
                 <p className="mt-3 text-3xl font-bold text-slate-900">
-                  {formatNumber(metrics.requests.last5m.p95LatencyMs)} ms
+                  {derived.latencySamples > 0 ? formatNumber(metrics.requests.last5m.p95LatencyMs) : "Insufficient data"} ms
                 </p>
                 <p className="mt-2 text-xs text-slate-500">
-                  95th percentile response time
+                  {derived.latencySamples > 0 ? "95th percentile response time" : "No recent requests to assess latency"}
                 </p>
               </div>
             </section>
@@ -484,6 +505,9 @@ const SystemHealth: React.FC = () => {
                   </span>
                   {metrics.dependencies.firestore.latencyMs !== null
                     ? ` · ${metrics.dependencies.firestore.latencyMs} ms`
+                    : ""}
+                  {metrics.dependencies.firestore.checkedAt !== null
+                    ? ` · ${formatRelativeTime(metrics.dependencies.firestore.checkedAt)}`
                     : ""}
                   {metrics.platform.cached ? " · cached" : ""}
                 </div>
@@ -577,7 +601,7 @@ const SystemHealth: React.FC = () => {
                 <div className="space-y-3">
                   <div>
                     <div className="flex items-center justify-between text-sm">
-                      <p className="text-slate-600">CPU load (1m)</p>
+                      <p className="text-slate-600">CPU load (1m, normalized)</p>
                       <p className={`font-semibold ${textTone(derived.cpuPressure)}`}>
                         {formatNumber(derived.cpuPressure)}%
                       </p>
