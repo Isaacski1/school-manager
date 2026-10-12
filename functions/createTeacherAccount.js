@@ -63,6 +63,7 @@ exports.createTeacherAccount = functions.https.onCall(async (data, context) => {
 
   // 6. Create Firestore user doc
   const userData = {
+    id: userRecord.uid,
     fullName: fullName.trim(),
     email: email.trim(),
     role: "teacher",

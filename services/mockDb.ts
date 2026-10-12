@@ -374,17 +374,27 @@ class FirestoreService {
   private dedupeTeacherAttendanceRecords(
     records: TeacherAttendanceRecord[] = [],
   ): TeacherAttendanceRecord[] {
-    const recordsByDate = new Map<string, TeacherAttendanceRecord[]>();
+    // Dedupe per (teacher, date), NOT per date alone. Attendance records are
+    // unique per teacher per day; multiple docs for the SAME teacher+date
+    // (re-marks, pending+approved, migrations) should collapse to the
+    // preferred record, while DIFFERENT teachers on the same day must all be
+    // preserved. Grouping by date only here was discarding every teacher
+    // except one per day, which broke the dashboard lists/summary.
+    const recordsByTeacherDate = new Map<string, TeacherAttendanceRecord[]>();
 
     records.filter(Boolean).forEach((record) => {
       const dateKey = String(record.date || "").trim();
+      const teacherKey = String((record as any).teacherId || "").trim();
       if (!dateKey) return;
-      const existing = recordsByDate.get(dateKey) || [];
+      const dedupeKey = teacherKey
+        ? `${teacherKey}|${dateKey}`
+        : (record as any).id || dateKey;
+      const existing = recordsByTeacherDate.get(dedupeKey) || [];
       existing.push(record);
-      recordsByDate.set(dateKey, existing);
+      recordsByTeacherDate.set(dedupeKey, existing);
     });
 
-    return Array.from(recordsByDate.values())
+    return Array.from(recordsByTeacherDate.values())
       .map((group) => this.selectPreferredTeacherAttendanceRecord(group))
       .filter(Boolean) as TeacherAttendanceRecord[];
   }
@@ -2658,8 +2668,12 @@ async getDashboardStats(schoolId?: string): Promise<{
       this.getSchoolConfig(scopedSchoolId),
     ]);
 
-    const students = studentsSnap.docs.map((d) => d.data() as Student);
-    const users = usersSnap.docs.map((d) => d.data() as User);
+    const students = studentsSnap.docs.map(
+      (d) => ({ id: d.id, ...d.data() }) as Student,
+    );
+    const users = usersSnap.docs.map(
+      (d) => ({ id: d.id, ...d.data() }) as User,
+    );
     const schoolData = schoolSnap.exists() ? (schoolSnap.data() as School) : null;
     const filteredClasses = getFilteredClasses(schoolData?.schoolType);
     const today = new Date();

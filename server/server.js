@@ -13889,6 +13889,7 @@ app.post(
 
       // Create Firestore document
       const userData = {
+        id: userRecord.uid,
         fullName: fullName.trim(),
         email: email.trim(),
         role: "teacher",
