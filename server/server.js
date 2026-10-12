@@ -13912,6 +13912,191 @@ app.post(
         resetLink = await admin.auth().generatePasswordResetLink(email);
       }
 
+      // Generate email verification link
+      let emailVerificationLink = "";
+      const requestOrigin = normalizeOriginValue(
+        req.headers.origin || "",
+      );
+      const configuredAppOrigin = normalizeOriginValue(
+        process.env.PUBLIC_APP_URL ||
+          process.env.FRONTEND_URL ||
+          process.env.CLIENT_URL ||
+          process.env.APP_URL ||
+          "https://school-manager-gh.web.app",
+      );
+      const origin =
+        requestOrigin && isAllowedOrigin(requestOrigin)
+          ? requestOrigin
+          : configuredAppOrigin || "https://school-manager-gh.web.app";
+      const verificationContinueUrl = `${origin}/?${new URLSearchParams({
+        authAction: "emailVerified",
+        email: email.trim(),
+      }).toString()}`;
+
+      try {
+        emailVerificationLink = await retryFirebaseAdminNetworkCall(
+          "generate teacher verification email link",
+          () =>
+            admin.auth().generateEmailVerificationLink(email.trim(), {
+              url: verificationContinueUrl,
+              handleCodeInApp: true,
+            }),
+        );
+      } catch (linkError) {
+        console.error(
+          "[CreateTeacher] Failed to generate email verification link:",
+          linkError?.message || linkError,
+        );
+        // Continue without verification email — administrator can use Resend Verification later
+      }
+
+      // Send verification email via Resend (same template as /api/public/resend-verification-email)
+      const resendKey = RESEND_API_KEY;
+      const resendFrom = RESEND_FROM_EMAIL;
+      if (resendKey && resendFrom && emailVerificationLink) {
+        try {
+          let displayName = fullName.trim();
+          // Try to get display name from user profile if available
+          try {
+            const userDoc = await admin.firestore()
+              .collection("users")
+              .doc(userRecord.uid)
+              .get();
+            if (userDoc.exists) {
+              displayName = userDoc.data()?.fullName || fullName.trim();
+            }
+          } catch (_profileError) {
+            // Ignore — use provided fullName
+          }
+
+          const from = RESEND_FROM_NAME
+            ? `${RESEND_FROM_NAME} <${resendFrom}>`
+            : resendFrom;
+
+          const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <style>
+                body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+                table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+                img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+                body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+                .email-body { width: 100%; }
+                .email-wrapper { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; }
+                .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; }
+                .logo img { height: 48px; width: auto; display: block; margin: 0 auto; }
+                .header-title { color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1.3; margin: 20px 0 0; }
+                .content { padding: 32px 20px; color: #0f172a; }
+                .content p { font-size: 16px; line-height: 1.6; margin: 0 0 16px; }
+                .greeting { font-weight: 600; }
+                .description { color: #475569; margin-bottom: 24px; }
+                .button-container { text-align: center; }
+                .cta-button { display: inline-block; background: #0B4A82; color: #ffffff !important; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 700; min-width: 200px; }
+                .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
+                .link-text a { color: #0B4A82; text-decoration: none; }
+                .footer { background: #F8FAFC; padding: 16px 20px; text-align: center; color: #94A3B8; font-size: 12px; }
+                .footer p { margin: 0; }
+                @media screen and (max-width: 600px) {
+                  .email-wrapper { border-radius: 0; }
+                  .header { padding: 24px 16px; }
+                  .header-title { font-size: 20px; }
+                  .content { padding: 24px 16px; }
+                  .cta-button { width: 100% !important; max-width: 100%; box-sizing: border-box; }
+                }
+              </style>
+            </head>
+            <body>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-body">
+                <tr>
+                  <td align="center" style="padding: 20px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper">
+                      <tr>
+                        <td class="header">
+                          <div class="logo">
+                            <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" width="48" style="display:block; margin:0 auto;" />
+                          </div>
+                          <h1 class="header-title">Verify your School Manager GH account</h1>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="content">
+                          <p class="greeting">Hi ${escapeHtml(displayName)},</p>
+                          <p class="description">Click the button below to verify your email address and activate your school workspace.</p>
+                          <div class="button-container">
+                            <a href="${escapeHtml(emailVerificationLink)}" class="cta-button">Verify Email Address</a>
+                          </div>
+                          <p class="link-text">If the button does not work, copy and paste this link into your browser:<br /><a href="${escapeHtml(emailVerificationLink)}">${escapeHtml(emailVerificationLink)}</a></p>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="footer">
+                          <p>School Manager GH</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+          `;
+
+          const text = [
+            `Hi ${displayName},`,
+            "",
+            "Click this link to verify your School Manager GH account:",
+            emailVerificationLink,
+            "",
+            "School Manager GH",
+          ].join("\n");
+
+          const response = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${resendKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from,
+              to: [email.trim()],
+              subject: "Verify your School Manager GH account",
+              text,
+              html,
+            }),
+          });
+          let resBody = null;
+          try {
+            resBody = await response.json();
+          } catch (parseErr) {
+            resBody = { parseError: true, raw: "(non-json response)" };
+          }
+          if (!response.ok) {
+            const providerMessage =
+              (resBody && (resBody.message || resBody.error || JSON.stringify(resBody))) ||
+              `Resend failed with ${response.status}`;
+            console.error(
+              "[CreateTeacher] Resend provider rejected verification email:",
+              {
+                status: response.status,
+                email: email.trim(),
+                providerResponse: resBody,
+                message: providerMessage,
+              },
+            );
+            // Verification link was generated but email delivery failed — continue
+            // and still report success so admin can use Resend Verification later
+          }
+        } catch (sendError) {
+          console.error(
+            "[CreateTeacher] Failed to send verification email:",
+            sendError?.message || sendError,
+          );
+        }
+      }
+
       // Log activity
       await logActivity({
         eventType: "teacher_created",
@@ -13927,6 +14112,7 @@ app.post(
         success: true,
         teacherUid: userRecord.uid,
         ...(sendResetEmail && { resetLink }),
+        emailVerificationLinkGenerated: Boolean(emailVerificationLink),
         message: "Teacher account created successfully",
       });
     } catch (error) {
