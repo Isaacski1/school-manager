@@ -3,6 +3,7 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useRef,
   ReactNode,
 } from "react";
 import { User, UserRole } from "../types";
@@ -68,6 +69,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<React.ReactNode | null>(null);
+
+  // Tracks the latest committed user so the onAuthStateChanged handler
+  // (registered once with an empty dependency array) can tell whether a
+  // profile was already loaded earlier in this session.
+  const loadedUserRef = useRef<User | null>(null);
+
+  useEffect(() => {
+    loadedUserRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     // Listen for Firebase Auth changes
@@ -180,6 +190,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
                 setLoading(false);
                 return;
               }
+
+              // Phase 1 fix: the Firebase session is still valid, but the
+              // Firestore profile could not be loaded (offline/connectivity
+              // failure) and no cached profile exists. This is NOT a logout.
+              // Keep the Firebase-authenticated user in a degraded state
+              // instead of forcing a false redirect to /login. Only facts
+              // from Firebase Authentication are used; role, school and
+              // permissions remain unknown until the profile can be loaded,
+              // so role-based authorization is never weakened or fabricated.
+              if (loadedUserRef.current) {
+                console.info("[Auth] Keeping previously loaded user during offline profile failure", {
+                  uid: firebaseUser.uid,
+                });
+              } else {
+                console.warn(
+                  "[Auth] Offline profile failure without cached profile; entering degraded session",
+                  { uid: firebaseUser.uid },
+                );
+                setUser({
+                  id: firebaseUser.uid,
+                  fullName: firebaseUser.displayName || firebaseUser.email || "",
+                  email: firebaseUser.email || "",
+                  role: undefined as unknown as UserRole,
+                  schoolId: null,
+                  status: "active",
+                  emailVerified: firebaseUser.emailVerified,
+                });
+              }
+              setError(
+                "We could not connect to the database. Please check your internet connection and try again.",
+              );
+              setAuthLoading(false);
+              setLoading(false);
+              return;
             }
 
             setUser(null);
