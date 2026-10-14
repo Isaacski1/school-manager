@@ -126,8 +126,11 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
     }
 
     switch (fee.appliesTo || "all_students") {
-      case "class":
-        return !fee.classId || fee.classId === student.classId;
+       case "class":
+         if (fee.classIds && fee.classIds.length > 0) {
+           return fee.classIds.includes(student.classId);
+         }
+         return !fee.classId || fee.classId === student.classId;
       case "selected_students":
         return fee.selectedStudentIds?.includes(student.id) || false;
       case "new_students_only": {

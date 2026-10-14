@@ -46,11 +46,46 @@ export const loadCachedUserProfile = (uid: string): UserProfile | null => {
   }
 };
 
+/**
+ * Structured error codes that represent a connectivity/transport failure while
+ * reading the user profile from Firestore.
+ *
+ * Firestore reports transport failures with `code: "unavailable"` (gRPC status
+ * 14) and a message such as "The operation could not be completed" that does
+ * not contain any offline keyword, so the structured code - not the message -
+ * is the reliable signal.
+ *
+ * This list is intentionally limited to connectivity conditions. Genuine
+ * authorization states ("permission-denied") and the account/school sentinels
+ * (ACCOUNT_NOT_PROVISIONED, ACCOUNT_INACTIVE, SCHOOL_NOT_FOUND,
+ * SCHOOL_INACTIVE) use different codes and are never treated as offline.
+ */
+const CONNECTIVITY_ERROR_CODES = new Set([
+  "unavailable",
+  "deadline-exceeded",
+  "auth/network-request-failed",
+]);
+
+const OFFLINE_MESSAGE_PATTERN =
+  /offline|network|failed to fetch|unavailable|client is offline/i;
+
+const findErrorCode = (error: unknown, depth = 0): string => {
+  if (!error || typeof error !== "object" || depth > 3) return "";
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && code.trim()) return code.trim();
+  return findErrorCode((error as { cause?: unknown }).cause, depth + 1);
+};
+
+/**
+ * True when the profile read failed because the backend/transport was
+ * unreachable - not because the account is invalid or unauthorized.
+ */
 export const isOfflineAuthProfileError = (error: unknown) => {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
+  if (CONNECTIVITY_ERROR_CODES.has(findErrorCode(error).toLowerCase()))
+    return true;
   const message = error instanceof Error ? error.message : String(error || "");
-  return (
-    typeof navigator !== "undefined" && !navigator.onLine
-  ) || /offline|network|failed to fetch|unavailable|client is offline/i.test(message);
+  return OFFLINE_MESSAGE_PATTERN.test(message);
 };
 
 /**

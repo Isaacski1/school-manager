@@ -11,6 +11,7 @@ import { School, SchoolConfig } from "../types";
 import { useAuth } from "./AuthContext";
 import { setRuntimeClasses } from "../constants";
 import { getConfiguredClassRooms } from "../services/classCatalog";
+import { isOfflineAuthProfileError } from "../services/authProfile";
 
 interface SchoolContextType {
   school: School | null;
@@ -19,6 +20,13 @@ interface SchoolContextType {
   schoolConfig: SchoolConfig | null;
   classCatalogReady: boolean;
   refreshSchool: () => void;
+  /**
+   * True when the school/settings read failed because the Firestore backend was
+   * unreachable. Previously loaded school data (if any) is retained and shown as
+   * cached information - it is not evidence of current school status or current
+   * authorization. Confirmed access failures keep using `schoolError`.
+   */
+  schoolOffline: boolean;
 }
 
 const SchoolContext = createContext<SchoolContextType | undefined>(undefined);
@@ -34,6 +42,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
   const [classCatalogReady, setClassCatalogReady] = useState(false);
   const [cachedSchool, setCachedSchool] = useState<School | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [schoolOffline, setSchoolOffline] = useState(false);
 
   const refreshSchool = React.useCallback(() => setRefreshTrigger((prev) => prev + 1), []);
 
@@ -46,6 +55,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
     const loadSchoolData = async () => {
       // reset immediately when user changes
       setSchool(null);
+      setSchoolOffline(false);
       setSchoolError(null);
       setClassCatalogReady(false);
       setRuntimeClasses();
@@ -141,11 +151,24 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         window.dispatchEvent(new Event("school-branding-updated"));
 
         const settingsRef = doc(firestore, "settings", effectiveSchoolId);
-        const settingsSnap = await getDoc(settingsRef);
+        // Settings are independent of the school document: a temporary network
+        // failure here must not discard a school document that was read
+        // successfully above. Only a confirmed (non-connectivity) failure is
+        // re-thrown so the authoritative error handling below still applies.
+        let settingsSnap: Awaited<ReturnType<typeof getDoc>> | null = null;
+        try {
+          settingsSnap = await getDoc(settingsRef);
+        } catch (settingsErr: any) {
+          if (!isOfflineAuthProfileError(settingsErr)) throw settingsErr;
+          console.info(
+            "[SchoolContext] Settings unavailable; keeping school data with default classrooms",
+          );
+          setSchoolOffline(true);
+        }
         if (!cancelled) {
-          const nextConfig = settingsSnap.exists()
-            ? ({ schoolId: effectiveSchoolId, ...settingsSnap.data() } as SchoolConfig)
-            : null;
+const nextConfig = settingsSnap?.exists()
+  ? ({ schoolId: effectiveSchoolId, ...settingsSnap.data! } as SchoolConfig)
+  : null;
           setSchoolConfig(nextConfig);
           setRuntimeClasses(
             getConfiguredClassRooms(
@@ -203,11 +226,27 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         );
       } catch (err: any) {
         console.error("Error loading school data:", err);
-        if (!cancelled)
+        if (!cancelled) {
+          if (isOfflineAuthProfileError(err)) {
+            // Connectivity failure, NOT a school-access failure: the Firebase
+            // session and the resolved school id are still valid. Keep any
+            // previously loaded school data (from `school_<id>` cache) instead of
+            // clearing it, and let the UI show it as cached information.
+            // A `permission-denied` response is authoritative and must never
+            // reach this branch, so it keeps the error handling below.
+            console.info(
+              "[SchoolContext] Offline while loading school data; using previously loaded data if available",
+            );
+            setSchoolOffline(true);
+            setSchoolLoading(false);
+            setClassCatalogReady(true);
+            return;
+          }
           setSchoolError("Failed to load school information. Please try refreshing the page.");
-        if (!cancelled) setSchool(null);
-        if (!cancelled) setSchoolLoading(false);
-        if (!cancelled) setClassCatalogReady(true);
+          setSchool(null);
+          setSchoolLoading(false);
+          setClassCatalogReady(true);
+        }
       }
     };
 
@@ -230,6 +269,7 @@ export const SchoolProvider: React.FC<{ children: ReactNode }> = ({
         schoolConfig,
         classCatalogReady,
         refreshSchool,
+        schoolOffline,
       }}
     >
       {children}

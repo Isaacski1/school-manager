@@ -11,7 +11,7 @@ import { SchoolProvider, useSchool } from "./context/SchoolContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { requireRole } from "./services/authProfile";
 import { canAccessFeature, FeatureKey } from "./services/featureAccess";
-import { UserRole } from "./types";
+import { User, UserRole } from "./types";
 import { trackPageView } from "./services/googleAnalytics";
 
 // Pages
@@ -120,9 +120,219 @@ const getEmailVerificationRedirect = () => {
   return `${url.origin}${url.pathname}#/login?${nextParams.toString()}`;
 };
 
+/**
+ * True when the authenticated user has a usable application profile.
+ *
+ * Every successfully loaded profile - from Firestore, from the phone/parent
+ * path, or from the offline cache - resolves a role (`role || PARENT` in
+ * services/authProfile.ts) and is cached in that resolved shape. The only
+ * state that carries no role is the degraded session AuthContext creates when
+ * Firestore is unreachable and no cached profile exists
+ * (context/AuthContext.tsx: role `undefined`, schoolId `null`). A missing role
+ * therefore means "Firebase identity is known, application profile is not" -
+ * a connectivity state, never an authorization decision. No role, schoolId or
+ * permission is ever inferred from it.
+ */
+const hasApplicationProfile = (candidate: User | null): boolean =>
+  Boolean(candidate?.role);
+
+/**
+ * Dead-end recovery state for an authenticated Firebase user whose application
+ * profile could not be loaded (offline, no cached profile).
+ *
+ * This is deliberately NOT a login failure: the Firebase session stays signed
+ * in, no role-specific route is guessed, and no protected screen is rendered
+ * until the profile can be loaded again.
+ */
+const OfflineProfileRecovery = ({ onSignOut }: { onSignOut: () => void }) => {
+  const [online, setOnline] = React.useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+
+  React.useEffect(() => {
+    const handleOnline = () => setOnline(true);
+    const handleOffline = () => setOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-100 p-8 text-center">
+        <div className="w-16 h-16 bg-[#E6F0FA] rounded-full flex items-center justify-center mx-auto mb-6">
+          <svg
+            className="w-8 h-8 text-[#0B4A82]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="m2 2 20 20"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"
+            />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-4">
+          You're offline
+        </h1>
+        <p className="text-slate-600 mb-3">
+          Your account is still signed in, but your school profile could not be
+          loaded because there is no internet connection.
+        </p>
+        <p className="text-sm text-slate-500 mb-6">
+          {online
+            ? "Reconnect to the internet, then try again. Your session and saved work are preserved."
+            : "Waiting for an internet connection. Your session and saved work are preserved."}
+        </p>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#083a68] transition-colors"
+          >
+            Try again
+          </button>
+          <button
+            onClick={onSignOut}
+            className="px-6 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Non-blocking notice shown when the school context is served from previously
+ * loaded data because the Firestore backend is unreachable. This is a
+ * connectivity state, not a school-access denial, and the dashboard stays
+ * usable. The retry re-runs school loading via `refreshSchool()`.
+ */
+const SchoolOfflineNotice = ({ onRetry }: { onRetry: () => void }) => (
+  <div className="fixed top-0 left-0 right-0 z-40 bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm text-amber-900">
+    You're offline. Showing your last loaded school information - it has not been
+    re-checked yet.{" "}
+    <button
+      onClick={onRetry}
+      className="underline font-medium hover:text-amber-950"
+    >
+      Try again
+    </button>
+  </div>
+);
+
+/**
+ * Recovery state for an authenticated user whose school information could not be
+ * loaded offline and has no previously loaded copy available. Nothing is
+ * fabricated: no role, school id, settings or permissions are invented, and no
+ * protected screen is rendered until the school context can be loaded again.
+ */
+const OfflineSchoolRecovery = ({
+  onRetry,
+  onSignOut,
+}: {
+  onRetry: () => void;
+  onSignOut: () => void;
+}) => {
+  const [online, setOnline] = React.useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+
+  React.useEffect(() => {
+    const handleOnline = () => setOnline(true);
+    const handleOffline = () => setOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-100 p-8 text-center">
+        <div className="w-16 h-16 bg-[#E6F0FA] rounded-full flex items-center justify-center mx-auto mb-6">
+          <svg
+            className="w-8 h-8 text-[#0B4A82]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="m2 2 20 20"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"
+            />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-4">
+          You're offline
+        </h1>
+        <p className="text-slate-600 mb-3">
+          You are still signed in, but your school information could not be
+          loaded because there is no internet connection, and it has not been
+          saved on this device yet.
+        </p>
+        <p className="text-sm text-slate-500 mb-6">
+          {online
+            ? "Reconnect to the internet, then try again. Your session is preserved."
+            : "Waiting for an internet connection. Your session is preserved."}
+        </p>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={onRetry}
+            className="px-6 py-2 bg-[#0B4A82] text-white rounded-lg hover:bg-[#083a68] transition-colors"
+          >
+            Try again
+          </button>
+          <button
+            onClick={onSignOut}
+            className="px-6 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
-  const { school, schoolLoading, schoolError, classCatalogReady } = useSchool();
+  const { school, schoolLoading, schoolError, classCatalogReady, schoolOffline, refreshSchool } = useSchool();
 
   const [brandingVersion, setBrandingVersion] = React.useState(0);
 
@@ -252,6 +462,31 @@ const AppContent = () => {
     );
   }
 
+  // Authenticated Firebase user with no usable application profile: the
+  // Firestore profile could not be read while offline and no cached profile
+  // exists. This is a recovery state, not an authentication failure, so never
+  // send the user to /login and never guess a role-specific route. Rendered
+  // ahead of every route (including role-gated routes) so ProtectedRoute and
+  // RoleBasedHome are never reached while the role is unknown.
+  if (user && !hasApplicationProfile(user)) {
+    return <OfflineProfileRecovery onSignOut={logout} />;
+  }
+
+  // Offline with no previously loaded school information. This is a
+  // connectivity state, not a confirmed school-access failure, so it must not
+  // render the school-access error screen or a role-gated screen whose
+  // authorization cannot be established (feature plans default to their most
+  // permissive tier when the school object is missing). Nothing is fabricated:
+  // the user simply retries or signs out.
+  if (schoolOffline && !schoolLoading && !school && !schoolError) {
+    return (
+      <OfflineSchoolRecovery
+        onRetry={() => refreshSchool()}
+        onSignOut={logout}
+      />
+    );
+  }
+
   if (
     !isPublicRoute &&
     user &&
@@ -352,6 +587,7 @@ const AppContent = () => {
   return (
     <ErrorBoundary>
       <InstallPrompt />
+      {schoolOffline && <SchoolOfflineNotice onRetry={() => refreshSchool()} />}
       {user?.role === UserRole.SCHOOL_ADMIN && <WhatsAppBroadcastProgress />}
       <PlatformAnnouncementPopup />
       <Suspense fallback={
@@ -397,8 +633,12 @@ const ProtectedRoute = ({
   const { user, isAuthenticated, authLoading } = useAuth();
   const { school } = useSchool();
 
+  // Diagnostic logging for route protection decisions
+  console.log("[AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s", authLoading, isAuthenticated);
+
   // Show splash screen while auth is being determined
   if (authLoading) {
+    console.log("[AUTH-DIAG] Showing splash screen - authLoading is true");
     const resolvedSchoolId =
       localStorage.getItem("activeSchoolId") ||
       user?.schoolId ||
@@ -434,10 +674,12 @@ const ProtectedRoute = ({
   }
 
   if (!isAuthenticated) {
+    console.log("[AUTH-DIAG] Redirecting to /login - isAuthenticated is false");
     return <Navigate to="/login" replace />;
   }
 
   if (user && !user.emailVerified && user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.PARENT) {
+    console.log("[AUTH-DIAG] Redirecting to /verify-email - email not verified");
     return <Navigate to="/verify-email" replace state={{ email: user.email }} />;
   }
 
@@ -451,15 +693,18 @@ const ProtectedRoute = ({
           : user.role === UserRole.PARENT
             ? "/parent"
             : "/teacher";
+    console.log("[AUTH-DIAG] Redirecting to role-based path:", redirectPath);
     return <Navigate to={redirectPath} replace />;
   }
 
   if (requiredFeature && !canAccessFeature(user, school, requiredFeature)) {
     const fallbackPath =
       user?.role === UserRole.TEACHER ? "/teacher" : user?.role === UserRole.PARENT ? "/parent" : "/admin/students";
+    console.log("[AUTH-DIAG] Redirecting to fallback path for missing feature:", fallbackPath);
     return <Navigate to={fallbackPath} replace />;
   }
 
+  console.log("[AUTH-DIAG] Access granted to protected route");
   return children;
 };
 

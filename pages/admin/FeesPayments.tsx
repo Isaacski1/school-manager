@@ -566,6 +566,7 @@ const FeesPayments: React.FC = () => {
     feeName: "",
     amount: "",
     classId: "",
+    classIds: [] as string[],
     baseClassId: "",
     feeFrequency: "per_term" as FeeFrequency,
     appliesTo: "all_students" as FeeAppliesTo,
@@ -575,6 +576,23 @@ const FeesPayments: React.FC = () => {
     applyToAcademicYear: "",
     applyToTerm: "" as FeeTerm | "",
   });
+
+  const resetFeeForm = useCallback(() => {
+    setFeeForm({
+      feeName: "",
+      amount: "",
+      classId: "",
+      classIds: [],
+      baseClassId: "",
+      feeFrequency: "per_term",
+      appliesTo: "all_students",
+      effectiveFromDate: "",
+      dueDate: "",
+      selectedStudentIds: [],
+      applyToAcademicYear: "",
+      applyToTerm: "",
+    });
+  }, []);
 
   const [paymentForm, setPaymentForm] = useState({
     classId: "",
@@ -1384,10 +1402,20 @@ const handleExportReport = () => {
     }
 
     switch (fee.appliesTo) {
-      case "class":
-        return fee.classId && fee.classId !== student.classId
-          ? `Fee is assigned to ${getClassLabel(fee.classId)} only.`
-          : null;
+      case "class": {
+        const feeClassIds =
+          fee.classIds && fee.classIds.length > 0
+            ? fee.classIds
+            : fee.classId
+              ? [fee.classId]
+              : [];
+        if (feeClassIds.length === 0) return null;
+        if (feeClassIds.includes(student.classId)) return null;
+        const classLabels = feeClassIds
+          .map((id) => getClassLabel(id))
+          .join(", ");
+        return `Fee is assigned to ${classLabels} only.`;
+      }
       case "base_class": {
         const studentClass = availableClasses.find(
           (classRoom) => classRoom.id === student.classId,
@@ -1659,8 +1687,14 @@ const handleExportReport = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
-    if (feeForm.appliesTo === "class" && !feeForm.classId) {
-      showToast("Select the specific class for this fee.", { type: "error" });
+    if (
+      feeForm.appliesTo === "class" &&
+      feeForm.classIds.length === 0
+    ) {
+      showToast(
+        "Select at least one class for this fee.",
+        { type: "error" },
+      );
       return;
     }
     if (feeForm.appliesTo === "base_class" && !feeForm.baseClassId) {
@@ -1686,7 +1720,12 @@ const handleExportReport = () => {
         schoolId,
         feeName: feeForm.feeName.trim(),
         amount,
-        classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+        classId:
+          feeForm.appliesTo === "class"
+            ? feeForm.classIds[0] || null
+            : null,
+        classIds:
+          feeForm.appliesTo === "class" ? feeForm.classIds : null,
         baseClassId:
           feeForm.appliesTo === "base_class"
             ? feeForm.baseClassId || null
@@ -1739,19 +1778,7 @@ const handleExportReport = () => {
           actorName: user.fullName || "",
         },
       });
-      setFeeForm({
-        feeName: "",
-        amount: "",
-        classId: "",
-        baseClassId: "",
-        feeFrequency: "per_term",
-        appliesTo: "all_students",
-        effectiveFromDate: "",
-        dueDate: "",
-        selectedStudentIds: [],
-        applyToAcademicYear: "",
-        applyToTerm: "",
-      });
+      resetFeeForm();
       await fetchData();
     } catch (error) {
       console.error("Failed to create fee", error);
@@ -1778,10 +1805,17 @@ const handleExportReport = () => {
 
   const handleEditFee = (fee: FeeDefinition) => {
     setEditingFeeId(fee.id);
+    const classIds =
+      fee.appliesTo === "class" && fee.classIds && fee.classIds.length > 0
+        ? fee.classIds
+        : fee.appliesTo === "class" && fee.classId
+          ? [fee.classId]
+          : [];
     setFeeForm({
       feeName: fee.feeName || "",
       amount: String(fee.amount || ""),
-      classId: fee.classId || "",
+      classId: classIds[0] || "",
+      classIds,
       baseClassId: fee.baseClassId || "",
       feeFrequency: fee.feeFrequency || "per_term",
       appliesTo: fee.appliesTo || "all_students",
@@ -1804,8 +1838,14 @@ const handleExportReport = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
-    if (feeForm.appliesTo === "class" && !feeForm.classId) {
-      showToast("Select the specific class for this fee.", { type: "error" });
+    if (
+      feeForm.appliesTo === "class" &&
+      feeForm.classIds.length === 0
+    ) {
+      showToast(
+        "Select at least one class for this fee.",
+        { type: "error" },
+      );
       return;
     }
     if (feeForm.appliesTo === "base_class" && !feeForm.baseClassId) {
@@ -1820,7 +1860,12 @@ const handleExportReport = () => {
         ...existing,
         feeName: feeForm.feeName.trim(),
         amount,
-        classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+        classId:
+          feeForm.appliesTo === "class"
+            ? feeForm.classIds[0] || null
+            : null,
+        classIds:
+          feeForm.appliesTo === "class" ? feeForm.classIds : null,
         baseClassId:
           feeForm.appliesTo === "base_class"
             ? feeForm.baseClassId || null
@@ -1873,19 +1918,7 @@ const handleExportReport = () => {
         },
       });
       setEditingFeeId(null);
-      setFeeForm({
-        feeName: "",
-        amount: "",
-        classId: "",
-        baseClassId: "",
-        feeFrequency: "per_term",
-        appliesTo: "all_students",
-        effectiveFromDate: "",
-        dueDate: "",
-        selectedStudentIds: [],
-        applyToAcademicYear: "",
-        applyToTerm: "",
-      });
+      resetFeeForm();
     } catch (error) {
       console.error("Failed to update fee", error);
       showToast("Failed to update fee.", { type: "error" });
@@ -2347,7 +2380,12 @@ const handleExportReport = () => {
       schoolId: schoolId || "",
       feeName: feeForm.feeName || "Preview",
       amount: normalizedAmount,
-      classId: feeForm.appliesTo === "class" ? feeForm.classId || null : null,
+      classId:
+        feeForm.appliesTo === "class"
+          ? feeForm.classIds[0] || null
+          : null,
+      classIds:
+        feeForm.appliesTo === "class" ? feeForm.classIds : null,
       baseClassId:
         feeForm.appliesTo === "base_class"
           ? feeForm.baseClassId || null
@@ -2385,7 +2423,11 @@ const handleExportReport = () => {
   const feeHealthChecks = useMemo(() => {
     const warnings: string[] = [];
     fees.forEach((fee) => {
-      if (fee.appliesTo === "class" && !fee.classId) {
+      if (
+        fee.appliesTo === "class" &&
+        !fee.classIds?.length &&
+        !fee.classId
+      ) {
         warnings.push(
           `"${fee.feeName}" is set to class but no class selected.`,
         );
@@ -4566,26 +4608,43 @@ const handleExportReport = () => {
                 )}
                 {feeForm.appliesTo === "class" && (
                   <div>
-                    <label className="text-xs text-slate-500">
-                      Specific Class
-                    </label>
-                    <select
-                      value={feeForm.classId}
-                      onChange={(e) =>
-                        setFeeForm((prev) => ({
-                          ...prev,
-                          classId: e.target.value,
-                        }))
-                      }
-                      className={DASH_INPUT}
-                    >
-                      <option value="">Select class</option>
-                      {availableClasses.map((cls) => (
-                        <option key={cls.id} value={cls.id}>
-                          {cls.name}
-                        </option>
-                      ))}
-                    </select>
+                      <label className="text-xs text-slate-500">
+                        Specific Classes
+                      </label>
+                      <div className="max-h-32 overflow-y-auto rounded-md border border-slate-200 bg-white">
+                        {availableClasses.map((cls) => {
+                          const isSelected = feeForm.classIds.includes(cls.id);
+                          return (
+                            <label
+                              key={cls.id}
+                              className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm transition hover:bg-slate-50 ${isSelected ? "bg-slate-50" : ""}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  setFeeForm((prev) => {
+                                    const isCurrentlySelected = prev.classIds.includes(cls.id);
+                                    const newClassIds = isCurrentlySelected
+                                      ? prev.classIds.filter((id) => id !== cls.id)
+                                      : [...prev.classIds, cls.id];
+                                    return {
+                                      ...prev,
+                                      classIds: newClassIds,
+                                      classId: newClassIds.length > 0 ? newClassIds[0] : "",
+                                    };
+                                  });
+                                }}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <span className="text-slate-700">
+                                {cls.name}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
                   </div>
                 )}
                 {feeForm.appliesTo === "selected_students" && (
@@ -4736,26 +4795,27 @@ const handleExportReport = () => {
                           "Update Fee"
                         )}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingFeeId(null);
-                          setFeeForm({
-                            feeName: "",
-                            amount: "",
-                            classId: "",
-                            baseClassId: "",
-                            feeFrequency: "per_term",
-                            appliesTo: "all_students",
-                            effectiveFromDate: "",
-                            dueDate: "",
-                            selectedStudentIds: [],
-                            applyToAcademicYear: "",
-                            applyToTerm: "",
-                          });
-                        }}
-                        className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm"
-                      >
+                       <button
+                         type="button"
+                         onClick={() => {
+                           setEditingFeeId(null);
+                           setFeeForm({
+                             feeName: "",
+                             amount: "",
+                             classId: "",
+                             classIds: [] as string[],
+                             baseClassId: "",
+                             feeFrequency: "per_term",
+                             appliesTo: "all_students",
+                             effectiveFromDate: "",
+                             dueDate: "",
+                             selectedStudentIds: [] as string[],
+                             applyToAcademicYear: "",
+                             applyToTerm: "",
+                           });
+                         }}
+                         className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm"
+                       >
                         Cancel
                       </button>
                     </div>
@@ -4796,14 +4856,20 @@ const handleExportReport = () => {
                               {fee.feeName}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {(fee.appliesTo === "class" && fee.classId
-                                ? availableClasses.find((c) => c.id === fee.classId)
-                                    ?.name
-                                : fee.appliesTo === "selected_students"
-                                  ? "Selected students"
-                                  : fee.appliesTo === "new_students_only"
-                                    ? "New students only"
-                                    : "All students") || "All students"}
+                                {(fee.appliesTo === "class" && 
+                                  ((fee.classIds && fee.classIds.length > 0) 
+                                    ? fee.classIds
+                                    : fee.classId ? [fee.classId] : []).length > 0
+                                  ? ((fee.classIds && fee.classIds.length > 0) 
+                                      ? fee.classIds
+                                      : fee.classId ? [fee.classId] : [])
+                                      .map((id) => availableClasses.find((c) => c.id === id)?.name || id)
+                                      .join(", ")
+                                  : fee.appliesTo === "selected_students"
+                                    ? "Selected students"
+                                    : fee.appliesTo === "new_students_only"
+                                      ? "New students only"
+                                      : "All students") || "All students"}
                             </p>
                           </div>
                           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">

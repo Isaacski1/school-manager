@@ -173,9 +173,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           } else {
             console.error("Error fetching user profile:", err);
 
-            if (isOfflineAuthProfileError(err)) {
+            // Diagnostic: non-sensitive metadata only
+            // (no uid, email, token, school id or user object contents)
+            console.error("[AUTH-DIAG] profile load failed", {
+              code: typeof err?.code === "string" ? err.code : null,
+              name: typeof err?.name === "string" ? err.name : null,
+              onLine: typeof navigator === "undefined" ? null : navigator.onLine,
+            });
+
+            // Diagnostic: Check if error is classified as offline
+            const isOffline = isOfflineAuthProfileError(err);
+            console.log("[AUTH-DIAG] isOfflineAuthProfileError result:", isOffline);
+
+            if (isOffline) {
+              // Connectivity failure, NOT an authentication failure: the
+              // Firebase session is still valid, so never clear the user and
+              // never sign out here. Recover the previously cached profile
+              // first, and only then fall back to a degraded session.
               const cachedProfile = loadCachedUserProfile(firebaseUser.uid);
+              console.log(
+                "[AUTH-DIAG] offline recovery - cached profile found:",
+                Boolean(cachedProfile),
+              );
               if (cachedProfile) {
+                console.log("[AUTH-DIAG] Cached profile found, using it");
                 console.info("[Auth] Using cached user profile while offline", {
                   uid: firebaseUser.uid,
                   role: cachedProfile.role,
@@ -200,14 +221,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               // permissions remain unknown until the profile can be loaded,
               // so role-based authorization is never weakened or fabricated.
               if (loadedUserRef.current) {
-                console.info("[Auth] Keeping previously loaded user during offline profile failure", {
-                  uid: firebaseUser.uid,
-                });
+                console.log("[AUTH-DIAG] Previously loaded user exists, keeping it");
+                console.log("[AUTH-DIAG] Firebase user exists: true");
               } else {
-                console.warn(
-                  "[Auth] Offline profile failure without cached profile; entering degraded session",
-                  { uid: firebaseUser.uid },
+                console.log(
+                  "[AUTH-DIAG] No previously loaded user, creating degraded session",
                 );
+                console.log("[AUTH-DIAG] Firebase user exists: true");
                 setUser({
                   id: firebaseUser.uid,
                   fullName: firebaseUser.displayName || firebaseUser.email || "",
@@ -230,34 +250,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
 
             // Improved Error Handling
             const errorMessage = err.message || err.toString();
+            console.log("[AUTH-DIAG] Error classification: NON-OFFLINE, proceeding with logout flow");
+            console.log("[AUTH-DIAG] Error message:", errorMessage);
 
             if (errorMessage === "ACCOUNT_NOT_PROVISIONED") {
+              console.log("[AUTH-DIAG] Handling ACCOUNT_NOT_PROVISIONED");
               setError(
                 "Your account is not set up yet. Please contact your administrator for access.",
               );
-              // Sign out the user
               await signOut(auth);
             } else if (errorMessage === "ACCOUNT_INACTIVE") {
+              console.log("[AUTH-DIAG] Handling ACCOUNT_INACTIVE");
               setError(
                 "Your account has been deactivated. Please contact your administrator for access.",
               );
-              // Sign out the user
               await signOut(auth);
             } else if (errorMessage === "SCHOOL_NOT_FOUND") {
+              console.log("[AUTH-DIAG] Handling SCHOOL_NOT_FOUND");
               setError(
                 "Your school could not be found. Please contact your administrator.",
               );
-              // Sign out the user
               await signOut(auth);
             } else if (errorMessage === "SCHOOL_INACTIVE") {
+              console.log("[AUTH-DIAG] Handling SCHOOL_INACTIVE");
               setError(
                 "Your school has been deactivated. Please contact your administrator.",
               );
-              // Sign out the user
               await signOut(auth);
             } else if (
               errorMessage.includes("Cloud Firestore API has not been used")
             ) {
+              console.log("[AUTH-DIAG] Handling Firestore API not ready");
               setError(
                 "The database is not ready yet. Please contact support.",
               );
@@ -265,6 +288,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               errorMessage.includes("permission-denied") ||
               errorMessage.includes("Missing or insufficient permissions")
             ) {
+              console.log("[AUTH-DIAG] Handling permission error");
               setError(
                 "You do not have permission to access this account. Please contact your school administrator.",
               );
@@ -272,10 +296,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
               errorMessage.includes("client is offline") ||
               errorMessage.includes("offline")
             ) {
+              console.log("[AUTH-DIAG] Handling generic offline message");
               setError(
                 "We could not connect to the database. Please check your internet connection and try again.",
               );
             } else {
+              console.log("[AUTH-DIAG] Handling generic error");
               setError(getFriendlyErrorMessage(
                 err,
                 "We could not load your account. Please refresh the page or contact support if it continues.",
@@ -284,6 +310,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           }
         }
       } else {
+        console.log("[AUTH-DIAG] Firebase user is null (signed out)");
         setUser(null);
         setError(null);
         localStorage.removeItem("activeSchoolId");

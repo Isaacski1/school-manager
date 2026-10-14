@@ -122,6 +122,7 @@ export interface FeeDefinition {
   feeName: string;
   amount: number;
   classId?: string | null;
+  classIds?: string[] | null;
   baseClassId?: string | null;
   academicYear: string;
   term: FeeTerm;
