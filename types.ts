@@ -145,13 +145,14 @@ export interface StudentFeeLedger {
   classId: string;
   academicYear: string;
   term: FeeTerm;
-  fees: Array<{
+fees: Array<{
     feeId: string;
     feeName: string;
     amount: number;
     openingPaidAmount?: number;
     openingBalance?: number;
     openingStatus?: "Paid" | "Part-paid" | "Unpaid";
+    openingPaidDate?: string | null;
   }>;
   openingPaidAmount?: number;
   openingBalance?: number;

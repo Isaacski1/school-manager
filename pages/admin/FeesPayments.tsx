@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ï»¿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
@@ -241,6 +241,8 @@ const PAYMENT_METHOD_THEMES: Record<
     dot: "bg-indigo-500",
   },
 };
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const FeesPayments: React.FC = () => {
   const { school, schoolConfig } = useSchool();
@@ -624,6 +626,7 @@ const FeesPayments: React.FC = () => {
       openingStatus: "Paid" | "Part-paid" | "Unpaid";
       openingPaidAmount: string;
       openingBalance: string;
+      openingPaidDate: string;
     };
   }>({});
   const [savingOpeningRowKey, setSavingOpeningRowKey] = useState<string | null>(
@@ -865,6 +868,14 @@ const downloadCsv = (
 const handleExportReport = () => {
       if (isExporting) return;
       setIsExporting(true);
+      const openingPaidDateByLedgerFee = new Map(
+        ledgers.flatMap((ledger) =>
+          ledger.fees.map((fee) => [
+            `${ledger.studentId}::${fee.feeId}`,
+            fee.openingPaidDate || "",
+          ]),
+        ),
+      );
       const headers = [
         "Student",
         "Class",
@@ -875,6 +886,7 @@ const handleExportReport = () => {
         "Academic Year",
         "Term",
         "Date",
+        "Payment Date",
       ];
       const rows = paymentsSorted.map((payment) => {
         const student = students.find((s) => s.id === payment.studentId);
@@ -891,6 +903,9 @@ const handleExportReport = () => {
           payment.academicYear,
           payment.term,
           new Date(payment.createdAt).toLocaleString(),
+          openingPaidDateByLedgerFee.get(
+            `${payment.studentId}::${payment.feeId}`,
+          ) || "",
         ];
       });
 
@@ -908,6 +923,14 @@ const handleExportReport = () => {
    const handleExportReportCsv = () => {
      if (isExporting) return;
      setIsExporting(true);
+     const openingPaidDateByLedgerFeeCsv = new Map(
+       ledgers.flatMap((ledger) =>
+         ledger.fees.map((fee) => [
+           `${ledger.studentId}::${fee.feeId}`,
+           fee.openingPaidDate || "",
+         ]),
+       ),
+     );
      const headers = [
        "Student",
        "Class",
@@ -918,6 +941,7 @@ const handleExportReport = () => {
        "Academic Year",
        "Term",
        "Date",
+       "Payment Date",
      ];
      const rows = paymentsSorted.map((payment) => {
        const student = students.find((s) => s.id === payment.studentId);
@@ -934,6 +958,9 @@ const handleExportReport = () => {
          payment.academicYear,
          payment.term,
          new Date(payment.createdAt).toLocaleString(),
+         openingPaidDateByLedgerFeeCsv.get(
+           `${payment.studentId}::${payment.feeId}`,
+         ) || "",
        ];
      });
 
@@ -1072,7 +1099,7 @@ const handleExportReport = () => {
 
         if (!renderedFirstPage && requestId === financeRequestIdRef.current) {
           // Pass a copy: `loaded` keeps mutating as later pages arrive, and
-          // the final snapshot reuses the same array — React would bail out
+          // the final snapshot reuses the same array ï¿½ React would bail out
           // on the identical reference and leave a stale first-page render.
           setStudents([...loaded]);
           renderedFirstPage = true;
@@ -2541,6 +2568,9 @@ const handleExportReport = () => {
         openingBalance: String(
           feeEntry?.openingBalance ?? existing?.openingBalance ?? "",
         ),
+        openingPaidDate: String(
+          feeEntry?.openingPaidDate ?? existing?.openingDate ?? onboardingDate ?? "",
+        ),
       }
     );
   };
@@ -2599,12 +2629,14 @@ const handleExportReport = () => {
                 openingStatus: ledgerForm.openingStatus,
                 openingPaidAmount: Number(ledgerForm.openingPaidAmount || 0),
                 openingBalance: Number(ledgerForm.openingBalance || 0),
+                openingPaidDate: ledgerForm.openingPaidDate || null,
               }
              : {
                  ...fee,
                  openingStatus: "Unpaid" as const,
                  openingPaidAmount: 0,
                  openingBalance: 0,
+                 openingPaidDate: null,
                };
         }
         return {
@@ -2612,6 +2644,7 @@ const handleExportReport = () => {
           openingStatus: form.openingStatus,
           openingPaidAmount: Number(form.openingPaidAmount || 0),
           openingBalance: Number(form.openingBalance || 0),
+          openingPaidDate: form.openingPaidDate || null,
         };
       });
       const totalDue = updatedFees.reduce((sum, fee) => sum + fee.amount, 0);
@@ -2674,6 +2707,7 @@ const handleExportReport = () => {
                 openingStatus: form.openingStatus,
                 openingPaidAmount,
                 openingBalance,
+                openingPaidDate: form.openingPaidDate || null,
               }
             : fee,
         )
@@ -2684,12 +2718,14 @@ const handleExportReport = () => {
                 openingStatus: form.openingStatus,
                 openingPaidAmount,
                 openingBalance,
+                openingPaidDate: form.openingPaidDate || null,
               }
             : {
                 ...fee,
                 openingStatus: "Unpaid" as const,
                 openingPaidAmount: 0,
                 openingBalance: 0,
+                openingPaidDate: null,
               },
         );
     const totalDue = updatedFees.reduce((sum, fee) => sum + fee.amount, 0);
@@ -2735,6 +2771,7 @@ const handleExportReport = () => {
           openingBalance: feeId
             ? String(openingBalance || 0)
             : String(updatedLedger.openingBalance || 0),
+          openingPaidDate: form.openingPaidDate || "",
         },
       }));
       showToast("Opening status saved.", { type: "success" });
@@ -4904,7 +4941,7 @@ const handleExportReport = () => {
                               </span>
                             )}
                             {fee.effectiveFromDate && fee.dueDate && (
-                              <span className="mx-1">•</span>
+                              <span className="mx-1">ï¿½</span>
                             )}
                             {fee.dueDate && (
                               <span>
@@ -5750,7 +5787,7 @@ const handleExportReport = () => {
                               {payment.feeName}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {payment.paymentMethod} •{" "}
+                              {payment.paymentMethod} ï¿½{" "}
                               {new Date(payment.createdAt).toLocaleDateString()}
                             </p>
                           </div>
@@ -6133,6 +6170,11 @@ const handleExportReport = () => {
                             owed before onboarding.
                           </p>
                         </div>
+                        <p className="mt-2 text-[11px] text-slate-400">
+                          Payment date is when the opening payment was made.
+                          Defaults to the onboarding date; leave blank if
+                          unknown.
+                        </p>
                         {onboardingLedgers
                           .filter(({ ledger }) =>
                             selectedOpeningFeeId
@@ -6182,7 +6224,7 @@ const handleExportReport = () => {
                             return (
                               <div
                                 key={ledger.id}
-                                className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-[minmax(160px,1.2fr)_minmax(150px,0.9fr)_minmax(130px,0.75fr)_minmax(130px,0.75fr)_auto] lg:items-center"
+                                className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-[minmax(160px,1.2fr)_minmax(150px,0.9fr)_minmax(120px,0.7fr)_minmax(120px,0.7fr)_minmax(130px,0.75fr)_auto] lg:items-center"
                               >
                                 <div className="min-w-0">
                                   <p className="text-sm font-semibold text-slate-900">
@@ -6267,6 +6309,29 @@ const handleExportReport = () => {
                                   />
                                   <p className="mt-1 text-[10px] text-slate-400">
                                     Still owed
+                                  </p>
+                                </div>
+                                <div className="min-w-0">
+                                  <label className="block text-xs text-slate-500">
+                                    Payment Date
+                                  </label>
+                                  <input
+                                    type="date"
+                                    max={todayISO()}
+                                    value={form.openingPaidDate}
+                                    onChange={(e) =>
+                                      setOpeningLedgerForm((prev) => ({
+                                        ...prev,
+                                        [formKey]: {
+                                          ...form,
+                                          openingPaidDate: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                                  />
+                                  <p className="mt-1 text-[10px] text-slate-400">
+                                    When opening payment was made
                                   </p>
                                 </div>
                                 <button

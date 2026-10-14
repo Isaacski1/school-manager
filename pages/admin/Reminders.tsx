@@ -966,7 +966,7 @@ const Reminders: React.FC = () => {
                           {selectedPhones.size} recipient{selectedPhones.size !== 1 ? "s" : ""} selected
                         </p>
                         <p className="text-[11px] text-indigo-600 font-semibold">
-                          Estimated cost: GHS {selectedPhones.size * smsCostPerMessage * (smsParts || 1)}
+                          Estimated cost: GHS {(selectedPhones.size * smsCostPerMessage * (smsParts || 1)).toFixed(2)}
                         </p>
                       </div>
                       <button
