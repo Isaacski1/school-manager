@@ -1065,9 +1065,9 @@ const Reminders: React.FC = () => {
                                         className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
                                       />
                                       <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
-                                        <p className="text-[11px] text-slate-500 truncate">
-                                          {p.phone} • Ward: {p.studentName}
+                                        <p className="text-sm font-semibold text-slate-800 break-words">{p.name}</p>
+                                        <p className="text-[11px] text-slate-500 break-words">
+                                          {p.phone} • Ward: {p.studentName || "Student"}
                                         </p>
                                       </div>
                                       {p.class && (
