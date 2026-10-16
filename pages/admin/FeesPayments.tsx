@@ -32,6 +32,7 @@ import {
   Eye,
   FilePenLine,
   Filter,
+  Lock,
   PieChart,
   Plus,
   RefreshCw,
@@ -39,6 +40,7 @@ import {
   Trash2,
   TrendingDown,
   TrendingUp,
+  Unlock,
   Users,
   Wallet,
   CreditCard,
@@ -626,6 +628,7 @@ const FeesPayments: React.FC = () => {
       openingStatus: "Paid" | "Part-paid" | "Unpaid";
       openingPaidAmount: string;
       openingBalance: string;
+      openingBalanceAuto: boolean;
       openingPaidDate: string;
     };
   }>({});
@@ -2558,6 +2561,8 @@ const handleExportReport = () => {
     const feeEntry = feeId
       ? existing?.fees.find((fee) => fee.feeId === feeId)
       : undefined;
+    const storedBalance =
+      feeEntry?.openingBalance ?? existing?.openingBalance ?? null;
     return (
       openingLedgerForm[key] || {
         openingStatus:
@@ -2565,14 +2570,29 @@ const handleExportReport = () => {
         openingPaidAmount: String(
           feeEntry?.openingPaidAmount ?? existing?.openingPaidAmount ?? "",
         ),
-        openingBalance: String(
-          feeEntry?.openingBalance ?? existing?.openingBalance ?? "",
-        ),
+        openingBalance: String(storedBalance ?? ""),
+        openingBalanceAuto: storedBalance == null,
         openingPaidDate: String(
           feeEntry?.openingPaidDate ?? existing?.openingDate ?? onboardingDate ?? "",
         ),
       }
     );
+  };
+
+  const resolveDerivedOpeningBalance = (
+    ledger: StudentFeeLedger,
+    feeMatch: { feeId?: string; amount?: number } | undefined,
+    form: { openingPaidAmount?: string },
+  ) => {
+    const totalDue = feeMatch?.amount
+      ? feeMatch.amount
+      : ledger.fees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
+    const paid = Number(form?.openingPaidAmount || 0);
+    const recorded =
+      onboardingPaymentTotals.get(
+        getOpeningFormKey(ledger.id, feeMatch?.feeId),
+      ) || 0;
+    return Math.max(0, totalDue - paid - recorded);
   };
 
   const handleSaveOnboardingSettings = async (options?: {
@@ -2616,11 +2636,21 @@ const handleExportReport = () => {
       formMap.has(ledger.id) ||
       ledger.fees.some((fee) => formMap.has(`${ledger.id}::${fee.feeId}`)),
     );
-    const updatedLedgers = ledgersToUpdate.map((ledger) => {
+const updatedLedgers = ledgersToUpdate.map((ledger) => {
       const ledgerForm = formMap.get(ledger.id);
       const updatedFees = ledger.fees.map((fee) => {
         const key = `${ledger.id}::${fee.feeId}`;
         const form = formMap.get(key);
+        const recordedPaidForFee = onboardingPaymentTotals.get(key) || 0;
+        const derivedBalance = Math.max(
+          0,
+          (fee.amount || 0) -
+            Number(form?.openingPaidAmount || 0) -
+            recordedPaidForFee,
+        ).toFixed(2);
+        const balanceToPersist = form?.openingBalanceAuto
+          ? Number(derivedBalance)
+          : Number(form?.openingBalance || 0);
         if (!form) {
           if (!ledgerForm) return fee;
           return fee === ledger.fees[0]
@@ -2632,18 +2662,19 @@ const handleExportReport = () => {
                 openingPaidDate: ledgerForm.openingPaidDate || null,
               }
              : {
-                 ...fee,
-                 openingStatus: "Unpaid" as const,
-                 openingPaidAmount: 0,
-                 openingBalance: 0,
-                 openingPaidDate: null,
-               };
+                ...fee,
+                openingStatus: "Unpaid" as const,
+                openingPaidAmount: 0,
+                openingBalance: 0,
+                openingPaidDate: null,
+              };
         }
+
         return {
           ...fee,
           openingStatus: form.openingStatus,
           openingPaidAmount: Number(form.openingPaidAmount || 0),
-          openingBalance: Number(form.openingBalance || 0),
+          openingBalance: balanceToPersist,
           openingPaidDate: form.openingPaidDate || null,
         };
       });
@@ -2698,7 +2729,18 @@ const handleExportReport = () => {
     setSavingOpeningRowKey(formKey);
     const form = resolveOpeningForm(ledger.id, feeId);
     const openingPaidAmount = Number(form.openingPaidAmount || 0);
-    const openingBalance = Number(form.openingBalance || 0);
+    const recordedPaidForForm = onboardingPaymentTotals.get(formKey) || 0;
+    const derivedOpeningBalance = Math.max(
+      0,
+      (feeId
+        ? (ledger.fees.find((f) => f.feeId === feeId)?.amount || 0)
+        : ledger.fees.reduce((sum, fee) => sum + (fee.amount || 0), 0)) -
+        openingPaidAmount -
+        recordedPaidForForm,
+    ).toFixed(2);
+    const openingBalance = form.openingBalanceAuto
+      ? Number(derivedOpeningBalance)
+      : Number(form.openingBalance || 0);
     const updatedFees = feeId
       ? ledger.fees.map((fee) =>
           fee.feeId === feeId
@@ -2771,6 +2813,7 @@ const handleExportReport = () => {
           openingBalance: feeId
             ? String(openingBalance || 0)
             : String(updatedLedger.openingBalance || 0),
+          openingBalanceAuto: form.openingBalanceAuto,
           openingPaidDate: form.openingPaidDate || "",
         },
       }));
@@ -6219,6 +6262,11 @@ const handleExportReport = () => {
                                 openingPaidForSelection -
                                 recordedPaidForSelection,
                             );
+                            const derivedOpeningBalance = resolveDerivedOpeningBalance(
+                              ledger,
+                              feeMatch,
+                              form,
+                            );
                             const isSavingThisOpeningRow =
                               savingOpeningRowKey === formKey;
                             return (
@@ -6275,15 +6323,25 @@ const handleExportReport = () => {
                                   </label>
                                   <input
                                     value={form.openingPaidAmount}
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const nextPaid = e.target.value;
                                       setOpeningLedgerForm((prev) => ({
                                         ...prev,
                                         [formKey]: {
                                           ...form,
-                                          openingPaidAmount: e.target.value,
+                                          openingPaidAmount: nextPaid,
+                                          openingBalance: form.openingBalanceAuto
+                                            ? String(
+                                                resolveDerivedOpeningBalance(
+                                                  ledger,
+                                                  feeMatch,
+                                                  { openingPaidAmount: nextPaid },
+                                                ),
+                                              )
+                                            : form.openingBalance,
                                         },
-                                      }))
-                                    }
+                                      }));
+                                    }}
                                     className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                                   />
                                   <p className="mt-1 text-[10px] text-slate-400">
@@ -6294,22 +6352,58 @@ const handleExportReport = () => {
                                   <label className="block text-xs text-slate-500">
                                     Opening Balance
                                   </label>
-                                  <input
-                                    value={form.openingBalance}
-                                    onChange={(e) =>
-                                      setOpeningLedgerForm((prev) => ({
-                                        ...prev,
-                                        [formKey]: {
-                                          ...form,
-                                          openingBalance: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                                  />
-                                  <p className="mt-1 text-[10px] text-slate-400">
-                                    Still owed
-                                  </p>
+                                  {form.openingBalanceAuto ? (
+                                    <div className="mt-1 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                                      <Lock size={13} className="shrink-0 text-emerald-600" />
+                                      <span className="text-xs font-semibold text-emerald-800">
+                                        {formatMoney(derivedOpeningBalance)}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <input
+                                      value={form.openingBalance}
+                                      onChange={(e) =>
+                                        setOpeningLedgerForm((prev) => ({
+                                          ...prev,
+                                          [formKey]: {
+                                            ...form,
+                                            openingBalance: e.target.value,
+                                          },
+                                        }))
+                                      }
+                                      className="mt-1 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs"
+                                    />
+                                  )}
+                                  <div className="mt-1 flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setOpeningLedgerForm((prev) => ({
+                                          ...prev,
+                                          [formKey]: {
+                                            ...form,
+                                            openingBalanceAuto: !form.openingBalanceAuto,
+                                            openingBalance: !form.openingBalanceAuto
+                                              ? String(derivedOpeningBalance)
+                                              : form.openingBalance,
+                                          },
+                                        }))
+                                      }
+                                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
+                                      title={
+                                        form.openingBalanceAuto
+                                          ? "Click to override manually"
+                                          : "Click to re-calculate automatically"
+                                      }
+                                    >
+                                      {form.openingBalanceAuto ? "Override" : "Auto"}
+                                    </button>
+                                    <span className="text-[10px] text-slate-400">
+                                      {form.openingBalanceAuto
+                                        ? "Auto from fees minus paid"
+                                        : "Manual override"}
+                                    </span>
+                                  </div>
                                 </div>
                                 <div className="min-w-0">
                                   <label className="block text-xs text-slate-500">
