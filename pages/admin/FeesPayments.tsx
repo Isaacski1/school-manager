@@ -2082,6 +2082,30 @@ const handleExportReport = () => {
         });
         return;
       }
+      const remainingForFee = feeRemainingBalance.get(fee.id);
+      if (
+        remainingForFee !== undefined &&
+        remainingForFee <= 0 &&
+        amountPaid > 0
+      ) {
+        showToast(
+          `${fee.feeName} is already fully paid. Choose another fee or use auto-allocate.`,
+          { type: "error" },
+        );
+        return;
+      }
+      if (
+        remainingForFee !== undefined &&
+        amountPaid > remainingForFee
+      ) {
+        showToast(
+          `Amount exceeds remaining balance for ${fee.feeName}. Remaining: ${formatMoney(
+            remainingForFee,
+          )}.`,
+          { type: "error" },
+        );
+        return;
+      }
       payload = {
         id: `${schoolId}_${student.id}_${Date.now()}`,
         schoolId,
@@ -3075,6 +3099,56 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
     term,
     schoolConfig?.schoolReopenDate,
     onboardingDate,
+  ]);
+
+  /**
+   * Remaining outstanding balance per fee for the currently selected
+   * student. Used to (a) show the admin how much is still owed per fee,
+   * (b) disable fully-paid fees in the dropdown, and (c) reject payments
+   * that exceed what a fee still owes.
+   */
+  const feeRemainingBalance = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!selectedPaymentStudent) return map;
+    const ledger = ledgers.find(
+      (item) =>
+        item.studentId === selectedPaymentStudent.id &&
+        item.academicYear === academicYear &&
+        item.term === term,
+    );
+    const paidSinceByFee = new Map<string, number>();
+    for (const payment of currentTermPayments) {
+      if (
+        payment.studentId !== selectedPaymentStudent.id ||
+        payment.academicYear !== academicYear ||
+        payment.term !== term
+      ) {
+        continue;
+      }
+      paidSinceByFee.set(
+        payment.feeId,
+        (paidSinceByFee.get(payment.feeId) || 0) + payment.amountPaid,
+      );
+    }
+    for (const fee of ledger?.fees || []) {
+      const totalDue = fee.amount;
+      const paidBefore = fee.openingPaidAmount || 0;
+      const paidSince = paidSinceByFee.get(fee.feeId) || 0;
+      const remainingBefore = fee.openingBalance;
+      const remaining =
+        remainingBefore !== undefined && remainingBefore !== null
+          ? Math.max(0, remainingBefore - paidSince)
+          : Math.max(0, totalDue - paidBefore - paidSince);
+      map.set(fee.feeId, remaining);
+    }
+    return map;
+  }, [
+    selectedPaymentStudent,
+    ledgers,
+    fees,
+    currentTermPayments,
+    academicYear,
+    term,
   ]);
 
   const unavailableCurrentScopeFees = useMemo(() => {
@@ -5191,17 +5265,43 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                           ? "Auto-allocate (distribute across outstanding fees)"
                           : "Select student first"}
                       </option>
-                      {availablePaymentFees.map((fee) => (
-                        <option key={fee.id} value={fee.id}>
-                          {fee.feeName}
-                        </option>
-                      ))}
+                      {availablePaymentFees.map((fee) => {
+                        const remaining = feeRemainingBalance.get(fee.id);
+                        const isPaid =
+                          remaining !== undefined && remaining <= 0;
+                        return (
+                          <option
+                            key={fee.id}
+                            value={fee.id}
+                            disabled={isPaid}
+                          >
+                            {fee.feeName}
+                            {isPaid ? " — Paid" : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                     {paymentForm.studentId && !paymentForm.feeId && (
                       <p className="mt-1 text-[11px] text-slate-400">
                         The payment is distributed across this student's
                         outstanding fees in priority order until fully
                         allocated.
+                      </p>
+                    )}
+                    {paymentForm.studentId && paymentForm.feeId && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Remaining for this fee:{" "}
+                        <span
+                          className={
+                            (feeRemainingBalance.get(paymentForm.feeId) || 0) <= 0
+                              ? "font-semibold text-emerald-700"
+                              : "font-semibold text-slate-700"
+                          }
+                        >
+                          {formatMoney(
+                            feeRemainingBalance.get(paymentForm.feeId) || 0,
+                          )}
+                        </span>
                       </p>
                     )}
                   </div>
