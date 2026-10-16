@@ -1,4 +1,4 @@
-export enum UserRole {
+﻿export enum UserRole {
   SUPER_ADMIN = "super_admin",
   SCHOOL_ADMIN = "school_admin",
   TEACHER = "teacher",
@@ -121,6 +121,7 @@ export interface FeeDefinition {
   schoolId: string;
   feeName: string;
   amount: number;
+  priority?: number;
   classId?: string | null;
   classIds?: string[] | null;
   baseClassId?: string | null;
@@ -167,34 +168,11 @@ export interface StudentFeeLedgerPaginatedResult {
   nextCursor: string | null;
 }
 
-export interface StudentFeePayment {
-  id: string;
-  schoolId: string;
-  studentId: string;
-  classId: string;
+export interface FeeAllocation {
   feeId: string;
   feeName: string;
   amountPaid: number;
-  paymentMethod: PaymentMethod;
-  receiptNumber?: string | null;
-  academicYear: string;
-  term: FeeTerm;
-  isOpeningPayment?: boolean;
-  createdAt: Date | number;
-  recordedBy: string;
-  adminReviewedAt?: Date | number;
-  adminReviewedBy?: string | null;
-}
-
-export interface StudentFeePaymentPaginatedResult {
-  items: StudentFeePayment[];
-  nextCursor: string | null;
-}
-
-
-export interface StudentFeeLedgerPaginatedResult {
-  items: StudentFeeLedger[];
-  nextCursor: string | null;
+  isOverpayment: boolean;
 }
 
 export interface StudentFeePayment {
@@ -210,31 +188,7 @@ export interface StudentFeePayment {
   academicYear: string;
   term: FeeTerm;
   isOpeningPayment?: boolean;
-  createdAt: Date | number;
-  recordedBy: string;
-  adminReviewedAt?: Date | number;
-  adminReviewedBy?: string | null;
-}
-
-export interface StudentFeePaymentPaginatedResult {
-  items: StudentFeePayment[];
-  nextCursor: string | null;
-}
-
-
-export interface StudentFeePayment {
-  id: string;
-  schoolId: string;
-  studentId: string;
-  classId: string;
-  feeId: string;
-  feeName: string;
-  amountPaid: number;
-  paymentMethod: PaymentMethod;
-  receiptNumber?: string | null;
-  academicYear: string;
-  term: FeeTerm;
-  isOpeningPayment?: boolean;
+  allocations?: FeeAllocation[];
   createdAt: Date | number;
   recordedBy: string;
   adminReviewedAt?: Date | number;
@@ -246,6 +200,7 @@ export interface FinanceSettings {
   financeVersion: "v1" | "v2";
   onboardingMode?: OnboardingMode;
   onboardingDate?: string | null;
+  allocationStrategy?: "priority" | "dueDate" | "alphabetical";
 }
 
 export type StaffPaymentMethod = "mobile_money" | "ghipss";

@@ -20,6 +20,11 @@ import {
   StudentFeePayment,
   SchoolConfig,
 } from "../../types";
+import {
+  allocate,
+  OutstandingFee,
+  UNALLOCATED_FEE_ID,
+} from "../../services/feeAllocation";
 import { ACADEMIC_YEAR, CLASSES_LIST } from "../../constants";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import {
@@ -1974,24 +1979,13 @@ const handleExportReport = () => {
 
   const handleRecordPayment = async () => {
     if (!schoolId || !user?.id) return;
-    if (
-      !paymentForm.studentId ||
-      !paymentForm.feeId ||
-      !paymentForm.amountPaid
-    ) {
-      showToast("Select student, fee and amount.", { type: "error" });
+    if (!paymentForm.studentId || !paymentForm.amountPaid) {
+      showToast("Select student and amount.", { type: "error" });
       return;
     }
     const student = students.find((s) => s.id === paymentForm.studentId);
-    const fee = fees.find((f) => f.id === paymentForm.feeId);
-    if (!student || !fee) {
-      showToast("Invalid student or fee.", { type: "error" });
-      return;
-    }
-    if (resolveFeeAssignments(student, [fee]).length === 0) {
-      showToast("Selected fee does not apply to this student.", {
-        type: "error",
-      });
+    if (!student) {
+      showToast("Invalid student.", { type: "error" });
       return;
     }
     const amountPaid = Number(paymentForm.amountPaid);
@@ -1999,11 +1993,97 @@ const handleExportReport = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
-    try {
-      setIsRecordingPayment(true);
-      const paymentId = `${schoolId}_${student.id}_${Date.now()}`;
-      const payload: StudentFeePayment = {
-        id: paymentId,
+
+    const isAllocating = !paymentForm.feeId;
+    let payload: StudentFeePayment;
+    if (isAllocating) {
+      // No specific fee selected: distribute the amount across the student's
+      // outstanding fees in a deterministic order. This keeps the receipt as
+      // a single payment row while crediting each fee individually.
+      const updatedLedger = await ensureLedger(student, fees);
+      const existingPayments = payments.filter(
+        (p) =>
+          p.studentId === student.id &&
+          p.academicYear === academicYear &&
+          p.term === term,
+      );
+      const alreadyPaidByFee = new Map<string, number>();
+      for (const p of existingPayments) {
+        alreadyPaidByFee.set(
+          p.feeId,
+          (alreadyPaidByFee.get(p.feeId) || 0) + p.amountPaid,
+        );
+      }
+      const outstandingFees: OutstandingFee[] = updatedLedger.fees.map(
+        (fee) => {
+          const feeDef = fees.find((f) => f.id === fee.feeId);
+          const dueDate = feeDef?.dueDate
+            ? new Date(feeDef.dueDate).getTime()
+            : undefined;
+          return {
+            feeId: fee.feeId,
+            feeName: fee.feeName,
+            amount: fee.amount,
+            priority: feeDef?.priority,
+            dueDate,
+            openingPaidAmount: fee.openingPaidAmount,
+            alreadyPaid: alreadyPaidByFee.get(fee.feeId) || 0,
+          };
+        },
+      );
+      const strategy =
+        (financeSettings?.allocationStrategy as
+          | "priority"
+          | "dueDate"
+          | "alphabetical"
+          | undefined) || "priority";
+      const allocations = allocate(amountPaid, outstandingFees, strategy);
+      if (!allocations.length) {
+        showToast("No outstanding fees for this student.", {
+          type: "error",
+        });
+        return;
+      }
+      const hasOverpayment = allocations.some((a) => a.isOverpayment);
+      const allocationSummary = allocations
+        .map((a) => `${a.feeName}: ${a.amountPaid}`)
+        .join(", ");
+      payload = {
+        id: `${schoolId}_${student.id}_${Date.now()}`,
+        schoolId,
+        studentId: student.id,
+        classId: student.classId,
+        feeId: UNALLOCATED_FEE_ID,
+        feeName: "Multiple fees",
+        amountPaid,
+        paymentMethod: paymentForm.paymentMethod,
+        receiptNumber: paymentForm.receiptNumber || null,
+        academicYear,
+        term,
+        allocations,
+        createdAt: Date.now(),
+        recordedBy: user.id,
+      };
+      showToast(
+        `Allocated: ${allocationSummary}${
+          hasOverpayment ? " (overpayment recorded)" : ""
+        }`,
+        { type: "success" },
+      );
+    } else {
+      const fee = fees.find((f) => f.id === paymentForm.feeId);
+      if (!fee) {
+        showToast("Invalid student or fee.", { type: "error" });
+        return;
+      }
+      if (resolveFeeAssignments(student, [fee]).length === 0) {
+        showToast("Selected fee does not apply to this student.", {
+          type: "error",
+        });
+        return;
+      }
+      payload = {
+        id: `${schoolId}_${student.id}_${Date.now()}`,
         schoolId,
         studentId: student.id,
         classId: student.classId,
@@ -2017,6 +2097,9 @@ const handleExportReport = () => {
         createdAt: Date.now(),
         recordedBy: user.id,
       };
+    }
+    try {
+      setIsRecordingPayment(true);
       await db.recordStudentPayment(payload);
 
       const updatedLedger = await ensureLedger(student, fees);
@@ -2045,9 +2128,10 @@ const handleExportReport = () => {
           module: "Fees & Payments",
           studentId: student.id,
           studentName: student.name,
-          feeName: fee.feeName,
+          feeName: payload.feeName,
           amountPaid: payload.amountPaid,
           paymentMethod: payload.paymentMethod,
+          allocations: payload.allocations,
           actorName: user.fullName || "",
         },
       });
@@ -2571,7 +2655,7 @@ const handleExportReport = () => {
           feeEntry?.openingPaidAmount ?? existing?.openingPaidAmount ?? "",
         ),
         openingBalance: String(storedBalance ?? ""),
-        openingBalanceAuto: storedBalance == null,
+        openingBalanceAuto: true,
         openingPaidDate: String(
           feeEntry?.openingPaidDate ?? existing?.openingDate ?? onboardingDate ?? "",
         ),
@@ -5103,7 +5187,9 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                       disabled={!paymentForm.studentId}
                     >
                       <option value="">
-                        {paymentForm.studentId ? "Select fee" : "Select student first"}
+                        {paymentForm.studentId
+                          ? "Auto-allocate (distribute across outstanding fees)"
+                          : "Select student first"}
                       </option>
                       {availablePaymentFees.map((fee) => (
                         <option key={fee.id} value={fee.id}>
@@ -5111,6 +5197,13 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                         </option>
                       ))}
                     </select>
+                    {paymentForm.studentId && !paymentForm.feeId && (
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        The payment is distributed across this student's
+                        outstanding fees in priority order until fully
+                        allocated.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-slate-500">Amount Paid</label>
