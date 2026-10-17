@@ -6023,8 +6023,10 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                               {payment.feeName}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {payment.paymentMethod} �{" "}
-                              {new Date(payment.createdAt).toLocaleDateString()}
+                              {payment.paymentMethod} •{" "}
+                              {availableClasses.find((c) => c.id === payment.classId)
+                                ?.name || "Unassigned"}{" "}
+                              • {new Date(payment.createdAt).toLocaleDateString()}
                             </p>
                           </div>
                           <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
