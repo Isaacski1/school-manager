@@ -205,7 +205,23 @@ const StudentAvatar: React.FC<{
 
 const formatMoney = (value: number) => `GHS ${value.toFixed(2)}`;
 
-const DASH_PANEL =
+  /**
+   * Human-readable fee label for a payment row.
+   *
+   * A fee-specific payment keeps a single `feeName`. An auto-allocated
+   * payment stores `feeName: "Multiple fees"` plus an `allocations` array
+   * naming every fee it was split across — this renders that breakdown so
+   * the admin can tell two auto-allocated payments apart at a glance.
+   */
+  const formatPaymentFeeLabel = (payment: StudentFeePayment): string => {
+    const allocations = payment.allocations || [];
+    const named = allocations.filter((a) => a.feeId !== UNALLOCATED_FEE_ID);
+    if (!named.length) return payment.feeName;
+    if (named.length === 1) return named[0].feeName;
+    return `${payment.feeName} (${named.map((a) => a.feeName).join(", ")})`;
+  };
+
+  const DASH_PANEL =
   "rounded-[30px] border border-white/55 bg-white shadow-[0_28px_80px_-45px_rgba(15,23,42,0.38)]";
 
 const DASH_PANEL_SOFT =
@@ -383,7 +399,7 @@ const FeesPayments: React.FC = () => {
     return [
       `${schoolName} receipt: GHS ${amount} received.`,
       `Child: ${studentName}.`,
-      `Fee: ${payment.feeName}.`,
+      `Fee: ${formatPaymentFeeLabel(payment)}.`,
       `Ref: ${payment.receiptNumber || payment.id}.`,
     ].join(" ");
   };
@@ -4317,7 +4333,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                               {student?.name || payment.studentId}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {payment.feeName} / {payment.paymentMethod}
+                              {formatPaymentFeeLabel(payment)} / {payment.paymentMethod}
                             </p>
                             {(sentInvoiceStatus[payment.id]?.channel || (payment as any).invoiceNotificationChannel) && (
                               <span className="mt-2 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
@@ -5705,7 +5721,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                     <div className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
                       <span className="text-slate-500">Fee</span>
                       <span className="font-medium text-slate-800">
-                        {selectedPayment.feeName}
+                        {formatPaymentFeeLabel(selectedPayment)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
@@ -6020,7 +6036,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                         >
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900">
-                              {payment.feeName}
+                              {formatPaymentFeeLabel(payment)}
                             </p>
                             <p className="text-xs text-slate-500">
                               {payment.paymentMethod} •{" "}
@@ -6053,7 +6069,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                             Edit Payment
                           </p>
                           <p className="text-sm font-semibold text-slate-900 break-words">
-                            {editingPayment.feeName}
+                            {formatPaymentFeeLabel(editingPayment)}
                           </p>
                         </div>
                         <button
