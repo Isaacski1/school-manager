@@ -6357,9 +6357,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                           onClick={() => {
                             void handleSendSmsReceipt(
                               payment,
-                              receiptSmsComposer.mode === "custom"
-                                ? receiptSmsComposer.message
-                                : undefined,
+                              messageToSend,
                             );
                           }}
                           disabled={

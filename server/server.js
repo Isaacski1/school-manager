@@ -16969,6 +16969,21 @@ app.post("/api/payments/send-invoice", authMiddleware, async (req, res) => {
       const settings = settingsSnap?.exists ? settingsSnap.data() || {} : {};
       const schoolData = schoolSnap?.exists ? schoolSnap.data() || {} : {};
       const notificationSettings = settings.notificationSettings || {};
+      // An admin_manual_receipt send must carry the exact message the admin
+      // reviewed in the SMS composer. If it arrives without one, the server
+      // would silently fall back to its own default template — which has a
+      // different format and no outstanding balance. Reject it here so the
+      // admin gets a toast and retries instead of the parent receiving a
+      // receipt that never went through review.
+      if (
+        req.body?.source === "admin_manual_receipt" &&
+        typeof req.body?.customParentMessage !== "string"
+      ) {
+        return res.status(400).json({
+          error:
+            "Admin receipt sends must include the reviewed parent message (customParentMessage).",
+        });
+      }
       const recipientPhones = resolvePaymentNotificationRecipients(studentData, req.body);
       const firstRecipient = recipientPhones[0] || null;
       const inlineProcessing = Boolean(forceInline) || shouldProcessInvoiceNotificationsInline();
