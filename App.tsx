@@ -65,6 +65,8 @@ import SplashScreen from "./components/SplashScreen";
 import InstallPrompt from "./components/InstallPrompt";
 import WhatsAppBroadcastProgress from "./components/WhatsAppBroadcastProgress";
 import PlatformAnnouncementPopup from "./components/PlatformAnnouncementPopup";
+import { GlobalLoadingProvider, useGlobalLoading } from "./components/GlobalLoadingProvider";
+import GlobalLoadingBar from "./components/GlobalLoadingBar";
 
 // Public Marketing Pages
 const MarketingHome = lazy(() => import("./pages/public/MarketingHome"));
@@ -333,8 +335,34 @@ const OfflineSchoolRecovery = ({
 const AppContent = () => {
   const { user, loading, authLoading, error, logout } = useAuth();
   const { school, schoolLoading, schoolError, classCatalogReady, schoolOffline, refreshSchool } = useSchool();
+  const { active: globalLoadingActive, setReady } = useGlobalLoading();
+
+  // The global badge is driven ONLY by in-flight network fetches (the global
+  // fetch wrapper), NOT by React auth/school loading flags. The splash screen
+  // has its own animation and the dashboard renders its own skeleton states
+  // while data loads, so the badge must not duplicate or fight them.
+  const showGlobalLoadingBar = globalLoadingActive;
+
+  // Once the initial auth/school-context load is complete, tell the global
+  // fetch wrapper to stop driving the indicator. This prevents the indicator
+  // from re-triggering on background polling/refresh cycles.
+  React.useEffect(() => {
+    if (!authLoading && !schoolLoading && !loading) {
+      setReady(true);
+    }
+  }, [authLoading, schoolLoading, loading, setReady]);
 
   const [brandingVersion, setBrandingVersion] = React.useState(0);
+
+  // Wrap any rendered subtree with the global loading bar so it appears at
+  // the top of the viewport even when an early-return path is taken (splash
+  // screen, offline recovery, error screens, etc.).
+  const withBar = (node: React.ReactNode) => (
+    <React.Fragment>
+      <GlobalLoadingBar active={showGlobalLoadingBar} label="Loading..." />
+      {node}
+    </React.Fragment>
+  );
 
   React.useEffect(() => {
     const handleBrandingUpdate = () => setBrandingVersion((prev) => prev + 1);
@@ -452,13 +480,13 @@ const AppContent = () => {
 
   // Show splash screen while auth is initializing
   if (authLoading) {
-    return (
+    return withBar(
       <SplashScreen
         hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
         message={splashMessage}
-      />
+      />,
     );
   }
 
@@ -469,7 +497,7 @@ const AppContent = () => {
   // ahead of every route (including role-gated routes) so ProtectedRoute and
   // RoleBasedHome are never reached while the role is unknown.
   if (user && !hasApplicationProfile(user)) {
-    return <OfflineProfileRecovery onSignOut={logout} />;
+    return withBar(<OfflineProfileRecovery onSignOut={logout} />);
   }
 
   // Offline with no previously loaded school information. This is a
@@ -479,11 +507,11 @@ const AppContent = () => {
   // permissive tier when the school object is missing). Nothing is fabricated:
   // the user simply retries or signs out.
   if (schoolOffline && !schoolLoading && !school && !schoolError) {
-    return (
+    return withBar(
       <OfflineSchoolRecovery
         onRetry={() => refreshSchool()}
         onSignOut={logout}
-      />
+      />,
     );
   }
 
@@ -496,13 +524,13 @@ const AppContent = () => {
       (!school && !cachedSchool && !schoolError)) &&
     !(user.role === UserRole.PARENT && !hasSchoolContext)
   ) {
-    return (
+    return withBar(
       <SplashScreen
         hideDefaultBranding={hideDefault}
         schoolName={splashSchoolName}
         schoolLogoUrl={splashSchoolLogo}
         message="Preparing Your Dashboard."
-      />
+      />,
     );
   }
 
@@ -511,8 +539,8 @@ const AppContent = () => {
     !isPublicRoute &&
     error ===
       "Your account is not set up yet. Please contact your administrator for access."
-  ) {
-    return (
+) {
+    return withBar(
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-100 p-8 text-center">
           <div className="w-16 h-16 bg-[#E6F0FA] rounded-full flex items-center justify-center mx-auto mb-6">
@@ -535,7 +563,7 @@ const AppContent = () => {
           </h1>
           <p className="text-slate-600 mb-6">
             Your account is not set up yet. Please contact your administrator
-            for access to the system.
+            for access.
           </p>
           <button
             onClick={logout}
@@ -544,14 +572,14 @@ const AppContent = () => {
             Sign Out
           </button>
         </div>
-      </div>
+      </div>,
     );
   }
 
   // Show school access error (only for non-super-admin and non-parent users)
   if (!isPublicRoute && schoolError && user?.role !== UserRole.SUPER_ADMIN && user?.role !== UserRole.PARENT) {
     const details = getSchoolErrorDetails(schoolError);
-    return (
+    return withBar(
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-100 p-8 text-center">
           <div className="w-16 h-16 bg-[#E6F0FA] rounded-full flex items-center justify-center mx-auto mb-6">
@@ -580,12 +608,13 @@ const AppContent = () => {
             Sign Out
           </button>
         </div>
-      </div>
+      </div>,
     );
   }
 
   return (
     <ErrorBoundary>
+      <GlobalLoadingBar active={showGlobalLoadingBar} label="Loading..." />
       <InstallPrompt />
       {schoolOffline && <SchoolOfflineNotice onRetry={() => refreshSchool()} />}
       {user?.role === UserRole.SCHOOL_ADMIN && <WhatsAppBroadcastProgress />}
@@ -613,9 +642,11 @@ const App = () => {
   return (
     <AuthProvider>
       <SchoolProvider>
-        <Router>
-          <AppContent />
-        </Router>
+        <GlobalLoadingProvider>
+          <Router>
+            <AppContent />
+          </Router>
+        </GlobalLoadingProvider>
       </SchoolProvider>
     </AuthProvider>
   );

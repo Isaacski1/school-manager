@@ -1,0 +1,88 @@
+test("verified backup is created before operational records reset", async () => {
+  const schoolId = "school-1";
+  const db = new FakeDb({
+    [`settings/${schoolId}`]: {
+      schoolId,
+      schoolName: "Test School",
+      currentTerm: "Term 3",
+      academicYear: "2025-2026",
+      schoolReopenDate: "2026-01-10",
+      vacationDate: "2026-07-20",
+      nextTermBegins: "2026-09-10",
+      termTransitionProcessed: false,
+    },
+    [`schools/${schoolId}`]: { name: "Test School", status: "active" },
+    "attendance/attendance-1": { schoolId, studentId: "student-1" },
+    "teacher_attendance/teacher-attendance-1": {
+      schoolId,
+      teacherId: "teacher-1",
+    },
+    "assessments/assessment-1": {
+      schoolId,
+      studentId: "student-1",
+      term: 3,
+      academicYear: "2025-2026",
+    },
+    "student_remarks/remark-1": {
+      schoolId,
+      studentId: "student-1",
+      term: 3,
+      academicYear: "2025-2026",
+    },
+    "fees/tuition-root": {
+      schoolId,
+      feeName: "Tuition",
+      amount: 100,
+      term: "Term 3",
+      academicYear: "2025-2026",
+      feeFrequency: "per_term",
+    },
+    [`schools/${schoolId}/fees/tuition-v2`]: {
+      schoolId,
+      feeName: "Tuition",
+      amount: 100,
+      term: "Term 3",
+      academicYear: "2025-2026",
+      feeFrequency: "per_term",
+    },
+    "payments/payment-1": {
+      schoolId,
+      studentId: "student-1",
+      amountPaid: 50,
+      term: "Term 3",
+      academicYear: "2025-2026",
+    },
+    [`schools/${schoolId}/payments/payment-v2`]: {
+      schoolId,
+      studentId: "student-1",
+      amountPaid: 50,
+      term: "Term 3",
+      academicYear: "2025-2026",
+    },
+    "student_ledgers/ledger-1": {
+      schoolId,
+      studentId: "student-1",
+      term: "Term 3",
+      academicYear: "2025-2026",
+      fees: [],
+    },
+    [`schools/${schoolId}/feeLedgers/ledger-v2`]: {
+      schoolId,
+      studentId: "student-1",
+      term: "Term 3",
+      academicYear: "2025-2026",
+      fees: [],
+    },
+  });
+  const service = createTermRolloverService({
+    db,
+    FieldValue,
+    Timestamp,
+    logger: { error: () => {} },
+  });
+
+  const result = await service.rolloverSchool(schoolId, {
+    now: new Date("2026-09-10T12:00:00"),
+    source: "test",
+  });
+

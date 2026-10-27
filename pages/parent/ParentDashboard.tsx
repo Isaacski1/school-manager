@@ -6,6 +6,7 @@ import { collection, query, where, getDocs, updateDoc, doc, setDoc } from "fireb
 import { firestore, auth } from "../../services/firebase";
 import { db } from "../../services/mockDb";
 import { getParentDashboardNotices, markParentDashboardNoticeRead } from "../../services/backendApi";
+import { withFirestoreQuotaRetry } from "../../services/firestoreQuotaRetry";
 import { ParentNotice, Student } from "../../types";
 import { CLASSES_LIST } from "../../constants";
 import {
@@ -172,46 +173,76 @@ export default function ParentDashboard() {
         };
 
         // 1. DISCOVERY VIA PHONE NUMBER
+        // Wrap each raw Firestore query with quota/backoff so a quota error
+        // degrades gracefully instead of crashing the whole page. If phone
+        // discovery fails (e.g. quota exhausted), we still fall through to the
+        // token-claims path below rather than giving up entirely.
         const phoneVariants = getPhoneVariants(phoneToMatch);
         const contactFields = ["fatherPhone", "motherPhone", "guardianPhone"];
         const queries = contactFields.flatMap((field) =>
           phoneVariants.map((variant) =>
-            getDocs(query(studentsRef, where(field, "==", variant))),
+            withFirestoreQuotaRetry(
+              `parent-discover-${field}-${variant}`,
+              () => getDocs(query(studentsRef, where(field, "==", variant))),
+              { maxAttempts: 3, baseDelayMs: 1500, maxDelayMs: 5000 },
+            ),
           ),
         );
 
-        const snapshots = await Promise.all(queries);
-        snapshots.forEach(snapshot => {
-          snapshot.forEach(docSnap => {
-            if (!seenIds.has(docSnap.id)) {
-              const data = docSnap.data() as Student;
-              const fingerprint = getFingerprint(data);
-              // Skip if we already have a student with same name, DOB, and class
-              if (!seenFingerprints.has(fingerprint)) {
-                seenIds.add(docSnap.id);
-                seenFingerprints.add(fingerprint);
-                fetchedStudents.push({ ...data, id: docSnap.id });
+        try {
+          const snapshots = await Promise.all(queries);
+          snapshots.forEach(snapshot => {
+            snapshot.forEach(docSnap => {
+              if (!seenIds.has(docSnap.id)) {
+                const data = docSnap.data() as Student;
+                const fingerprint = getFingerprint(data);
+                // Skip if we already have a student with same name, DOB, and class
+                if (!seenFingerprints.has(fingerprint)) {
+                  seenIds.add(docSnap.id);
+                  seenFingerprints.add(fingerprint);
+                  fetchedStudents.push({ ...data, id: docSnap.id });
+                }
               }
-            }
+            });
           });
-        });
+        } catch (phoneDiscoveryError) {
+          // Quota/network errors during phone discovery are non-fatal: the
+          // token-claims fallback below can still resolve the children.
+          console.warn(
+            "[ParentDashboard] Phone-based student discovery failed; falling back to token claims.",
+            phoneDiscoveryError,
+          );
+        }
 
         // 2. DISCOVERY VIA TOKEN CLAIMS (Fallback)
-        const idTokenResult = await auth.currentUser?.getIdTokenResult(true);
-        const claimIds = (idTokenResult?.claims?.studentIds as string[]) || [];
-        
-        for (const id of claimIds) {
-          if (!seenIds.has(id)) {
-            const s = await db.getStudent(id);
-            if (s) {
-              const fingerprint = getFingerprint(s);
-              if (!seenFingerprints.has(fingerprint)) {
-                seenIds.add(id);
-                seenFingerprints.add(fingerprint);
-                fetchedStudents.push(s);
+        // This path is server-side (db.getStudent) and is the primary
+        // resilience mechanism when Firestore quota is exhausted.
+        try {
+          const idTokenResult = await auth.currentUser?.getIdTokenResult(true);
+          const claimIds = (idTokenResult?.claims?.studentIds as string[]) || [];
+
+          for (const id of claimIds) {
+            if (!seenIds.has(id)) {
+              const s = await withFirestoreQuotaRetry(
+                `parent-claim-${id}`,
+                () => db.getStudent(id),
+                { maxAttempts: 3, baseDelayMs: 1500, maxDelayMs: 5000 },
+              );
+              if (s) {
+                const fingerprint = getFingerprint(s);
+                if (!seenFingerprints.has(fingerprint)) {
+                  seenIds.add(id);
+                  seenFingerprints.add(fingerprint);
+                  fetchedStudents.push(s);
+                }
               }
             }
           }
+        } catch (claimError) {
+          console.warn(
+            "[ParentDashboard] Token-claims student discovery failed.",
+            claimError,
+          );
         }
 
         // 3. PROCESS RESULTS

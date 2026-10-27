@@ -81,9 +81,6 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
   }
 
   const { monday, friday } = viewMode === "day" ? getDayRange(week) : getWeekRange(week);
-  const effectiveCurrentWeekStart = getEffectiveCurrentWeekStart();
-  const isCurrentWeek =
-    effectiveCurrentWeekStart.toDateString() === monday.toDateString();
 
   // Parse date string safely to avoid timezone shift
   const parseLocalDate = (dateString: string): Date => {
@@ -97,6 +94,27 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
     }
     return new Date(dateString);
   };
+
+  // Effective "today" reference: if the school hasn't reopened yet, the
+  // re-open date acts as the current day instead of the real calendar date.
+  const getEffectiveCurrentDate = (): Date => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (schoolReopenDate) {
+      const reopen = parseLocalDate(schoolReopenDate);
+      if (!Number.isNaN(reopen.getTime()) && reopen > today) {
+        return reopen;
+      }
+    }
+    return today;
+  };
+
+  const effectiveCurrentDate = getEffectiveCurrentDate();
+  const isCurrent =
+    viewMode === "day"
+      ? monday.toDateString() === effectiveCurrentDate.toDateString()
+      : getWeekRange(effectiveCurrentDate).monday.toDateString() ===
+        monday.toDateString();
 
   // Check if school has reopened
   let schoolStatus = "";
@@ -183,7 +201,7 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
               <p className="text-xs text-slate-500 font-medium">
                 {monday.getFullYear()}
               </p>
-              {isCurrentWeek && !showSkeleton && (
+              {isCurrent && !showSkeleton && (
                 <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full mt-1 uppercase tracking-wide">
                   Current {viewMode === "day" ? "Day" : "Week"}
                 </span>
@@ -193,17 +211,17 @@ const AttendanceChart: React.FC<AttendanceChartProps> = ({
 
           <button
             onClick={onNextWeek}
-            disabled={isCurrentWeek}
+            disabled={isCurrent}
             className="flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-red-400 transition-colors shadow-sm text-slate-600 hover:text-red-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-600"
             title={
-              isCurrentWeek ? `You are viewing the current ${viewMode === "day" ? "day" : "week"}` : viewMode === "day" ? "Next day" : "Next week"
+              isCurrent ? `You are viewing the current ${viewMode === "day" ? "day" : "week"}` : viewMode === "day" ? "Next day" : "Next week"
             }
           >
             →
           </button>
         </div>
 
-        {!isCurrentWeek && !showSkeleton && (
+        {!isCurrent && !showSkeleton && (
           <div className="mt-3 text-center">
             <button
               onClick={onCurrentWeek}
@@ -341,10 +359,6 @@ export default AttendanceChart;
     const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
     return { monday, friday };
-  };
-
-  const getEffectiveCurrentWeekStart = () => {
-    return getWeekRange(new Date()).monday;
   };
 
   // For day view, use the same date for both monday and friday

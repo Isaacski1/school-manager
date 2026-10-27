@@ -1,0 +1,217 @@
+{
+  "results": [
+    {
+      "version": "v1",
+      "schoolId": "cfv1-1792618949947",
+      "panelText": "Carry-forward review\n\nBalances carried over from the previous term.\n\nFILTER BY CLASS\nAll Classes\nJHS 1A\n\nSTUDENTS CARRIED\n\n2\n\nTOTAL CARRIED\n\nGHS 300.00\n\nPAID AGAINST CARRIED\n\nGHS 150.00\n\nSTILL OUTSTANDING\n\nGHS 150.00\n\nCLASS\tSTUDENTS\tCARRIED\tPAID\tOUTSTANDING\nclass-1\t2\tGHS 300.00\tGHS 150.00\tGHS 150.00\n\nAma Mensah\n\nclass-1 • from Term 3, 2025-2026\n\nCarried GHS 200.00\nPaid GHS 50.00\nGHS 150.00 outstanding",
+      "hasDefaultersSection": true,
+      "hasStudentLedgersSection": true,
+      "reviewCalls": [
+        "GET http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2023-2024&term=Term%201",
+        "GET http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2026-2027&term=Term%201"
+      ],
+      "reviewResponses": [
+        {
+          "url": "http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2026-2027&term=Term%201",
+          "status": 200,
+          "body": "{\"success\":true,\"schoolId\":\"cfv1-1792618949947\",\"academicYear\":\"2026-2027\",\"term\":\"Term 1\",\"rows\":[{\"studentId\":\"cfv1a-1792618949947\",\"studentName\":\"Ama Mensah\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv1-1792618949947_cfv1a-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"fromAcademicYear\":\"2025-2026\",\"fromTerm\":\"Term 3\",\"toAcademicYear\":\"2026-2027\",\"toTerm\":\"Term 1\",\"carriedAmount\":200,\"paidAmount\":50,\"outstandingAmount\":150,\"status\":\"outstanding\"},{\"studentId\":\"cfv1b-1792618949947\",\"studentName\":\"Kofi Owusu\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv1-1792618949947_cfv1b-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"fromAcademicYear\":\"2025-2026\",\"fromTerm\":\"Term 3\",\"toAcademicYear\":\"2026-2027\",\"toTerm\":\"Term 1\",\"carriedAmount\":100,\"paidAmount\":100,\"outstandingAmount\":0,\"status\":\"settled\"}],\"outstandingRows\":[{\"studentId\":\"cfv1a-1792618949947\",\"studentName\":\"Ama Mensah\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv1-1792618949947_cfv1a-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"f"
+        }
+      ],
+      "consoleErrors": [
+        "Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)"
+      ],
+      "consoleMessages": [
+        "debug: [vite] connecting...",
+        "info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+        "info: [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}",
+        "debug: [vite] connected.",
+        "log: [AUTH-DIAG] Firebase user is null (signed out)",
+        "verbose: [DOM] Input elements should have autocomplete attributes (suggested: \"current-password\"): (More info: https://www.chromium.org/developers/design-documents/create-amazing-password-forms) %o",
+        "info: [Auth] Firebase user {uid: vAGeYIyUSGas8ZALyd48rvdrcnn2, email: cf.v1.1792618949947@schoolmanagergh.test}",
+        "info: [Auth] Extracted custom claims: {name: CF Verify Admin, iss: https://securetoken.google.com/school-manager-gh, aud: school-manager-gh, auth_time: 1792619019, user_id: vAGeYIyUSGas8ZALyd48rvdrcnn2}",
+        "info: [Auth] user profile {id: vAGeYIyUSGas8ZALyd48rvdrcnn2, fullName: CF Verify Admin, email: cf.v1.1792618949947@schoolmanagergh.test, role: school_admin, schoolId: cfv1-1792618949947}",
+        "verbose: [DOM] Input elements should have autocomplete attributes (suggested: \"current-password\"): (More info: https://www.chromium.org/developers/design-documents/create-amazing-password-forms) %o",
+        "warning: Security login logging failed TypeError: Failed to fetch\n    at safeLogSecurityLogin (http://127.0.0.1:5173/pages/Login.tsx:163:30)\n    at handleLogin (http://127.0.0.1:5173/pages/Login.tsx:219:15)",
+        "error: Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "error: Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "debug: [vite] connecting...",
+        "debug: [vite] connected.",
+        "info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+        "info: [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}",
+        "info: [Auth] Firebase user {uid: vAGeYIyUSGas8ZALyd48rvdrcnn2, email: cf.v1.1792618949947@schoolmanagergh.test}",
+        "info: [Auth] Extracted custom claims: {name: CF Verify Admin, iss: https://securetoken.google.com/school-manager-gh, aud: school-manager-gh, auth_time: 1792619019, user_id: vAGeYIyUSGas8ZALyd48rvdrcnn2}",
+        "info: [Auth] user profile {id: vAGeYIyUSGas8ZALyd48rvdrcnn2, fullName: CF Verify Admin, email: cf.v1.1792618949947@schoolmanagergh.test, role: school_admin, schoolId: cfv1-1792618949947}",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route"
+      ],
+      "pageErrors": [],
+      "ledger": {
+        "path": "student_ledgers/cfv1-1792618949947_cfv1a-1792618949947_2026-2027_Term1",
+        "totalDue": 800,
+        "carryForwardCount": 1,
+        "fees": [
+          {
+            "feeId": "fee-tuition",
+            "feeName": "Tuition",
+            "amount": 600,
+            "openingPaidAmount": 0
+          },
+          {
+            "feeId": "__carry_forward___cfv1-1792618949947_cfv1a-1792618949947_2025-2026_Term3",
+            "feeName": "Carried Balance (Term 3, 2025-2026)",
+            "amount": 200,
+            "openingPaidAmount": 0,
+            "openingBalance": 200,
+            "openingStatus": "Unpaid",
+            "openingPaidDate": null
+          }
+        ]
+      },
+      "notifications": [
+        {
+          "id": "carry-forward-cfv1-1792618949947-2026-2027-Term1",
+          "schoolId": "cfv1-1792618949947",
+          "message": "Term 1 carry-forward: 2 student(s) carried GHS 300.00 from Term 3, 2025-2026. Outstanding carried balance: GHS 150.00. Review in Fees & Payments -> Carry-forward review.",
+          "createdAt": 1792618994410,
+          "isRead": false,
+          "type": "system"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "cf-cfv1-1792618949947-2026-2027-Term1",
+          "totals": {
+            "studentCount": 2,
+            "outstandingStudentCount": 1,
+            "carriedAmount": 300,
+            "paidAmount": 150,
+            "outstandingAmount": 150
+          }
+        }
+      ],
+      "screenshot": "C:\\Users\\USER\\Desktop\\My Project\\school-manager\\e2e-artifacts\\cf-review-v1.png"
+    },
+    {
+      "version": "v2",
+      "schoolId": "cfv2-1792618949947",
+      "panelText": "Carry-forward review\n\nBalances carried over from the previous term.\n\nFILTER BY CLASS\nAll Classes\nJHS 1A\n\nSTUDENTS CARRIED\n\n2\n\nTOTAL CARRIED\n\nGHS 300.00\n\nPAID AGAINST CARRIED\n\nGHS 150.00\n\nSTILL OUTSTANDING\n\nGHS 150.00\n\nCLASS\tSTUDENTS\tCARRIED\tPAID\tOUTSTANDING\nclass-1\t2\tGHS 300.00\tGHS 150.00\tGHS 150.00\n\nEfua Ansah\n\nclass-1 • from Term 3, 2025-2026\n\nCarried GHS 200.00\nPaid GHS 50.00\nGHS 150.00 outstanding",
+      "hasDefaultersSection": true,
+      "hasStudentLedgersSection": true,
+      "reviewCalls": [
+        "GET http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2023-2024&term=Term%201",
+        "GET http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2026-2027&term=Term%201"
+      ],
+      "reviewResponses": [
+        {
+          "url": "http://localhost:3001/api/schools/finance/carry-forward-review?academicYear=2026-2027&term=Term%201",
+          "status": 200,
+          "body": "{\"success\":true,\"schoolId\":\"cfv2-1792618949947\",\"academicYear\":\"2026-2027\",\"term\":\"Term 1\",\"rows\":[{\"studentId\":\"cfv2a-1792618949947\",\"studentName\":\"Efua Ansah\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv2-1792618949947_cfv2a-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"fromAcademicYear\":\"2025-2026\",\"fromTerm\":\"Term 3\",\"toAcademicYear\":\"2026-2027\",\"toTerm\":\"Term 1\",\"carriedAmount\":200,\"paidAmount\":50,\"outstandingAmount\":150,\"status\":\"outstanding\"},{\"studentId\":\"cfv2b-1792618949947\",\"studentName\":\"Yaw Boadu\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv2-1792618949947_cfv2b-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"fromAcademicYear\":\"2025-2026\",\"fromTerm\":\"Term 3\",\"toAcademicYear\":\"2026-2027\",\"toTerm\":\"Term 1\",\"carriedAmount\":100,\"paidAmount\":100,\"outstandingAmount\":0,\"status\":\"settled\"}],\"outstandingRows\":[{\"studentId\":\"cfv2a-1792618949947\",\"studentName\":\"Efua Ansah\",\"classId\":\"class-1\",\"className\":\"\",\"carryForwardFeeId\":\"__carry_forward___cfv2-1792618949947_cfv2a-1792618949947_2025-2026_Term3\",\"feeName\":\"Carried Balance (Term 3, 2025-2026)\",\"fr"
+        }
+      ],
+      "consoleErrors": [
+        "Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "Failed to load resource: net::ERR_QUIC_PROTOCOL_ERROR.QUIC_TOO_MANY_RTOS"
+      ],
+      "consoleMessages": [
+        "debug: [vite] connecting...",
+        "debug: [vite] connected.",
+        "info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+        "info: [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}",
+        "log: [AUTH-DIAG] Firebase user is null (signed out)",
+        "verbose: [DOM] Input elements should have autocomplete attributes (suggested: \"current-password\"): (More info: https://www.chromium.org/developers/design-documents/create-amazing-password-forms) %o",
+        "info: [Auth] Firebase user {uid: lCp6P6sXd7YdI8E3D6MrO8a3IZ32, email: cf.v2.1792618949947@schoolmanagergh.test}",
+        "info: [Auth] Extracted custom claims: {name: CF Verify Admin, iss: https://securetoken.google.com/school-manager-gh, aud: school-manager-gh, auth_time: 1792619114, user_id: lCp6P6sXd7YdI8E3D6MrO8a3IZ32}",
+        "info: [Auth] user profile {id: lCp6P6sXd7YdI8E3D6MrO8a3IZ32, fullName: CF Verify Admin, email: cf.v2.1792618949947@schoolmanagergh.test, role: school_admin, schoolId: cfv2-1792618949947}",
+        "verbose: [DOM] Input elements should have autocomplete attributes (suggested: \"current-password\"): (More info: https://www.chromium.org/developers/design-documents/create-amazing-password-forms) %o",
+        "error: Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "error: Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).\n    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)\n    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)\n    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)\n    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)\n    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)\n    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)\n    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)\n    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)\n    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)\n    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)",
+        "debug: [vite] connecting...",
+        "debug: [vite] connected.",
+        "info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+        "info: [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}",
+        "info: [Auth] Firebase user {uid: lCp6P6sXd7YdI8E3D6MrO8a3IZ32, email: cf.v2.1792618949947@schoolmanagergh.test}",
+        "info: [Auth] Extracted custom claims: {name: CF Verify Admin, iss: https://securetoken.google.com/school-manager-gh, aud: school-manager-gh, auth_time: 1792619114, user_id: lCp6P6sXd7YdI8E3D6MrO8a3IZ32}",
+        "info: [Auth] user profile {id: lCp6P6sXd7YdI8E3D6MrO8a3IZ32, fullName: CF Verify Admin, email: cf.v2.1792618949947@schoolmanagergh.test, role: school_admin, schoolId: cfv2-1792618949947}",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "log: [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true",
+        "log: [AUTH-DIAG] Access granted to protected route",
+        "error: Failed to load resource: net::ERR_QUIC_PROTOCOL_ERROR.QUIC_TOO_MANY_RTOS"
+      ],
+      "pageErrors": [],
+      "ledger": {
+        "path": "schools/cfv2-1792618949947/feeLedgers/cfv2-1792618949947_cfv2a-1792618949947_2026-2027_Term1",
+        "totalDue": 800,
+        "carryForwardCount": 1,
+        "fees": [
+          {
+            "feeId": "fee-tuition",
+            "feeName": "Tuition",
+            "amount": 600,
+            "openingPaidAmount": 0
+          },
+          {
+            "feeId": "__carry_forward___cfv2-1792618949947_cfv2a-1792618949947_2025-2026_Term3",
+            "feeName": "Carried Balance (Term 3, 2025-2026)",
+            "amount": 200,
+            "openingPaidAmount": 0,
+            "openingBalance": 200,
+            "openingStatus": "Unpaid",
+            "openingPaidDate": null
+          }
+        ]
+      },
+      "notifications": [
+        {
+          "id": "carry-forward-cfv2-1792618949947-2026-2027-Term1",
+          "schoolId": "cfv2-1792618949947",
+          "message": "Term 1 carry-forward: 2 student(s) carried GHS 300.00 from Term 3, 2025-2026. Outstanding carried balance: GHS 150.00. Review in Fees & Payments -> Carry-forward review.",
+          "createdAt": 1792619008800,
+          "isRead": false,
+          "type": "system"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "cf-cfv2-1792618949947-2026-2027-Term1",
+          "totals": {
+            "studentCount": 2,
+            "outstandingStudentCount": 1,
+            "carriedAmount": 300,
+            "paidAmount": 150,
+            "outstandingAmount": 150
+          }
+        }
+      ],
+      "screenshot": "C:\\Users\\USER\\Desktop\\My Project\\school-manager\\e2e-artifacts\\cf-review-v2.png"
+    }
+  ],
+  "errors": [],
+  "notificationUiConsumers": [
+    "pages\\teacher\\Assessment.tsx",
+    "pages\\teacher\\Attendance.tsx",
+    "pages\\teacher\\EditSkills.tsx",
+    "pages\\teacher\\TeacherAttendance.tsx",
+    "pages\\teacher\\WriteRemarks.tsx"
+  ]
+}

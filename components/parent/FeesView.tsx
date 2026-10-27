@@ -20,6 +20,8 @@ import {
   getParentFeeTotals,
   normalizeParentFeeTerm,
 } from "../../services/parentFees";
+import { buildParentPaymentHistory } from "../../services/parentFeeData";
+import { loadParentLedgers } from "../../services/parentLedgerSource";
 
 interface FeesViewProps {
   student: Student;
@@ -214,8 +216,10 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
             setAcademicYear(yearToFetch);
         }
 
-        // Fetch ALL fee ledgers for the student to discover available years
-        const allLedgers = await db.getStudentLedgers({
+        // Fetch ALL fee ledgers for the student to discover available years.
+        // The Parent loader merges the two storage layouts so a carry-forward
+        // entry is never lost when a school holds both copies of a ledger.
+        const allLedgers = await loadParentLedgers({
           schoolId: student.schoolId,
           studentId: student.id,
         });
@@ -308,34 +312,39 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const enrichedLedgers = feeSummary.enrichedLedgers;
   const billLedgers = feeSummary.billLedgers;
   const totalStats = feeSummary.totals;
+  const feeState = feeSummary.summary;
 
-  const visiblePayments = useMemo(() => {
-    const visibleFeeIds = new Set(
-      billLedgers
-        .flatMap((ledger) => ledger.fees)
-        .map((fee) => fee.feeId),
-    );
-    let filtered = payments.filter((p) => p.academicYear === academicYear);
-    if (selectedTerm !== "all") {
-      filtered = filtered.filter(
-        (p) => normalizeParentFeeTerm(p.term) === selectedTerm,
-      );
-    }
-    filtered = filtered.filter(
-      (p) => p.feeId === "online_payment" || visibleFeeIds.has(p.feeId),
-    );
-    return [...filtered].sort((a, b) => {
-      const aTime =
-        a.createdAt instanceof Date
-          ? a.createdAt.getTime()
-          : Number(a.createdAt || 0);
-      const bTime =
-        b.createdAt instanceof Date
-          ? b.createdAt.getTime()
-          : Number(b.createdAt || 0);
-      return bTime - aTime;
+  // Fee id -> fee name, used to describe what a payment was allocated toward.
+  const feeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    enrichedLedgers.forEach((ledger) => {
+      (ledger.allFees || []).forEach((fee) => {
+        if (fee.feeId && !map.has(fee.feeId)) map.set(fee.feeId, fee.feeName);
+      });
     });
-  }, [payments, academicYear, selectedTerm, billLedgers]);
+    return map;
+  }, [enrichedLedgers]);
+
+  const visiblePayments = useMemo(
+    () =>
+      buildParentPaymentHistory(payments, {
+        studentId: student.id,
+        academicYear,
+        term: selectedTerm,
+        feeIds: enrichedLedgers.flatMap((ledger) =>
+          (ledger.allFees || []).map((fee) => fee.feeId),
+        ),
+        feeNameById,
+      }),
+    [
+      payments,
+      academicYear,
+      selectedTerm,
+      enrichedLedgers,
+      feeNameById,
+      student.id,
+    ],
+  );
 
   const getStatusColor = (status?: string) => {
     switch (status) {
@@ -353,6 +362,133 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const formatCurrency = (amount: number) => {
     return `GHS ${amount.toFixed(2)}`;
   };
+
+  // Firestore timestamps, ISO strings and epoch numbers all have to render.
+  const formatPaymentDate = (value: any) => {
+    if (!value) return "";
+    if (value instanceof Date) return value.toLocaleDateString();
+    if (typeof value.toDate === "function") return value.toDate().toLocaleDateString();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Financial presentation.
+  //
+  // Every number below comes from the verified financial engine
+  // (services/parentFees.js). The component never calculates a balance.
+  // ---------------------------------------------------------------------------
+  const compactPeriodKey = (value?: string) =>
+    String(value || "").replace(/\s+/g, "").toLowerCase();
+
+  const carryForward = feeState.carryForward;
+  const previousTermBalance = carryForward ? carryForward.remaining : 0;
+  const carryForwardCarried = carryForward ? carryForward.amount : 0;
+  const carryForwardPaid = carryForward ? carryForward.paid : 0;
+
+  const carryForwardSourceLabel = carryForward
+    ? carryForward.entries.length === 1
+      ? `Carried over from ${carryForward.entries[0].fromTerm}, ${carryForward.entries[0].fromAcademicYear}`
+      : `Carried over from ${carryForward.entries.length} previous terms`
+    : "No previous term balance carried forward";
+
+  const previousTermHint = carryForward
+    ? carryForward.outstanding
+      ? `${carryForwardSourceLabel} · GHS ${carryForwardCarried.toFixed(2)} carried, GHS ${carryForwardPaid.toFixed(2)} paid`
+      : `${carryForwardSourceLabel} · Fully cleared`
+    : carryForwardSourceLabel;
+
+  const paymentsHint =
+    feeState.unallocatedPaid > 0
+      ? `Includes ${formatCurrency(feeState.unallocatedPaid)} applied to overall balance`
+      : "Payments credited to this period";
+
+  const feeSummaryRows = [
+    {
+      key: "previous-term-balance",
+      label: "Previous Term Balance",
+      hint: previousTermHint,
+      value: previousTermBalance,
+      className: "text-amber-700",
+      color: "#b45309",
+      emphasis: false,
+    },
+    {
+      key: "current-term-fees",
+      label: "Current Term Fees",
+      hint: "Current term fees, carry-forward excluded",
+      value: feeState.currentTermFees,
+      className: "text-slate-800",
+      color: "#1f2937",
+      emphasis: false,
+    },
+    {
+      key: "total-amount-due",
+      label: "Total Amount Due",
+      hint: "Carried balance + current term fees",
+      value: feeState.totalDue,
+      className: "text-blue-700",
+      color: "#1d4ed8",
+      emphasis: true,
+    },
+    {
+      key: "payments",
+      label: "Payments",
+      hint: paymentsHint,
+      value: feeState.totalPaid,
+      className: "text-green-600",
+      color: "#15803d",
+      emphasis: false,
+    },
+    {
+      key: "remaining-balance",
+      label: "Remaining Balance",
+      hint: "Total amount due - payments",
+      value: feeState.remaining,
+      className: feeState.remaining > 0 ? "text-red-600" : "text-green-600",
+      color: feeState.remaining > 0 ? "#dc2626" : "#16a34a",
+      emphasis: true,
+    },
+  ];
+
+  // Ledger that received a carried balance, so the "All terms" view can say
+  // where the previous term went instead of showing it as a second debt.
+  const carriedForwardTargets = useMemo(() => {
+    const map = new Map<string, string>();
+    enrichedLedgers.forEach((ledger) => {
+      (ledger.allFees || []).forEach((fee) => {
+        if (!fee.isCarryForward || !fee.carryForwardSource) return;
+        const sourceKey = `${compactPeriodKey(fee.carryForwardSource.academicYear)}|${compactPeriodKey(fee.carryForwardSource.term)}`;
+        if (!map.has(sourceKey)) {
+          map.set(sourceKey, `${ledger.term}, ${ledger.academicYear}`);
+        }
+      });
+    });
+    return map;
+  }, [enrichedLedgers]);
+
+  const carryForwardNoteForLedger = (ledger: (typeof enrichedLedgers)[number]) => {
+    if (!ledger?.isCarryForwardSource) return "";
+    const key = `${compactPeriodKey(ledger.academicYear)}|${compactPeriodKey(ledger.term)}`;
+    const target = carriedForwardTargets.get(key);
+    return target
+      ? `Balance carried into ${target}`
+      : "Balance carried forward";
+  };
+
+  // The carried balance can be paid directly: the payment path records the
+  // selected fee id, so the payment is credited to the carry-forward entry.
+  const carryForwardPaymentOptions = useMemo(() => {
+    const entries = feeState.carryForward?.entries || [];
+    return entries
+      .filter((entry) => entry.remaining > 0)
+      .map((entry) => ({
+        id: entry.feeId,
+        name: entry.feeName,
+        balance: entry.remaining,
+        source: `${entry.fromTerm}, ${entry.fromAcademicYear}`,
+      }));
+  }, [feeState.carryForward]);
 
   const handleDownload = async () => {
     try {
@@ -694,19 +830,17 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                 </div>
 
                 {/* Financial Summary */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
-                  <div style={{ background: '#eff6ff', padding: '14px', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
-                    <div style={{ fontSize: '10px', color: '#1d4ed8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Fees</div>
-                    <div style={{ fontSize: '18px', fontWeight: '900', color: '#1e3a8a', marginTop: '4px' }}>{formatCurrency(totalStats.totalFees)}</div>
-                  </div>
-                  <div style={{ background: '#f0fdf4', padding: '14px', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-                    <div style={{ fontSize: '10px', color: '#15803d', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Paid</div>
-                    <div style={{ fontSize: '18px', fontWeight: '900', color: '#14532d', marginTop: '4px' }}>{formatCurrency(totalStats.totalPaid)}</div>
-                  </div>
-                  <div style={{ background: '#fef2f2', padding: '14px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                    <div style={{ fontSize: '10px', color: '#dc2626', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Balance Due</div>
-                    <div style={{ fontSize: '18px', fontWeight: '900', color: '#7f1d1d', marginTop: '4px' }}>{formatCurrency(totalStats.totalBalance)}</div>
-                  </div>
+                <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '14px', marginBottom: '20px' }}>
+                  <div style={{ fontSize: '10px', color: '#374151', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Fee Summary</div>
+                  {feeSummaryRows.map((row) => (
+                    <div key={row.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', padding: '5px 0', borderBottom: '1px solid #f3f4f6' }}>
+                      <div>
+                        <div style={{ fontSize: '12px', color: '#374151', fontWeight: row.emphasis ? '700' : '500' }}>{row.label}</div>
+                        <div style={{ fontSize: '9px', color: '#6b7280' }}>{row.hint}</div>
+                      </div>
+                      <div style={{ fontSize: '13px', fontWeight: '900', color: row.color, whiteSpace: 'nowrap' }}>{formatCurrency(row.value)}</div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Fee Breakdown */}
@@ -730,7 +864,12 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                           {ledger.fees.map((fee: any, feeIdx: number) => (
                             <tr key={`${idx}-${feeIdx}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
                               <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', color: '#374151' }}>{ledger.term}</td>
-                              <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', fontWeight: '600', color: '#111827' }}>{fee.feeName}</td>
+                              <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', fontWeight: '600', color: '#111827' }}>
+                                {fee.feeName}
+                                {fee.isCarryForward && fee.carryForwardSource
+                                  ? ` (Carried over from ${fee.carryForwardSource.term}, ${fee.carryForwardSource.academicYear})`
+                                  : ''}
+                              </td>
                               <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', textAlign: 'right', fontWeight: '700' }}>{formatCurrency(fee.amount)}</td>
                               <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', textAlign: 'right', color: '#15803d', fontWeight: '700' }}>{formatCurrency(fee.actualPaid || 0)}</td>
                               <td style={{ padding: '10px 12px', border: '1px solid #e5e7eb', textAlign: 'right', color: fee.actualBalance > 0 ? '#dc2626' : '#15803d', fontWeight: '700' }}>{formatCurrency(fee.actualBalance || 0)}</td>
@@ -758,27 +897,40 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
             </div>
 
             <div id="fee-statement-content" className="p-3 sm:p-6 pb-10 space-y-4 sm:space-y-5">
-              {/* Summary Stats Card */}
+              {/* Financial Summary Card */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="grid grid-cols-3 divide-x divide-slate-100">
-                  {/* Total Fees */}
-                  <div className="p-2 sm:p-5 text-center">
-                    <p className="text-[10px] sm:text-xs text-slate-500 mb-1 font-medium">Total Fees</p>
-                    <p className="text-xs sm:text-xl font-bold text-blue-700 break-all leading-tight">{formatCurrency(totalStats.totalFees)}</p>
-                  </div>
-                  {/* Total Paid */}
-                  <div className="p-2 sm:p-5 text-center">
-                    <p className="text-[10px] sm:text-xs text-slate-500 mb-1 font-medium">Paid</p>
-                    <p className="text-xs sm:text-xl font-bold text-green-600 break-all leading-tight">{formatCurrency(totalStats.totalPaid)}</p>
-                  </div>
-                  {/* Balance Due */}
-                  <div className={`p-2 sm:p-5 text-center ${totalStats.totalBalance > 0 ? 'bg-red-50' : ''}`}>
-                    <p className="text-[10px] sm:text-xs text-slate-500 mb-1 font-medium">Balance</p>
-                    <p className={`text-xs sm:text-xl font-bold break-all leading-tight ${totalStats.totalBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {formatCurrency(totalStats.totalBalance)}
+                <div className="px-3 sm:px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold text-slate-800 text-sm sm:text-base">Fee Summary</h3>
+                    <p className="text-xs text-slate-500">
+                      {selectedTerm === "all" ? "All terms" : selectedTerm} · {academicYear}
                     </p>
                   </div>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium border shrink-0 ${getStatusColor(feeState.status)}`}>
+                    {feeState.status}
+                  </span>
                 </div>
+
+                <dl className="divide-y divide-slate-100">
+                  {feeSummaryRows.map((row) => (
+                    <div
+                      key={row.key}
+                      data-testid={`fee-summary-${row.key}`}
+                      className={`flex items-center justify-between gap-3 px-3 sm:px-5 py-2.5 sm:py-3 ${row.key === "remaining-balance" && row.value > 0 ? "bg-red-50/60" : ""}`}
+                    >
+                      <div className="min-w-0">
+                        <dt className="text-xs sm:text-sm font-semibold text-slate-700">{row.label}</dt>
+                        <dd className="text-[11px] text-slate-500 break-words">{row.hint}</dd>
+                      </div>
+                      <dd
+                        data-testid={`fee-summary-${row.key}-value`}
+                        className={`text-sm sm:text-lg font-bold break-all text-right leading-tight shrink-0 ${row.className}`}
+                      >
+                        {formatCurrency(row.value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
 
                 {/* Pay Online Action — full width below stats */}
                 {totalStats.totalBalance > 0 && (
@@ -796,6 +948,11 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                       value={selectedFeeToPay ? `${selectedFeeToPay.id}|${selectedFeeToPay.name}` : ""}
                     >
                       <option value="">Select Fee to Pay (Optional)</option>
+                      {carryForwardPaymentOptions.map(option => (
+                        <option key={option.id} value={`${option.id}|${option.name}`}>
+                          {option.name} — carried over from {option.source} — GH₵ {option.balance.toFixed(2)}
+                        </option>
+                      ))}
                       {feeDefinitions.map(f => {
                         const ledgerFee = billLedgers.flatMap(l => l.fees).find(lf => lf.feeId === f.id || lf.feeName === f.feeName);
                         const balance = ledgerFee ? ledgerFee.actualBalance : f.amount;
@@ -830,6 +987,7 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs sm:text-sm font-medium text-slate-700 whitespace-nowrap">Year:</span>
                   <select
+                    data-testid="year-select"
                     value={academicYear}
                     onChange={(e) => setAcademicYear(e.target.value)}
                     className="bg-white border border-slate-300 text-slate-800 text-xs sm:text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 px-2 py-1.5 outline-none flex-1 min-w-0"
@@ -882,6 +1040,11 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                         <div>
                           <h3 className="font-semibold text-slate-800 text-sm sm:text-base">{ledger.term} - {ledger.academicYear}</h3>
                           <p className="text-xs sm:text-sm text-slate-500">{CLASSES_LIST.find(c => c.id === ledger.classId)?.name || ledger.classId}</p>
+                          {carryForwardNoteForLedger(ledger) && (
+                            <p className="text-[11px] sm:text-xs font-medium text-amber-700 mt-0.5">
+                              {carryForwardNoteForLedger(ledger)}
+                            </p>
+                          )}
                         </div>
                         <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(ledger.actualStatus)}`}>
                           {ledger.actualStatus || "Unpaid"}
@@ -901,10 +1064,28 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                           </thead>
                           <tbody>
                             {ledger.fees.map((fee, index) => (
-                              <tr key={index} className="border-b border-slate-100 last:border-0">
+                              <tr
+                                key={index}
+                                data-testid={`fee-row-${fee.feeId}`}
+                                data-carry-forward={fee.isCarryForward ? "true" : "false"}
+                                className="border-b border-slate-100 last:border-0"
+                              >
                                 <td className="py-2 sm:py-3 text-slate-800 text-xs sm:text-sm">
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     <span>{fee.feeName}</span>
+                                    {fee.isCarryForward && fee.carryForwardSource && (
+                                      <span
+                                        data-testid="carry-forward-badge"
+                                        className={`px-2 py-0.5 text-[10px] sm:text-xs font-semibold rounded-full whitespace-nowrap ${
+                                          fee.actualBalance > 0
+                                            ? "bg-amber-100 text-amber-800"
+                                            : "bg-green-100 text-green-700"
+                                        }`}
+                                      >
+                                        Carried over from {fee.carryForwardSource.term}, {fee.carryForwardSource.academicYear}
+                                        {fee.actualBalance > 0 ? "" : " · Cleared"}
+                                      </span>
+                                    )}
                                     {isAdmissionFeeNewStudentsOnly(fee.feeName, feeDefinitions) && isStudentNewForAdmissionFee() && (
                                       <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded-full whitespace-nowrap">
                                         New students only
@@ -924,6 +1105,14 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                             ))}
                           </tbody>
                         </table>
+                        {ledger.unallocatedPaid > 0 && (
+                          <p
+                            data-testid="unallocated-note"
+                            className="mt-2 text-[11px] sm:text-xs text-slate-500"
+                          >
+                            {formatCurrency(ledger.unallocatedPaid)} of the payments recorded for this term was applied to the overall balance, so it is not shown against a single fee.
+                          </p>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -945,14 +1134,23 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                   ) : (
                     <div className="space-y-2 sm:space-y-3">
                       {visiblePayments.map(payment => (
-                        <div key={payment.id} className="flex items-center justify-between py-2 sm:py-3 border-b border-slate-100 last:border-0 gap-2">
+                        <div
+                          key={payment.id}
+                          data-testid="payment-history-item"
+                          className="flex items-center justify-between py-2 sm:py-3 border-b border-slate-100 last:border-0 gap-2"
+                        >
                           <div className="min-w-0">
-                            <p className="font-medium text-slate-800 text-sm truncate">{payment.feeName}</p>
+                            <p className="font-medium text-slate-800 text-sm break-words">{payment.displayLabel}</p>
+                            {payment.appliedToOverallBalance && (
+                              <p className="text-[11px] text-slate-500">
+                                Paid against the overall balance, not a specific fee
+                              </p>
+                            )}
                             <p className="text-[11px] font-semibold text-slate-400">
                               {normalizeParentFeeTerm(payment.term)}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {payment.paymentMethod} • {new Date(payment.createdAt as number).toLocaleDateString()}
+                              {[payment.paymentMethod, formatPaymentDate(payment.createdAt)].filter(Boolean).join(" • ")}
                             </p>
                           </div>
                           <p className="font-bold text-green-600 text-sm shrink-0">+{formatCurrency(payment.amountPaid)}</p>

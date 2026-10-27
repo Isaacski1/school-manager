@@ -1,0 +1,101 @@
+URL: http://127.0.0.1:5173/#/parent?view=fees
+
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}
+[log] [AUTH-DIAG] Firebase user is null (signed out)
+[verbose] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://www.chromium.org/developers/design-documents/create-amazing-password-forms) %o
+[info] [Auth] Firebase user {uid: +233244812462, email: null}
+[info] [Auth] Extracted custom claims: {role: parent, schoolIds: Array(1), studentIds: Array(3), parentContactRole: guardian, parentContactName: E2E Guardian}
+[info] [Auth] user profile {id: +233244812462, fullName: E2E Guardian, email: , role: parent, schoolId: null}
+[warning] Failed to log analytics event FirebaseError: Missing or insufficient permissions.
+[debug] Skipping activity log: no schoolId provided
+[error] Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).
+    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)
+    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)
+    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)
+    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)
+    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)
+    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)
+    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)
+    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)
+    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)
+    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)
+[error] Error refreshing ID token: FirebaseError: Firebase: Error (auth/network-request-failed).
+    at createErrorInternal (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:836:37)
+    at _fail (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:798:9)
+    at _performFetchWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1285:5)
+    at async requestStsToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1668:20)
+    at async _StsTokenManager.refresh (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1756:54)
+    at async _StsTokenManager.getToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1747:7)
+    at async _logoutIfInvalidated (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1515:12)
+    at async _UserImpl.getIdToken (http://127.0.0.1:5173/node_modules/.vite/deps/firebase_auth.js?v=647d7be1:1830:25)
+    at async getFreshIdToken (http://127.0.0.1:5173/services/authToken.ts:8:12)
+    at async getIdTokenWithRetry (http://127.0.0.1:5173/services/authToken.ts:18:14)
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}
+[info] [Auth] Firebase user {uid: +233244812462, email: null}
+[info] [Auth] Extracted custom claims: {role: parent, schoolIds: Array(1), studentIds: Array(3), parentContactRole: guardian, parentContactName: E2E Guardian}
+[info] [Auth] user profile {id: +233244812462, fullName: E2E Guardian, email: , role: parent, schoolId: null}
+[warning] Failed to log analytics event FirebaseError: Missing or insufficient permissions.
+[debug] Skipping activity log: no schoolId provided
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] [Firebase] runtime config {projectId: school-manager-gh, appId: 1:69639965950:web:afd5727a824b7f7ac2e9af, usingEnvConfig: true, functionsRegion: us-central1, hostingProjectId: null}
+[info] [Auth] Firebase user {uid: +233244812462, email: null}
+[info] [Auth] Extracted custom claims: {role: parent, schoolIds: Array(1), studentIds: Array(3), parentContactRole: guardian, parentContactName: E2E Guardian}
+[info] [Auth] user profile {id: +233244812462, fullName: E2E Guardian, email: , role: parent, schoolId: e2e-parent-v1-1792883812462}
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [AUTH-DIAG] ProtectedRoute check: authLoading=%s, isAuthenticated=%s false true
+[log] [AUTH-DIAG] Access granted to protected route
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"
+[log] [ParentDashboard] Discovering students for phone: "+233244812462"

@@ -1,4 +1,11 @@
 import crypto from "crypto";
+import {
+  computeCarryForwardBalance,
+  buildCarryForwardFeeEntry,
+  buildCarryForwardId,
+  buildLedgerId,
+  isCarryForwardFee,
+} from "../services/termBalanceCarryForward.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOCK_LEASE_MS = 15 * 60 * 1000;
@@ -28,13 +35,13 @@ const RESET_COLLECTIONS = Object.freeze([
   "teacher_attendance",
   "notices",
   "admin_notifications",
-  "payments",
-  "student_ledgers",
+  // Note: payments and student_ledgers are NOT reset to preserve financial history
+  // and enable carry-forward of outstanding balances
 ]);
 
 const RESET_SCHOOL_SUBCOLLECTIONS = Object.freeze([
-  "payments",
-  "feeLedgers",
+  // Note: payments and feeLedgers are NOT reset to preserve financial history
+  // and enable carry-forward of outstanding balances
 ]);
 
 const toDateKey = (value = new Date()) => {
@@ -239,6 +246,200 @@ const buildBackupPayload = async (db, schoolId, config) => {
   };
 };
 
+/**
+ * Resolve the finance storage version used by a school.
+ *
+ * Prefers the `financeSettings` sub-collection document and falls back to the
+ * `financeVersion` stored on the school settings document so that a v2 school
+ * is detected even when the financeSettings document has not been created.
+ *
+ * @param {Object} db - Firestore instance
+ * @param {string} schoolId - The school identifier
+ * @param {Object} config - The school settings/config snapshot
+ * @returns {Promise<string>} "v1" or "v2"
+ */
+const resolveFinanceVersion = async (db, schoolId, config) => {
+  try {
+    const snapshot = await db
+      .collection("schools")
+      .doc(schoolId)
+      .collection("financeSettings")
+      .doc("main")
+      .get();
+    const stored = snapshot?.exists ? snapshot.data() : null;
+    if (stored?.financeVersion) return stored.financeVersion;
+  } catch (error) {
+    // Fall through to the settings-level fallback below.
+  }
+  return config?.financeVersion || "v1";
+};
+
+/**
+ * Calculate the outstanding balance of every previous-term ledger and persist
+ * it as a carry-forward fee entry inside the student's new-term ledger.
+ *
+ * For each previous-term ledger with an outstanding balance:
+ *   - a single carry-forward fee entry is built with the deterministic
+ *     carry-forward fee ID,
+ *   - if the student already has a ledger for the new term, the fee entry is
+ *     appended to that ledger's `fees` array (never duplicating an existing
+ *     carry-forward fee ID),
+ *   - otherwise a new ledger is created for the new term containing the
+ *     carry-forward fee.
+ *
+ * Previous term fees, payments and ledgers are never modified.
+ *
+ * @param {Object} params
+ * @param {Object} params.db - Firestore instance
+ * @param {string} params.schoolId - The school identifier
+ * @param {Object} params.config - The school settings/config snapshot
+ * @returns {Promise<{financeVersion: string, applied: Array<Object>}>}
+ */
+const applyCarryForwardBalances = async ({ db, schoolId, config }) => {
+  const financeVersion = await resolveFinanceVersion(db, schoolId, config);
+  const useV2 = financeVersion === "v2";
+
+  const previousTerm = config.currentTerm;
+  const previousAcademicYear = config.academicYear;
+  const nextPeriod = getNextAcademicPeriod(
+    config.currentTerm,
+    config.academicYear,
+  );
+  const nextTerm = nextPeriod.currentTerm;
+  const nextAcademicYear = nextPeriod.academicYear;
+
+  // Canonical ledger collection for the resolved storage version.
+  // v1 keeps ledgers in the root `student_ledgers` collection, v2 keeps them
+  // in the `feeLedgers` sub-collection of the school document.
+  const ledgerCollection = useV2 ? "feeLedgers" : "student_ledgers";
+
+  const [v1LedgerRows, v2LedgerRows, v1PaymentRows, v2PaymentRows] =
+    await Promise.all([
+      readRootRows(db, "student_ledgers", schoolId),
+      readSubcollectionRows(db, schoolId, "feeLedgers"),
+      readRootRows(db, "payments", schoolId),
+      readSubcollectionRows(db, schoolId, "payments"),
+    ]);
+
+  // Prefer the canonical collection but fall back to the other layout so that
+  // a school whose financial records still live in the legacy location is
+  // still carried forward.
+  const canonicalLedgerRows = useV2 ? v2LedgerRows : v1LedgerRows;
+  const sourceLedgerRows =
+    canonicalLedgerRows.length > 0
+      ? canonicalLedgerRows
+      : useV2
+        ? v1LedgerRows
+        : v2LedgerRows;
+  const canonicalPaymentRows = useV2 ? v2PaymentRows : v1PaymentRows;
+  const sourcePaymentRows =
+    canonicalPaymentRows.length > 0
+      ? canonicalPaymentRows
+      : useV2
+        ? v1PaymentRows
+        : v2PaymentRows;
+
+  const previousTermLedgers = sourceLedgerRows.filter(
+    (ledger) =>
+      ledger.academicYear === previousAcademicYear &&
+      ledger.term === previousTerm,
+  );
+  const previousTermPayments = sourcePaymentRows.filter(
+    (payment) =>
+      payment.academicYear === previousAcademicYear &&
+      payment.term === previousTerm,
+  );
+
+  const ledgerCollectionRef = useV2
+    ? db.collection("schools").doc(schoolId).collection(ledgerCollection)
+    : db.collection(ledgerCollection);
+
+  const applied = [];
+
+  for (const ledger of previousTermLedgers) {
+    const carryForwardAmount = computeCarryForwardBalance({
+      ledger,
+      payments: previousTermPayments,
+    });
+    if (!(carryForwardAmount > 0)) continue;
+
+    const carryForwardFeeId = buildCarryForwardId(
+      schoolId,
+      ledger.studentId,
+      previousAcademicYear,
+      previousTerm,
+    );
+
+    const carryForwardResult = {
+      studentId: ledger.studentId,
+      classId: ledger.classId,
+      carriedBalance: carryForwardAmount,
+      fromAcademicYear: previousAcademicYear,
+      fromTerm: previousTerm,
+      toAcademicYear: nextAcademicYear,
+      toTerm: nextTerm,
+      carryForwardFeeId,
+    };
+
+    const carryForwardFeeEntry = buildCarryForwardFeeEntry(carryForwardResult);
+    if (!carryForwardFeeEntry) continue;
+
+    // Locate the student's new-term ledger in the canonical collection.
+    const existingLedger = canonicalLedgerRows.find(
+      (row) =>
+        row.studentId === ledger.studentId &&
+        row.academicYear === nextAcademicYear &&
+        row.term === nextTerm,
+    );
+
+    if (existingLedger) {
+      const fees = Array.isArray(existingLedger.fees)
+        ? existingLedger.fees
+        : [];
+      // Idempotency: never add a second carry-forward entry for the same fee ID.
+      if (fees.some((fee) => fee.feeId === carryForwardFeeId)) {
+        applied.push({ ...carryForwardResult, action: "skipped" });
+        continue;
+      }
+      await ledgerCollectionRef.doc(existingLedger.id).update({
+        fees: [...fees, carryForwardFeeEntry],
+      });
+      applied.push({
+        ...carryForwardResult,
+        action: "updated",
+        ledgerId: existingLedger.id,
+      });
+      continue;
+    }
+
+    const newLedgerId = buildLedgerId(
+      schoolId,
+      ledger.studentId,
+      nextAcademicYear,
+      nextTerm,
+    );
+    const newLedger = {
+      schoolId,
+      studentId: ledger.studentId,
+      classId: ledger.classId,
+      term: nextTerm,
+      academicYear: nextAcademicYear,
+      fees: [carryForwardFeeEntry],
+      openingPaidAmount: 0,
+      openingBalance: carryForwardFeeEntry.amount,
+      openingStatus: "Unpaid",
+    };
+    await ledgerCollectionRef.doc(newLedgerId).set(newLedger);
+    applied.push({
+      ...carryForwardResult,
+      action: "created",
+      ledgerId: newLedgerId,
+    });
+  }
+
+  return { financeVersion, applied };
+};
+
 const createVerifiedBackup = async ({
   db,
   FieldValue,
@@ -270,6 +471,7 @@ const createVerifiedBackup = async ({
       writeOperations.push((batch) =>
         batch.set(backupRef.collection("chunks").doc(chunkId), {
           schoolId,
+          key,
           key,
           index,
           count: rows.length,
@@ -410,6 +612,22 @@ export const createTermRolloverService = ({
     if (!lock.acquired) return { changed: false, reason: lock.reason };
 
     try {
+      const nextPeriod = getNextAcademicPeriod(
+        lock.config.currentTerm,
+        lock.config.academicYear,
+      );
+
+      // STEP 1: Calculate and persist carry-forward balances.
+      // This runs BEFORE the backup so the persisted carry-forward ledger is
+      // captured by the verified backup, and BEFORE any records are reset so
+      // the previous term's fees and payments are still available.
+      const carryForward = await applyCarryForwardBalances({
+        db,
+        schoolId,
+        config: lock.config,
+      });
+
+      // STEP 2: Create the verified backup of the school data
       const backup = await createVerifiedBackup({
         db,
         FieldValue,
@@ -417,6 +635,8 @@ export const createTermRolloverService = ({
         config: lock.config,
         transitionKey: lock.transitionKey,
       });
+
+      // STEP 3: Delete only non-financial collections that need resetting
       const resetCounts = {};
       for (const collectionName of RESET_COLLECTIONS) {
         resetCounts[collectionName] = await deleteSchoolScopedCollection(
@@ -430,10 +650,7 @@ export const createTermRolloverService = ({
           await deleteSchoolSubcollection(db, schoolId, collectionName);
       }
 
-      const nextPeriod = getNextAcademicPeriod(
-        lock.config.currentTerm,
-        lock.config.academicYear,
-      );
+      // STEP 4: Update academic period and mark rollover as completed
       await withQuotaRetry(`update settings ${schoolId}`, () =>
         lock.settingsRef.update({
           currentTerm: nextPeriod.currentTerm,
@@ -471,6 +688,7 @@ export const createTermRolloverService = ({
             backupId: backup.backupId,
             resetCounts,
             source,
+            carryForward,
           },
         }),
       );
@@ -479,6 +697,7 @@ export const createTermRolloverService = ({
         backupId: backup.backupId,
         nextPeriod,
         resetCounts,
+        carryForward,
       };
     } catch (error) {
       logger.error("[TermRollover] Failed", {

@@ -10,12 +10,59 @@
  * reference so repeated requests are idempotent.
  */
 
+import crypto from "crypto";
+
 export const PAYMENT_RECORD_SOURCE = "paystack_verified_server";
 
 const MAX_ALLOCATIONS = 20;
 const ALLOWED_CURRENCY = "GHS";
 // A pesewa is the smallest unit; compare amounts in pesewas to avoid float drift.
 const PESA_EPSILON = 0;
+
+/**
+ * Compute the SHA-256 request ID from the normalized school ID and raw reference.
+ * @param {string} normalizedSchoolId - The school ID after trimming.
+ * @param {string} rawReference - The raw Paystack reference.
+ * @returns {string} Hex-encoded SHA-256 hash.
+ */
+function computeRequestId(normalizedSchoolId, rawReference) {
+  const input = `${normalizedSchoolId}|${rawReference}`;
+  return crypto.createHash("sha256").update(input, "utf8").digest().toString("hex");
+}
+
+/**
+ * Compute the canonical fingerprint of the payment request.
+ * @param {Object} input - The parsed input from parseVerifyAndRecordInput.
+ * @returns {string} Canonical string representation.
+ */
+function computeFingerprint(input) {
+  // Create a copy of the allocations array to avoid mutating the original
+  const allocations = [...input.allocations];
+  // Sort allocations by feeId, academicYear, term, amountPaid (in pesewas)
+  allocations.sort((a, b) => {
+    if (a.feeId !== b.feeId) return a.feeId.localeCompare(b.feeId);
+    if (a.academicYear !== b.academicYear) return a.academicYear.localeCompare(b.academicYear);
+    if (a.term !== b.term) return a.term.localeCompare(b.term);
+    return Math.round(a.amountPaid * 100) - Math.round(b.amountPaid * 100);
+  });
+
+  // Build a canonical string
+  // We include: schoolId, studentId, reference, and each allocation in order
+  const parts = [
+    input.schoolId,
+    input.studentId,
+    input.reference,
+    allocations.map(
+      (alloc) =>
+        `${alloc.feeId}|${alloc.academicYear}|${alloc.term}|${Math.round(
+          alloc.amountPaid * 100
+        )}` // Convert to pesewas for integer comparison
+    ).join(";"),
+  ];
+  return parts.join("|");
+}
+
+export { computeRequestId, computeFingerprint };
 
 export class PaymentVerificationError extends Error {
   constructor(code, message, httpStatus = 400) {
@@ -373,60 +420,339 @@ export function createPaymentVerificationService({
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  const verifyAndRecordPayment = async (caller, rawBody) => {
-    const input = parseVerifyAndRecordInput(rawBody);
+const verifyAndRecordPayment = async (caller, rawBody) => {
+      const input = parseVerifyAndRecordInput(rawBody);
 
-    const { studentData } = await loadStudentAndSchool(input);
-    await assertCallerAuthorized(caller, input, studentData);
+      // All reads must happen before any writes
+      const { studentData } = await loadStudentAndSchool(input);
+      await assertCallerAuthorized(caller, input, studentData);
 
-    const transaction = await verifyWithPaystack(input.reference);
-    const verifiedPesewas = assertTransactionUsable(transaction, input);
+      const transaction = await verifyWithPaystack(input.reference);
+      const verifiedPesewas = assertTransactionUsable(transaction, input);
 
-    const ledgers = await loadStudentLedgers(input);
-    assertAllocationsMatchLedgers(input, ledgers);
+      const ledgers = await loadStudentLedgers(input);
+      assertAllocationsMatchLedgers(input, ledgers);
 
-    const paymentsCollection = await resolvePaymentsCollection(input.schoolId);
+      // Compute request ID and fingerprint
+      const requestId = computeRequestId(input.schoolId, input.reference);
+      const fingerprint = computeFingerprint(input);
 
-    const recorded = [];
-    let alreadyRecorded = 0;
-
-    for (const [index, allocation] of input.allocations.entries()) {
-      const docId = `PAYVRF-${sanitizeReference(input.reference)}-${index}`;
-      const docRef = paymentsCollection.doc(docId);
-      const existingSnap = await docRef.get();
-      if (existingSnap.exists) {
-        const existing = existingSnap.data() || {};
-        if (
-          existing.source === PAYMENT_RECORD_SOURCE &&
-          String(existing.receiptNumber || "") === input.reference
-        ) {
-          alreadyRecorded += 1;
-          continue;
-        }
+      // Resolve payments collections
+      const activePaymentsCol = await resolvePaymentsCollection(input.schoolId);
+      const settingsSnap = await db
+        .collection("schools")
+        .doc(input.schoolId)
+        .collection("financeSettings")
+        .doc("main")
+        .get()
+        .catch(() => null);
+      const settings =
+        settingsSnap && settingsSnap.exists ? settingsSnap.data() || {} : {};
+      let alternatePaymentsCol;
+      if (settings.financeVersion === "v2") {
+        alternatePaymentsCol = db.collection("payments");
+      } else {
+        alternatePaymentsCol = db.collection(`schools/${input.schoolId}/payments`);
       }
-      const paymentDoc = buildPaymentDoc({
-        input,
-        studentData,
-        allocation,
-        index,
-        docId,
-        verifiedPesewas,
-        transaction,
-      });
-      await docRef.set(paymentDoc);
-      recorded.push(paymentDoc);
-    }
 
-    return {
-      success: true,
-      reference: input.reference,
-      verifiedAmountGhs: verifiedPesewas / 100,
-      recordedCount: recorded.length,
-      alreadyRecordedCount: alreadyRecorded,
-      idempotent: recorded.length === 0 && alreadyRecorded > 0,
-      payments: recorded,
+      // Reference to the payment request document
+      const paymentRequestsCollection = db.collection("paymentRequests");
+      const requestDocRef = paymentRequestsCollection.doc(requestId);
+
+      // Helper to build allocation tuple for comparison
+      const allocationTuple = (alloc) => [
+        alloc.feeId,
+        alloc.academicYear,
+        alloc.term,
+        Math.round(alloc.amountPaid * 100),
+      ];
+
+      // Build input allocations tuples for comparison
+      const inputAllocationsTuples = input.allocations
+        .map(allocationTuple)
+        .sort((a, b) => {
+          if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
+          if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
+          if (a[2] !== b[2]) return a[2].localeCompare(b[2]);
+          return a[3] - b[3];
+        });
+
+      // Execute the write phase in a transaction with create-only semantics
+      const attemptWrite = async () => {
+        return await db.runTransaction(async (tx) => {
+          // All transaction reads before any transaction writes
+          const requestDocSnap = await tx.get(requestDocRef);
+
+          // Query both collections for payment documents with matching reference
+          const [activeSnaps, alternateSnaps] = await Promise.all([
+            activePaymentsCol.where("reference", "==", input.reference).get(),
+            alternatePaymentsCol.where("reference", "==", input.reference).get(),
+          ]);
+
+          const existingAllocationDocs = [...activeSnaps.docs, ...alternateSnaps.docs].map(
+            (doc) => ({ id: doc.id, ...(doc.data() || {}) })
+          );
+
+          // Build set of existing allocations from docs that match source and receiptNumber
+          const validExistingAllocations = [];
+          for (const doc of existingAllocationDocs) {
+            if (
+              doc.source === PAYMENT_RECORD_SOURCE &&
+              String(doc.receiptNumber || "") === input.reference
+            ) {
+              validExistingAllocations.push({
+                feeId: doc.feeId,
+                academicYear: doc.academicYear,
+                term: doc.term,
+                amountPaid: doc.amountPaid,
+              });
+            } else {
+              // Found a document with matching reference but mismatched source/receiptNumber -> conflict
+              throw new PaymentVerificationError(
+                "IDEMPOTENCY_CONFLICT",
+                "Conflicting payment record found with mismatched source or reference.",
+                409
+              );
+            }
+          }
+
+          // Build existing allocations tuples for comparison
+          const existingAllocationsTuples = validExistingAllocations
+            .map(allocationTuple)
+            .sort((a, b) => {
+              if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
+              if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
+              if (a[2] !== b[2]) return a[2].localeCompare(b[2]);
+              return a[3] - b[3];
+            });
+
+          // Check if the existing allocations exactly match the input allocations
+          const isExactMatch =
+            inputAllocationsTuples.length === existingAllocationsTuples.length &&
+            inputAllocationsTuples.every((tuple, index) => {
+              return (
+                tuple[0] === existingAllocationsTuples[index][0] &&
+                tuple[1] === existingAllocationsTuples[index][1] &&
+                tuple[2] === existingAllocationsTuples[index][2] &&
+                tuple[3] === existingAllocationsTuples[index][3]
+              );
+            });
+
+          // Case 1: Request document exists and fingerprint matches -> idempotent success
+          if (requestDocSnap.exists) {
+            const existingData = requestDocSnap.data();
+            if (existingData && existingData.fingerprint === fingerprint) {
+              return {
+                success: true,
+                reference: input.reference,
+                verifiedAmountGhs: verifiedPesewas / 100,
+                recordedCount: 0,
+                alreadyRecordedCount: input.allocations.length,
+                idempotent: true,
+                payments: [],
+              };
+            } else {
+              // Request document exists but fingerprint mismatch -> conflict
+              throw new PaymentVerificationError(
+                "IDEMPOTENCY_CONFLICT",
+                "Payment request fingerprint mismatch.",
+                409
+              );
+            }
+          }
+
+          // Case 2: No existing allocation documents -> create request and allocations
+          if (existingAllocationDocs.length === 0) {
+            // Create request document (create-only)
+            const requestRecord = {
+              fingerprint,
+              createdAt: now(),
+              schoolId: input.schoolId,
+              studentId: input.studentId,
+              reference: input.reference,
+            };
+            tx.create(requestDocRef, requestRecord);
+
+            // Create allocation documents (create-only)
+            const recorded = [];
+            for (const [index, allocation] of input.allocations.entries()) {
+              const docId = `PAYVRF-${sanitizeReference(input.reference)}-${index}`;
+              const docRef = activePaymentsCol.doc(docId);
+              const paymentDoc = buildPaymentDoc({
+                input,
+                studentData,
+                allocation,
+                index,
+                docId,
+                verifiedPesewas,
+                transaction,
+              });
+              tx.create(docRef, paymentDoc);
+              recorded.push(paymentDoc);
+            }
+
+            return {
+              success: true,
+              reference: input.reference,
+              verifiedAmountGhs: verifiedPesewas / 100,
+              recordedCount: recorded.length,
+              alreadyRecordedCount: 0,
+              idempotent: false,
+              payments: recorded,
+            };
+          }
+
+          // Case 3: Exact match of existing allocations -> create request document only, return idempotent
+          if (isExactMatch) {
+            const requestRecord = {
+              fingerprint,
+              createdAt: now(),
+              schoolId: input.schoolId,
+              studentId: input.studentId,
+              reference: input.reference,
+            };
+            tx.create(requestDocRef, requestRecord);
+
+            return {
+              success: true,
+              reference: input.reference,
+              verifiedAmountGhs: verifiedPesewas / 100,
+              recordedCount: 0,
+              alreadyRecordedCount: input.allocations.length,
+              idempotent: true,
+              payments: [],
+            };
+          }
+
+          // Case 4: Partial or conflicting legacy set -> conflict
+          throw new PaymentVerificationError(
+            "IDEMPOTENCY_CONFLICT",
+            "Partial or conflicting legacy allocation set found.",
+            409
+          );
+        });
+      };
+
+      // Handle transaction conflicts (ALREADY_EXISTS) with fresh read-only validation
+      try {
+        return await attemptWrite();
+      } catch (error) {
+        // Check if this is a Firestore ALREADY_EXISTS error
+        const isAlreadyExists =
+          error.code === "already-exists" ||
+          error.code === "ALREADY_EXISTS" ||
+          (error.message && error.message.includes("already exists"));
+
+        if (isAlreadyExists) {
+          // Fresh read-only validation after conflict
+          const freshRequestDocSnap = await requestDocRef.get();
+          if (freshRequestDocSnap.exists) {
+            const existingData = freshRequestDocSnap.data();
+            if (existingData && existingData.fingerprint === fingerprint) {
+              // Exact match -> idempotent success
+              return {
+                success: true,
+                reference: input.reference,
+                verifiedAmountGhs: verifiedPesewas / 100,
+                recordedCount: 0,
+                alreadyRecordedCount: input.allocations.length,
+                idempotent: true,
+                payments: [],
+              };
+            } else {
+              // Fingerprint mismatch -> conflict
+              throw new PaymentVerificationError(
+                "IDEMPOTENCY_CONFLICT",
+                "Payment request fingerprint mismatch after conflict.",
+                409
+              );
+            }
+          }
+
+          // Request document doesn't exist, check allocation documents
+          const [freshActiveSnaps, freshAlternateSnaps] = await Promise.all([
+            activePaymentsCol.where("reference", "==", input.reference).get(),
+            alternatePaymentsCol.where("reference", "==", input.reference).get(),
+          ]);
+
+          const freshExistingAllocationDocs = [...freshActiveSnaps.docs, ...freshAlternateSnaps.docs].map(
+            (doc) => ({ id: doc.id, ...(doc.data() || {}) })
+          );
+
+          const freshValidExistingAllocations = [];
+          for (const doc of freshExistingAllocationDocs) {
+            if (
+              doc.source === PAYMENT_RECORD_SOURCE &&
+              String(doc.receiptNumber || "") === input.reference
+            ) {
+              freshValidExistingAllocations.push({
+                feeId: doc.feeId,
+                academicYear: doc.academicYear,
+                term: doc.term,
+                amountPaid: doc.amountPaid,
+              });
+            } else {
+              throw new PaymentVerificationError(
+                "IDEMPOTENCY_CONFLICT",
+                "Conflicting payment record found with mismatched source or reference after conflict.",
+                409
+              );
+            }
+          }
+
+          const freshExistingAllocationsTuples = freshValidExistingAllocations
+            .map(allocationTuple)
+            .sort((a, b) => {
+              if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
+              if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
+              if (a[2] !== b[2]) return a[2].localeCompare(b[2]);
+              return a[3] - b[3];
+            });
+
+          const freshIsExactMatch =
+            inputAllocationsTuples.length === freshExistingAllocationsTuples.length &&
+            inputAllocationsTuples.every((tuple, index) => {
+              return (
+                tuple[0] === freshExistingAllocationsTuples[index][0] &&
+                tuple[1] === freshExistingAllocationsTuples[index][1] &&
+                tuple[2] === freshExistingAllocationsTuples[index][2] &&
+                tuple[3] === freshExistingAllocationsTuples[index][3]
+              );
+            });
+
+          if (freshExistingAllocationDocs.length === 0) {
+            // No allocation docs found after conflict - this shouldn't happen if conflict was on request doc
+            // But we'll treat as conflict since we can't determine state
+            throw new PaymentVerificationError(
+              "IDEMPOTENCY_CONFLICT",
+              "Unable to determine state after conflict: no request or allocation documents found.",
+              409
+            );
+          } else if (freshIsExactMatch) {
+            // Exact match -> idempotent success (request doc was created by another transaction)
+            return {
+              success: true,
+              reference: input.reference,
+              verifiedAmountGhs: verifiedPesewas / 100,
+              recordedCount: 0,
+              alreadyRecordedCount: input.allocations.length,
+              idempotent: true,
+              payments: [],
+            };
+          } else {
+            // Partial or conflicting -> conflict
+            throw new PaymentVerificationError(
+              "IDEMPOTENCY_CONFLICT",
+              "Partial or conflicting legacy allocation set found after conflict.",
+              409
+            );
+          }
+        }
+
+        // Unrelated error - propagate unchanged
+        throw error;
+      }
     };
-  };
 
   return { verifyAndRecordPayment };
 }

@@ -194,43 +194,48 @@ const Login = () => {
     );
   };
 
-  const safeLogSecurityLogin = async (payload: {
+  const safeLogSecurityLogin = (payload: {
     status: "SUCCESS" | "FAILED";
     email?: string | null;
     errorCode?: string | null;
     userAgent?: string | null;
     idToken?: string | null;
   }) => {
-    try {
-      // For SUCCESS events, include the Firebase ID token; for FAILED, omit it.
-      // This allows unauthenticated failed-login reporting while preventing
-      // forged successful-login events from unauthenticated callers.
-      const token = payload.status === "SUCCESS" && payload.idToken
-        ? payload.idToken
-        : undefined;
+    // Fire-and-forget: security logging must NEVER block or delay the login
+    // flow. If the backend hangs (e.g. Firestore DEADLINE_EXCEEDED), the
+    // login still completes and the user is redirected on time.
+    const token = payload.status === "SUCCESS" && payload.idToken
+      ? payload.idToken
+      : undefined;
 
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
-      const { idToken: _omit, ...body } = payload;
-      const response = await fetch(`${API_BASE_URL}/api/security/log-login`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-
-      // Do not throw so the login outcome is not unexpectedly changed.
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.warn("Security login logging failed", errorData);
-      }
-    } catch (logError) {
-      console.warn("Security login logging failed", logError);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
+
+    const { idToken: _omit, ...body } = payload;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 4000);
+
+    fetch(`${API_BASE_URL}/api/security/log-login`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.warn("Security login logging failed", errorData);
+        }
+      })
+      .catch((logError) => {
+        console.warn("Security login logging failed", logError);
+      })
+      .finally(() => window.clearTimeout(timer));
   };
 
   // Post-login redirect is handled in App.tsx to avoid flashing the login screen.
@@ -271,7 +276,7 @@ if (isMfaEnrollmentRequiredError(mfaError)) {
           // Send SUCCESS event with ID token after email/password auth succeeds
           const idToken = await auth.currentUser?.getIdToken();
           if (idToken) {
-            await safeLogSecurityLogin({
+            safeLogSecurityLogin({
               status: "SUCCESS",
               email: normalizeEmailInput(email),
               userAgent: navigator.userAgent,
@@ -287,7 +292,7 @@ if (isMfaEnrollmentRequiredError(mfaError)) {
       // Send SUCCESS event with ID token after email/password auth succeeds
       const idToken = await auth.currentUser?.getIdToken();
       if (idToken) {
-        await safeLogSecurityLogin({
+        safeLogSecurityLogin({
           status: "SUCCESS",
           email: normalizeEmailInput(email),
           userAgent: navigator.userAgent,
@@ -303,7 +308,7 @@ if (isMfaEnrollmentRequiredError(mfaError)) {
         return;
       }
       
-      await safeLogSecurityLogin({
+      safeLogSecurityLogin({
         status: "FAILED",
         email: normalizeEmailInput(email),
         errorCode: err?.code || "unknown",
@@ -411,7 +416,7 @@ if (isMfaEnrollmentRequiredError(mfaError)) {
 
       const idToken = await auth.currentUser?.getIdToken();
       if (idToken) {
-        await safeLogSecurityLogin({
+        safeLogSecurityLogin({
           status: "SUCCESS",
           email: normalizeEmailInput(email),
           userAgent: navigator.userAgent,

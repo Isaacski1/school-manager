@@ -25,6 +25,14 @@ import {
   OutstandingFee,
   UNALLOCATED_FEE_ID,
 } from "../../services/feeAllocation";
+import {
+  buildLedgerFeesPayload,
+  buildFeeAssignmentSignature,
+} from "../../services/ledgerFeeAssignment";
+import {
+  buildClassNameLookup,
+  resolveClassLabel,
+} from "../../services/carryForwardReview";
 import { ACADEMIC_YEAR, CLASSES_LIST } from "../../constants";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import {
@@ -54,6 +62,11 @@ import {
   X,
 } from "lucide-react";
 import { API_BASE_URL } from "../../src/config";
+import type {
+  CarryForwardReviewGroup,
+  CarryForwardReviewRow,
+  CarryForwardReviewTotals,
+} from "../../services/carryForwardReview";
 import * as XLSX from "xlsx";
 
 
@@ -274,6 +287,12 @@ const FeesPayments: React.FC = () => {
   const navigate = useNavigate();
   const schoolId = school?.id || "";
   const { classes: availableClasses } = useSchoolClasses();
+  // Class id -> human readable class name, from the class rooms this school
+  // has already configured (used to label the carry-forward review).
+  const classNameLookup = useMemo(
+    () => buildClassNameLookup(availableClasses),
+    [availableClasses],
+  );
   const baseClassOptions = useMemo(() => {
     const options = new Map<string, string>();
     availableClasses.forEach((classRoom) => {
@@ -292,6 +311,8 @@ const FeesPayments: React.FC = () => {
   const recordPaymentRef = useRef<HTMLDivElement | null>(null);
   const ledgerAutoSyncSignatureRef = useRef("");
   const ledgerAutoSyncInFlightRef = useRef(false);
+  const recordPaymentStartedRef = useRef(false);
+  const recordPaymentSavedRef = useRef(false);
 
   const [academicYear, setAcademicYear] = useState(ACADEMIC_YEAR);
   const [term, setTerm] = useState<FeeTerm>("Term 1");
@@ -348,6 +369,15 @@ const FeesPayments: React.FC = () => {
     useState<(typeof statusFilters)[number]>("all");
   const [ledgerClassFilter, setLedgerClassFilter] = useState("all");
   const [defaultersClassFilter, setDefaultersClassFilter] = useState("all");
+  const [carryForwardReview, setCarryForwardReview] = useState<{
+    rows: CarryForwardReviewRow[];
+    outstandingRows: CarryForwardReviewRow[];
+    groups: { byClass: CarryForwardReviewGroup[]; bySourceTerm: CarryForwardReviewGroup[] };
+    totals: CarryForwardReviewTotals;
+  } | null>(null);
+  const [carryForwardReviewLoading, setCarryForwardReviewLoading] = useState(false);
+  const [carryForwardReviewError, setCarryForwardReviewError] = useState<string | null>(null);
+  const [carryForwardClassFilter, setCarryForwardClassFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState("This term");
 
@@ -396,12 +426,70 @@ const FeesPayments: React.FC = () => {
     const amount = Number(payment.amountPaid || 0).toLocaleString(undefined, {
       maximumFractionDigits: 2,
     });
-    return [
-      `${schoolName} receipt: GHS ${amount} received.`,
-      `Child: ${studentName}.`,
-      `Fee: ${formatPaymentFeeLabel(payment)}.`,
-      `Ref: ${payment.receiptNumber || payment.id}.`,
-    ].join(" ");
+
+    // Outstanding balance after this payment. Include the just-recorded
+    // payment even though React has not yet flushed setPayments(), so the
+    // figure the parent sees is always correct for this transaction.
+    const ledger = ledgers.find(
+      (item) =>
+        item.studentId === payment.studentId &&
+        item.academicYear === payment.academicYear &&
+        item.term === payment.term,
+    );
+    const paidSinceByFee = new Map<string, number>();
+    const allPayments = [
+      payment,
+      ...payments.filter(
+        (p) =>
+          p.studentId === payment.studentId &&
+          p.academicYear === payment.academicYear &&
+          p.term === payment.term &&
+          p.id !== payment.id,
+      ),
+    ];
+    for (const p of allPayments) {
+      paidSinceByFee.set(
+        p.feeId,
+        (paidSinceByFee.get(p.feeId) || 0) + p.amountPaid,
+      );
+    }
+    let outstanding = 0;
+    for (const fee of ledger?.fees || []) {
+      const totalDue = fee.amount;
+      const paidBefore = fee.openingPaidAmount || 0;
+      const paidSince = paidSinceByFee.get(fee.feeId) || 0;
+      const remainingBefore = fee.openingBalance;
+      const remaining =
+        remainingBefore !== undefined && remainingBefore !== null
+          ? Math.max(0, remainingBefore - paidSince)
+          : Math.max(0, totalDue - paidBefore - paidSince);
+      outstanding += remaining;
+    }
+
+    const paymentDate = payment.createdAt
+      ? new Date(payment.createdAt).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })
+      : "";
+
+    const receiptRef =
+      payment.receiptNumber || `RCPT-${payment.id.slice(-6).toUpperCase()}`;
+
+    const lines = [
+      `${schoolName} — Payment Receipt`,
+      `Thank you for your payment of GHS ${amount}.`,
+      `Student: ${studentName}`,
+      `Fee: ${formatPaymentFeeLabel(payment)} (${payment.academicYear} ${payment.term})`,
+    ];
+    if (paymentDate) lines.push(`Date: ${paymentDate}`);
+    lines.push(`Ref: ${receiptRef}`);
+    lines.push(
+      `Outstanding balance: GHS ${outstanding.toFixed(2)}`,
+    );
+    lines.push(`Keep this reference for any queries.`);
+    return lines.join("\n");
   };
 
   const openReceiptSmsComposer = (payment: StudentFeePayment) => {
@@ -626,6 +714,7 @@ const FeesPayments: React.FC = () => {
     amountPaid: "",
     paymentMethod: "MoMo" as PaymentMethod,
     receiptNumber: "",
+    paymentDate: new Date().toISOString().split("T")[0],
   });
 
   const [selectedPayment, setSelectedPayment] =
@@ -1514,59 +1603,25 @@ const handleExportReport = () => {
     const existing = ledgers.find((l) => l.id === ledgerId);
     const assignedFees = resolveFeeAssignments(student, feeSnapshot);
     const existingFees = existing?.fees || [];
-    const feesList = assignedFees.map((fee) => {
-      const previous = existingFees.find((item) => item.feeId === fee.id);
-      const feeEntry: StudentFeeLedger["fees"][number] = {
-        feeId: fee.id,
-        feeName: fee.feeName,
-        amount: fee.amount,
-      };
-      if (previous?.openingPaidAmount !== undefined) {
-        feeEntry.openingPaidAmount = previous.openingPaidAmount;
-      }
-      if (previous?.openingBalance !== undefined) {
-        feeEntry.openingBalance = previous.openingBalance;
-      }
-      if (previous?.openingStatus !== undefined) {
-        feeEntry.openingStatus = previous.openingStatus;
-      }
-      return feeEntry;
-    });
-    const openingPaidTotal = feesList.reduce(
-      (sum, fee) => sum + (fee.openingPaidAmount || 0),
-      0,
-    );
-    const openingBalanceTotal = feesList.reduce((sum, fee) => {
-      const paid = fee.openingPaidAmount || 0;
-      const balanceValue =
-        fee.openingBalance !== undefined && fee.openingBalance !== null
-          ? fee.openingBalance
-          : Math.max(0, fee.amount - paid);
-      return sum + balanceValue;
-    }, 0);
-    const openingStatusDerived =
-      openingPaidTotal <= 0
-        ? "Unpaid"
-        : openingPaidTotal >= feesList.reduce((sum, fee) => sum + fee.amount, 0)
-          ? "Paid"
-          : "Part-paid";
-      const totalFee = feesList.reduce((sum, fee) => sum + fee.amount, 0);
-      const payload: StudentFeeLedger = {
-        id: ledgerId,
-        schoolId,
-        studentId: student.id,
-        classId: student.classId,
-        academicYear,
-        term,
-        fees: feesList,
-        totalFee,
-        openingPaidAmount: openingPaidTotal,
-        openingBalance: openingBalanceTotal,
-        openingStatus: openingStatusDerived,
-        openingDate: existing?.openingDate || onboardingDate || null,
-        createdAt: existing?.createdAt || Date.now(),
-        updatedAt: Date.now(),
-      };
+    // Shared with the bulk path: rebuilds the current term's fee entries and
+    // preserves the carry-forward entries written by the term rollover.
+    const feePayload = buildLedgerFeesPayload({ assignedFees, existingFees });
+    const payload: StudentFeeLedger = {
+      id: ledgerId,
+      schoolId,
+      studentId: student.id,
+      classId: student.classId,
+      academicYear,
+      term,
+      fees: feePayload.fees,
+      totalFee: feePayload.totalFee,
+      openingPaidAmount: feePayload.openingPaidAmount,
+      openingBalance: feePayload.openingBalance,
+      openingStatus: feePayload.openingStatus,
+      openingDate: existing?.openingDate || onboardingDate || null,
+      createdAt: existing?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
     await db.upsertStudentLedger(payload);
     return payload;
   };
@@ -1581,43 +1636,10 @@ const handleExportReport = () => {
       const existing = ledgers.find((l) => l.id === ledgerId);
       const assignedFees = resolveFeeAssignments(student, feeSnapshot);
       const existingFees = existing?.fees || [];
-      const feesList = assignedFees.map((fee) => {
-        const previous = existingFees.find((item) => item.feeId === fee.id);
-        const feeEntry: StudentFeeLedger["fees"][number] = {
-          feeId: fee.id,
-          feeName: fee.feeName,
-          amount: fee.amount,
-        };
-        if (previous?.openingPaidAmount !== undefined) {
-          feeEntry.openingPaidAmount = previous.openingPaidAmount;
-        }
-        if (previous?.openingBalance !== undefined) {
-          feeEntry.openingBalance = previous.openingBalance;
-        }
-        if (previous?.openingStatus !== undefined) {
-          feeEntry.openingStatus = previous.openingStatus;
-        }
-        return feeEntry;
-      });
-      const openingPaidTotal = feesList.reduce(
-        (sum, fee) => sum + (fee.openingPaidAmount || 0),
-        0,
-      );
-      const openingBalanceTotal = feesList.reduce((sum, fee) => {
-        const paid = fee.openingPaidAmount || 0;
-        const balanceValue =
-          fee.openingBalance !== undefined && fee.openingBalance !== null
-            ? fee.openingBalance
-            : Math.max(0, fee.amount - paid);
-        return sum + balanceValue;
-      }, 0);
-      const openingStatusDerived =
-        openingPaidTotal <= 0
-          ? "Unpaid"
-          : openingPaidTotal >= feesList.reduce((sum, fee) => sum + fee.amount, 0)
-            ? "Paid"
-            : "Part-paid";
-      const totalFee = feesList.reduce((sum, fee) => sum + fee.amount, 0);
+      // Shared with the single-ledger path: rebuilds the current term's fee
+      // entries and preserves the carry-forward entries written by the term
+      // rollover.
+      const feePayload = buildLedgerFeesPayload({ assignedFees, existingFees });
       const payload: StudentFeeLedger = {
         id: ledgerId,
         schoolId,
@@ -1625,11 +1647,11 @@ const handleExportReport = () => {
         classId: student.classId,
         academicYear,
         term,
-        fees: feesList,
-        totalFee,
-        openingPaidAmount: openingPaidTotal,
-        openingBalance: openingBalanceTotal,
-        openingStatus: openingStatusDerived,
+        fees: feePayload.fees,
+        totalFee: feePayload.totalFee,
+        openingPaidAmount: feePayload.openingPaidAmount,
+        openingBalance: feePayload.openingBalance,
+        openingStatus: feePayload.openingStatus,
         openingDate: existing?.openingDate || onboardingDate || null,
         createdAt: existing?.createdAt || Date.now(),
         updatedAt: Date.now(),
@@ -1662,10 +1684,11 @@ const handleExportReport = () => {
           .map((fee) => `${fee.id}:${fee.amount}`)
           .sort()
           .join("|");
-        const existingSignature = (existing?.fees || [])
-          .map((fee) => `${fee.feeId}:${fee.amount}`)
-          .sort()
-          .join("|");
+        // Carry-forward entries are not part of the fee assignment, so they
+        // must not keep triggering a ledger sync.
+        const existingSignature = buildFeeAssignmentSignature(
+          existing?.fees || [],
+        );
 
         return {
           student,
@@ -2009,14 +2032,42 @@ const handleExportReport = () => {
       showToast("Enter a valid amount.", { type: "error" });
       return;
     }
+    // Guard against double-submission. A rapid second click while the first
+    // request is in flight must not create a second payment row. The ref is
+    // cleared in the finally block so a failed payment can be retried.
+    if (recordPaymentStartedRef.current) {
+      showToast("Payment already in progress.", { type: "error" });
+      return;
+    }
+    recordPaymentStartedRef.current = true;
+    // Show the Saving indicator immediately, before any async work, so the
+    // user gets prompt feedback. The entire operation below is covered by
+    // try/finally so the guard and loading state are always released.
+    setIsRecordingPayment(true);
 
     const isAllocating = !paymentForm.feeId;
     let payload: StudentFeePayment;
-    if (isAllocating) {
+    const paymentTimestamp = paymentForm.paymentDate
+      ? new Date(paymentForm.paymentDate).getTime()
+      : Date.now();
+    // DEV-ONLY timing diagnostics. These log stage durations only and never
+    // record student names, phone numbers, amounts, receipt details, or any
+    // other sensitive financial data. They cannot affect payment processing.
+    const t0 = performance.now();
+    try {
+      const tLedgerStart = performance.now();
+      // Ensure the student's ledger exists for this term before computing
+      // allocations or totals. Called once here so both the auto-allocate
+      // branch (which needs the fee list) and the post-save path (which needs
+      // the persisted ledger for totals and state) reuse the same result.
+      const updatedLedger = await ensureLedger(student, fees);
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[perf] ensureLedger ms:", Math.round(performance.now() - tLedgerStart));
+      }
+      if (isAllocating) {
       // No specific fee selected: distribute the amount across the student's
       // outstanding fees in a deterministic order. This keeps the receipt as
       // a single payment row while crediting each fee individually.
-      const updatedLedger = await ensureLedger(student, fees);
       const existingPayments = payments.filter(
         (p) =>
           p.studentId === student.id &&
@@ -2077,7 +2128,7 @@ const handleExportReport = () => {
         academicYear,
         term,
         allocations,
-        createdAt: Date.now(),
+        createdAt: paymentTimestamp,
         recordedBy: user.id,
       };
       showToast(
@@ -2134,29 +2185,38 @@ const handleExportReport = () => {
         receiptNumber: paymentForm.receiptNumber || null,
         academicYear,
         term,
-        createdAt: Date.now(),
+        createdAt: paymentTimestamp,
         recordedBy: user.id,
       };
     }
-    try {
-      setIsRecordingPayment(true);
+      const tPaymentStart = performance.now();
       await db.recordStudentPayment(payload);
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[perf] recordStudentPayment ms:", Math.round(performance.now() - tPaymentStart));
+      }
+      // The payment row is now persisted. If any later step fails, the
+      // catch block must not imply the payment was never saved.
+      recordPaymentSavedRef.current = true;
 
-      const updatedLedger = await ensureLedger(student, fees);
       const ledgerPayments = currentTermPayments.filter(
         (p) =>
           p.studentId === student.id &&
           p.academicYear === academicYear &&
           p.term === term,
       );
+      const tTotalsStart = performance.now();
       const totals = await db.computeLedgerTotals(updatedLedger, [
         ...ledgerPayments,
         payload,
       ]);
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[perf] computeLedgerTotals ms:", Math.round(performance.now() - tTotalsStart));
+      }
 
       showToast(`Payment recorded. Balance: ${formatMoney(totals.balance)}`, {
         type: "success",
       });
+      const tLogStart = performance.now();
       await logActivity({
         schoolId,
         actorUid: user.id,
@@ -2175,6 +2235,15 @@ const handleExportReport = () => {
           actorName: user.fullName || "",
         },
       });
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[perf] logActivity ms:", Math.round(performance.now() - tLogStart));
+        console.info("[perf] TOTAL handleRecordPayment ms:", Math.round(performance.now() - t0));
+      }
+      // Open the SMS receipt composer so the admin can review or customize
+      // the message before it is sent to the parent. The payment and ledger
+      // writes have already completed, so the receipt reflects the persisted
+      // transaction. The form is reset first so the admin can record the next
+      // payment while the composer is open.
       setPaymentForm({
         classId: "",
         studentId: "",
@@ -2182,11 +2251,52 @@ const handleExportReport = () => {
         amountPaid: "",
         paymentMethod: "MoMo",
         receiptNumber: "",
+        paymentDate: new Date().toISOString().split("T")[0],
       });
-      await fetchData();
+      // Reflect the just-persisted payment and ledger in local state without
+      // reloading the entire school workspace. `payload` and `updatedLedger`
+      // are authoritative: both were already written to Firestore by
+      // recordStudentPayment() and ensureLedger() above. Every derived metric
+      // in this page (balances, status badges, defaulters count, collection
+      // charts, recent payments, reconciliation stats) is a pure function of
+      // `payments` and `ledgers`, so updating those two state variables keeps
+      // the whole UI in sync with zero extra network calls.
+      setPayments((prev) => [payload, ...prev]);
+      setLedgers((prev) => {
+        const exists = prev.some((ledger) => ledger.id === updatedLedger.id);
+        if (exists) {
+          return prev.map((ledger) =>
+            ledger.id === updatedLedger.id ? updatedLedger : ledger,
+          );
+        }
+        return [...prev, updatedLedger];
+      });
+      // Show the SMS composer for review/editing before sending.
+      openReceiptSmsComposer(payload);
     } catch (error) {
+      // DEV-ONLY: report total duration for failed flows so stages that
+      // throw (ensureLedger, recordStudentPayment, computeLedgerTotals) are
+      // not invisible in the diagnostics. Logs duration only — no student
+      // names, phone numbers, amounts, receipt details, or other data.
+      if (process.env.NODE_ENV !== "production") {
+        console.info(
+          "[perf] TOTAL handleRecordPayment ms (failed):",
+          Math.round(performance.now() - t0),
+        );
+      }
       console.error("Failed to record payment", error);
-      showToast("Failed to record payment.", { type: "error" });
+      // Distinguish a genuine payment-write failure from a failure in a
+      // post-save step (totals, activity log). The payment row is the only
+      // part that cannot be safely retried, so the message reflects what is
+      // known: if we got past `db.recordStudentPayment`, the payment exists
+      // and the admin should verify it rather than assume it was dropped.
+      const paymentSaved = recordPaymentSavedRef.current;
+      showToast(
+        paymentSaved
+          ? "Payment was saved but a follow-up step failed. Verify the payment and retry."
+          : "Failed to record payment.",
+        { type: "error" },
+      );
       await logActivity({
         schoolId,
         actorUid: user?.id || null,
@@ -2196,11 +2306,14 @@ const handleExportReport = () => {
         meta: {
           status: "failed",
           module: "Fees & Payments",
+          paymentSaved,
           error: (error as any)?.message || "Unknown error",
           actorName: user?.fullName || "",
         },
       });
     } finally {
+      recordPaymentStartedRef.current = false;
+      recordPaymentSavedRef.current = false;
       setIsRecordingPayment(false);
     }
   };
@@ -2651,6 +2764,68 @@ const handleExportReport = () => {
       .sort((a, b) => getPaymentCreatedAtMs(b) - getPaymentCreatedAtMs(a))
       .slice(0, 6);
   }, [currentTermPayments, getPaymentCreatedAtMs]);
+
+  // Administrator carry-forward review. The server derives the rows from the
+  // carry-forward entries already persisted on the students' ledgers.
+  useEffect(() => {
+    if (!schoolId || !academicYear || !term) return;
+    let active = true;
+    const controller = new AbortController();
+    setCarryForwardReviewLoading(true);
+    setCarryForwardReviewError(null);
+
+    (async () => {
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        const response = await fetch(
+          `${API_BASE_URL}/api/schools/finance/carry-forward-review?academicYear=${encodeURIComponent(
+            academicYear,
+          )}&term=${encodeURIComponent(term)}`,
+          {
+            signal: controller.signal,
+            headers: {
+              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
+          },
+        );
+        if (!response.ok) {
+          throw new Error("Could not load the carry-forward review.");
+        }
+        const payload = await response.json();
+        if (!active) return;
+        setCarryForwardReview({
+          rows: payload.rows || [],
+          outstandingRows: payload.outstandingRows || [],
+          groups: payload.groups || { byClass: [], bySourceTerm: [] },
+          totals: payload.totals || {
+            studentCount: 0,
+            outstandingStudentCount: 0,
+            carriedAmount: 0,
+            paidAmount: 0,
+            outstandingAmount: 0,
+          },
+        });
+      } catch (error: any) {
+        if (!active || error?.name === "AbortError") return;
+        setCarryForwardReviewError(
+          error?.message || "Could not load the carry-forward review.",
+        );
+      } finally {
+        if (active) setCarryForwardReviewLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [schoolId, academicYear, term]);
+
+  const carryForwardVisibleRows = useMemo(() => {
+    const rows = carryForwardReview?.outstandingRows || [];
+    if (carryForwardClassFilter === "all") return rows;
+    return rows.filter((row) => row.classId === carryForwardClassFilter);
+  }, [carryForwardReview, carryForwardClassFilter]);
 
   const defaulters = useMemo(() => {
     return ledgerRows
@@ -5266,6 +5441,26 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                         ))}
                     </select>
                   </div>
+                  {paymentForm.studentId && selectedPaymentStudent && (
+                    <div className="sm:col-span-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs uppercase tracking-[0.15em] text-slate-400">
+                          Outstanding Balance
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-slate-900">
+                          {formatMoney(
+                            Array.from(feeRemainingBalance.values()).reduce(
+                              (sum, val) => sum + val,
+                              0,
+                            ),
+                          )}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Total amount owed across all fees for this term.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-xs text-slate-500">Fee</label>
                     <select
@@ -5304,7 +5499,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                         allocated.
                       </p>
                     )}
-                    {paymentForm.studentId && paymentForm.feeId && (
+{paymentForm.studentId && paymentForm.feeId && (
                       <p className="mt-1 text-[11px] text-slate-500">
                         Remaining for this fee:{" "}
                         <span
@@ -5317,9 +5512,24 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                           {formatMoney(
                             feeRemainingBalance.get(paymentForm.feeId) || 0,
                           )}
-                        </span>
+                          </span>
                       </p>
                     )}
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Payment Date</label>
+                    <input
+                      type="date"
+                      value={paymentForm.paymentDate}
+                      onChange={(e) =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          paymentDate: e.target.value,
+                        })
+                      }
+                      className={DASH_INPUT}
+                      max={new Date().toISOString().split("T")[0]}
+                    />
                   </div>
                   <div>
                     <label className="text-xs text-slate-500">Amount Paid</label>
@@ -5583,6 +5793,166 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                       <span className="text-sm font-semibold text-rose-700">
                         {formatMoney(balance)}
                       </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div
+              data-assistant-focus="fees-carry-forward-review"
+              className={`relative overflow-hidden ${DASH_PANEL} p-6 lg:col-span-2`}
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Carry-forward review
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Balances carried over from the previous term.
+                  </p>
+                </div>
+                <div className="w-full sm:w-48">
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Filter by Class
+                  </label>
+                  <select
+                    value={carryForwardClassFilter}
+                    onChange={(e) => setCarryForwardClassFilter(e.target.value)}
+                    className={DASH_INPUT}
+                  >
+                    <option value="all">All Classes</option>
+                    {availableClasses.map((cls) => (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                    Students Carried
+                  </p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {carryForwardReview?.totals?.studentCount ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                    Total Carried
+                  </p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {formatMoney(carryForwardReview?.totals?.carriedAmount ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                    Paid Against Carried
+                  </p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {formatMoney(carryForwardReview?.totals?.paidAmount ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-rose-100 bg-rose-50/60 px-4 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-rose-400">
+                    Still Outstanding
+                  </p>
+                  <p className="text-sm font-semibold text-rose-700">
+                    {formatMoney(carryForwardReview?.totals?.outstandingAmount ?? 0)}
+                  </p>
+                </div>
+              </div>
+
+              {carryForwardReview?.groups?.byClass?.length ? (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[10px] uppercase tracking-[0.16em] text-slate-400">
+                        <th className="py-2 pr-3">Class</th>
+                        <th className="py-2 pr-3">Students</th>
+                        <th className="py-2 pr-3">Carried</th>
+                        <th className="py-2 pr-3">Paid</th>
+                        <th className="py-2">Outstanding</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {carryForwardReview.groups.byClass.map((group) => (
+                        <tr
+                          key={group.key}
+                          className="border-b border-slate-50 last:border-0"
+                        >
+                          <td className="py-2 pr-3 font-medium text-slate-800">
+                            {resolveClassLabel({
+                              classId: group.key === "unassigned" ? "" : group.key,
+                              className: group.label,
+                              classNameLookup,
+                            })}
+                          </td>
+                          <td className="py-2 pr-3">{group.studentCount}</td>
+                          <td className="py-2 pr-3">
+                            {formatMoney(group.carriedAmount)}
+                          </td>
+                          <td className="py-2 pr-3">{formatMoney(group.paidAmount)}</td>
+                          <td className="py-2 font-semibold text-rose-700">
+                            {formatMoney(group.outstandingAmount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1 scrollbar-thin">
+                {carryForwardReviewLoading ? (
+                  Array.from({ length: 3 }).map((_, index) => (
+                    <SkeletonBlock key={index} className="h-12" />
+                  ))
+                ) : carryForwardReviewError ? (
+                  <p className="text-sm text-slate-400">{carryForwardReviewError}</p>
+                ) : carryForwardVisibleRows.length === 0 ? (
+                  <p className="text-sm text-slate-400">
+                    No outstanding carried balances for the selected term.
+                  </p>
+                ) : (
+                  carryForwardVisibleRows.map((row) => (
+                    <div
+                      key={`${row.studentId}-${row.carryForwardFeeId}`}
+                      className="flex flex-col gap-1 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">
+                          {row.studentName}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {resolveClassLabel({
+                            classId: row.classId,
+                            className: row.className,
+                            classNameLookup,
+                          })}{" "}
+                          • from {row.fromTerm}, {row.fromAcademicYear}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
+                        <span>
+                          Carried{" "}
+                          <span className="font-semibold text-slate-800">
+                            {formatMoney(row.carriedAmount)}
+                          </span>
+                        </span>
+                        <span>
+                          Paid{" "}
+                          <span className="font-semibold text-slate-800">
+                            {formatMoney(row.paidAmount)}
+                          </span>
+                        </span>
+                        <span className="font-semibold text-rose-700">
+                          {formatMoney(row.outstandingAmount)} outstanding
+                        </span>
+                      </div>
                     </div>
                   ))
                 )}

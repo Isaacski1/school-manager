@@ -14,6 +14,10 @@ import {
   TERM_ROLLOVER_INTERVAL_MS,
 } from "./termRollover.js";
 import {
+  loadCarryForwardReview,
+  publishCarryForwardReview,
+} from "./carryForwardReview.js";
+import {
   createPaymentVerificationService,
   PaymentVerificationError,
 } from "./paymentVerification.js";
@@ -427,6 +431,16 @@ const fetchArkeselBalanceDetails = async (apiKey) => {
 };
 
 const app = express();
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
@@ -946,6 +960,48 @@ const termRolloverService = createTermRolloverService({
   FieldValue: admin.firestore.FieldValue,
   Timestamp: admin.firestore.Timestamp,
 });
+
+/**
+ * Publish the administrator carry-forward review after a term rollover.
+ *
+ * This runs AFTER the rollover completed (and therefore after the operational
+ * records were reset), because `admin_notifications` is cleared during the
+ * rollover reset. The review is derived from the carry-forward entries already
+ * persisted on the students' ledgers - nothing is recalculated here.
+ *
+ * Failures are logged but never break the rollover: the money has already been
+ * carried forward at this point.
+ */
+const publishCarryForwardReviewAfterRollover = async (schoolId, result) => {
+  if (!result?.changed) return null;
+  const nextPeriod = result.nextPeriod || {};
+  const academicYear = String(nextPeriod.academicYear || "");
+  const term = String(nextPeriod.currentTerm || "");
+  if (!academicYear || !term) return null;
+
+  try {
+    const published = await publishCarryForwardReview({
+      db: admin.firestore(),
+      schoolId,
+      academicYear,
+      term,
+    });
+    if (published?.notificationId) {
+      console.log(
+        `[CarryForwardReview] ${schoolId}: ${published.review?.totals?.studentCount || 0} student(s) carried GHS ${(
+          published.review?.totals?.carriedAmount || 0
+        ).toFixed(2)} into ${term}.`,
+      );
+    }
+    return published;
+  } catch (error) {
+    console.error(
+      "[CarryForwardReview] Failed to publish the carry-forward review:",
+      error?.message || error,
+    );
+    return null;
+  }
+};
 
 /**
  * Middleware: Verify Firebase ID token
@@ -2088,11 +2144,16 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
 
     const startTime = Date.now();
     // Query by phone variants across all admission contact fields.
+    // Wrap in quota/backoff so a Firestore quota error degrades gracefully
+    // instead of returning the generic "Internal server error during login."
     const studentsRef = admin.firestore().collection("students");
     const phoneFields = ["fatherPhone", "motherPhone", "guardianPhone"];
     const snapshots = await Promise.all(
       phoneFields.map((field) =>
-        studentsRef.where(field, "in", uniquePhoneVariants.slice(0, 10)).get(),
+        retryFirebaseAdminQuotaCall(
+          `parent-login-${field}`,
+          () => studentsRef.where(field, "in", uniquePhoneVariants.slice(0, 10)).get(),
+        ),
       ),
     );
     const studentDocsById = new Map();
@@ -2176,7 +2237,8 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
     // handler can resolve parent identity from users/{uid} after ID-token
     // verification. Only server-derived, already-validated values are written.
     // Merge semantics preserve any pre-existing fields on this document.
-    await admin
+    // Fire-and-forget: don't block the login response on Firestore write
+    admin
       .firestore()
       .collection("users")
       .doc(uid)
@@ -2192,7 +2254,12 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
           parentPhone: matchedContact.phone || normalizedPhone,
         },
         { merge: true },
-      );
+      )
+      .then(() => console.log("[Auth] User doc written successfully for uid:", uid))
+      .catch((firestoreError) => {
+        console.error("[Auth] Firestore write error (non-blocking):", firestoreError);
+        // Don't throw - login should succeed even if Firestore write fails
+      });
 
     return res.json({
       success: true,
@@ -2200,10 +2267,17 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
     });
 
   } catch (error) {
+    // Surface the actual failure so quota errors are distinguishable from a
+    // generic "internal server error" — this also helps debugging without
+    // exposing secrets.
+    const isQuota = isFirestoreQuotaError(error);
     console.error("Parent Custom Login Error:", error);
     return res.status(500).json({
       success: false,
-      error: "Internal server error during login."
+      error: isQuota
+        ? "Login temporarily unavailable due to a data service limit. Please try again in a moment."
+        : "Internal server error during login.",
+      code: isQuota ? "FIRESTORE_QUOTA_EXCEEDED" : undefined,
     });
   }
 });
@@ -15076,9 +15150,13 @@ app.get("/api/public/health", async (req, res) => {
 });
 
 // Background worker: process email_verification_queue with controlled rate and backoff
-const EMAIL_QUEUE_POLL_INTERVAL_MS = 60 * 1000; // poll every 60s to reduce Firestore reads
-const EMAIL_QUEUE_BATCH_SIZE = 2; // process up to 2 items per poll
-const EMAIL_QUEUE_BASE_DELAY_MS = 5 * 60 * 1000; // 5 minutes base retry
+  // Poll interval is environment-configurable so Firestore quota can be conserved
+  // without changing any application logic. Defaults to 60s.
+  const EMAIL_QUEUE_POLL_INTERVAL_MS = Number(
+    process.env.EMAIL_QUEUE_POLL_INTERVAL_MS || 60 * 1000,
+  );
+  const EMAIL_QUEUE_BATCH_SIZE = Number(process.env.EMAIL_QUEUE_BATCH_SIZE || 2); // process up to 2 items per poll
+  const EMAIL_QUEUE_BASE_DELAY_MS = Number(process.env.EMAIL_QUEUE_BASE_DELAY_MS || 5 * 60 * 1000); // 5 minutes base retry
 
 async function processEmailVerificationQueueOnce() {
   try {
@@ -17373,6 +17451,7 @@ app.post(
             source: "school_admin_dashboard",
           }),
       );
+      await publishCarryForwardReviewAfterRollover(schoolId, result);
       return res.json({ success: true, ...result });
     } catch (error) {
       console.error("[TermRollover] Admin check failed:", error);
@@ -17394,11 +17473,50 @@ app.post(
         String(req.params.schoolId || ""),
         { source: "super_admin_manual" },
       );
+      await publishCarryForwardReviewAfterRollover(
+        String(req.params.schoolId || ""),
+        result,
+      );
       return res.json({ success: true, ...result });
     } catch (error) {
       console.error("[TermRollover] Super Admin run failed:", error);
       return res.status(500).json({
         error: error?.message || "Term rollover failed",
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/schools/finance/carry-forward-review",
+  authLimiter,
+  authMiddleware,
+  schoolAdminMiddleware,
+  async (req, res) => {
+    try {
+      const schoolId = req.callerDoc?.schoolId;
+      const settingsSnap = await admin
+        .firestore()
+        .collection("settings")
+        .doc(schoolId)
+        .get();
+      const settings = settingsSnap.exists ? settingsSnap.data() || {} : {};
+      const academicYear = String(
+        req.query.academicYear || settings.academicYear || "",
+      );
+      const term = String(req.query.term || settings.currentTerm || "");
+
+      const review = await loadCarryForwardReview({
+        db: admin.firestore(),
+        schoolId,
+        academicYear,
+        term,
+      });
+      return res.json({ success: true, ...review });
+    } catch (error) {
+      console.error("[CarryForwardReview] Review read failed:", error);
+      return res.status(500).json({
+        error: error?.message || "Could not load the carry-forward review",
       });
     }
   },
@@ -17423,6 +17541,9 @@ app.post("/api/jobs/term-rollovers", async (req, res) => {
     const results = await termRolloverService.runDueRollovers({
       source: "external_scheduler",
     });
+    for (const result of results) {
+      await publishCarryForwardReviewAfterRollover(result.schoolId, result);
+    }
     return res.json({ success: true, results });
   } catch (error) {
     console.error("[TermRollover] External scheduler failed:", error);
@@ -17447,6 +17568,9 @@ if (termRolloverEnabled) {
       const results = await termRolloverService.runDueRollovers({
         source: "server_scheduler",
       });
+      for (const result of results) {
+        await publishCarryForwardReviewAfterRollover(result.schoolId, result);
+      }
       const changed = results.filter((result) => result.changed).length;
       if (changed > 0) {
         console.log(`[TermRollover] Completed ${changed} scheduled rollover(s).`);
@@ -17619,3 +17743,4 @@ server.on("error", (err) => {
   console.error("Server failed to start:", err);
   process.exit(1);
 });
+

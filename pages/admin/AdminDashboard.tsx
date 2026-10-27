@@ -508,6 +508,10 @@ const AdminDashboard = () => {
   const heavyRefreshInFlightRef = React.useRef(false);
   const lastHeavyRefreshAtRef = React.useRef(0);
   const dashboardInitRef = React.useRef<Record<string, boolean>>({});
+  // When true, the auto-advance effect is suppressed so the user can browse
+  // past days/weeks without the view snapping back to today. Reset when the
+  // user returns to the current day/week.
+  const manualNavRef = React.useRef(false);
   const [thisWeekAttendance, setThisWeekAttendance] = useState<number | null>(
     null,
   );
@@ -516,8 +520,24 @@ const AdminDashboard = () => {
   );
 
 const [todayClassAttendance, setTodayClassAttendance] = useState<ClassAttendanceStat[]>([]);
-   const HEAVY_REFRESH_THROTTLE_MS = 15000;
-   const STATS_POLL_INTERVAL_MS = 30000;
+    // Polling intervals are environment-configurable so Firestore quota can be
+    // conserved without changing any application logic. Defaults match the
+    // previous hardcoded values; set the env vars to throttle under quota.
+    // NOTE: Vite exposes env vars via import.meta.env (process.env is not
+    // available in the browser), so read with a safe fallback.
+    const readEnvNumber = (key: string, fallback: number) => {
+      const raw = (import.meta as any)?.env?.[key];
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const HEAVY_REFRESH_THROTTLE_MS = readEnvNumber(
+      "VITE_HEAVY_REFRESH_THROTTLE_MS",
+      15000,
+    );
+    const STATS_POLL_INTERVAL_MS = readEnvNumber(
+      "VITE_STATS_POLL_INTERVAL_MS",
+      30000,
+    );
    const parseYmdDate = (value?: string) => {
      if (!value) return null;
      const parts = value.split("-");
@@ -2472,7 +2492,9 @@ const [
       const friday = new Date(monday);
       friday.setDate(monday.getDate() + 4);
       if (attendanceViewMode === "day") {
-        await computeClassAttendanceForRange(monday, monday);
+        // Day view must query the SELECTED day, not the week's Monday.
+        // Otherwise navigating to a later date still pulls Monday's records.
+        await computeClassAttendanceForRange(attendanceWeek, attendanceWeek);
       } else {
         await computeClassAttendanceForRange(monday, friday);
       }
@@ -2568,6 +2590,41 @@ const [
     // If no re-open date set or school already reopened, default to current week's Monday
     setAttendanceWeek(getWeekRange(new Date()).monday);
   }, [schoolConfig.schoolReopenDate]);
+
+  // Auto-advance the attendance view to the current date as time progresses.
+  // Without this, switching to "Day" (or "Week") leaves the view pinned to the
+  // initial day/week and it never catches up to today unless the user clicks
+  // "Return to Current Day/Week".
+  useEffect(() => {
+    if (attendanceWeek === null) return;
+    if (manualNavRef.current) return;
+
+    const advanceIfNeeded = () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (attendanceViewMode === "day") {
+        const displayed = new Date(attendanceWeek);
+        displayed.setHours(0, 0, 0, 0);
+        if (displayed < today) {
+          setAttendanceWeek(new Date(today));
+        }
+        return;
+      }
+
+      // Week view: advance when we have crossed into a new week
+      const currentMonday = getWeekRange(today).monday;
+      const displayedMonday = getWeekRange(attendanceWeek).monday;
+      if (displayedMonday < currentMonday) {
+        setAttendanceWeek(new Date(currentMonday));
+      }
+    };
+
+    // Check immediately and then periodically so the view stays in sync
+    advanceIfNeeded();
+    const id = window.setInterval(advanceIfNeeded, 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [attendanceWeek, attendanceViewMode, schoolConfig.schoolReopenDate]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -2700,6 +2757,7 @@ const [
           return;
         }
       }
+      manualNavRef.current = true;
       setAttendanceWeek(prevDay);
       return;
     }
@@ -2724,6 +2782,7 @@ const [
         return;
       }
     }
+    manualNavRef.current = true;
     setAttendanceWeek(prevWeek);
   };
 
@@ -2733,16 +2792,19 @@ const [
     if (attendanceViewMode === "day") {
       const nextDay = new Date(attendanceWeek);
       nextDay.setDate(nextDay.getDate() + 1);
+      manualNavRef.current = true;
       setAttendanceWeek(nextDay);
       return;
     }
 
     const nextWeek = new Date(attendanceWeek);
     nextWeek.setDate(nextWeek.getDate() + 7);
+    manualNavRef.current = true;
     setAttendanceWeek(nextWeek);
   };
 
   const goToCurrentWeek = () => {
+    manualNavRef.current = false;
     if (attendanceViewMode === "day") {
       setAttendanceWeek(new Date());
       return;

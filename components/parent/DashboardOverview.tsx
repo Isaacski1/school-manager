@@ -4,6 +4,7 @@ import { db } from "../../services/mockDb";
 import { CreditCard, Activity, BookOpen, MessageSquare, FileText, CalendarDays, ArrowRight, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { getParentFeeTotals } from "../../services/parentFees";
+import { loadParentLedgers } from "../../services/parentLedgerSource";
 
 interface DashboardOverviewProps {
   student: Student;
@@ -34,6 +35,30 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [dueFees, setDueFees] = useState(0);
+  const [feeSummaryInfo, setFeeSummaryInfo] = useState<{
+    totalDue: number;
+    currentTermFees: number;
+    totalPaid: number;
+    remaining: number;
+    carryForward: {
+      amount: number;
+      paid: number;
+      remaining: number;
+      outstanding: boolean;
+      fromAcademicYear: string;
+      fromTerm: string;
+      entries: Array<{
+        feeId: string;
+        feeName: string;
+        amount: number;
+        paid: number;
+        remaining: number;
+        outstanding: boolean;
+        fromAcademicYear: string;
+        fromTerm: string;
+      }>;
+    } | null;
+  } | null>(null);
   const [feeStatus, setFeeStatus] = useState<"Paid" | "Part-paid" | "Outstanding" | "Loading">("Loading");
   const [lastPaymentDate, setLastPaymentDate] = useState<string | null>(null);
   const [attendanceStats, setAttendanceStats] = useState({ present: 0, total: 0, percentage: 0, isNew: false });
@@ -112,7 +137,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         };
 
         const [ledgerData, paymentData, allClassAttendance, assessments, remarks] = await Promise.all([
-          db.getStudentLedgers({
+          loadParentLedgers({
             schoolId: effectiveSchoolId,
             academicYear: currentYear,
             studentId: student.id
@@ -175,7 +200,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         );
 
         const hasLedgers = finalLedgerData.length > 0;
-        const { totals } = getParentFeeTotals(
+        const { totals, summary: feeSummary } = getParentFeeTotals(
           currentTermLedgers,
           paymentData,
           selectedFeeTerm,
@@ -184,6 +209,24 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
 
         setDueFees(totals.totalBalance);
         setHasLedgers(hasLedgers);
+        setFeeSummaryInfo({
+          totalDue: feeSummary.totalDue,
+          currentTermFees: feeSummary.currentTermFees,
+          totalPaid: feeSummary.totalPaid,
+          remaining: feeSummary.remaining,
+          carryForward: feeSummary.carryForward
+            ? {
+                amount: feeSummary.carryForward.amount,
+                paid: feeSummary.carryForward.paid,
+                remaining: feeSummary.carryForward.remaining,
+                outstanding: feeSummary.carryForward.outstanding,
+                fromAcademicYear:
+                  feeSummary.carryForward.fromAcademicYear || "",
+                fromTerm: feeSummary.carryForward.fromTerm || "",
+                entries: feeSummary.carryForward.entries,
+              }
+            : null,
+        });
 
         const sortedPayments = [...paymentData].sort((a, b) => {
           const aDate = new Date(a.createdAt as any).getTime();
@@ -400,7 +443,9 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Due Fees</p>
-                  <p className="text-[10px] text-orange-500/80">Current term</p>
+                  <p className="text-[10px] text-orange-500/80">
+                    {feeSummaryInfo?.carryForward ? "Current term + carried balance" : "Current term"}
+                  </p>
                 </div>
               </div>
               {feeStatus !== "Loading" && (
@@ -413,6 +458,20 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             <p className="mt-4 text-3xl font-bold text-orange-900">
               {dueFees > 0 ? formatCurrency(dueFees) : hasLedgers ? "GHS 0.00" : "—"}
             </p>
+            {feeSummaryInfo?.carryForward && (
+              <div data-testid="carry-forward-note" className="mt-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
+                <p className="text-[11px] font-semibold text-amber-800">
+                  {feeSummaryInfo.carryForward.outstanding
+                    ? `Includes ${formatCurrency(feeSummaryInfo.carryForward.remaining)} carried over from ${feeSummaryInfo.carryForward.fromTerm}, ${feeSummaryInfo.carryForward.fromAcademicYear}`
+                    : `${formatCurrency(feeSummaryInfo.carryForward.amount)} carried over from ${feeSummaryInfo.carryForward.fromTerm}, ${feeSummaryInfo.carryForward.fromAcademicYear} - fully cleared`}
+                </p>
+                <p className="mt-0.5 text-[10px] text-amber-700/80">
+                  Total amount due {formatCurrency(feeSummaryInfo.totalDue)} (current term fees{" "}
+                  {formatCurrency(feeSummaryInfo.currentTermFees)} + carried balance{" "}
+                  {formatCurrency(feeSummaryInfo.carryForward.amount)})
+                </p>
+              </div>
+            )}
             <div className="mt-3 flex items-center justify-between">
               <p className="text-xs text-orange-600">
                 {dueFees > 0

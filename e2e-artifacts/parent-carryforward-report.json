@@ -1,0 +1,97 @@
+{
+  "success": false,
+  "error": "[G-all-terms] previous term still inspectable: expected \">= 1\", got 0",
+  "checks": [
+    {
+      "scenario": "A-V1",
+      "name": "previous term balance",
+      "expected": "GHS 200.00",
+      "actual": "GHS 200.00",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "current term fees",
+      "expected": "GHS 600.00",
+      "actual": "GHS 600.00",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "total amount due",
+      "expected": "GHS 800.00",
+      "actual": "GHS 800.00",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "payments",
+      "expected": "GHS 300.00",
+      "actual": "GHS 300.00",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "remaining balance",
+      "expected": "GHS 500.00",
+      "actual": "GHS 500.00",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "carry-forward badge",
+      "expected": "Carried over from Term 3, 2025-2026",
+      "actual": "Carried over from Term 3, 2025-2026",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "unallocated payment note",
+      "expected": "GHS 300.00 applied to the overall balance",
+      "actual": "GHS 300.00 of the payments recorded for this term was applied to the overall balance, so it is not shown against a single fee.",
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "payment history entries",
+      "expected": ">= 1",
+      "actual": 1,
+      "ok": true
+    },
+    {
+      "scenario": "A-V1",
+      "name": "portal payment shown as overall balance",
+      "expected": "Applied to overall balance",
+      "actual": "Applied to overall balance\n\nPaid against the overall balance, not a specific fee\n\nTerm 1\n\nMoMo • 10/24/2026\n\n+GHS 300.00",
+      "ok": true
+    },
+    {
+      "scenario": "G-all-terms",
+      "name": "total amount due",
+      "expected": "GHS 800.00",
+      "actual": "GHS 800.00",
+      "ok": true
+    },
+    {
+      "scenario": "G-all-terms",
+      "name": "remaining balance",
+      "expected": "GHS 500.00",
+      "actual": "GHS 500.00",
+      "ok": true
+    },
+    {
+      "scenario": "G-all-terms",
+      "name": "previous term ledger not shown as a current term debt",
+      "expected": 0,
+      "actual": 0,
+      "ok": true
+    },
+    {
+      "scenario": "G-all-terms",
+      "name": "previous term still inspectable",
+      "expected": ">= 1",
+      "actual": 0,
+      "ok": false
+    }
+  ]
+}

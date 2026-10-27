@@ -24,6 +24,17 @@
  */
 export const createSecurityLoginLogHandler = (admin) => {
   return async (req, res) => {
+    // Fail fast if Firestore is unreachable instead of hanging until the
+    // gRPC deadline (60s). Security logging is non-critical: a slow or failed
+    // write must never block a login response.
+    const withTimeout = (promise, ms, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timed out`)), ms),
+        ),
+      ]);
+
     try {
       const { status, email, errorCode, userAgent } = req.body || {};
       if (!status || !email) {
@@ -46,21 +57,33 @@ export const createSecurityLoginLogHandler = (admin) => {
         }
 
         try {
-          decodedToken = await admin.auth().verifyIdToken(tokenMatch[1]);
+          decodedToken = await withTimeout(
+            admin.auth().verifyIdToken(tokenMatch[1]),
+            8000,
+            "ID token verification",
+          );
           userId = decodedToken.uid;
 
-          const userDoc = await admin.firestore().collection("users").doc(userId).get();
+          const userDoc = await withTimeout(
+            admin.firestore().collection("users").doc(userId).get(),
+            8000,
+            "user lookup",
+          );
           if (userDoc.exists) {
             const uData = userDoc.data();
             name = uData?.fullName || null;
             role = uData?.role || null;
             if (uData?.schoolId) {
               schoolId = String(uData.schoolId);
-              const schoolSnap = await admin
-                .firestore()
-                .collection("schools")
-                .doc(String(uData.schoolId))
-                .get();
+              const schoolSnap = await withTimeout(
+                admin
+                  .firestore()
+                  .collection("schools")
+                  .doc(String(uData.schoolId))
+                  .get(),
+                8000,
+                "school lookup",
+              );
               if (schoolSnap.exists) schoolName = schoolSnap.data()?.name || null;
             }
           }
@@ -86,24 +109,29 @@ export const createSecurityLoginLogHandler = (admin) => {
           : null;
 
       const logRef = admin.firestore().collection("securityLoginLogs").doc();
-      await logRef.set({
-        userId,
-        name,
-        email: String(email).toLowerCase(),
-        role,
-        schoolId,
-        schoolName,
-        timestamp: Date.now(),
-        userAgent: sanitizedUserAgent,
-        ipAddress,
-        status,
-        errorCode: sanitizedErrorCode,
-      });
+      await withTimeout(
+        logRef.set({
+          userId,
+          name,
+          email: String(email).toLowerCase(),
+          role,
+          schoolId,
+          schoolName,
+          timestamp: Date.now(),
+          userAgent: sanitizedUserAgent,
+          ipAddress,
+          status,
+          errorCode: sanitizedErrorCode,
+        }),
+        8000,
+        "login log write",
+      );
 
       return res.json({ success: true });
     } catch (error) {
       console.error("Failed to log login event", error);
-      return res.status(500).json({ error: "Failed to log login event" });
+      // Non-critical: logging failures must not break login.
+      return res.json({ success: true, logged: false });
     }
   };
 };
