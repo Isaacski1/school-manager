@@ -3337,10 +3337,28 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
       ) {
         continue;
       }
-      paidSinceByFee.set(
-        payment.feeId,
-        (paidSinceByFee.get(payment.feeId) || 0) + payment.amountPaid,
+      // Credit the payment against the fees it actually reduced. An
+      // auto-allocated payment stores `feeId: UNALLOCATED_FEE_ID` plus an
+      // `allocations` array naming every fee it was split across, so the
+      // outstanding-balance math must read those allocations instead of the
+      // sentinel `feeId` — otherwise the credited amount is never matched to
+      // a real fee and the balance stays at the pre-payment figure.
+      const realAllocations = (payment.allocations || []).filter(
+        (a) => a.feeId !== UNALLOCATED_FEE_ID,
       );
+      if (realAllocations.length) {
+        for (const a of realAllocations) {
+          paidSinceByFee.set(
+            a.feeId,
+            (paidSinceByFee.get(a.feeId) || 0) + a.amountPaid,
+          );
+        }
+      } else {
+        paidSinceByFee.set(
+          payment.feeId,
+          (paidSinceByFee.get(payment.feeId) || 0) + payment.amountPaid,
+        );
+      }
     }
     for (const fee of ledger?.fees || []) {
       const totalDue = fee.amount;
@@ -3442,15 +3460,32 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
       (fee) => fee.feeId === paymentForm.feeId,
     );
     const fee = fees.find((item) => item.id === paymentForm.feeId);
+    // Amount credited to this specific fee. Include allocations from
+    // auto-allocated payments, which store `feeId: UNALLOCATED_FEE_ID` and
+    // list the real credited amounts in `allocations`.
     const paidSince = currentTermPayments
       .filter(
         (payment) =>
           payment.studentId === paymentForm.studentId &&
-          payment.feeId === paymentForm.feeId &&
           payment.academicYear === academicYear &&
           payment.term === term,
       )
-      .reduce((sum, payment) => sum + payment.amountPaid, 0);
+      .reduce((sum, payment) => {
+        const realAllocations = (payment.allocations || []).filter(
+          (a) => a.feeId !== UNALLOCATED_FEE_ID,
+        );
+        if (realAllocations.length) {
+          return (
+            sum +
+            realAllocations
+              .filter((a) => a.feeId === paymentForm.feeId)
+              .reduce((s, a) => s + a.amountPaid, 0)
+          );
+        }
+        return payment.feeId === paymentForm.feeId
+          ? sum + payment.amountPaid
+          : sum;
+      }, 0);
     const paidBefore = feeEntry?.openingPaidAmount || 0;
     const remainingBefore = feeEntry?.openingBalance;
     const totalDue = feeEntry?.amount ?? fee?.amount ?? 0;
