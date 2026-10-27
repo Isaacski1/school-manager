@@ -447,11 +447,32 @@ const FeesPayments: React.FC = () => {
           p.id !== payment.id,
       ),
     ];
-    for (const p of allPayments) {
-      paidSinceByFee.set(
-        p.feeId,
-        (paidSinceByFee.get(p.feeId) || 0) + p.amountPaid,
+    // Credit each payment against the fees it actually reduced. An
+    // auto-allocated payment stores `feeId: UNALLOCATED_FEE_ID` plus an
+    // `allocations` array naming every fee it was split across, so the
+    // outstanding-balance math below must read those allocations instead of
+    // the sentinel `feeId` — otherwise the credited amount is never matched
+    // to a real fee and the balance stays at the pre-payment figure.
+    const creditPayment = (p: StudentFeePayment) => {
+      const realAllocations = (p.allocations || []).filter(
+        (a) => a.feeId !== UNALLOCATED_FEE_ID,
       );
+      if (realAllocations.length) {
+        for (const a of realAllocations) {
+          paidSinceByFee.set(
+            a.feeId,
+            (paidSinceByFee.get(a.feeId) || 0) + a.amountPaid,
+          );
+        }
+      } else {
+        paidSinceByFee.set(
+          p.feeId,
+          (paidSinceByFee.get(p.feeId) || 0) + p.amountPaid,
+        );
+      }
+    };
+    for (const p of allPayments) {
+      creditPayment(p);
     }
     let outstanding = 0;
     for (const fee of ledger?.fees || []) {
