@@ -23,6 +23,7 @@
 //      a filter that only knows the visible fee ids would hide it.
 
 import { isCarryForwardFeeId } from "./carryForwardReview.js";
+import { sumDemandedAmounts } from "./ledgerFeeAssignment.js";
 import { normalizeParentFeeTerm } from "./parentFees.js";
 import { UNALLOCATED_FEE_ID } from "./feeAllocation.js";
 
@@ -88,7 +89,7 @@ export const mergeParentLedgers = (canonicalLedgers, alternateLedgers) => {
     merged.set(alt.id, {
       ...current,
       fees,
-      totalFee: fees.reduce((sum, fee) => sum + toNumber(fee?.amount), 0),
+      totalFee: sumDemandedAmounts(fees),
     });
   });
 

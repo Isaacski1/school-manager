@@ -22,6 +22,7 @@ import {
   PaymentVerificationError,
 } from "./paymentVerification.js";
 import { createSecurityLoginLogHandler } from "./securityLoginLog.js";
+import { sumDemandedAmounts } from "./services/ledgerFeeAssignment.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1403,14 +1404,10 @@ app.post("/api/admin/school-assistant/chat", authMiddleware, async (req, res) =>
         .map((paymentDoc) => paymentDoc.data() || {})
         .filter((payment) => payment.studentId);
       const summaries = scopedLedgers.map((ledger) => {
-        const totalDue = ledger.fees.reduce(
-          (sum, fee) => sum + Number(fee?.amount || 0),
-          0,
-        );
-        const openingPaid = ledger.fees.reduce(
-          (sum, fee) => sum + Number(fee?.openingPaidAmount || 0),
-          0,
-        );
+        const totalDue = sumDemandedAmounts(ledger.fees);
+        const openingPaid = ledger.fees
+          .filter((fee) => !fee?.historicalOnly)
+          .reduce((sum, fee) => sum + Number(fee?.openingPaidAmount || 0), 0);
         const recordedPaid = payments
           .filter(
             (payment) =>

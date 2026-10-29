@@ -1,4 +1,5 @@
 import admin from "firebase-admin";
+import { sumDemandedAmounts } from "../services/ledgerFeeAssignment.js";
 
 const MAX_RESULT_SIZE = 100;
 const MAX_DATE_RANGE_DAYS = 365;
@@ -270,8 +271,10 @@ export const getStudentFeeBalance = async ({ schoolId, studentId, academicYear, 
   const ledger = ledgers[0];
   const fees = Array.isArray(ledger.fees) ? ledger.fees : [];
   
-  const totalDue = fees.reduce((sum, fee) => sum + Number(fee?.amount || 0), 0);
-  const openingPaid = fees.reduce((sum, fee) => sum + Number(fee?.openingPaidAmount || 0), 0);
+  const totalDue = sumDemandedAmounts(fees);
+  const openingPaid = fees
+    .filter((fee) => !fee?.historicalOnly)
+    .reduce((sum, fee) => sum + Number(fee?.openingPaidAmount || 0), 0);
 
   const payments = [...paymentsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })), ...v2PaymentsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))];
   const recordedPaid = payments

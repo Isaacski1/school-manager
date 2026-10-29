@@ -70,6 +70,7 @@ import {
   jhsSubjects,
   getFilteredClasses,
 } from "../constants";
+import { sumDemandedAmounts } from "./ledgerFeeAssignment";
 
 type SchoolScopedPage<T> = {
   items: T[];
@@ -4590,7 +4591,7 @@ async updateStudentPayment(
     balance: number;
     status: "Unpaid" | "Part-paid" | "Paid";
   }> {
-    const totalDue = ledger.fees.reduce((sum, fee) => sum + fee.amount, 0);
+    const totalDue = sumDemandedAmounts(ledger.fees);
     const openingPaid = ledger.openingPaidAmount || 0;
     const totalPaid = payments
       .filter(

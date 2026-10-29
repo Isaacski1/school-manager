@@ -28,6 +28,7 @@ import {
   parseCarryForwardFeeId,
   sumPaidAgainstFee,
 } from "./carryForwardReview.js";
+import { sumDemandedAmounts } from "./ledgerFeeAssignment.js";
 
 /**
  * @typedef {"Term 1"|"Term 2"|"Term 3"|string} ParentFeeTermFilter
@@ -372,7 +373,7 @@ export const enrichParentFeeLedgers = (ledgers, payments, selectedTerm) => {
     const unallocatedPaid =
       unattributedOpeningPaid + Math.max(0, appliedPayments - creditedPayments);
 
-    const actualTotalDue = sumBy(allFees, "amount");
+    const actualTotalDue = sumDemandedAmounts(allFees);
     const actualTotalPaid = openingPaid + appliedPayments;
     const actualBalance = Math.max(0, actualTotalDue - actualTotalPaid);
 
@@ -477,7 +478,7 @@ const buildParentFeeState = (
 
   const currentTermFees = liveLedger
     ? (liveLedger.allFees || [])
-        .filter((fee) => !fee.isCarryForward)
+        .filter((fee) => !fee.isCarryForward && !fee.historicalOnly)
         .reduce((total, fee) => total + toNumber(fee.amount), 0)
     : 0;
 

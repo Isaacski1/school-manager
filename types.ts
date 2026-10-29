@@ -134,6 +134,10 @@ export interface FeeDefinition {
   selectedStudentIds?: string[];
   applyToAcademicYear?: string | null;
   applyToTerm?: FeeTerm | null;
+  // Phase 2 deactivation flag (additive, optional for backward compatibility).
+  // A fee with active=false must never create NEW assignments, but its
+  // existing ledger entries and payment history must remain fully available.
+  active?: boolean;
   createdAt: Date | number;
   createdBy: string;
 }
@@ -154,6 +158,28 @@ fees: Array<{
     openingBalance?: number;
     openingStatus?: "Paid" | "Part-paid" | "Unpaid";
     openingPaidDate?: string | null;
+    // Phase 1 historical snapshot fields (additive, optional for backward
+    // compatibility). These capture the fee name and amount in force at the
+    // moment this student was assigned the obligation. The live FeeDefinition
+    // is NOT historical truth; these snapshots are. They are populated on
+    // new assignments and lazily backfilled from the existing entry's own
+    // stored values on subsequent writes — never from the live definition.
+    feeNameSnapshot?: string;
+    assignedAmount?: number;
+    // Phase 2.1 historical-only marker (additive, optional for backward
+    // compatibility). An entry becomes historical-only when the underlying
+    // FeeDefinition is deactivated (active === false) or removed from the
+    // fee-definition set, meaning the fee no longer applies to this student.
+    //
+    // Historical-only entries are preserved verbatim for audit, receipt, and
+    // payment-history continuity, but are EXCLUDED from all current-term
+    // demand calculations (balances, defaulter lists, invoice totals, payment
+    // allocation, carry-forward) so they never create new demand.
+    //
+    // Rule: set by buildLedgerFeeList when an ordinary (non carry-forward)
+    // entry's feeId is no longer present in the current assignedFees list;
+    // never set on carry-forward entries (they carry real current-term demand).
+    historicalOnly?: boolean;
   }>;
   openingPaidAmount?: number;
   openingBalance?: number;

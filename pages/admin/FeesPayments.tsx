@@ -28,6 +28,7 @@ import {
 import {
   buildLedgerFeesPayload,
   buildFeeAssignmentSignature,
+  sumDemandedAmounts,
 } from "../../services/ledgerFeeAssignment";
 import {
   buildClassNameLookup,
@@ -476,6 +477,7 @@ const FeesPayments: React.FC = () => {
     }
     let outstanding = 0;
     for (const fee of ledger?.fees || []) {
+      if (fee.historicalOnly) continue;
       const totalDue = fee.amount;
       const paidBefore = fee.openingPaidAmount || 0;
       const paidSince = paidSinceByFee.get(fee.feeId) || 0;
@@ -753,6 +755,14 @@ const FeesPayments: React.FC = () => {
   });
 
   const [deletingFeeId, setDeletingFeeId] = useState<string | null>(null);
+  const [activatingFee, setActivatingFee] = useState<{
+    feeId: string;
+    action: "activate" | "deactivate";
+  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    feeId: string;
+    action: "activate" | "deactivate";
+  } | null>(null);
   const [editingFeeId, setEditingFeeId] = useState<string | null>(null);
   const [openingLedgerForm, setOpeningLedgerForm] = useState<{
     [key: string]: {
@@ -1506,6 +1516,13 @@ const handleExportReport = () => {
     },
   ) => {
     const includeScope = options?.includeScope ?? true;
+    // Phase 2 deactivation: a fee that has been deactivated must never create
+    // NEW assignments. It is still returned as ineligible (so existing ledger
+    // entries are preserved as historical records and payment attribution is
+    // kept), but it is never selected for a genuinely new assignment.
+    if (fee.active === false) {
+      return "Fee is deactivated.";
+    }
     if (includeScope) {
       const frequency = fee.feeFrequency || "per_term";
       if (frequency === "one_time") {
@@ -1702,7 +1719,7 @@ const handleExportReport = () => {
         const ledgerId = buildLedgerId(schoolId, student.id, academicYear, term);
         const existing = ledgers.find((ledger) => ledger.id === ledgerId);
         const assignedSignature = assignedFees
-          .map((fee) => `${fee.id}:${fee.amount}`)
+          .map((fee) => `${fee.id}`)
           .sort()
           .join("|");
         // Carry-forward entries are not part of the fee assignment, so they
@@ -2102,23 +2119,25 @@ const handleExportReport = () => {
           (alreadyPaidByFee.get(p.feeId) || 0) + p.amountPaid,
         );
       }
-      const outstandingFees: OutstandingFee[] = updatedLedger.fees.map(
-        (fee) => {
-          const feeDef = fees.find((f) => f.id === fee.feeId);
-          const dueDate = feeDef?.dueDate
-            ? new Date(feeDef.dueDate).getTime()
-            : undefined;
-          return {
-            feeId: fee.feeId,
-            feeName: fee.feeName,
-            amount: fee.amount,
-            priority: feeDef?.priority,
-            dueDate,
-            openingPaidAmount: fee.openingPaidAmount,
-            alreadyPaid: alreadyPaidByFee.get(fee.feeId) || 0,
-          };
-        },
-      );
+      const outstandingFees: OutstandingFee[] = updatedLedger.fees
+        .filter((fee) => !fee.historicalOnly)
+        .map(
+          (fee) => {
+            const feeDef = fees.find((f) => f.id === fee.feeId);
+            const dueDate = feeDef?.dueDate
+              ? new Date(feeDef.dueDate).getTime()
+              : undefined;
+            return {
+              feeId: fee.feeId,
+              feeName: fee.feeName,
+              amount: fee.amount,
+              priority: feeDef?.priority,
+              dueDate,
+              openingPaidAmount: fee.openingPaidAmount,
+              alreadyPaid: alreadyPaidByFee.get(fee.feeId) || 0,
+            };
+          },
+        );
       const strategy =
         (financeSettings?.allocationStrategy as
           | "priority"
@@ -2412,6 +2431,47 @@ const handleExportReport = () => {
     setDeletingFeeId(feeId);
     try {
       const feeToDelete = fees.find((fee) => fee.id === feeId);
+
+      // Phase 2 deactivation guard. If the fee already has ledger or payment
+      // history, deleting it would orphan historical obligations and payment
+      // attribution. In that case DEACTIVATE the definition instead: set
+      // active=false so no new assignments can be created, while every existing
+      // ledger entry and payment record remains fully available. The entry is
+      // no longer stripped from ledgers, so the historical debt survives.
+      const hasLedgerHistory = ledgers.some((ledger) =>
+        ledger.fees.some((fee) => fee.feeId === feeId),
+      );
+      const hasPaymentHistory = payments.some(
+        (payment) => payment.feeId === feeId,
+      );
+
+      if (feeToDelete && (hasLedgerHistory || hasPaymentHistory)) {
+        await db.saveFee({
+          ...feeToDelete,
+          active: false,
+        });
+        showToast(
+          "Fee has existing history, so it was deactivated instead of deleted.",
+          { type: "warning" },
+        );
+        await logActivity({
+          schoolId,
+          actorUid: user?.id || null,
+          actorRole: user?.role || null,
+          eventType: "fee_deactivated",
+          entityId: feeId,
+          meta: {
+            status: "success",
+            module: "Fees & Payments",
+            feeName: feeToDelete?.feeName || "",
+            actorName: user?.fullName || "",
+            reason: "has_ledger_or_payment_history",
+          },
+        });
+        await fetchData();
+        return;
+      }
+
       await db.deleteFee(feeId, schoolId);
 
       if (feeToDelete) {
@@ -2459,6 +2519,129 @@ const handleExportReport = () => {
       });
     } finally {
       setDeletingFeeId(null);
+    }
+  };
+
+  const handleActivateFee = async (feeId: string) => {
+    if (!schoolId || !user?.id || !feeId) return;
+    setActivatingFee({ feeId, action: "activate" });
+    try {
+      const feeToActivate = fees.find((fee) => fee.id === feeId);
+      if (!feeToActivate) return;
+
+      const payload: FeeDefinition = {
+        ...feeToActivate,
+        active: true,
+        updatedAt: Date.now(),
+      } as FeeDefinition & { updatedAt?: number };
+
+      await db.saveFee(payload);
+
+      const impactedStudents = students.filter((student) => {
+        return resolveFeeAssignments(student, [payload]).length > 0;
+      });
+      const nextFees = fees.map((fee) =>
+        fee.id === payload.id ? payload : fee,
+      );
+      setFees(nextFees);
+      await ensureLedgersBulk(impactedStudents, nextFees);
+
+      showToast(`"${feeToActivate.feeName}" has been activated.`, { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user.id,
+        actorRole: user.role,
+        eventType: "fee_activated",
+        entityId: payload.id,
+        meta: {
+          status: "success",
+          module: "Fees & Payments",
+          feeName: payload.feeName,
+          amount: payload.amount,
+          appliesTo: payload.appliesTo,
+          classId: payload.classId || "",
+          actorName: user.fullName || "",
+        },
+      });
+      await fetchData();
+    } catch (error) {
+      console.error("Failed to activate fee", error);
+      showToast("Failed to activate fee.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "fee_activate_failed",
+        entityId: feeId,
+        meta: {
+          status: "failed",
+          module: "Fees & Payments",
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    } finally {
+      setActivatingFee(null);
+    }
+  };
+
+  const handleDeactivateFee = async (feeId: string) => {
+    if (!schoolId || !user?.id || !feeId) return;
+    setActivatingFee({ feeId, action: "deactivate" });
+    try {
+      const feeToDeactivate = fees.find((fee) => fee.id === feeId);
+      if (!feeToDeactivate) return;
+
+      const payload: FeeDefinition = {
+        ...feeToDeactivate,
+        active: false,
+        updatedAt: Date.now(),
+      } as FeeDefinition & { updatedAt?: number };
+
+      await db.saveFee(payload);
+
+      const nextFees = fees.map((fee) =>
+        fee.id === payload.id ? payload : fee,
+      );
+      setFees(nextFees);
+
+      showToast(`"${feeToDeactivate.feeName}" has been deactivated.`, { type: "success" });
+      await logActivity({
+        schoolId,
+        actorUid: user.id,
+        actorRole: user.role,
+        eventType: "fee_deactivated",
+        entityId: feeToDeactivate.id,
+        meta: {
+          status: "success",
+          module: "Fees & Payments",
+          feeName: feeToDeactivate.feeName,
+          amount: feeToDeactivate.amount,
+          appliesTo: feeToDeactivate.appliesTo,
+          classId: feeToDeactivate.classId || "",
+          actorName: user.fullName || "",
+          reason: "manual_deactivation",
+        },
+      });
+      await fetchData();
+    } catch (error) {
+      console.error("Failed to deactivate fee", error);
+      showToast("Failed to deactivate fee.", { type: "error" });
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "fee_deactivate_failed",
+        entityId: feeId,
+        meta: {
+          status: "failed",
+          module: "Fees & Payments",
+          error: (error as any)?.message || "Unknown error",
+          actorName: user?.fullName || "",
+        },
+      });
+    } finally {
+      setActivatingFee(null);
     }
   };
 
@@ -2556,11 +2739,10 @@ const handleExportReport = () => {
           p.academicYear === academicYear &&
           p.term === term,
       );
-      const totalDue = ledger.fees.reduce((sum, fee) => sum + fee.amount, 0);
-      const openingPaid = ledger.fees.reduce(
-        (sum, fee) => sum + (fee.openingPaidAmount || 0),
-        0,
-      );
+      const totalDue = sumDemandedAmounts(ledger.fees);
+      const openingPaid = ledger.fees
+        .filter((fee) => !fee.historicalOnly)
+        .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
       const totalPaidSinceOnboarding = ledgerPayments.reduce(
         (sum, payment) => sum + payment.amountPaid,
         0,
@@ -2741,11 +2923,10 @@ const handleExportReport = () => {
   const previousTermMetrics = useMemo(() => {
     const totals = lastTermLedgers.reduce(
       (acc, ledger) => {
-        const totalDue = ledger.fees.reduce((sum, fee) => sum + fee.amount, 0);
-        const openingPaid = ledger.fees.reduce(
-          (sum, fee) => sum + (fee.openingPaidAmount || 0),
-          0,
-        );
+        const totalDue = sumDemandedAmounts(ledger.fees);
+        const openingPaid = ledger.fees
+          .filter((fee) => !fee.historicalOnly)
+          .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
         const termPayments = lastTermPayments.filter(
           (payment) => payment.studentId === ledger.studentId,
         );
@@ -2906,7 +3087,7 @@ const handleExportReport = () => {
   ) => {
     const totalDue = feeMatch?.amount
       ? feeMatch.amount
-      : ledger.fees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
+      : sumDemandedAmounts(ledger.fees);
     const paid = Number(form?.openingPaidAmount || 0);
     const recorded =
       onboardingPaymentTotals.get(
@@ -2998,19 +3179,20 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
           openingPaidDate: form.openingPaidDate || null,
         };
       });
-      const totalDue = updatedFees.reduce((sum, fee) => sum + fee.amount, 0);
-      const openingPaidTotal = updatedFees.reduce(
-        (sum, fee) => sum + (fee.openingPaidAmount || 0),
-        0,
-      );
-      const openingBalanceTotal = updatedFees.reduce((sum, fee) => {
-        const paid = fee.openingPaidAmount || 0;
-        const balanceValue =
-          fee.openingBalance !== undefined && fee.openingBalance !== null
-            ? fee.openingBalance
-            : Math.max(0, fee.amount - paid);
-        return sum + balanceValue;
-      }, 0);
+      const totalDue = sumDemandedAmounts(updatedFees);
+      const openingPaidTotal = updatedFees
+        .filter((fee) => !fee.historicalOnly)
+        .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
+      const openingBalanceTotal = updatedFees
+        .filter((fee) => !fee.historicalOnly)
+        .reduce((sum, fee) => {
+          const paid = fee.openingPaidAmount || 0;
+          const balanceValue =
+            fee.openingBalance !== undefined && fee.openingBalance !== null
+              ? fee.openingBalance
+              : Math.max(0, fee.amount - paid);
+          return sum + balanceValue;
+        }, 0);
       const openingStatusDerived =
         openingPaidTotal <= 0
           ? "Unpaid"
@@ -3053,8 +3235,8 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
     const derivedOpeningBalance = Math.max(
       0,
       (feeId
-        ? (ledger.fees.find((f) => f.feeId === feeId)?.amount || 0)
-        : ledger.fees.reduce((sum, fee) => sum + (fee.amount || 0), 0)) -
+        ? (ledger.fees.find((f) => f.feeId === feeId && !f.historicalOnly)?.amount || 0)
+        : sumDemandedAmounts(ledger.fees)) -
         openingPaidAmount -
         recordedPaidForForm,
     ).toFixed(2);
@@ -3090,19 +3272,20 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                 openingPaidDate: null,
               },
         );
-    const totalDue = updatedFees.reduce((sum, fee) => sum + fee.amount, 0);
-    const openingPaidTotal = updatedFees.reduce(
-      (sum, fee) => sum + (fee.openingPaidAmount || 0),
-      0,
-    );
-    const openingBalanceTotal = updatedFees.reduce((sum, fee) => {
-      const paid = fee.openingPaidAmount || 0;
-      const balanceValue =
-        fee.openingBalance !== undefined && fee.openingBalance !== null
-          ? fee.openingBalance
-          : Math.max(0, fee.amount - paid);
-      return sum + balanceValue;
-    }, 0);
+    const totalDue = sumDemandedAmounts(updatedFees);
+    const openingPaidTotal = updatedFees
+      .filter((fee) => !fee.historicalOnly)
+      .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
+    const openingBalanceTotal = updatedFees
+      .filter((fee) => !fee.historicalOnly)
+      .reduce((sum, fee) => {
+        const paid = fee.openingPaidAmount || 0;
+        const balanceValue =
+          fee.openingBalance !== undefined && fee.openingBalance !== null
+            ? fee.openingBalance
+            : Math.max(0, fee.amount - paid);
+        return sum + balanceValue;
+      }, 0);
     const openingStatusDerived =
       openingPaidTotal <= 0
         ? "Unpaid"
@@ -3361,6 +3544,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
       }
     }
     for (const fee of ledger?.fees || []) {
+      if (fee.historicalOnly) continue;
       const totalDue = fee.amount;
       const paidBefore = fee.openingPaidAmount || 0;
       const paidSince = paidSinceByFee.get(fee.feeId) || 0;
@@ -3489,8 +3673,10 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
     const paidBefore = feeEntry?.openingPaidAmount || 0;
     const remainingBefore = feeEntry?.openingBalance;
     const totalDue = feeEntry?.amount ?? fee?.amount ?? 0;
-    const remaining =
-      remainingBefore !== undefined && remainingBefore !== null
+    // Historical-only fees are not demanded; remaining is always 0.
+    const remaining = feeEntry?.historicalOnly
+      ? 0
+      : remainingBefore !== undefined && remainingBefore !== null
         ? Math.max(0, remainingBefore - paidSince)
         : Math.max(0, totalDue - paidBefore - paidSince);
     const totalPaid = paidBefore + paidSince;
@@ -4303,7 +4489,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                               onMouseLeave={() => setHoveredWeekIndex(null)}
                               className="rounded-[22px] border border-white/80 bg-white/86 p-4 text-xs text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                             >
-                              <div className="flex items-start justify-between gap-3">
+<div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
                                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
                                     {segment.label}
@@ -5324,18 +5510,18 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                   )}
                 </div>
               </div>
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {fees.length === 0 ? (
                   <p className="text-sm text-slate-400">No fees created yet.</p>
                 ) : (
                   fees.map((fee) => (
                     <div
                       key={fee.id}
-                      className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white/80 p-4 shadow-sm transition hover:shadow-md"
+                      className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white/80 p-3 shadow-sm transition hover:shadow-md sm:p-4"
                     >
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.08),_transparent_45%)]" />
                       <div className="relative">
-                        <div className="flex items-start justify-between gap-3">
+<div className="flex items-start justify-between gap-2">
                           <div>
                             <p className="text-sm font-semibold text-slate-900">
                               {fee.feeName}
@@ -5357,9 +5543,20 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                                       : "All students") || "All students"}
                             </p>
                           </div>
-                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                            {formatMoney(fee.amount)}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:px-2 sm:py-0.5 sm:text-xs ${
+                                fee.active === false
+                                  ? "bg-rose-50 text-rose-700 border border-rose-100"
+                                  : "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                              }`}
+                            >
+                              {fee.active === false ? "Deactivated" : "Active"}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 sm:px-3 sm:py-1 sm:text-xs">
+                              {formatMoney(fee.amount)}
+                            </span>
+                          </div>
                         </div>
 
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
@@ -5399,22 +5596,56 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                           </div>
                         )}
 
-                        <div className="mt-4 flex items-center justify-end gap-2">
+                        <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
+                          {fee.active === false ? (
+                            <>
+                              <button
+                                onClick={() => setConfirmAction({ feeId: fee.id, action: "activate" })}
+                                disabled={activatingFee?.feeId === fee.id}
+                                className="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-70 sm:px-3 sm:py-1 sm:text-xs"
+                              >
+                                <Unlock size={14} /> Activate
+                              </button>
+                              <button
+                                disabled
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-400 cursor-not-allowed opacity-50 sm:px-3 sm:py-1 sm:text-xs"
+                              >
+                                <Lock size={14} /> Deactivate
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                disabled
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-400 cursor-not-allowed opacity-50 sm:px-3 sm:py-1 sm:text-xs"
+                              >
+                                <Unlock size={14} /> Activate
+                              </button>
+                              <button
+                                onClick={() => setConfirmAction({ feeId: fee.id, action: "deactivate" })}
+                                disabled={activatingFee?.feeId === fee.id}
+                                className="inline-flex items-center gap-1 rounded-full border border-rose-100 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-70 sm:px-3 sm:py-1 sm:text-xs"
+                              >
+                                <Lock size={14} /> Deactivate
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => handleEditFee(fee)}
-                            className="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
+                            className="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 sm:px-3 sm:py-1 sm:text-xs"
                           >
                             <FilePenLine size={14} /> Edit
                           </button>
                           <button
                             onClick={() => handleDeleteFee(fee.id)}
                             disabled={deletingFeeId === fee.id}
-                            className="inline-flex items-center gap-1 rounded-full border border-rose-100 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
+                            className="inline-flex items-center gap-1 rounded-full border border-rose-100 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-70 sm:px-3 sm:py-1 sm:text-xs"
                           >
                             {deletingFeeId === fee.id ? (
                               <span className="flex items-center gap-2">
                                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-rose-400 border-t-transparent" />
-                                Deleting...
+                                <span className="hidden sm:inline">Deleting...</span>
+                                <span className="sm:hidden">...</span>
                               </span>
                             ) : (
                               <>
@@ -5427,9 +5658,120 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                     </div>
                   ))
                 )}
-              </div>
+</div>
             </div>
 
+            {/* Activate/Deactivate Confirmation Modal */}
+            {confirmAction && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200">
+                  <div
+                    className={`absolute inset-0 bg-gradient-to-br ${
+                      confirmAction.action === "activate"
+                        ? "from-emerald-500 to-emerald-600"
+                        : "from-rose-500 to-rose-600"
+                    } opacity-10`}
+                  />
+                  <div className="relative p-6">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`flex h-12 w-12 items-center justify-center rounded-full ${
+                          confirmAction.action === "activate"
+                            ? "bg-emerald-100 text-emerald-600"
+                            : "bg-rose-100 text-rose-600"
+                        }`}
+                      >
+                        {confirmAction.action === "activate" ? (
+                          <Unlock size={24} />
+                        ) : (
+                          <Lock size={24} />
+                        )}
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">
+                          {confirmAction.action === "activate" ? "Activate Fee" : "Deactivate Fee"}
+                        </h3>
+                        <p className="text-sm text-slate-500">
+                          {confirmAction.action === "activate"
+                            ? "This fee will be available for assignment"
+                            : "This fee will be removed from current demand"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-xl bg-slate-50 p-4">
+                      <p className="text-sm text-slate-600">
+                        {confirmAction.action === "activate" ? (
+                          <>
+                            Activate{" "}
+                            <span className="font-semibold text-slate-900">
+                              "{fees.find((f) => f.id === confirmAction.feeId)?.feeName}"
+                            </span>{" "}
+                            ? This will allow the fee to be assigned to eligible
+                            students and included in current fee demand where
+                            appropriate.
+                          </>
+                        ) : (
+                          <>
+                            Deactivate{" "}
+                            <span className="font-semibold text-slate-900">
+                              "{fees.find((f) => f.id === confirmAction.feeId)?.feeName}"
+                            </span>{" "}
+                            ? This will stop the fee from being assigned to new
+                            students and remove it from current fee demand.
+                            Existing ledger entries and payment history will be
+                            preserved as historical records.
+                          </>
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="mt-5 flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => setConfirmAction(null)}
+                        disabled={activatingFee?.feeId === confirmAction.feeId}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <X size={16} /> Cancel
+                      </button>
+                      <button
+                        onClick={() => {
+                          const feeId = confirmAction.feeId;
+                          const action = confirmAction.action;
+                          setConfirmAction(null);
+                          if (action === "activate") {
+                            void handleActivateFee(feeId);
+                          } else {
+                            void handleDeactivateFee(feeId);
+                          }
+                        }}
+                        disabled={activatingFee?.feeId === confirmAction.feeId}
+                        className={`inline-flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-50 ${
+                          confirmAction.action === "activate"
+                            ? "bg-emerald-600 hover:bg-emerald-700"
+                            : "bg-rose-600 hover:bg-rose-700"
+                        }`}
+                      >
+                        {activatingFee?.feeId === confirmAction.feeId ? (
+                          <span className="flex items-center gap-2">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            Processing...
+                          </span>
+                        ) : confirmAction.action === "activate" ? (
+                          <>
+                            <Unlock size={16} /> Activate
+                          </>
+                        ) : (
+                          <>
+                            <Lock size={16} /> Deactivate
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div
               ref={recordPaymentRef}
@@ -6880,12 +7222,9 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                               ledger.id,
                               feeMatch?.feeId,
                             );
-                            const totalDueForSelection = feeMatch
-                              ? feeMatch.amount
-                              : ledger.fees.reduce(
-                                  (sum, fee) => sum + fee.amount,
-                                  0,
-                                );
+const totalDueForSelection = feeMatch
+      ? feeMatch.amount
+      : sumDemandedAmounts(ledger.fees);
                             const openingPaidForSelection = Number(
                               form.openingPaidAmount || 0,
                             );

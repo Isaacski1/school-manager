@@ -3,6 +3,7 @@
 // and safe to import from anywhere.
 
 import { UNALLOCATED_FEE_ID } from "./feeAllocation.js";
+import { sumDemandedAmounts } from "./ledgerFeeAssignment.js";
 
 /**
  * Prefix for carry-forward fee IDs to distinguish them from regular fees.
@@ -78,11 +79,15 @@ export function isCarryForwardFee(feeId) {
 export function computeCarryForwardBalance({ ledger, payments }) {
   if (!ledger) return 0;
 
-  // Total fee amount from the ledger (sum of all fee amounts)
-  const totalDue = ledger.fees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+  // Total fee amount from the ledger, EXCLUDING historical-only entries.
+  // Historical-only entries represent deactivated fees that must not be
+  // carried forward as new-term demand.
+  const totalDue = sumDemandedAmounts(ledger.fees);
 
-  // Total opening payments (sum of openingPaidAmount across all fees)
-  const openingPaid = ledger.fees.reduce((sum, fee) => sum + (Number(fee.openingPaidAmount) || 0), 0);
+  // Total opening payments, EXCLUDING historical-only entries.
+  const openingPaid = ledger.fees
+    .filter((fee) => !fee?.historicalOnly)
+    .reduce((sum, fee) => sum + (Number(fee.openingPaidAmount) || 0), 0);
 
   // Filter payments to only those made during the term by this student (excluding opening payments)
   const termPayments = payments.filter(p =>
@@ -93,9 +98,7 @@ export function computeCarryForwardBalance({ ledger, payments }) {
     p.isOpeningPayment !== true
   );
 
-  // Build a map of feeId -> amount paid from payments
-  // For payments with stored allocations, credit each allocation to its fee
-  // For payments without allocations, credit the full amount to the feeId
+  // Build a map of feeId -> amount paid from payments, EXCLUDING historical-only fees.
   const creditedByFee = new Map();
   for (const payment of termPayments) {
     if (
@@ -107,19 +110,25 @@ export function computeCarryForwardBalance({ ledger, payments }) {
       for (const alloc of payment.allocations) {
         if (!alloc) continue;
         if (alloc.feeId === UNALLOCATED_FEE_ID) continue; // overpayment, handled separately
+        // Skip allocations to historical-only fees
+        const feeEntry = ledger.fees?.find(f => f.feeId === alloc.feeId);
+        if (feeEntry?.historicalOnly) continue;
         const feeId = alloc.feeId;
         const amountPaid = Number(alloc.amountPaid) || 0;
         creditedByFee.set(feeId, (creditedByFee.get(feeId) || 0) + amountPaid);
       }
     } else {
       // Payment without stored allocations — credit the full amount to its feeId
+      // Skip if the fee is historical-only
+      const feeEntry = ledger.fees?.find(f => f.feeId === payment.feeId);
+      if (feeEntry?.historicalOnly) continue;
       const feeId = payment.feeId;
       const amountPaid = Number(payment.amountPaid) || 0;
       creditedByFee.set(feeId, (creditedByFee.get(feeId) || 0) + amountPaid);
     }
   }
 
-  // Sum all credited amounts across all fees
+  // Sum all credited amounts across all non-historical-only fees
   let totalCredited = 0;
   for (const amount of creditedByFee.values()) {
     totalCredited += amount;

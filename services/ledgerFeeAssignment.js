@@ -35,50 +35,90 @@ export const collectCarryForwardFees = (existingFees) =>
  * Rebuild the fee list of a student ledger from the current term's fee
  * assignments.
  *
- * Ordinary fee entries are rebuilt exactly as before: a fee definition that is
- * assigned produces a fresh entry (carrying over its opening paid/balance/
- * status), and a fee that is no longer assigned is dropped.
+ * Phase 2 historical-freezing semantics. The rebuilt list is a MERGE, not a
+ * regeneration:
  *
- * Carry-forward entries are preserved, because they represent a balance
- * carried over from the previous term and are not fee definitions. They are
- * de-duplicated by their deterministic fee ID so that repeated assignment can
- * never create a duplicate.
+ *   - An existing assignment (same `feeId` within the ledger's academic year and
+ *     term) is PRESERVED VERBATIM. Its historical `feeName`, `amount`,
+ *     `feeNameSnapshot` and `assignedAmount` are frozen and never replaced by
+ *     the current live FeeDefinition. Only opening paid/balance/status are
+ *     carried over, as before.
+ *   - A genuinely new assignment (fee currently applicable, no matching entry)
+ *     is CREATED from the current definition.
+ *   - Existing ordinary entries that are no longer returned by the assignment
+ *     resolver (scope narrowed, fee deactivated, fee no longer applies to this
+ *     student's class) are PRESERVED as historical records. Their obligation
+ *     and payment attribution survive; they are not silently erased.
+ *   - Carry-forward entries are preserved unchanged and never matched against
+ *     incoming fee definitions.
+ *
+ * Matching is by `feeId` alone because the ledger document is already scoped to
+ * one `(schoolId, studentId, academicYear, term)` by `buildLedgerId`, so a
+ * `feeId` match inside it is unambiguous.
  *
  * @param {Object} params
  * @param {Array<{id:string, feeName:string, amount:number}>} params.assignedFees -
  *   The fee definitions currently assigned to the student
  * @param {Array<Object>} params.existingFees - The ledger's current fee entries
- * @returns {Array<Object>} The rebuilt fee list
+ * @returns {Array<Object>} The merged fee list
  */
 export const buildLedgerFeeList = ({
   assignedFees = [],
   existingFees = [],
 } = {}) => {
   const previousFees = existingFees || [];
+  // Ordinary entries only; carry-forward entries are handled separately and
+  // must never be matched against incoming fee definitions.
+  const previousOrdinaryFees = previousFees.filter(
+    (fee) => !isCarryForwardFeeEntry(fee),
+  );
 
-  const feesList = assignedFees.map((fee) => {
-    const previous = previousFees.find((item) => item.feeId === fee.id);
-    const feeEntry = {
-      feeId: fee.id,
-      feeName: fee.feeName,
-      amount: fee.amount,
-    };
-    if (previous?.openingPaidAmount !== undefined) {
-      feeEntry.openingPaidAmount = previous.openingPaidAmount;
-    }
-    if (previous?.openingBalance !== undefined) {
-      feeEntry.openingBalance = previous.openingBalance;
-    }
-    if (previous?.openingStatus !== undefined) {
-      feeEntry.openingStatus = previous.openingStatus;
-    }
-    return feeEntry;
-  });
+  const feesList = [];
+  const seenFeeIds = new Set();
 
-  const seenFeeIds = new Set(feesList.map((fee) => fee.feeId));
+  for (const fee of assignedFees) {
+    const previous = previousOrdinaryFees.find((item) => item.feeId === fee.id);
+    if (previous) {
+      // EXISTING assignment. Freeze the historical obligation: the assigned
+      // amount, fee name and Phase 1 snapshots come from the stored entry,
+      // never from the live FeeDefinition. Only genuinely new assignments use
+      // the current definition. Opening paid/balance/status are carried over
+      // from the stored entry as before.
+      feesList.push({
+        ...previous,
+        historicalOnly: false,
+        feeNameSnapshot: previous.feeNameSnapshot ?? previous.feeName,
+        assignedAmount: previous.assignedAmount ?? previous.amount,
+      });
+    } else {
+      // GENUINELY NEW assignment: use the current applicable definition.
+      feesList.push({
+        feeId: fee.id,
+        feeName: fee.feeName,
+        amount: fee.amount,
+        feeNameSnapshot: fee.feeName,
+        assignedAmount: fee.amount,
+      });
+    }
+    seenFeeIds.add(fee.id);
+  }
+
+  // Preserve existing ordinary entries that are no longer returned by the
+  // assignment resolver (fee scope narrowed, fee deactivated, or fee no longer
+  // applies to this student's class). Their historical obligation and payment
+  // attribution survive; they are marked historicalOnly so demand-calculating
+  // consumers can exclude them from current balances and payment allocation.
+  for (const previousFee of previousOrdinaryFees) {
+    if (seenFeeIds.has(previousFee.feeId)) continue;
+    feesList.push({ ...previousFee, historicalOnly: true });
+    seenFeeIds.add(previousFee.feeId);
+  }
+
+  // Carry-forward entries are preserved unchanged and never matched against
+  // incoming fee definitions.
   for (const carryForwardFee of collectCarryForwardFees(previousFees)) {
     if (seenFeeIds.has(carryForwardFee.feeId)) continue;
-    feesList.push({ ...carryForwardFee });
+    feesList.push({ ...carryForwardFee, historicalOnly: false });
     seenFeeIds.add(carryForwardFee.feeId);
   }
 
@@ -89,13 +129,21 @@ export const buildLedgerFeeList = ({
  * Build the fee-derived fields of a student ledger from the current term's
  * fee assignments, preserving any carry-forward entries.
  *
+ * Phase 2: `buildLedgerFeeList` now MERGES rather than regenerates, so the
+ * returned `fees` carry frozen historical `amount`/`feeName`/snapshots for
+ * existing assignments and only genuinely new assignments use the current
+ * definition. `totalFee` is therefore the ledger's total obligation including
+ * preserved historical-only entries; it is no longer silently rewritten by a
+ * live fee edit.
+ *
  * @param {Object} params
  * @param {Array<Object>} params.assignedFees - Assigned fee definitions
  * @param {Array<Object>} params.existingFees - The ledger's current fee entries
  * @returns {{fees: Array<{feeId: string, feeName: string, amount: number,
  *   openingPaidAmount?: number, openingBalance?: number,
  *   openingStatus?: "Paid" | "Part-paid" | "Unpaid",
- *   openingPaidDate?: string | null}>, totalFee: number,
+ *   openingPaidDate?: string | null,
+ *   feeNameSnapshot?: string, assignedAmount?: number}>, totalFee: number,
  *   openingPaidAmount: number, openingBalance: number,
  *   openingStatus: "Paid" | "Part-paid" | "Unpaid"}}
  */
@@ -138,10 +186,21 @@ export const buildLedgerFeesPayload = ({
 };
 
 /**
- * Signature of the current-term fee assignments held by a ledger.
+ * Signature of the ordinary (non carry-forward) fee assignments held by a
+ * ledger.
  *
- * Carry-forward entries are excluded so that the automatic ledger sync is not
- * triggered by the presence of a carry-forward entry.
+ * Phase 2: the signature is IDENTITY-BASED (`feeId` only), not
+ * `feeId:amount`. Under the historical-freezing model an existing assignment's
+ * `amount` is frozen and must never be rewritten by a live fee edit, so
+ * keying the signature on `amount` would make every fee amount/name edit look
+ * like a pending assignment change and trigger a spurious, non-terminating
+ * ledger sync.
+ *
+ * Identity-based signatures are stable across amount, name and scope edits,
+ * and only change when the SET of ordinary fee assignments actually differs —
+ * i.e. when a genuinely new fee must be assigned or an assignment is genuinely
+ * removed. Carry-forward entries are excluded so they never keep triggering a
+ * sync.
  *
  * @param {Array<Object>} fees - The ledger's fee entries
  * @returns {string}
@@ -149,6 +208,76 @@ export const buildLedgerFeesPayload = ({
 export const buildFeeAssignmentSignature = (fees) =>
   (fees || [])
     .filter((fee) => !isCarryForwardFeeEntry(fee))
-    .map((fee) => `${fee.feeId}:${fee.amount}`)
+    .map((fee) => `${fee.feeId}`)
     .sort()
     .join("|");
+
+/**
+ * Resolve the historically-assigned amount for a ledger fee entry.
+ *
+ * Phase 1 read-compatibility helper. Prefers the Phase 1 snapshot
+ * `assignedAmount` when present, falling back to the live `amount` for
+ * entries created before the snapshot fields existed. Never consults the live
+ * FeeDefinition, so the result is stable regardless of later fee edits.
+ *
+ * @param {Object} fee - A ledger fee entry
+ * @returns {number}
+ */
+export const resolveAssignedAmount = (fee) => {
+  if (!fee) return 0;
+  if (fee.assignedAmount !== undefined && fee.assignedAmount !== null) {
+    return Number(fee.assignedAmount) || 0;
+  }
+  return Number(fee.amount) || 0;
+};
+
+/**
+ * Resolve the historically-assigned fee name for a ledger fee entry.
+ *
+ * Phase 1 read-compatibility helper. Prefers the Phase 1 snapshot
+ * `feeNameSnapshot` when present, falling back to the live `feeName` for
+ * entries created before the snapshot fields existed.
+ *
+ * @param {Object} fee - A ledger fee entry
+ * @returns {string}
+ */
+export const resolveAssignedFeeName = (fee) => {
+  if (!fee) return "";
+  if (fee.feeNameSnapshot !== undefined && fee.feeNameSnapshot !== null) {
+    return String(fee.feeNameSnapshot);
+  }
+  return String(fee.feeName || "");
+};
+
+/**
+ * True when a ledger fee entry carries a Phase 1 historical snapshot.
+ *
+ * @param {Object} fee - A ledger fee entry
+ * @returns {boolean}
+ */
+export const hasHistoricalSnapshot = (fee) =>
+  Boolean(fee && (fee.assignedAmount !== undefined || fee.feeNameSnapshot !== undefined));
+
+/**
+ * Sum the amounts of fees that are NOT historical-only.
+ *
+ * Historical-only entries represent obligations that have been deactivated
+ * and must NOT be counted toward current-term demand (balances, invoices,
+ * defaulter lists, payment allocation, carry-forward). This helper is the
+ * single source of truth for "current demand" totals.
+ *
+ * @param {Array<Object>} fees - Ledger fee entries
+ * @returns {number} Sum of amounts for non-historical-only fees
+ */
+export const sumDemandedAmounts = (fees = []) =>
+  fees.reduce((sum, fee) => sum + (fee?.historicalOnly ? 0 : Number(fee?.amount || 0)), 0);
+
+/**
+ * Filter out historical-only entries, returning only fees that represent
+ * current-term demand.
+ *
+ * @param {Array<Object>} fees - Ledger fee entries
+ * @returns {Array<Object>} Non-historical-only fee entries
+ */
+export const filterDemandedFees = (fees = []) =>
+  (fees || []).filter((fee) => !fee?.historicalOnly);

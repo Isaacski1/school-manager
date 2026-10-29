@@ -29,6 +29,9 @@ export interface OutstandingFee {
   dueDate?: number;
   openingPaidAmount?: number;
   alreadyPaid: number;
+  /** True when the underlying FeeDefinition is deactivated; must never be
+   * included in current payment allocation. */
+  historicalOnly?: boolean;
 }
 
 /**
@@ -85,6 +88,8 @@ export function allocate(
 
   for (const fee of ordered) {
     if (remaining <= 0) break;
+    // Defensive: never allocate payments to historical-only fees.
+    if (fee?.historicalOnly) continue;
     const owed = Math.max(
       0,
       fee.amount - fee.alreadyPaid - (fee.openingPaidAmount || 0),
