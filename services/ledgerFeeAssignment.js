@@ -35,14 +35,15 @@ export const collectCarryForwardFees = (existingFees) =>
  * Rebuild the fee list of a student ledger from the current term's fee
  * assignments.
  *
- * Phase 2 historical-freezing semantics. The rebuilt list is a MERGE, not a
- * regeneration:
+ * The rebuilt list is a MERGE, not a regeneration:
  *
  *   - An existing assignment (same `feeId` within the ledger's academic year and
- *     term) is PRESERVED VERBATIM. Its historical `feeName`, `amount`,
- *     `feeNameSnapshot` and `assignedAmount` are frozen and never replaced by
- *     the current live FeeDefinition. Only opening paid/balance/status are
- *     carried over, as before.
+ *     term) is UPDATED from the current live FeeDefinition: the `feeName`,
+ *     `feeNameSnapshot`, `amount` and `assignedAmount` are taken from the live
+ *     definition so admin edits are reflected on the student ledger card. The
+ *     `openingPaidAmount` (the immutable record of money already collected) is
+ *     preserved verbatim — payments are never rewritten. `openingBalance` and
+ *     `openingStatus` are omitted so buildLedgerFeesPayload recomputes them.
  *   - A genuinely new assignment (fee currently applicable, no matching entry)
  *     is CREATED from the current definition.
  *   - Existing ordinary entries that are no longer returned by the assignment
@@ -79,16 +80,20 @@ export const buildLedgerFeeList = ({
   for (const fee of assignedFees) {
     const previous = previousOrdinaryFees.find((item) => item.feeId === fee.id);
     if (previous) {
-      // EXISTING assignment. Freeze the historical obligation: the assigned
-      // amount, fee name and Phase 1 snapshots come from the stored entry,
-      // never from the live FeeDefinition. Only genuinely new assignments use
-      // the current definition. Opening paid/balance/status are carried over
-      // from the stored entry as before.
+      // EXISTING assignment. Propagate the live FeeDefinition's name and amount
+      // so admin edits are reflected on the student ledger card. The opening
+      // paid amount is the immutable record of money already collected and is
+      // preserved verbatim — payments are never rewritten. openingBalance and
+      // openingStatus are omitted so buildLedgerFeesPayload recomputes them
+      // from the live amount and the preserved paid amount.
+      const { openingBalance, openingStatus, ...rest } = previous;
       feesList.push({
-        ...previous,
+        ...rest,
+        feeName: fee.feeName,
+        feeNameSnapshot: fee.feeName,
+        amount: fee.amount,
+        assignedAmount: fee.amount,
         historicalOnly: false,
-        feeNameSnapshot: previous.feeNameSnapshot ?? previous.feeName,
-        assignedAmount: previous.assignedAmount ?? previous.amount,
       });
     } else {
       // GENUINELY NEW assignment: use the current applicable definition.
@@ -129,12 +134,11 @@ export const buildLedgerFeeList = ({
  * Build the fee-derived fields of a student ledger from the current term's
  * fee assignments, preserving any carry-forward entries.
  *
- * Phase 2: `buildLedgerFeeList` now MERGES rather than regenerates, so the
- * returned `fees` carry frozen historical `amount`/`feeName`/snapshots for
- * existing assignments and only genuinely new assignments use the current
- * definition. `totalFee` is therefore the ledger's total obligation including
- * preserved historical-only entries; it is no longer silently rewritten by a
- * live fee edit.
+ * `buildLedgerFeeList` now MERGES rather than regenerates: existing assignments
+ * carry their live `amount`/`feeName`/snapshots (propagated from the current
+ * definition) and only genuinely new assignments use the current definition.
+ * `totalFee` is therefore the ledger's total obligation including preserved
+ * historical-only entries; it is no longer silently frozen by a live fee edit.
  *
  * @param {Object} params
  * @param {Array<Object>} params.assignedFees - Assigned fee definitions
@@ -153,12 +157,19 @@ export const buildLedgerFeesPayload = ({
 } = {}) => {
   const fees = buildLedgerFeeList({ assignedFees, existingFees });
 
-  const openingPaidAmount = fees.reduce(
+  // Phase 2.2: historicalOnly entries (deactivated fees, reassigned
+  // obligations) have their openingPaidAmount frozen for audit but must
+  // NOT contribute to the current-term opening paid total — otherwise
+  // transferred credit would be double-counted (once on the old
+  // historicalOnly entry, once on the new current entry).
+  const currentFees = fees.filter((fee) => !fee?.historicalOnly);
+
+  const openingPaidAmount = currentFees.reduce(
     (sum, fee) => sum + (fee.openingPaidAmount || 0),
     0,
   );
 
-  const openingBalance = fees.reduce((sum, fee) => {
+  const openingBalance = currentFees.reduce((sum, fee) => {
     const paid = fee.openingPaidAmount || 0;
     const balanceValue =
       fee.openingBalance !== undefined && fee.openingBalance !== null
@@ -167,12 +178,21 @@ export const buildLedgerFeesPayload = ({
     return sum + balanceValue;
   }, 0);
 
-  const totalFee = fees.reduce((sum, fee) => sum + fee.amount, 0);
+  // totalFee intentionally includes ALL entries (frozen semantics) so
+  // historical obligations remain visible in the audit trail.
+  const totalFee = fees.reduce((sum, fee) => sum + (fee?.amount || 0), 0);
+
+  // Demand total excludes historicalOnly entries so the "Paid" status is
+  // reachable when all current fees are fully paid.
+  const demandedTotal = currentFees.reduce(
+    (sum, fee) => sum + (Number(fee?.amount) || 0),
+    0,
+  );
 
   const openingStatus =
     openingPaidAmount <= 0
       ? "Unpaid"
-      : openingPaidAmount >= totalFee
+      : openingPaidAmount >= demandedTotal
         ? "Paid"
         : "Part-paid";
 
@@ -189,12 +209,10 @@ export const buildLedgerFeesPayload = ({
  * Signature of the ordinary (non carry-forward) fee assignments held by a
  * ledger.
  *
- * Phase 2: the signature is IDENTITY-BASED (`feeId` only), not
- * `feeId:amount`. Under the historical-freezing model an existing assignment's
- * `amount` is frozen and must never be rewritten by a live fee edit, so
- * keying the signature on `amount` would make every fee amount/name edit look
- * like a pending assignment change and trigger a spurious, non-terminating
- * ledger sync.
+ * The signature is IDENTITY-BASED (`feeId` only), not `feeId:amount`.
+ * Keying it on `amount` would make every fee amount/name edit look like a
+ * pending assignment change and trigger a spurious, non-terminating ledger
+ * sync.
  *
  * Identity-based signatures are stable across amount, name and scope edits,
  * and only change when the SET of ordinary fee assignments actually differs —

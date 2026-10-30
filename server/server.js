@@ -22,7 +22,7 @@ import {
   PaymentVerificationError,
 } from "./paymentVerification.js";
 import { createSecurityLoginLogHandler } from "./securityLoginLog.js";
-import { sumDemandedAmounts } from "./services/ledgerFeeAssignment.js";
+import { sumDemandedAmounts } from "../services/ledgerFeeAssignment.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

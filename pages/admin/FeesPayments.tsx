@@ -2605,6 +2605,18 @@ const handleExportReport = () => {
       );
       setFees(nextFees);
 
+      // Mark the deactivated fee as historical-only on every student ledger
+      // that currently carries it, immediately rather than waiting for the
+      // auto-sync effect. resolveFeeAssignments would exclude the deactivated
+      // fee, so impacted students are found by inspecting existing ledgers
+      // directly.
+      const impactedStudents = students.filter((student) => {
+        const ledgerId = buildLedgerId(schoolId, student.id, academicYear, term);
+        const existing = ledgers.find((l) => l.id === ledgerId);
+        return existing && existing.fees.some((f) => f.feeId === payload.id);
+      });
+      await ensureLedgersBulk(impactedStudents, nextFees);
+
       showToast(`"${feeToDeactivate.feeName}" has been deactivated.`, { type: "success" });
       await logActivity({
         schoolId,
@@ -6085,7 +6097,8 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                                   key={fee.feeId}
                                   className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600"
                                 >
-                                  {fee.feeName}
+                                  {fees.find((f) => f.id === fee.feeId)?.feeName ||
+                                    fee.feeName}
                                 </span>
                               ))}
                             </div>

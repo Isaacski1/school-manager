@@ -351,7 +351,13 @@ export const enrichParentFeeLedgers = (ledgers, payments, selectedTerm) => {
 
     // Opening paid: the per fee amounts are authoritative, the ledger level
     // amount is the fallback for ledgers that only carry the aggregate.
-    const feeOpeningPaid = sumBy(allFees, "openingPaidAmount");
+    // Phase 2.2: historicalOnly entries (deactivated fees, reassigned
+    // obligations) must be excluded from this sum so transferred credit is
+    // never double-counted (once on the frozen old entry, once on the new).
+    const feeOpeningPaid = sumBy(
+      allFees.filter((fee) => !fee.historicalOnly),
+      "openingPaidAmount",
+    );
     const ledgerOpeningPaid = toNumber(ledger?.openingPaidAmount);
     const openingPaid = feeOpeningPaid > 0 ? feeOpeningPaid : ledgerOpeningPaid;
     const unattributedOpeningPaid = Math.max(

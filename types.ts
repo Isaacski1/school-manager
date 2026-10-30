@@ -180,6 +180,21 @@ fees: Array<{
     // entry's feeId is no longer present in the current assignedFees list;
     // never set on carry-forward entries (they carry real current-term demand).
     historicalOnly?: boolean;
+    // Phase 2.2 reassignment metadata (additive, optional for backward
+    // compatibility). Present ONLY on entries created by reassignObligation
+    // to record the audit trail of an obligation moved from one fee to another.
+    // The old entry is marked historicalOnly with its original values frozen;
+    // this metadata on the new entry records the source fee and transferred credit.
+    reassignedFrom?: {
+      fromFeeId: string;
+      fromFeeName: string;
+      fromAmount: number;
+      fromOpeningPaidAmount: number;
+      transferredPaidAmount: number;
+      absorbedPaymentIds: string[];
+      reassignedAt: number;
+      reassignedBy: string;
+    };
   }>;
   openingPaidAmount?: number;
   openingBalance?: number;

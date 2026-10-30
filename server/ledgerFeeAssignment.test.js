@@ -13,6 +13,7 @@ import {
   resolveAssignedAmount,
   resolveAssignedFeeName,
   hasHistoricalSnapshot,
+  sumDemandedAmounts,
 } from "../services/ledgerFeeAssignment.js";
 import {
   buildCarryForwardId,
@@ -316,13 +317,15 @@ test("fee assignment: repeated reassignment never duplicates the carry-forward",
   }
 });
 
-test("fee assignment: existing assignment is frozen when the live fee amount changes", () => {
+test("fee assignment: existing assignment is updated when the live fee amount changes", () => {
   const db = new FakeLedgerStore({ useV2: false });
   db.upsertStudentLedger(existingLedger);
 
-  // The live definition is re-priced from 600 to 700, but the student was
-  // already assigned at 600. The historical obligation and its snapshot must
-  // survive unchanged; only genuinely new assignments use 700.
+  // The live definition is re-priced from 600 to 700. The student was
+  // already assigned at 600, but the admin's edit must propagate to the
+  // ledger so the student's card reflects the new obligation. Only the
+  // openingPaidAmount (money already collected) is preserved verbatim —
+  // payments are never rewritten.
   runEnsureLedger({
     db,
     assignedFees: [{ id: "fee-tuition-current", feeName: "Tuition", amount: 700 }],
@@ -335,18 +338,24 @@ test("fee assignment: existing assignment is frozen when the live fee amount cha
   );
   assert.equal(
     currentFee.amount,
-    600,
-    "Existing assignment amount must be frozen, not updated to the live 700",
+    700,
+    "Existing assignment amount must be updated to the live 700",
   );
   assert.equal(
     currentFee.assignedAmount,
-    600,
-    "Historical assignedAmount snapshot must be preserved",
+    700,
+    "assignedAmount snapshot must be updated to the live 700",
   );
   assert.equal(
     currentFee.feeNameSnapshot,
     "Tuition",
-    "Historical feeNameSnapshot must be preserved",
+    "feeNameSnapshot must reflect the live fee name",
+  );
+  // openingPaidAmount is the immutable payment record and must survive.
+  assert.equal(
+    currentFee.openingPaidAmount,
+    0,
+    "openingPaidAmount must be preserved from the stored entry",
   );
 
   const carryForwardEntries = persisted.fees.filter(
@@ -354,8 +363,8 @@ test("fee assignment: existing assignment is frozen when the live fee amount cha
   );
   assert.equal(carryForwardEntries.length, 1);
   assert.equal(carryForwardEntries[0].amount, 200);
-  // 600 (frozen) + 200 (carry-forward) = 800, unchanged by the live edit.
-  assert.equal(productionLedgerTotals(persisted).totalDue, 800);
+  // 700 (propagated) + 200 (carry-forward) = 900, reflecting the live edit.
+  assert.equal(productionLedgerTotals(persisted).totalDue, 900);
 });
 
 test("fee assignment: obsolete ordinary fee entries are retained as historical records", () => {
@@ -560,14 +569,15 @@ test("phase1: existing entry without snapshots is lazily backfilled from its own
   assert.equal(entry.assignedAmount, 600, "Backfilled snapshot must equal stored amount");
 });
 
-test("phase1: backfill uses stored ledger values, never the live FeeDefinition", () => {
+test("phase1: backfill propagates the live FeeDefinition's amount and name", () => {
   const db = new FakeLedgerStore({ useV2: false });
   db.upsertStudentLedger(existingLedger);
 
-  // The live fee definition says 700, but the stored ledger entry still says
-  // 600. Under Phase 2 the existing assignment is FROZEN: both the live
-  // `amount` and the snapshot come from the stored entry, never from the live
-  // definition.
+  // The live fee definition says 700 and the stored ledger entry still says
+  // 600. The existing assignment is UPDATED from the live definition: both the
+  // live `amount` and the snapshot come from the live definition, so the
+  // student's card reflects the admin's edit. The openingPaidAmount (money
+  // already collected) is preserved verbatim.
   runEnsureLedger({
     db,
     assignedFees: [{ id: "fee-tuition-current", feeName: "Tuition", amount: 700 }],
@@ -578,18 +588,23 @@ test("phase1: backfill uses stored ledger values, never the live FeeDefinition",
   const entry = persisted.fees.find((fee) => fee.feeId === "fee-tuition-current");
   assert.equal(
     entry.amount,
-    600,
-    "Existing assignment amount must be frozen at the stored 600, not the live 700",
+    700,
+    "Existing assignment amount must be updated to the live 700",
   );
   assert.equal(
     entry.assignedAmount,
-    600,
-    "Snapshot must be backfilled from the stored 600, NOT the live 700",
+    700,
+    "Snapshot must be propagated from the live 700",
   );
-  assert.equal(entry.feeNameSnapshot, "Tuition");
+  assert.equal(entry.feeNameSnapshot, "Tuition", "Snapshot must reflect the live fee name");
+  assert.equal(
+    entry.openingPaidAmount,
+    0,
+    "openingPaidAmount must be preserved from the stored entry",
+  );
 });
 
-test("phase1: existing snapshots are never overwritten during backfill", () => {
+test("phase1: existing snapshots are overwritten by the live FeeDefinition", () => {
   const db = new FakeLedgerStore({ useV2: false });
   const ledgerWithSnapshots = {
     ...existingLedger,
@@ -602,8 +617,9 @@ test("phase1: existing snapshots are never overwritten during backfill", () => {
   db.upsertStudentLedger(ledgerWithSnapshots);
 
   // Live definition has been renamed and re-priced since the snapshot was taken.
-  // Under Phase 2 the existing assignment is frozen verbatim: the historical
-  // name and amount survive and are never replaced by the live definition.
+  // The existing assignment is UPDATED from the live definition: the live name
+  // ("New Tuition") and amount (350) replace the stale snapshot. The
+  // openingPaidAmount (money already collected) is preserved verbatim.
   runEnsureLedger({
     db,
     assignedFees: [{ id: "fee-tuition-current", feeName: "New Tuition", amount: 350 }],
@@ -612,17 +628,22 @@ test("phase1: existing snapshots are never overwritten during backfill", () => {
 
   const persisted = db.readLedger(ledgerWithSnapshots.id);
   const entry = persisted.fees.find((fee) => fee.feeId === "fee-tuition-current");
-  // The entry is preserved verbatim: its stored feeName ("Tuition") and amount
-  // (600) are frozen, and the pre-existing snapshot ("Old Tuition"/300) is
-  // preserved untouched. None of these are replaced by the live definition.
-  assert.equal(entry.feeName, "Tuition", "Stored historical feeName must be frozen");
-  assert.equal(entry.amount, 600, "Stored historical amount must be frozen");
+  // The entry is updated from the live definition: its feeName, amount and
+  // snapshot are replaced by the live values. The openingPaidAmount is the
+  // immutable payment record and survives.
+  assert.equal(entry.feeName, "New Tuition", "feeName must be updated to the live name");
+  assert.equal(entry.amount, 350, "amount must be updated to the live amount");
   assert.equal(
     entry.feeNameSnapshot,
-    "Old Tuition",
-    "Existing snapshot must be preserved verbatim",
+    "New Tuition",
+    "feeNameSnapshot must be updated to the live name",
   );
-  assert.equal(entry.assignedAmount, 300, "Existing snapshot must be preserved verbatim");
+  assert.equal(entry.assignedAmount, 350, "assignedAmount must be updated to the live amount");
+  assert.equal(
+    entry.openingPaidAmount,
+    0,
+    "openingPaidAmount must be preserved from the stored entry",
+  );
 });
 
 test("phase1: carry-forward entries are not given synthetic snapshots", () => {
@@ -665,7 +686,7 @@ test("phase1: read-compatibility helpers fall back to live fields", () => {
   assert.equal(resolveAssignedFeeName(undefined), "");
 });
 
-test("phase1: repeated reassignment keeps snapshots stable and idempotent", () => {
+test("phase1: repeated reassignment applies live values and stays idempotent", () => {
   for (const useV2 of [false, true]) {
     const db = new FakeLedgerStore({ useV2 });
     db.upsertStudentLedger(existingLedger);
@@ -681,12 +702,164 @@ test("phase1: repeated reassignment keeps snapshots stable and idempotent", () =
     const persisted = db.readLedger(existingLedger.id);
     const entry = persisted.fees.find((fee) => fee.feeId === "fee-tuition-current");
     assert.equal(entry.feeNameSnapshot, "Tuition");
-    // Phase 1 backfill semantics: the snapshot is seeded from the EXISTING
-    // entry's stored values (600), never from the newly-assigned fee (300).
-    assert.equal(entry.assignedAmount, 600);
+    // The existing assignment is updated from the live definition (300), and
+    // repeated reassignment stays idempotent — the amount stays at 300.
+    assert.equal(entry.assignedAmount, 300);
+    assert.equal(entry.amount, 300);
     assert.equal(
       persisted.fees.filter((fee) => fee.feeId === "fee-tuition-current").length,
       1,
     );
   }
+});
+
+// --- Fee definition update propagation ---
+
+test("propagation: admin fee name edit propagates to the student ledger card", () => {
+  const db = new FakeLedgerStore({ useV2: false });
+  db.upsertStudentLedger(existingLedger);
+
+  // The live definition is renamed from "Tuition" to "Tuition (Daily)".
+  runEnsureLedger({
+    db,
+    assignedFees: [{ id: "fee-tuition-current", feeName: "Tuition (Daily)", amount: 600 }],
+    ledger: db.readLedger(existingLedger.id),
+  });
+
+  const persisted = db.readLedger(existingLedger.id);
+  const currentFee = persisted.fees.find(
+    (fee) => fee.feeId === "fee-tuition-current",
+  );
+  assert.equal(
+    currentFee.feeName,
+    "Tuition (Daily)",
+    "feeName must reflect the admin's rename",
+  );
+  assert.equal(
+    currentFee.feeNameSnapshot,
+    "Tuition (Daily)",
+    "feeNameSnapshot must reflect the admin's rename",
+  );
+});
+
+test("propagation: openingPaidAmount survives a fee amount edit", () => {
+  const db = new FakeLedgerStore({ useV2: false });
+  db.upsertStudentLedger({
+    ...existingLedger,
+    fees: [
+      {
+        feeId: "fee-tuition-current",
+        feeName: "Tuition",
+        amount: 600,
+        openingPaidAmount: 250,
+      },
+      carryForwardFee,
+    ],
+    totalFee: 850,
+    openingPaidAmount: 250,
+    openingBalance: 550,
+    openingStatus: "Part-paid",
+  });
+
+  // The live definition is re-priced from 600 to 750. The paid credit that was
+  // already collected (250) must survive — payments are never rewritten.
+  runEnsureLedger({
+    db,
+    assignedFees: [{ id: "fee-tuition-current", feeName: "Tuition", amount: 750 }],
+    ledger: db.readLedger(existingLedger.id),
+  });
+
+  const persisted = db.readLedger(existingLedger.id);
+  const currentFee = persisted.fees.find(
+    (fee) => fee.feeId === "fee-tuition-current",
+  );
+  assert.equal(currentFee.amount, 750, "amount must be updated to the live 750");
+  assert.equal(
+    currentFee.openingPaidAmount,
+    250,
+    "openingPaidAmount must survive the amount edit",
+  );
+  // 750 (propagated) + 200 (carry-forward) = 950.
+  assert.equal(productionLedgerTotals(persisted).totalDue, 950);
+});
+
+test("propagation: deactivated fee is marked historical-only immediately", () => {
+  const db = new FakeLedgerStore({ useV2: false });
+  db.upsertStudentLedger(existingLedger);
+
+  // The fee is deactivated: it is no longer in the assignedFees list, so
+  // buildLedgerFeeList must mark the existing entry historicalOnly.
+  runEnsureLedger({
+    db,
+    assignedFees: [],
+    ledger: db.readLedger(existingLedger.id),
+  });
+
+  const persisted = db.readLedger(existingLedger.id);
+  const currentFee = persisted.fees.find(
+    (fee) => fee.feeId === "fee-tuition-current",
+  );
+  assert.ok(currentFee, "Deactivated fee entry must be retained as a historical record");
+  assert.equal(
+    currentFee.historicalOnly,
+    true,
+    "Deactivated fee must be marked historicalOnly",
+  );
+  assert.equal(currentFee.amount, 600, "Historical amount must be frozen for audit");
+  assert.equal(
+    currentFee.openingPaidAmount,
+    0,
+    "Historical openingPaidAmount must be preserved for audit",
+  );
+  // Demand excludes the historical-only entry: only the carry-forward (200).
+  assert.equal(sumDemandedAmounts(persisted.fees), 200);
+  // totalFee still sums all entries (frozen semantics for audit).
+  assert.equal(persisted.totalFee, 800);
+});
+
+test("propagation: openingBalance is recomputed when the live amount changes", () => {
+  const db = new FakeLedgerStore({ useV2: false });
+  db.upsertStudentLedger({
+    ...existingLedger,
+    fees: [
+      {
+        feeId: "fee-tuition-current",
+        feeName: "Tuition",
+        amount: 600,
+        openingPaidAmount: 100,
+        openingBalance: 500,
+        openingStatus: "Part-paid",
+      },
+    ],
+    totalFee: 600,
+    openingPaidAmount: 100,
+    openingBalance: 500,
+    openingStatus: "Part-paid",
+  });
+
+  // The live definition is re-priced from 600 to 800. The openingBalance must
+  // be recomputed from the new amount and the preserved paid credit.
+  runEnsureLedger({
+    db,
+    assignedFees: [{ id: "fee-tuition-current", feeName: "Tuition", amount: 800 }],
+    ledger: db.readLedger(existingLedger.id),
+  });
+
+  const persisted = db.readLedger(existingLedger.id);
+  assert.equal(persisted.openingBalance, 700, "openingBalance = 800 - 100 = 700");
+  assert.equal(persisted.openingStatus, "Part-paid");
+  assert.equal(persisted.openingPaidAmount, 100);
+});
+
+test("propagation: admin page wires the deactivate handler to ensureLedgersBulk", () => {
+  const source = readFileSync(feesPagePath, "utf8");
+
+  assert.ok(
+    source.includes("ensureLedgersBulk(impactedStudents, nextFees)"),
+    "handleDeactivateFee must call ensureLedgersBulk immediately",
+  );
+  assert.ok(
+    source.includes("existing.fees.some((f) => f.feeId === payload.id)"),
+    "handleDeactivateFee must find impacted students by inspecting existing ledgers",
+  );
 });
