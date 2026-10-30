@@ -935,7 +935,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 <NavItem href="/admin/students" icon={<GraduationCap size={18} />} label="Students" />
               )}
               {hasFeature("attendance") && (
-                <NavItem href="/admin/attendance" icon={<ClipboardCheck size={18} />} label="Attendance" />
+                <NavItem href="/admin/attendance" icon={<ClipboardCheck size={18} />} label="Students Attendance" />
               )}
               
               {hasFeature("basic_exam_reports") && (
