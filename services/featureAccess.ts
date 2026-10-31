@@ -103,7 +103,12 @@ export const canAccessFeature = (
 
 export const canAccessSchoolAssistant = (user: User | null): boolean => {
   if (!user) return false;
-  return user.role === UserRole.SUPER_ADMIN;
+  // The School AI assistant is scoped to a single school's data. It is only
+  // surfaced for school-level admins on their own school dashboard. Super
+  // Admins operate across all schools, so the assistant is not shown on the
+  // Super Admin panel.
+  if (user.role === UserRole.SUPER_ADMIN) return false;
+  return user.role === UserRole.SCHOOL_ADMIN;
 };
 
 export const requireFeatureAccess = (
