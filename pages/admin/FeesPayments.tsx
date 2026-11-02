@@ -3577,6 +3577,43 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
     term,
   ]);
 
+  /**
+   * Outstanding balance for the selected student, computed the same way as
+   * the student ledger (`computeLedgerTotals`): global netting of total paid
+   * against total due, not per-fee clamped. This keeps the Record Payment
+   * screen consistent with the ledger balance instead of trapping
+   * overpayments on individual fees.
+   */
+  const selectedStudentOutstandingBalance = useMemo(() => {
+    if (!selectedPaymentStudent) return 0;
+    const ledger = ledgers.find(
+      (item) =>
+        item.studentId === selectedPaymentStudent.id &&
+        item.academicYear === academicYear &&
+        item.term === term,
+    );
+    if (!ledger) return 0;
+    const totalDue = sumDemandedAmounts(ledger.fees);
+    const openingPaid = ledger.fees
+      .filter((fee) => !fee.historicalOnly)
+      .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
+    const totalPaid = currentTermPayments
+      .filter(
+        (payment) =>
+          payment.studentId === selectedPaymentStudent.id &&
+          payment.academicYear === academicYear &&
+          payment.term === term,
+      )
+      .reduce((sum, payment) => sum + payment.amountPaid, 0);
+    return Math.max(0, totalDue - openingPaid - totalPaid);
+  }, [
+    selectedPaymentStudent,
+    ledgers,
+    currentTermPayments,
+    academicYear,
+    term,
+  ]);
+
   const unavailableCurrentScopeFees = useMemo(() => {
     if (!selectedPaymentStudent || availablePaymentFees.length > 0) {
       return [] as Array<{ id: string; feeName: string; reason: string }>;
@@ -5858,12 +5895,7 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
                           Outstanding Balance
                         </p>
                         <p className="mt-1 text-lg font-semibold text-slate-900">
-                          {formatMoney(
-                            Array.from(feeRemainingBalance.values()).reduce(
-                              (sum, val) => sum + val,
-                              0,
-                            ),
-                          )}
+                          {formatMoney(selectedStudentOutstandingBalance)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
                           Total amount owed across all fees for this term.
