@@ -113,6 +113,12 @@ service cloud.firestore {
       return isParentOf(get(/databases/$(database)/documents/students/$(studentId)).data.guardianPhone);
     }
 
+    function isParentsStudentInSchool(studentId, schoolId) {
+      let studentDoc = get(/databases/$(database)/documents/students/$(studentId));
+      return isParentOf(studentDoc.data.guardianPhone) &&
+             studentDoc.data.schoolId == schoolId;
+    }
+
     function maxStudentsForSchool(schoolId) {
       let school = get(/databases/$(database)/documents/schools/$(schoolId)).data;
       return school.keys().hasAny(['limits']) &&
@@ -294,6 +300,7 @@ service cloud.firestore {
           "academicYear",
           "term",
           "fees",
+          "totalFee",
           "createdAt",
           "updatedAt",
           "openingPaidAmount",
@@ -303,7 +310,9 @@ service cloud.firestore {
         ]);
 
       allow read: if isSuperAdmin() || 
-                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+                     (schoolScopedRead(schoolId) && (isSchoolAdmin() || isTeacher())) ||
+                     (isParentsStudentInSchool(resource.data.studentId, schoolId) &&
+                      resource.data.schoolId == schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == schoolId)) &&
@@ -678,8 +687,8 @@ match /settings/{document} {
 
       allow read: if isSuperAdmin() ||
                      (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) ||
-                     teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
-                     isParent();
+                      teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
+                      isParentsStudentInSchool(resource.data.studentId, resource.data.schoolId);
 
       allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
         teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
@@ -810,7 +819,7 @@ match /settings/{document} {
       allow read: if isSuperAdmin() ||
                      (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) ||
                      teacherOwnsClass(resource.data.schoolId, resource.data.classId) ||
-                     isParent();
+                     isParentsStudentInSchool(resource.data.studentId, resource.data.schoolId);
 
       allow update: if (schoolScopedUpdate(resource.data.schoolId) ||
         teacherOwnsClass(resource.data.schoolId, resource.data.classId)) &&
@@ -852,7 +861,7 @@ match /settings/{document} {
 
       allow read: if isSuperAdmin() || 
                      (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
-                     isParent();
+                     isParentsStudentInSchool(resource.data.studentId, resource.data.schoolId);
 
       allow update: if schoolScopedUpdate(resource.data.schoolId) &&
         onlyAllowedFields([
@@ -993,7 +1002,8 @@ match /settings/{document} {
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
       allow read: if isSuperAdmin() || 
-                     (isAuthenticated() && (isSchoolAdmin() || isTeacher() || isParent()));
+                     (isAuthenticated() && (isSchoolAdmin() || isTeacher())) ||
+                     isParentsStudentInSchool(resource.data.studentId, resource.data.schoolId);
     }
 
     // Legacy payments
@@ -1182,7 +1192,7 @@ match /settings/{document} {
 
       allow read: if isSuperAdmin() || 
                      (schoolScopedRead(resource.data.schoolId) && (isSchoolAdmin() || isTeacher())) || 
-                     isParent();
+                     isParentsStudentInSchool(resource.data.studentId, resource.data.schoolId);
 
       allow update: if isAuthenticated() && isActiveUser() &&
         (isSuperAdmin() || (isSchoolAdmin() && userSchoolId() == resource.data.schoolId)) &&

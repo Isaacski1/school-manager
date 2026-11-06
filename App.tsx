@@ -42,6 +42,7 @@ const EditSkills = lazy(() => import("./pages/teacher/EditSkills"));
 const StudentPerformance = lazy(() => import("./pages/teacher/StudentPerformance"));
 const TeacherDailyCollections = lazy(() => import("./pages/teacher/DailyCollections"));
 const ParentDashboard = lazy(() => import("./pages/parent/ParentDashboard"));
+const AcademicPerformancePage = lazy(() => import("./pages/parent/AcademicPerformancePage"));
 const Schools = lazy(() => import("./pages/super-admin/Schools"));
 const SchoolDetails = lazy(() => import("./pages/super-admin/SchoolDetails"));
 const Dashboard = lazy(() => import("./pages/super-admin/Dashboard"));
@@ -1289,6 +1290,14 @@ const AppRoutes = ({
         element={
           <ProtectedRoute allowedRoles={[UserRole.PARENT]}>
             <ParentDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/parent/academic-performance"
+        element={
+          <ProtectedRoute allowedRoles={[UserRole.PARENT]} requiredFeature="basic_exam_reports">
+            <AcademicPerformancePage />
           </ProtectedRoute>
         }
       />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
@@ -39,6 +39,7 @@ export default function ParentDashboard() {
   const [parentNotices, setParentNotices] = useState<ParentNotice[]>([]);
   const [loadingParentNotices, setLoadingParentNotices] = useState(false);
   const [markingNoticeId, setMarkingNoticeId] = useState<string | null>(null);
+  const noticesFetchRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
     return sessionStorage.getItem("parentDashboard_selectedStudentId") || null;
@@ -319,6 +320,7 @@ export default function ParentDashboard() {
   const loggedInParentContact = getLoggedInParentContact(selectedStudent);
 
   useEffect(() => {
+    const currentFetch = ++noticesFetchRef.current;
     const fetchParentNotices = async () => {
       if (!selectedStudent?.schoolId || !selectedStudent?.id) {
         setParentNotices([]);
@@ -336,12 +338,16 @@ export default function ParentDashboard() {
           classId: selectedStudent.classId || "",
           className: className || "",
         });
+        if (currentFetch !== noticesFetchRef.current) return;
         setParentNotices((response.notices || []).slice(0, 8) as ParentNotice[]);
       } catch (error) {
+        if (currentFetch !== noticesFetchRef.current) return;
         console.error("Failed to load parent dashboard notices:", error);
         setParentNotices([]);
       } finally {
-        setLoadingParentNotices(false);
+        if (currentFetch === noticesFetchRef.current) {
+          setLoadingParentNotices(false);
+        }
       }
     };
 

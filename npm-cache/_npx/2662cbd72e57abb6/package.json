@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "update-browserslist-db": "^1.3.4"
+  }
+}

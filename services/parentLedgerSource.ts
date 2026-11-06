@@ -21,6 +21,8 @@ import { collection, getDocs, query, where } from "firebase/firestore";
 import { firestore } from "./firebase";
 import { db } from "./mockDb";
 import { mergeParentLedgers } from "./parentFeeData";
+import type { LedgerRetrievalResult } from "./ledgerRetrievalTypes";
+export type { LedgerRetrievalResult } from "./ledgerRetrievalTypes";
 import { FeeTerm, StudentFeeLedger } from "../types";
 
 export interface ParentLedgerQuery {
@@ -65,23 +67,8 @@ const readAlternateLedgers = async (
  */
 export const loadParentLedgers = async (
   params: ParentLedgerQuery,
-): Promise<StudentFeeLedger[]> => {
-  const canonical = await db.getStudentLedgers(params);
-  const schoolId = params.schoolId;
-  const studentId = params.studentId;
-
-  if (!schoolId || !studentId) return canonical;
-
-  try {
-    const alternate = await readAlternateLedgers(schoolId, studentId);
-    return mergeParentLedgers(canonical, alternate) as StudentFeeLedger[];
-  } catch (error) {
-    console.warn(
-      "[parentLedgerSource] alternate layout ledger read failed, using canonical copy",
-      error,
-    );
-    return canonical;
-  }
+): Promise<LedgerRetrievalResult> => {
+  return db._getLedgersWithStatus(params);
 };
 
 export default loadParentLedgers;

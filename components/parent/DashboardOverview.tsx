@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Student, Assessment, StudentRemark, FeeDefinition, FeeTerm, StudentFeeLedger } from "../../types";
 import { db } from "../../services/mockDb";
-import { CreditCard, Activity, BookOpen, MessageSquare, FileText, CalendarDays, ArrowRight, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
+import { CreditCard, Activity, BookOpen, MessageSquare, FileText, CalendarDays, ArrowRight, TrendingUp, Clock, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { getParentFeeTotals } from "../../services/parentFees";
-import { loadParentLedgers } from "../../services/parentLedgerSource";
+import { loadParentLedgers, type LedgerRetrievalResult } from "../../services/parentLedgerSource";
 
 interface DashboardOverviewProps {
   student: Student;
@@ -63,6 +63,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
   const [lastPaymentDate, setLastPaymentDate] = useState<string | null>(null);
   const [attendanceStats, setAttendanceStats] = useState({ present: 0, total: 0, percentage: 0, isNew: false });
   const [hasLedgers, setHasLedgers] = useState(false);
+  const [ledgerRetrievalError, setLedgerRetrievalError] = useState<{ message: string } | null>(null);
+  const [ledgerResultStatus, setLedgerResultStatus] = useState<"complete" | "partial" | "failed" | null>(null);
   const [latestExam, setLatestExam] = useState<Assessment | null>(null);
   const [recentAssessments, setRecentAssessments] = useState<Assessment[]>([]);
   const [latestRemark, setLatestRemark] = useState<StudentRemark | null>(null);
@@ -71,9 +73,11 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
     academicYear: string;
     termEndDate: string;
     daysRemaining: number | null;
-  } | null>(null);
+   } | null>(null);
+  const fetchRef = useRef(0);
 
   useEffect(() => {
+    const currentFetch = ++fetchRef.current;
     async function fetchData() {
       const effectiveSchoolId = student.schoolId || (user as any)?.schoolId;
       if (!effectiveSchoolId || !student.id) return;
@@ -136,14 +140,15 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           }
         };
 
-        const [ledgerData, paymentData, allClassAttendance, assessments, remarks] = await Promise.all([
+        const [ledgerResult, paymentData, allClassAttendance, assessments, remarks] = await Promise.all([
           loadParentLedgers({
             schoolId: effectiveSchoolId,
             academicYear: currentYear,
             studentId: student.id
           }).catch(e => {
             console.error("[DashboardOverview] Ledger Fetch Error:", e);
-            return [];
+            setLedgerRetrievalError({ message: "Fee records could not be retrieved. Please try again later." });
+            return { ledgers: [], status: "failed", sources: [], error: String(e) };
           }),
 
           db.getPayments({
@@ -161,9 +166,23 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             .catch(e => { console.error("Error fetching remarks:", e); return []; })
         ]);
 
-        let finalLedgerData: StudentFeeLedger[] = [...ledgerData];
+        if (currentFetch !== fetchRef.current) return;
 
-        if (finalLedgerData.length === 0) {
+        // Track retrieval errors for UI display
+        if (ledgerResult.status === "failed") {
+          setLedgerRetrievalError({
+            message: ledgerResult.error || "Fee records could not be retrieved. Please try again later.",
+          });
+        } else if (ledgerResult.status === "complete" || ledgerResult.status === "partial") {
+          setLedgerRetrievalError(null);
+        }
+        setLedgerResultStatus(ledgerResult.status as "complete" | "partial" | "failed");
+
+        let finalLedgerData: StudentFeeLedger[] = [...ledgerResult.ledgers];
+
+        // Only create virtual ledger when retrieval was complete and genuinely empty.
+        // A failed or partial retrieval must not present fee projections as actual ledger data.
+        if (ledgerResult.status === "complete" && finalLedgerData.length === 0) {
           try {
             const allFees = await db.getFees({
               schoolId: effectiveSchoolId,
@@ -184,6 +203,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
                   feeName: f.feeName,
                   amount: f.amount
                 })),
+                totalFee: classFees.reduce((sum, f) => sum + f.amount, 0),
                 createdAt: Date.now(),
               };
               finalLedgerData = [virtualLedger];
@@ -192,6 +212,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
             console.error("[DashboardOverview] Class fee fetch failed:", e);
           }
         }
+
+        if (currentFetch !== fetchRef.current) return;
 
         const currentTermLedgers = finalLedgerData.filter(
           (ledger) =>
@@ -206,6 +228,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           selectedFeeTerm,
           currentYear,
         );
+
+        if (currentFetch !== fetchRef.current) return;
 
         setDueFees(totals.totalBalance);
         setHasLedgers(hasLedgers);
@@ -293,6 +317,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           });
         }
 
+        if (currentFetch !== fetchRef.current) return;
+
         const schoolDateSet = new Set(schoolDates);
         present = allClassAttendance.filter(record =>
           !record.isHoliday &&
@@ -305,6 +331,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         const attendancePercentage = total > 0 ? Math.round((present / total) * 100) : 0;
 
         const isNewStudent = student.createdAt ? (Date.now() - new Date(student.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000) : false;
+
+        if (currentFetch !== fetchRef.current) return;
 
         setAttendanceStats({
           present,
@@ -329,9 +357,13 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
           setRecentAssessments([]);
         }
 
+        if (currentFetch !== fetchRef.current) return;
+
         if (remarks.length > 0) {
+          const targetTermNumber =
+            Number(String(currentTermLabel).replace(/\D/g, "")) || 0;
           let matchedRemark = remarks.find(
-            r => r.academicYear === currentYear && r.term === currentTermLabel
+            r => r.academicYear === currentYear && r.term === targetTermNumber
           );
 
           if (!matchedRemark) {
@@ -360,7 +392,9 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
       } catch (error) {
         console.error("General error in DashboardOverview fetchData:", error);
       } finally {
-        setLoading(false);
+        if (currentFetch === fetchRef.current) {
+          setLoading(false);
+        }
       }
     }
 
@@ -429,6 +463,34 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ student }) => {
         <div className="absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
         <div className="absolute -bottom-8 -left-8 h-32 w-32 rounded-full bg-white/5 blur-3xl" />
       </div>
+
+      {/* Ledger Retrieval Warning */}
+      {ledgerRetrievalError && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-rose-800">Unable to Load Fee Records</h4>
+              <p className="text-[11px] text-rose-600/80 leading-relaxed mt-0.5">
+                {ledgerRetrievalError.message}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      {ledgerResultStatus === "partial" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-amber-800">Some Fee Records Could Not Be Retrieved</h4>
+              <p className="text-[11px] text-amber-600/80 leading-relaxed mt-0.5">
+                The information displayed may be incomplete. Please try again later.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

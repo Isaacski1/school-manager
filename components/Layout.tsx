@@ -590,7 +590,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
               };
             })
             .filter(Boolean)
-            .sort((a, b) => b.createdAt - a.createdAt);
+            .sort((a: { createdAt: number }, b: { createdAt: number }) => b.createdAt - a.createdAt);
 
           setNotifications(notes);
           setUnreadCount(notes.filter((n) => !n.isRead).length);
@@ -896,6 +896,11 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                 href="/parent?view=report"
                 icon={<FileText size={18} />}
                 label="Report Cards"
+              />
+              <NavItem
+                href="/parent/academic-performance"
+                icon={<BarChart3 size={18} />}
+                label="Academic Performance"
               />
               <NavItem
                 href="/parent?view=remarks"

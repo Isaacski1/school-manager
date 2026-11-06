@@ -21,7 +21,7 @@ import {
   normalizeParentFeeTerm,
 } from "../../services/parentFees";
 import { buildParentPaymentHistory } from "../../services/parentFeeData";
-import { loadParentLedgers } from "../../services/parentLedgerSource";
+import { loadParentLedgers, type LedgerRetrievalResult } from "../../services/parentLedgerSource";
 
 interface FeesViewProps {
   student: Student;
@@ -36,6 +36,9 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   const [feeDefinitions, setFeeDefinitions] = useState<FeeDefinition[]>([]);
   const [payments, setPayments] = useState<StudentFeePayment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ledgerRetrievalError, setLedgerRetrievalError] = useState<{ message: string } | null>(null);
+  const [ledgerResultStatus, setLedgerResultStatus] = useState<"complete" | "partial" | "failed" | null>(null);
+  const fetchRef = useRef(0);
   const [selectedTerm, setSelectedTerm] = useState<FeeTerm | "all">(() => {
     return "Term 1";
   });
@@ -181,6 +184,7 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
   };
 
   useEffect(() => {
+    const currentFetch = ++fetchRef.current;
     async function fetchFeeData() {
       if (!student.schoolId || !student.classId) {
         setLoading(false);
@@ -189,6 +193,7 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
 
       try {
         setLoading(true);
+        setLedgerRetrievalError(null);
 
         // Resolve academic year to fetch
         let yearToFetch = academicYear;
@@ -219,14 +224,26 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
         // Fetch ALL fee ledgers for the student to discover available years.
         // The Parent loader merges the two storage layouts so a carry-forward
         // entry is never lost when a school holds both copies of a ledger.
-        const allLedgers = await loadParentLedgers({
+        const ledgerResult = await loadParentLedgers({
           schoolId: student.schoolId,
           studentId: student.id,
         });
 
-        // Extract unique years
+        if (currentFetch !== fetchRef.current) return;
+
+        // Handle retrieval failures
+        if (ledgerResult.status === "failed") {
+          setLedgerRetrievalError({
+            message: ledgerResult.error || "Fee records could not be retrieved. Please try again later.",
+          });
+        } else {
+          setLedgerRetrievalError(null);
+        }
+        setLedgerResultStatus(ledgerResult.status as "complete" | "partial" | "failed");
+
+        // Extract unique years from successfully retrieved ledgers
         const yearsSet = new Set<string>();
-        allLedgers.forEach(l => {
+        ledgerResult.ledgers.forEach(l => {
           if (l.academicYear) yearsSet.add(l.academicYear);
         });
         if (yearToFetch) yearsSet.add(yearToFetch);
@@ -249,37 +266,47 @@ const FeesView: React.FC<FeesViewProps> = ({ student, onClose }) => {
         // Filter ledgers for the selected year. If a newly-added student does
         // not have ledger rows yet, project the balance from fee definitions so
         // the parent still sees what the child owes.
-        const studentLedgers = allLedgers.filter(l => l.academicYear === yearToFetch);
-        if (studentLedgers.length > 0 || relevantFees.length === 0) {
-          setLedgers(studentLedgers);
-        } else {
-          const virtualLedgers = termOptions
-            .map((term) => {
-              const termFees = relevantFees.filter((fee) => fee.term === term);
-              if (termFees.length === 0) return null;
+        const studentLedgers = ledgerResult.ledgers.filter(l => l.academicYear === yearToFetch);
 
-              return {
-                id: `virtual_${student.id}_${yearToFetch}_${term}`,
-                schoolId: student.schoolId,
-                studentId: student.id,
-                classId: student.classId,
-                academicYear: yearToFetch,
-                term,
-                fees: termFees.map((fee) => ({
-                  feeId: fee.id,
-                  feeName: fee.feeName,
-                  amount: fee.amount,
+        if (ledgerResult.status === "complete") {
+          if (currentFetch !== fetchRef.current) return;
+          if (studentLedgers.length > 0 || relevantFees.length === 0) {
+            setLedgers(studentLedgers);
+          } else {
+            const virtualLedgers = termOptions
+              .map((term) => {
+                const termFees = relevantFees.filter((fee) => fee.term === term);
+                if (termFees.length === 0) return null;
+
+                return {
+                  id: `virtual_${student.id}_${yearToFetch}_${term}`,
+                  schoolId: student.schoolId,
+                  studentId: student.id,
+                  classId: student.classId,
+                  academicYear: yearToFetch,
+                  term,
+                  totalFee: termFees.reduce((sum, f) => sum + f.amount, 0),
+                  fees: termFees.map((fee) => ({
+                    feeId: fee.id,
+                    feeName: fee.feeName,
+                    amount: fee.amount,
+                    openingPaidAmount: 0,
+                    openingStatus: "Unpaid" as const,
+                  })),
                   openingPaidAmount: 0,
                   openingStatus: "Unpaid" as const,
-                })),
-                openingPaidAmount: 0,
-                openingStatus: "Unpaid" as const,
-                createdAt: Date.now(),
-              } satisfies StudentFeeLedger;
-            })
-            .filter(Boolean) as StudentFeeLedger[];
+                  createdAt: Date.now(),
+                } satisfies StudentFeeLedger;
+              })
+              .filter(Boolean) as StudentFeeLedger[];
 
-          setLedgers(virtualLedgers);
+            if (currentFetch !== fetchRef.current) return;
+            setLedgers(virtualLedgers);
+          }
+        } else {
+          // partial or failed: show available records only, no virtual ledgers
+          if (currentFetch !== fetchRef.current) return;
+          setLedgers(studentLedgers);
         }
 
         // 3. Fetch payments for the student
@@ -699,12 +726,12 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
           console.log("[Invoice] SMS notification handled:", result);
           const notificationResults = Array.isArray(result.results) ? result.results : [];
           const sentToParentSms = notificationResults.some(
-            (item) => item.success && item.channel === "sms" && item.type === "payment_invoice_parent",
+            (item: { success: boolean; channel: string; type: string }) => item.success && item.channel === "sms" && item.type === "payment_invoice_parent",
           );
           const sentToAdminSms = notificationResults.some(
-            (item) => item.success && item.channel === "sms" && item.type === "payment_alert_admin",
+            (item: { success: boolean; channel: string; type: string }) => item.success && item.channel === "sms" && item.type === "payment_alert_admin",
           );
-          const allFailed = notificationResults.length > 0 && notificationResults.every((item) => !item.success);
+          const allFailed = notificationResults.length > 0 && notificationResults.every((item: { success: boolean; channel: string; type: string }) => !item.success);
 
           if (result.queued) {
             showToast("Payment saved. SMS notification is pending.", { type: "info" });
@@ -1026,8 +1053,44 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
                 </div>
               </div>
 
+              {/* Ledger Retrieval Warning */}
+              {ledgerRetrievalError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-rose-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-rose-800">Unable to Load Fee Records</h4>
+                      <p className="text-[11px] text-rose-600/80 leading-relaxed mt-0.5">
+                        {ledgerRetrievalError.message}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {ledgerResultStatus === "partial" && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-amber-800">Some Fee Records Could Not Be Retrieved</h4>
+                      <p className="text-[11px] text-amber-600/80 leading-relaxed mt-0.5">
+                        The information displayed may be incomplete. Please try again later.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Fee Ledgers */}
-              {billLedgers.length === 0 ? (
+              {ledgerResultStatus === "failed" ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-8 text-center">
+                  <AlertTriangle className="w-10 h-10 text-rose-600 mx-auto mb-4" />
+                  <h3 className="text-sm font-semibold text-rose-800 mb-1">Unable to Load Fee Records</h3>
+                  <p className="text-xs text-rose-600/80 max-w-xs mx-auto">
+                    {ledgerRetrievalError?.message || "Fee records could not be retrieved. Please try again later."}
+                  </p>
+                </div>
+              ) : billLedgers.length === 0 ? (
                 <div className="bg-slate-50 rounded-xl p-8 text-center">
                   <CreditCard size={48} className="text-slate-300 mx-auto mb-4" />
                   <p className="text-slate-500">No fee records found for this student.</p>

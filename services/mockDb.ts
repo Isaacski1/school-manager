@@ -52,6 +52,7 @@ import {
   RecoveryCollectionScope,
   AdmissionCustomization,
 } from "../types";
+import type { LedgerRetrievalResult } from "./ledgerRetrievalTypes";
 import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
 import { logActivity } from "./activityLog";
 import {
@@ -4310,13 +4311,13 @@ const male = students.filter(s => s.gender === "Male").length;
     );
   }
 
-  async getStudentLedgers(filters: {
+  async _getLedgersWithStatus(filters: {
     schoolId?: string;
     academicYear?: string;
     term?: FeeTerm;
     classId?: string;
     studentId?: string;
-  }): Promise<StudentFeeLedger[]> {
+  }): Promise<LedgerRetrievalResult> {
     await this.requireFeature(filters.schoolId, "fees_payments");
     const scopedSchoolId = this.requireSchoolId(
       filters.schoolId,
@@ -4345,24 +4346,84 @@ const male = students.filter(s => s.gender === "Male").length;
         id: d.id,
       }));
     };
+
+    let primary: StudentFeeLedger[] = [];
+    let alternate: StudentFeeLedger[] = [];
+    let primaryError: string | undefined;
+    let alternateError: string | undefined;
+
     try {
-      const primary = await readLedgersFrom(ledgerCollection);
-      const alternate = await readLedgersFrom(alternateLedgerCollection);
-      const allLedgers = [...primary];
-      const existingIds = new Set(allLedgers.map((l) => l.id));
-      for (const ledger of alternate) {
-        if (!existingIds.has(ledger.id)) {
-          allLedgers.push(ledger);
-        }
-      }
-      return allLedgers;
+      primary = await readLedgersFrom(ledgerCollection);
     } catch (error) {
-      console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);
-      return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {
-        console.warn("[mockDb] getStudentLedgers alternate query failed, returning empty", alternateError);
-        return [];
-      });
+      primaryError = error instanceof Error ? error.message : String(error);
+      console.warn("[mockDb] _getLedgersWithStatus primary query failed:", error);
     }
+
+    try {
+      alternate = await readLedgersFrom(alternateLedgerCollection);
+    } catch (error) {
+      alternateError = error instanceof Error ? error.message : String(error);
+      console.warn("[mockDb] _getLedgersWithStatus alternate query failed:", error);
+    }
+
+    const sources = [
+      {
+        source: "primary" as const,
+        status: primaryError ? "failed" : "ok" as const,
+        error: primaryError,
+        recordCount: primary.length,
+      },
+      {
+        source: "alternate" as const,
+        status: alternateError ? "failed" : "ok" as const,
+        error: alternateError,
+        recordCount: alternate.length,
+      },
+    ];
+
+    const allLedgers = [...primary];
+    const existingIds = new Set(allLedgers.map((l) => l.id));
+    for (const ledger of alternate) {
+      if (!existingIds.has(ledger.id)) {
+        allLedgers.push(ledger);
+      }
+    }
+
+    const primaryOk = primaryError === undefined;
+    const alternateOk = alternateError === undefined;
+
+    let status: "complete" | "partial" | "failed";
+    let resultError: string | undefined;
+
+    if (primaryOk && alternateOk) {
+      status = "complete";
+    } else if (primaryOk || alternateOk) {
+      status = "partial";
+    } else {
+      status = "failed";
+      resultError = primaryError || alternateError || "Both ledger sources failed";
+    }
+
+    return {
+      ledgers: allLedgers,
+      status,
+      sources,
+      error: resultError,
+    };
+  }
+
+  async getStudentLedgers(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+    studentId?: string;
+  }): Promise<StudentFeeLedger[]> {
+    const result = await this._getLedgersWithStatus(filters);
+    if (result.status === "failed") {
+      throw new Error(result.error || "Both ledger sources failed");
+    }
+    return result.ledgers;
   }
 
 async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {

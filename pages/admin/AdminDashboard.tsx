@@ -5154,6 +5154,17 @@ const [
                               <p className="text-xs font-semibold text-slate-800 truncate">
                                 {record.teacherName}
                               </p>
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  record.status === "present"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-rose-100 text-rose-700"
+                                }`}
+                              >
+                                {record.status === "present"
+                                  ? "Present"
+                                  : "Absent"}
+                              </span>
                               <p className="text-[10px] text-slate-500 truncate">
                                 {record.teacherClasses || "No classes assigned"}
                               </p>

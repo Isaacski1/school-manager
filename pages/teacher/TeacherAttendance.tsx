@@ -507,7 +507,7 @@ const TeacherAttendance = () => {
      History Loading
    ======================= */
   const loadHistoryWeeks = useCallback(async () => {
-    if (!schoolId || !user?.id || !schoolConfig || showHistory) return;
+    if (!schoolId || !user?.id || !schoolConfig || !showHistory) return;
 
     setLoadingHistory(true);
     try {
@@ -1114,29 +1114,63 @@ const TeacherAttendance = () => {
 
                       {isConfigHoliday || !isValid || isFuture ? null : (
                         <div className="flex flex-1 flex-wrap items-center gap-2">
-                          {!record && (
+                          {!record || record.approvalStatus !== "approved" ? (
                             <>
                               <button
                                 onClick={() =>
                                   handleMarkAttendance(date, "present")
                                 }
-                                disabled={saving[date]}
-                                className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:scale-[1.02] hover:bg-emerald-100"
+                                disabled={
+                                  saving[date] ||
+                                  record?.approvalStatus === "approved"
+                                }
+                                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold shadow-sm transition hover:scale-[1.02] ${
+                                  record?.status === "present"
+                                    ? "bg-emerald-100 border-emerald-200 text-emerald-700"
+                                    : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                }`}
                               >
                                 <CheckCircle className="h-4 w-4" />
                                 Present
+                                {record?.status === "present" && (
+                                  <span className="ml-1 text-[10px] opacity-70">
+                                    (submitted)
+                                  </span>
+                                )}
                               </button>
                               <button
                                 onClick={() =>
                                   handleMarkAttendance(date, "absent")
                                 }
-                                disabled={saving[date]}
-                                className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:scale-[1.02] hover:bg-rose-100"
+                                disabled={
+                                  saving[date] ||
+                                  record?.approvalStatus === "approved"
+                                }
+                                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold shadow-sm transition hover:scale-[1.02] ${
+                                  record?.status === "absent"
+                                    ? "bg-rose-100 border-rose-200 text-rose-700"
+                                    : "bg-rose-50 border-rose-200 text-rose-700"
+                                }`}
                               >
                                 <XCircle className="h-4 w-4" />
                                 Absent
+                                {record?.status === "absent" && (
+                                  <span className="ml-1 text-[10px] opacity-70">
+                                    (submitted)
+                                  </span>
+                                )}
                               </button>
                             </>
+                          ) : (
+                            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-600">
+                              <CheckCircle className="h-4 w-4 text-emerald-600" />
+                              <span>
+                                Approved:{" "}
+                                {record.status === "present"
+                                  ? "Present"
+                                  : "Absent"}
+                              </span>
+                            </div>
                           )}
 
                           {(!record || record.isHoliday) && (
