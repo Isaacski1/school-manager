@@ -934,6 +934,7 @@ if (firebaseProjectId) {
 try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    projectId: firebaseProjectId,
     storageBucket:
       normalizeStorageBucketName(process.env.FIREBASE_STORAGE_BUCKET) ||
       (firebaseProjectId ? `${firebaseProjectId}.appspot.com` : undefined),
@@ -950,17 +951,52 @@ try {
     );
   }
   console.log("   Allowed browser origins:", Array.from(allowedOrigins));
-} catch (error) {
-  console.error("CRITICAL: Firebase Admin SDK initialization failed.");
-  console.error("Original Error:", error.message);
-  process.exit(1);
-}
+  } catch (error) {
+    console.error("CRITICAL: Firebase Admin SDK initialization failed.");
+    console.error("Original Error:", error.message);
+    process.exit(1);
+  }
 
-const termRolloverService = createTermRolloverService({
-  db: admin.firestore(),
-  FieldValue: admin.firestore.FieldValue,
-  Timestamp: admin.firestore.Timestamp,
-});
+  // --- Read-only credential verification ---
+  // Performs a single authenticated read against Firestore to confirm the
+  // service account credential is valid and targets the expected project.
+  // Does not create or modify any document. A missing document is acceptable
+  // because the purpose is to confirm the SDK can authenticate and reach
+  // Firestore, not to verify document existence.
+  try {
+    const healthDoc = await admin
+      .firestore()
+      .collection("_health_checks")
+      .doc("credential-verification")
+      .get();
+    console.log(
+      "   Firestore credential verification:",
+      healthDoc.exists
+        ? "document found"
+        : "document not found (authenticated read succeeded)",
+    );
+    console.log("   Verified project ID:", firebaseProjectId);
+  } catch (error) {
+    const safeCode =
+      error?.code || error?.errorInfo?.code || "unknown";
+    const safeMessage = String(error?.message || error)
+      .replace(/private_key["\s]*:[^,}]*/gi, "private_key=[REDACTED]")
+      .replace(
+        /-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/gi,
+        "[REDACTED]",
+      );
+    console.warn(
+      "   Firestore credential verification failed:",
+      safeCode,
+      safeMessage,
+    );
+  }
+
+  const termRolloverService = createTermRolloverService({
+    db: admin.firestore(),
+    FieldValue: admin.firestore.FieldValue,
+    Timestamp: admin.firestore.Timestamp,
+  });
 
 /**
  * Publish the administrator carry-forward review after a term rollover.
