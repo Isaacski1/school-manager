@@ -369,10 +369,32 @@ const getSchoolDaySummary = (params: {
   });
   const days = dayKeys.length;
 
+  let weeks = 0;
+  if (days > 0) {
+    const msInWeek = 7 * 24 * 60 * 60 * 1000;
+    const parseDateKey = (key: string) => {
+      const parts = key.split("-").map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+    const startOfWeek = (date: Date) => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return d;
+    };
+    const firstDay = parseDateKey(dayKeys[0]);
+    const lastDay = parseDateKey(dayKeys[dayKeys.length - 1]);
+    weeks =
+      Math.round(
+        (startOfWeek(lastDay).getTime() - startOfWeek(firstDay).getTime()) /
+          msInWeek,
+      ) + 1;
+  }
+
   return {
     dayKeys,
     days,
-    weeks: Math.max(0, Math.ceil(days / 5)),
+    weeks: Math.max(0, weeks),
   };
 };
 

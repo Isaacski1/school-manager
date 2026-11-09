@@ -864,7 +864,36 @@ const TeacherDashboard = () => {
         }).length;
         const totalDays = Math.max(0, totalPossibleDays - holidayCount);
         setTotalSchoolDays(totalDays);
-        setTotalSchoolWeeks(Math.max(0, Math.ceil(totalDays / 5)));
+
+        const termDayKeys = getExpectedSchoolDayKeys({
+          reopenDate: effectiveStart,
+          endDate: effectiveEnd,
+          holidayDates: config.holidayDates || [],
+          vacationDate: config.vacationDate,
+          nextTermBegins: config.nextTermBegins,
+        });
+        let weeks = 0;
+        if (termDayKeys.length > 0) {
+          const msInWeek = 7 * 24 * 60 * 60 * 1000;
+          const parseDateKey = (key: string) => {
+            const parts = key.split("-").map(Number);
+            return new Date(parts[0], parts[1] - 1, parts[2]);
+          };
+          const startOfWeek = (date: Date) => {
+            const d = new Date(date);
+            d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+            return d;
+          };
+          const firstDay = parseDateKey(termDayKeys[0]);
+          const lastDay = parseDateKey(termDayKeys[termDayKeys.length - 1]);
+          weeks =
+            Math.round(
+              (startOfWeek(lastDay).getTime() - startOfWeek(firstDay).getTime()) /
+                msInWeek,
+            ) + 1;
+        }
+        setTotalSchoolWeeks(Math.max(0, weeks));
       } catch (error) {
         console.error("Error fetching school config:", error);
         setSectionError("analytics", "Could not load school term settings.");
