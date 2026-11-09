@@ -23,6 +23,7 @@ import {
 } from "./paymentVerification.js";
 import { createSecurityLoginLogHandler } from "./securityLoginLog.js";
 import { sumDemandedAmounts } from "../services/ledgerFeeAssignment.js";
+import { authorizeWebhookRequest } from "./paystackWebhookSecurity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -3344,6 +3345,7 @@ app.post(
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "";
 const PAYSTACK_PLAN_CODE = process.env.PAYSTACK_PLAN_CODE || "";
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
+const PAYSTACK_WEBHOOK_SECRET = process.env.PAYSTACK_WEBHOOK_SECRET || "";
 const PLATFORM_FEE_PERCENTAGE = 2.5;
 const SCHOOL_SETTLEMENT_PERCENTAGE = 100 - PLATFORM_FEE_PERCENTAGE;
 const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
@@ -3351,7 +3353,8 @@ const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY 
 // to explicitly permit sk_test_ keys (for local/QA testing only — never in production).
 const allowPaystackTestMode = () => String(process.env.PAYSTACK_ALLOW_TEST_MODE || "").toLowerCase() === "true";
 const paystackConfigReady = () => Boolean(PAYSTACK_SECRET_KEY) && (isLivePaystackSecret() || allowPaystackTestMode());
-const APP_VERSION = process.env.APP_VERSION || "1.0.0";
+const paystackWebhookConfigReady = () => Boolean(PAYSTACK_WEBHOOK_SECRET);
+
 const APP_ENV = process.env.APP_ENV || "development";
 const SUPERADMIN_NVIDIA_API_KEY = String(
   process.env.NVIDIA_API_KEY || "",
@@ -12390,13 +12393,17 @@ app.post("/api/billing/webhook", async (req, res) => {
       return res.status(500).send("Paystack not configured");
     }
 
-    const signature = req.headers["x-paystack-signature"];
-    const hash = crypto
-      .createHmac("sha512", PAYSTACK_SECRET_KEY)
-      .update(req.rawBody || "")
-      .digest("hex");
-
-    if (hash !== signature) {
+    // Verify signature using new Paystack-Signature header.
+    // If present, ONLY accept if the new signature is valid.
+    // Only fall back to legacy x-paystack-signature when the new header is absent.
+    const isValid = authorizeWebhookRequest(
+      req.headers["paystack-signature"],
+      req.headers["x-paystack-signature"],
+      req.rawBody || "",
+      PAYSTACK_WEBHOOK_SECRET,
+      PAYSTACK_SECRET_KEY,
+    );
+    if (!isValid) {
       return res.status(401).send("Invalid signature");
     }
 
