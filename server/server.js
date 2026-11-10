@@ -12396,15 +12396,22 @@ app.post("/api/billing/webhook", async (req, res) => {
     // Verify signature using new Paystack-Signature header.
     // If present, ONLY accept if the new signature is valid.
     // Only fall back to legacy x-paystack-signature when the new header is absent.
+    const newSignatureHeader = req.headers["paystack-signature"];
     const isValid = authorizeWebhookRequest(
-      req.headers["paystack-signature"],
+      newSignatureHeader,
       req.headers["x-paystack-signature"],
       req.rawBody || "",
       PAYSTACK_WEBHOOK_SECRET,
       PAYSTACK_SECRET_KEY,
     );
     if (!isValid) {
+      console.log("PAYSTACK_WEBHOOK_SIGNATURE signature_rejected");
       return res.status(401).send("Invalid signature");
+    }
+    if (newSignatureHeader) {
+      console.log("PAYSTACK_WEBHOOK_SIGNATURE new_signature_accepted");
+    } else {
+      console.log("PAYSTACK_WEBHOOK_SIGNATURE legacy_signature_accepted");
     }
 
     const event = req.body;
