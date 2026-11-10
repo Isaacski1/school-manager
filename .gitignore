@@ -38,3 +38,6 @@ public/sw.js
 .wwebjs_cache/
 whatsapp-session/
 scratch/
+
+.env.*
+!.env.example

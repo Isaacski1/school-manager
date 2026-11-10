@@ -367,16 +367,15 @@ test("fee assignment: existing assignment is updated when the live fee amount ch
   assert.equal(productionLedgerTotals(persisted).totalDue, 900);
 });
 
-test("fee assignment: obsolete ordinary fee entries are retained as historical records", () => {
+test("fee assignment: obsolete ordinary fee entries are not carried forward", () => {
   const db = new FakeLedgerStore({ useV2: false });
   db.upsertStudentLedger({
     ...existingLedger,
     fees: [
       ...existingLedger.fees,
       // An ordinary fee that is no longer assigned to the student (scope
-      // narrowed or fee deactivated). Its obligation and payment attribution
-      // must survive as a historical record rather than being silently
-      // erased.
+      // narrowed or fee deactivated). It must NOT survive in the ledger —
+      // only officially-assigned fees are displayed.
       { feeId: "fee-old-lunch", feeName: "Lunch", amount: 150 },
     ],
   });
@@ -390,17 +389,16 @@ test("fee assignment: obsolete ordinary fee entries are retained as historical r
   const persisted = db.readLedger(existingLedger.id);
   assert.equal(
     persisted.fees.some((fee) => fee.feeId === "fee-old-lunch"),
-    true,
-    "Obsolete ordinary fee entries must be retained as historical records",
+    false,
+    "Obsolete ordinary fee entries must not be carried forward",
   );
-  const obsolete = persisted.fees.find((fee) => fee.feeId === "fee-old-lunch");
-  assert.equal(obsolete.amount, 150, "Obsolete entry keeps its historical amount");
-  // The entry is preserved verbatim; it carries no Phase 1 snapshot because it
-  // was hand-crafted without one, and Phase 2 must not invent one.
-  assert.equal(obsolete.assignedAmount, undefined);
-  assert.equal(obsolete.feeName, "Lunch");
-  // 600 (current) + 150 (retained historical) + 200 (carry-forward) = 950.
-  assert.equal(productionLedgerTotals(persisted).totalDue, 950);
+  assert.equal(
+    persisted.fees.some((fee) => fee.feeId === "fee-tuition-current"),
+    true,
+    "Current term fee must be preserved",
+  );
+  // 600 (current) + 200 (carry-forward) = 800. The obsolete 150 is gone.
+  assert.equal(productionLedgerTotals(persisted).totalDue, 800);
 });
 
 test("fee assignment: payments and prior-term records remain intact", () => {
@@ -783,12 +781,12 @@ test("propagation: openingPaidAmount survives a fee amount edit", () => {
   assert.equal(productionLedgerTotals(persisted).totalDue, 950);
 });
 
-test("propagation: deactivated fee is marked historical-only immediately", () => {
+test("propagation: deactivated fee is removed when unassigned", () => {
   const db = new FakeLedgerStore({ useV2: false });
   db.upsertStudentLedger(existingLedger);
 
   // The fee is deactivated: it is no longer in the assignedFees list, so
-  // buildLedgerFeeList must mark the existing entry historicalOnly.
+  // buildLedgerFeeList must remove it from the ledger entirely.
   runEnsureLedger({
     db,
     assignedFees: [],
@@ -796,25 +794,18 @@ test("propagation: deactivated fee is marked historical-only immediately", () =>
   });
 
   const persisted = db.readLedger(existingLedger.id);
-  const currentFee = persisted.fees.find(
-    (fee) => fee.feeId === "fee-tuition-current",
-  );
-  assert.ok(currentFee, "Deactivated fee entry must be retained as a historical record");
   assert.equal(
-    currentFee.historicalOnly,
-    true,
-    "Deactivated fee must be marked historicalOnly",
+    persisted.fees.some((fee) => fee.feeId === "fee-tuition-current"),
+    false,
+    "Deactivated fee entry must be removed from the ledger",
   );
-  assert.equal(currentFee.amount, 600, "Historical amount must be frozen for audit");
-  assert.equal(
-    currentFee.openingPaidAmount,
-    0,
-    "Historical openingPaidAmount must be preserved for audit",
-  );
-  // Demand excludes the historical-only entry: only the carry-forward (200).
+  // Only the carry-forward entry remains.
+  assert.equal(persisted.fees.length, 1);
+  assert.equal(persisted.fees[0].feeId, carryForwardFeeId);
+  // Demand is only the carry-forward (200).
   assert.equal(sumDemandedAmounts(persisted.fees), 200);
-  // totalFee still sums all entries (frozen semantics for audit).
-  assert.equal(persisted.totalFee, 800);
+  // totalFee sums only remaining entries (carry-forward 200).
+  assert.equal(persisted.totalFee, 200);
 });
 
 test("propagation: openingBalance is recomputed when the live amount changes", () => {

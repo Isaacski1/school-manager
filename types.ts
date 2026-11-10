@@ -231,6 +231,7 @@ export interface StudentFeePayment {
   isOpeningPayment?: boolean;
   allocations?: FeeAllocation[];
   createdAt: Date | number;
+  recordedAt?: number;
   recordedBy: string;
   adminReviewedAt?: Date | number;
   adminReviewedBy?: string | null;

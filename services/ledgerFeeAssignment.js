@@ -35,7 +35,8 @@ export const collectCarryForwardFees = (existingFees) =>
  * Rebuild the fee list of a student ledger from the current term's fee
  * assignments.
  *
- * The rebuilt list is a MERGE, not a regeneration:
+ * The rebuilt list is a MERGE of only officially-assigned fees plus any
+ * carry-forward entries:
  *
  *   - An existing assignment (same `feeId` within the ledger's academic year and
  *     term) is UPDATED from the current live FeeDefinition: the `feeName`,
@@ -47,9 +48,10 @@ export const collectCarryForwardFees = (existingFees) =>
  *   - A genuinely new assignment (fee currently applicable, no matching entry)
  *     is CREATED from the current definition.
  *   - Existing ordinary entries that are no longer returned by the assignment
- *     resolver (scope narrowed, fee deactivated, fee no longer applies to this
- *     student's class) are PRESERVED as historical records. Their obligation
- *     and payment attribution survive; they are not silently erased.
+ *     resolver (scope narrowed, fee deactivated, or fee no longer applies to
+ *     this student's class) are NOT carried forward — they do not appear in
+ *     the ledger at all. Only fees officially assigned to the student are
+ *     displayed.
  *   - Carry-forward entries are preserved unchanged and never matched against
  *     incoming fee definitions.
  *
@@ -108,17 +110,6 @@ export const buildLedgerFeeList = ({
     seenFeeIds.add(fee.id);
   }
 
-  // Preserve existing ordinary entries that are no longer returned by the
-  // assignment resolver (fee scope narrowed, fee deactivated, or fee no longer
-  // applies to this student's class). Their historical obligation and payment
-  // attribution survive; they are marked historicalOnly so demand-calculating
-  // consumers can exclude them from current balances and payment allocation.
-  for (const previousFee of previousOrdinaryFees) {
-    if (seenFeeIds.has(previousFee.feeId)) continue;
-    feesList.push({ ...previousFee, historicalOnly: true });
-    seenFeeIds.add(previousFee.feeId);
-  }
-
   // Carry-forward entries are preserved unchanged and never matched against
   // incoming fee definitions.
   for (const carryForwardFee of collectCarryForwardFees(previousFees)) {
@@ -134,11 +125,11 @@ export const buildLedgerFeeList = ({
  * Build the fee-derived fields of a student ledger from the current term's
  * fee assignments, preserving any carry-forward entries.
  *
- * `buildLedgerFeeList` now MERGES rather than regenerates: existing assignments
- * carry their live `amount`/`feeName`/snapshots (propagated from the current
- * definition) and only genuinely new assignments use the current definition.
- * `totalFee` is therefore the ledger's total obligation including preserved
- * historical-only entries; it is no longer silently frozen by a live fee edit.
+ * `buildLedgerFeeList` now includes only officially-assigned fees plus
+ * carry-forward entries — obsolete ordinary entries are not carried forward,
+ * so the ledger displays only fees assigned to the student. `totalFee` is
+ * therefore the ledger's total obligation from current assignments and
+ * carry-forward balances only.
  *
  * @param {Object} params
  * @param {Array<Object>} params.assignedFees - Assigned fee definitions

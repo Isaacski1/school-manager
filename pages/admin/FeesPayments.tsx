@@ -428,16 +428,18 @@ const FeesPayments: React.FC = () => {
       maximumFractionDigits: 2,
     });
 
-    // Outstanding balance after this payment. Include the just-recorded
-    // payment even though React has not yet flushed setPayments(), so the
-    // figure the parent sees is always correct for this transaction.
+    // Outstanding balance after this payment, computed the same way as the
+    // student ledger (`selectedStudentOutstandingBalance` / `computeLedgerTotals`):
+    // global netting of total paid against total due, not per-fee clamped.
+    // Include the just-recorded payment even though React has not yet flushed
+    // setPayments(), so the figure the parent sees is correct for this
+    // transaction and matches the ledger balance.
     const ledger = ledgers.find(
       (item) =>
         item.studentId === payment.studentId &&
         item.academicYear === payment.academicYear &&
         item.term === payment.term,
     );
-    const paidSinceByFee = new Map<string, number>();
     const allPayments = [
       payment,
       ...payments.filter(
@@ -448,46 +450,15 @@ const FeesPayments: React.FC = () => {
           p.id !== payment.id,
       ),
     ];
-    // Credit each payment against the fees it actually reduced. An
-    // auto-allocated payment stores `feeId: UNALLOCATED_FEE_ID` plus an
-    // `allocations` array naming every fee it was split across, so the
-    // outstanding-balance math below must read those allocations instead of
-    // the sentinel `feeId` — otherwise the credited amount is never matched
-    // to a real fee and the balance stays at the pre-payment figure.
-    const creditPayment = (p: StudentFeePayment) => {
-      const realAllocations = (p.allocations || []).filter(
-        (a) => a.feeId !== UNALLOCATED_FEE_ID,
-      );
-      if (realAllocations.length) {
-        for (const a of realAllocations) {
-          paidSinceByFee.set(
-            a.feeId,
-            (paidSinceByFee.get(a.feeId) || 0) + a.amountPaid,
-          );
-        }
-      } else {
-        paidSinceByFee.set(
-          p.feeId,
-          (paidSinceByFee.get(p.feeId) || 0) + p.amountPaid,
-        );
-      }
-    };
-    for (const p of allPayments) {
-      creditPayment(p);
-    }
-    let outstanding = 0;
-    for (const fee of ledger?.fees || []) {
-      if (fee.historicalOnly) continue;
-      const totalDue = fee.amount;
-      const paidBefore = fee.openingPaidAmount || 0;
-      const paidSince = paidSinceByFee.get(fee.feeId) || 0;
-      const remainingBefore = fee.openingBalance;
-      const remaining =
-        remainingBefore !== undefined && remainingBefore !== null
-          ? Math.max(0, remainingBefore - paidSince)
-          : Math.max(0, totalDue - paidBefore - paidSince);
-      outstanding += remaining;
-    }
+    const totalDue = sumDemandedAmounts(ledger?.fees || []);
+    const openingPaid = (ledger?.fees || [])
+      .filter((fee) => !fee.historicalOnly)
+      .reduce((sum, fee) => sum + (fee.openingPaidAmount || 0), 0);
+    const totalPaid = allPayments.reduce(
+      (sum, p) => sum + (p.amountPaid || 0),
+      0,
+    );
+    const outstanding = Math.max(0, totalDue - openingPaid - totalPaid);
 
     const paymentDate = payment.createdAt
       ? new Date(payment.createdAt).toLocaleDateString("en-GB", {
@@ -1937,6 +1908,7 @@ const handleExportReport = () => {
       applyToAcademicYear: fee.applyToAcademicYear || "",
       applyToTerm: fee.applyToTerm || "",
     });
+    window.setTimeout(() => scrollToSection(feeSetupRef), 0);
   };
 
   const handleUpdateFee = async () => {
@@ -2169,6 +2141,7 @@ const handleExportReport = () => {
         term,
         allocations,
         createdAt: paymentTimestamp,
+        recordedAt: Date.now(),
         recordedBy: user.id,
       };
       showToast(
@@ -2226,6 +2199,7 @@ const handleExportReport = () => {
         academicYear,
         term,
         createdAt: paymentTimestamp,
+        recordedAt: Date.now(),
         recordedBy: user.id,
       };
     }
@@ -3475,9 +3449,11 @@ const updatedLedgers = ledgersToUpdate.map((ledger) => {
   );
 
   const paymentsSorted = useMemo(() => {
-    return [...currentTermPayments].sort(
-      (a, b) => getPaymentCreatedAtMs(b) - getPaymentCreatedAtMs(a),
-    );
+    return [...currentTermPayments].sort((a, b) => {
+      const aRec = a.recordedAt ?? getPaymentCreatedAtMs(a);
+      const bRec = b.recordedAt ?? getPaymentCreatedAtMs(b);
+      return bRec - aRec;
+    });
   }, [currentTermPayments, getPaymentCreatedAtMs]);
 
   const ledgerPayments = useMemo(() => {
